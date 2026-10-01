@@ -16,6 +16,7 @@ import websockets
 
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
+from polymaker.research.capture import CausalCapture, clock
 from polymaker.state.tracker import UserEventProcessor
 from polymaker.userstream.parse import (
     maker_order_id_evidence,
@@ -41,6 +42,7 @@ class UserStream:
         proxy: str | None = None,
         on_reconnect: Callable[[], None] | None = None,
         on_connection: Callable[[bool], None] | None = None,
+        research: CausalCapture | None = None,
     ) -> None:
         self._creds = creds
         self._address = our_address
@@ -59,6 +61,10 @@ class UserStream:
         self.connected: bool = False
         self.disconnected_since: float = time.time()
         self._ever_connected = False
+        self.connection_generation = 0
+        self._research = research
+        self._receipt_us: int | None = None
+        self._receipt_ns: int | None = None
 
     def set_markets(self, condition_ids: list[str]) -> None:
         self._markets = condition_ids
@@ -94,6 +100,8 @@ class UserStream:
         async with websockets.connect(self._url, **kwargs) as ws:
             await ws.send(json.dumps(sub))
             self.connected = True
+            self.connection_generation += 1
+            self._observe_connection("UP")
             self._on_connection(True)
             is_reconnect = self._ever_connected
             self._ever_connected = True
@@ -104,11 +112,18 @@ class UserStream:
                 self._on_reconnect()
             try:
                 async for raw in ws:
-                    self._handle(raw)
+                    if self._research is not None:
+                        self._receipt_us, self._receipt_ns = clock()
+                    try:
+                        self._handle(raw)
+                    finally:
+                        self._receipt_us = None
+                        self._receipt_ns = None
             finally:
                 self.connected = False
-                self._on_connection(False)
                 self.disconnected_since = time.time()
+                self._observe_connection("DOWN")
+                self._on_connection(False)
 
     def stop(self) -> None:
         self._stop.set()
@@ -143,14 +158,18 @@ class UserStream:
             return
         for ev in normalize_trade(msg, self._address, self._other_token):
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
-            self._proc.on_trade(ev, cond)
+            self._proc.on_trade(ev, cond, received_at_us=self._receipt_us,
+                received_monotonic_ns=self._receipt_ns,
+                connection_generation=self.connection_generation)
 
     def _on_order(self, msg: dict[str, Any]) -> None:
         self._journal_write("user_order", msg)
         ev = normalize_order(msg)
         if ev is not None:
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
-            self._proc.on_order(ev, cond)
+            self._proc.on_order(ev, cond, received_at_us=self._receipt_us,
+                received_monotonic_ns=self._receipt_ns,
+                connection_generation=self.connection_generation)
         else:
             oid = msg.get("id", msg.get("order_id"))
             if isinstance(oid, str) and oid.strip():
@@ -159,6 +178,11 @@ class UserStream:
     def _journal_write(self, kind: str, payload: dict[str, Any]) -> None:
         if self._journal is not None:
             self._journal.write(kind, payload, _ts(payload))
+
+    def _observe_connection(self, state: str) -> None:
+        if self._research is not None:
+            self._research.emit("CONNECTION", "", {"stream": "user", "state": state},
+                source="USER_WS", connection_generation=self.connection_generation)
 
 
 def _ts(msg: dict[str, Any]) -> float:

@@ -29,6 +29,7 @@ from polymaker.marketdata.parse import (
     parse_price_changes,
     parse_tick_size_change,
 )
+from polymaker.research.capture import CausalCapture, clock, exchange_us
 
 log = get_logger("marketdata.service")
 
@@ -47,6 +48,7 @@ class MarketDataService:
         proxy: str | None = None,
         on_connection: Callable[[bool], None] | None = None,
         queue_maxsize: int = 2048,
+        research: CausalCapture | None = None,
     ) -> None:
         self._url = url
         self._on_dirty = on_dirty or (lambda _c, _t: None)
@@ -68,6 +70,9 @@ class MarketDataService:
         self.connected_since: float = 0.0
         self.connection_generation: int = 0
         self._queue_maxsize = queue_maxsize
+        self._research = research
+        self._receipt_us: int | None = None
+        self._receipt_ns: int | None = None
         self.metrics = {"received": 0, "processed": 0, "queue_full": 0, "processing_lag_ms": 0.0}
 
     # ── subscription management ─────────────────────────────────────────
@@ -130,16 +135,21 @@ class MarketDataService:
             self.connected = True
             self.connection_generation += 1
             self.connected_since = time.time()
+            self._observe("CONNECTION", "", {"stream": "market", "state": "UP", "subscriptions": tuple(self._subs)})
             self._on_connection(True)
             log.info("market_ws_subscribed", n=len(self._subs))
-            queue: asyncio.Queue[tuple[int, float, str | bytes]] = asyncio.Queue(maxsize=self._queue_maxsize)
+            queue: asyncio.Queue[tuple[int, float, str | bytes] | tuple[int, float, str | bytes, int]] = asyncio.Queue(maxsize=self._queue_maxsize)
             generation = self.connection_generation
             consumer = asyncio.create_task(self._consume(queue, generation), name="market-ws-consumer")
             try:
                 async for raw in ws:
                     self.metrics["received"] += 1
                     try:
-                        queue.put_nowait((generation, time.monotonic(), raw))
+                        if self._research is None:
+                            queue.put_nowait((generation, time.monotonic(), raw))
+                        else:
+                            receipt_us, receipt_ns = clock()
+                            queue.put_nowait((generation, receipt_ns / 1e9, raw, receipt_us))
                     except asyncio.QueueFull as exc:
                         self.metrics["queue_full"] += 1
                         log.error("market_ws_queue_full", depth=queue.qsize(), maxsize=self._queue_maxsize,
@@ -150,15 +160,27 @@ class MarketDataService:
                 await asyncio.gather(consumer, return_exceptions=True)
                 self.connected = False
                 self.disconnected_since = time.time()
+                self._observe("CONNECTION", "", {"stream": "market", "state": "DOWN"})
                 self._on_connection(False)
 
-    async def _consume(self, queue: asyncio.Queue[tuple[int, float, str | bytes]], generation: int) -> None:
+    async def _consume(self, queue: asyncio.Queue[tuple[int, float, str | bytes] | tuple[int, float, str | bytes, int]], generation: int) -> None:
         last_stats = time.monotonic()
         while True:
-            queued_generation, received_at, raw = await queue.get()
+            item = await queue.get()
+            if len(item) == 3:  # existing direct-consumer callers lack receipt wall time
+                queued_generation, received_at, raw = item
+                receipt_us = None
+            else:
+                queued_generation, received_at, raw, receipt_us = item
             try:
                 if queued_generation == generation == self.connection_generation and self.connected:
-                    await self._process_raw(raw)
+                    self._receipt_us = receipt_us
+                    self._receipt_ns = int(received_at * 1e9) if receipt_us is not None else None
+                    try:
+                        await self._process_raw(raw)
+                    finally:
+                        self._receipt_us = None
+                        self._receipt_ns = None
                     self.metrics["processed"] += 1
                     self.metrics["processing_lag_ms"] = (time.monotonic() - received_at) * 1000
             finally:
@@ -210,6 +232,10 @@ class MarketDataService:
             book.set_tick_size(upd.tick_size)
         book.apply_snapshot(upd.bids, upd.asks, upd.ts, upd.book_hash)
         book.snapshot_generation = self.connection_generation
+        if self._research is not None:
+            self._observe("BOOK", upd.condition_id, {"token_id": upd.asset_id,
+                "bids": upd.bids, "asks": upd.asks, "book_hash": upd.book_hash,
+                "tick_size": book.tick_size, "snapshot_generation": book.snapshot_generation}, upd.ts)
         self._journal_write("book", msg, upd.ts)
         self._wake(upd.asset_id)
 
@@ -221,6 +247,9 @@ class MarketDataService:
             if book is None:
                 continue
             book.apply_delta(ch.side, ch.price, ch.size, ch.ts)
+            if self._research is not None:
+                self._observe("DELTA", ch.condition_id, {"token_id": ch.asset_id,
+                    "side": ch.side.value, "price": ch.price, "size": ch.size}, ch.ts)
             touched.add(ch.asset_id)
         if changes:
             self._journal_write("price_change", msg, changes[0].ts)
@@ -232,12 +261,18 @@ class MarketDataService:
         if tp is None or tp.asset_id not in self.books:
             return
         self._journal_write("last_trade_price", msg, tp.ts)
+        if self._research is not None:
+            self._observe("TRADE", tp.condition_id, {"token_id": tp.asset_id,
+                "side": tp.aggressor.value, "price": tp.price, "size": tp.size}, tp.ts)
         self._on_trade(tp)
 
     def _on_tick_change(self, msg: dict[str, Any]) -> None:
         tc = parse_tick_size_change(msg)
         if tc and tc.asset_id in self.books:
             self.books[tc.asset_id].set_tick_size(tc.tick_size)
+            if self._research is not None:
+                self._observe("TICK", self._token_condition.get(tc.asset_id, ""),
+                    {"token_id": tc.asset_id, "tick_size": tc.tick_size})
             log.info("tick_size_change", token=tc.asset_id[:12], tick=tc.tick_size)
 
     def _wake(self, token_id: str) -> None:
@@ -248,6 +283,19 @@ class MarketDataService:
     def _journal_write(self, kind: str, payload: dict[str, Any], ts: float) -> None:
         if self._journal is not None:
             self._journal.write(kind, payload, ts)
+
+    def _observe(self, kind: str, condition_id: str, payload: dict[str, Any],
+                 event_ts: float | None = None) -> None:
+        if self._research is not None:
+            try:
+                self._research.emit(kind, condition_id, payload, source="MARKET_WS",
+                    exchange_at_us=exchange_us(event_ts), received_at_us=self._receipt_us,
+                    received_monotonic_ns=self._receipt_ns,
+                    connection_generation=self.connection_generation)
+            except Exception:
+                # Only Research preparation is inside this boundary. The applied
+                # market mutation and its normal wake must always continue.
+                self._research.failures += 1
 
 
 def _empty_view() -> BookView:

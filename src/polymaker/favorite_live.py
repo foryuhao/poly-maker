@@ -34,6 +34,8 @@ from polymaker.favorite_report import (
     run_id,
     write_artifacts,
 )
+from polymaker.research.observer import ResearchConfig, ResearchObserver
+from polymaker.research.writer import ResearchWriter
 from polymaker.strategy.favorite_first import FavoriteFirstConfig, StrategyState
 
 
@@ -483,6 +485,7 @@ async def run_favorite_first_live(
     config_loader: Callable[[str], Config] = Config.load,
     resolver: Callable[[Config, str], Awaitable[MarketMeta]] = resolve_btc5m_market,
     engine_factory: Callable[..., Any] | None = None,
+    research_config: ResearchConfig | None = None,
 ) -> LiveResult:
     """Commit to one upcoming exact slug, preflight, arm once, clean up, exit."""
     from polymaker.engine import Engine
@@ -498,6 +501,7 @@ async def run_favorite_first_live(
     artifact_dir: Path | None = None
     raw_handler: logging.FileHandler | None = None
     final_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
+    research_writer: ResearchWriter | None = None
 
     def persist(report: dict[str, Any], result: LiveResult) -> None:
         if artifact_dir is None or committed_meta is None or "start" not in report:
@@ -593,8 +597,22 @@ async def run_favorite_first_live(
         )
         cfg.markets = [MarketEntry(slug=slug, profile=PROFILE, enabled=True)]
         phase = "Engine startup and account reconciliation"
+        research_kwargs: dict[str, Any] = {}
+        if research_config is not None and research_config.enabled:
+            try:
+                observer = ResearchObserver(research_config)
+                assert observer.queue is not None
+                research_writer = ResearchWriter(Path(research_config.output_root),
+                    "m4a", artifact_dir.name, observer.queue)
+                research_writer.start()
+                research_kwargs = {"research_observer": observer,
+                                   "research_session_id": artifact_dir.name}
+            except Exception as exc:  # Research must not prevent trading startup.
+                research_writer = None
+                console.print(f"Research capture unavailable: {type(exc).__name__}")
         engine = (engine_factory or Engine)(
-            cfg, paper=False, favorite_first=CONTROLLED_CONFIG, market_start_ts=epoch
+            cfg, paper=False, favorite_first=CONTROLLED_CONFIG, market_start_ts=epoch,
+            **research_kwargs,
         )
         await engine.start(arm_favorite=False)
         if len(engine.metas) != 1 or meta.condition_id not in engine.metas:
@@ -701,5 +719,11 @@ async def run_favorite_first_live(
     finally:
         if engine is not None:
             await engine.shutdown()
+        if research_writer is not None:
+            try:
+                if not research_writer.close():
+                    console.print("Research capture did not close cleanly")
+            except Exception as exc:
+                console.print(f"Research capture close failed: {type(exc).__name__}")
         if raw_handler is not None:
             detach_raw_log(raw_handler)

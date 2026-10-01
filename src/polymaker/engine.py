@@ -13,8 +13,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from dataclasses import replace
+import uuid
+from dataclasses import asdict, replace
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from polymaker.alerts import Alerter
@@ -30,6 +32,8 @@ from polymaker.logging import get_logger
 from polymaker.marketdata.parse import TradePrint
 from polymaker.marketdata.service import MarketDataService
 from polymaker.merge import Merger
+from polymaker.research.capture import CausalCapture, clock
+from polymaker.research.observer import ResearchObserver
 from polymaker.risk.manager import RiskManager
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import UserEventProcessor
@@ -58,7 +62,9 @@ log = get_logger("engine")
 class Engine:
     def __init__(self, cfg: Config, *, paper: bool = False,
                  favorite_first: FavoriteFirstConfig | None = None,
-                 market_start_ts: float | None = None) -> None:
+                 market_start_ts: float | None = None,
+                 research_observer: ResearchObserver | None = None,
+                 research_session_id: str | None = None) -> None:
         if favorite_first is not None and market_start_ts is None:
             raise ValueError("Favorite-First requires the exact market start timestamp")
         self.cfg = cfg
@@ -66,24 +72,28 @@ class Engine:
         self._favorite_bootstrap = (favorite_first, market_start_ts)
         self._favorite_armed = favorite_first is None
         self._running = False
+        self.research = (CausalCapture(research_observer, research_session_id or uuid.uuid4().hex)
+                         if research_observer is not None and research_observer.config.enabled else None)
 
         self.journal = Journal(cfg.paths.journal_dir, enabled=cfg.engine.journal,
                                day="paper" if paper else "live")
         self.state = StateStore(cfg.paths.db)
         self.catalog = CatalogStore(cfg.paths.db)
-        self.gateway = ExecutionGateway(cfg, self.journal, paper=paper)
+        self.gateway = ExecutionGateway(cfg, self.journal, paper=paper, research=self.research)
         self.risk = RiskManager(cfg.risk, self.state)
         self.merger = Merger(cfg)
         self.alerter = Alerter(cfg.secrets.alert_webhook_url, proxy=cfg.proxy)
 
         self.md = MarketDataService(on_dirty=self._on_dirty, on_trade=self._on_trade,
                                     on_connection=self._on_market_ws_connection,
-                                    journal=self.journal, proxy=cfg.proxy)
+                                    journal=self.journal, proxy=cfg.proxy, research=self.research)
         self._fill_recovery_pending: set[str] = set()
         self._fill_recovery_orders: dict[str, set[str]] = {}
         self._fill_truth_generation: dict[str, int] = {}
         self.user_proc = UserEventProcessor(self.state, on_change=self._wake_cid,
-            on_fill=self._on_fill, on_reconcile=self._schedule_order_reconcile)
+            on_fill=self._on_fill, on_reconcile=self._schedule_order_reconcile,
+            research=self.research,
+            fill_truth_ready=self._research_fill_truth_ready if self.research is not None else None)
         self.user: UserStream | None = None
 
         # per-market state
@@ -111,6 +121,7 @@ class Engine:
         self._favorite_mismatch_pending: set[str] = set()
         self._favorite_mismatch_reads: dict[str, int] = {}
         self._favorite_mismatch_confirmed: set[str] = set()
+        self._research_rest_replacements: dict[str, int] = {}
         # supervised tasks: name -> (factory, task) so a dead task restarts
         self._task_specs: dict[str, Any] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
@@ -154,6 +165,7 @@ class Engine:
             other_token=self._other_token, condition_of_token=self._cid_of_token,
             journal=self.journal, proxy=self.cfg.proxy,
             on_reconnect=self._on_user_reconnect,
+            research=self.research,
         )
         self.user.set_markets(list(self.metas))
 
@@ -386,6 +398,8 @@ class Engine:
             generations = self._fill_truth_generation = {}
         generation = generations.get(condition_id, 0) + 1
         generations[condition_id] = generation
+        self._research_emit("SAFETY", condition_id,
+            {"transition": "FILL_TRUTH_INVALIDATED", "fill_truth_generation": generation})
         return generation
 
     def _can_submit_market(self, expected_generation: int, condition_id: str | None = None,
@@ -400,6 +414,12 @@ class Engine:
             and (condition_id is None or condition_id not in self._fill_recovery_pending)
             and (condition_id is None or not self.user_proc.has_quarantine_for_condition(condition_id))
         )
+
+    def _research_fill_truth_ready(self, cid: str) -> bool:
+        """Copy the current live recovery/quarantine guards at this revision."""
+        return (cid not in self._fill_recovery_pending
+                and cid not in self._order_state_uncertain
+                and not self.user_proc.has_quarantine_for_condition(cid))
 
     def favorite_live_user_ready(self) -> bool:
         """Current authenticated execution feed state for a new live order."""
@@ -480,6 +500,8 @@ class Engine:
 
     async def _reconcile_owned_order(self, order_id: str, cid: str) -> None:
         outcome = await reconcile_owned_order(order_id, self.gateway, self.user_proc)
+        self._research_emit("SAFETY", cid, {"transition": "FILL_TRUTH_RECONCILE",
+            "order_id": order_id, "outcome": outcome.value})
         if outcome is ReconciliationOutcome.COMPLETE:
             pending = self._fill_recovery_orders.get(cid, set())
             pending.discard(order_id)
@@ -663,6 +685,8 @@ class Engine:
                     self._invalidate_fill_truth(cid)
                     return
         terminal.add(cid)
+        self._research_emit("SAFETY", cid, {"transition": "FIRST_FINALIZED" if first else "PAIR_TERMINAL",
+            "order_ids": tuple(ids)})
         self._wake_cid(cid)
 
     async def _quoter(self, cid: str) -> None:
@@ -856,7 +880,7 @@ class Engine:
                                  else economics["pair_vwap"])
             strategy_no_vwap = (economics["first_vwap"] if first_side == "NO"
                                 else economics["pair_vwap"])
-            decision = evaluate_favorite(StrategySnapshot(
+            strategy_snapshot = StrategySnapshot(
                 now=now, market_start_ts=start, yes=yes_book.view(), no=no_book.view(),
                 yes_qty=strategy_yes, no_qty=strategy_no,
                 yes_vwap=strategy_yes_vwap, no_vwap=strategy_no_vwap,
@@ -871,8 +895,29 @@ class Engine:
                 pair_terminal_authoritative=cid in self._favorite_pair_terminal,
                 venue_min_order_size=meta.min_order_size,
                 account_position_mismatch=cid in self._favorite_mismatch_confirmed,
-            ), memory, favorite_config)
+            )
+            decision = evaluate_favorite(strategy_snapshot, memory, favorite_config)
             favorite_decision = decision
+            if self.research is not None:
+                try:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "snapshot": self._research_primitive(asdict(strategy_snapshot)),
+                        "memory_before": self._research_primitive(asdict(memory)),
+                        "config": asdict(favorite_config),
+                        "strategy_state": decision.memory.state.value,
+                        "first_leg_side": decision.memory.first_leg_side,
+                        "first_leg_qty": decision.first_leg_qty,
+                        "paired_qty": decision.paired_qty,
+                        "pair_trigger": (decision.memory.pair_trigger.value
+                                         if decision.memory.pair_trigger else None),
+                        "pure_quote": self._research_quote(decision.quote),
+                        "yes": {"bid": yes_book.view().best_bid, "ask": yes_book.view().best_ask},
+                        "no": {"bid": no_book.view().best_bid if no_book else None,
+                               "ask": no_book.view().best_ask if no_book else None},
+                        "first_fill_exchange_ts": economics["first_ts"],
+                    })
+                except Exception:
+                    self.research.failures += 1
             self._favorite[cid] = (start, favorite_config, decision.memory)
             if (now - start >= favorite_config.hard_order_cutoff_s
                     and cid not in self._favorite_cutoff_seen):
@@ -898,6 +943,15 @@ class Engine:
                     desired = type(desired)(desired.token_id, desired.side, active.price, desired.size)
             tq = TargetQuotes(cid, Regime.HALTED if desired is None else regime,
                               (desired,) if desired is not None else ())
+            if self.research is not None:
+                self._research_emit("SAFETY", cid, {
+                    "halt_reason": self.favorite_halt_reason(cid), "blind": blind,
+                    "fill_truth_ready": cid not in self._fill_recovery_pending,
+                    "market_recovery_pending": self._market_recovery_pending,
+                    "first_finalized": cid in self._favorite_first_finalized,
+                    "pair_terminal": cid in self._favorite_pair_terminal,
+                    "cutoff_seen": cid in self._favorite_cutoff_seen,
+                })
             record = (decision.memory.state, desired, decision.memory.pair_trigger,
                       decision.pair_quote_mode, decision.first_leg_qty,
                       decision.paired_qty, decision.submin_working_remainder,
@@ -972,7 +1026,27 @@ class Engine:
         plan = reconcile(tq, live, tick=meta.tick_size,
                          reprice_ticks=0 if favorite_config else p.reprice_ticks,
                          resize_frac=0 if favorite_config else p.resize_frac)
+        if favorite_config and self.research is not None:
+            try:
+                self._research_emit("BASELINE_DECISION", cid, {
+                    "phase": "ORDER_PLAN", "stage": "RECONCILED_PLAN",
+                    "target_quote": self._research_quote(desired),
+                    "quote": self._research_quote(plan.to_place[0]) if plan.to_place else None,
+                    "to_place": [self._research_quote(q) for q in plan.to_place],
+                    "to_cancel": tuple(plan.to_cancel), "is_noop": plan.is_noop,
+                    "suppressed": desired is None and favorite_decision is not None
+                        and favorite_decision.quote is not None,
+                    "blind": blind, "risk_halt": rd.halt,
+                    "reduce_only": rd.reduce_only, "mismatch": mismatch,
+                })
+            except Exception:
+                self.research.failures += 1
         if plan.is_noop:
+            if favorite_config and self.research is not None:
+                self._research_emit("BASELINE_DECISION", cid, {
+                    "phase": "EFFECTIVE_QUOTE", "stage": "NOOP", "quote": None,
+                    "is_noop": True,
+                })
             if favorite_decision and favorite_decision.first_leg_finalize_needed:
                 await self._favorite_finalize_orders(cid, first=True)
             if favorite_decision and favorite_decision.pair_finalize_needed:
@@ -989,6 +1063,11 @@ class Engine:
             else:
                 # cancel MAY have partially applied server-side — keep our view,
                 # resync from REST, and skip placing this cycle (avoid doubles)
+                if favorite_config and self.research is not None:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "phase": "EFFECTIVE_QUOTE", "stage": "CANCEL_UNCERTAIN",
+                        "quote": None, "to_cancel": tuple(plan.to_cancel),
+                    })
                 await self._refresh_token_orders(meta, grace_s=10.0)
                 self._dirty[cid].set()
                 return
@@ -996,6 +1075,12 @@ class Engine:
                 # A cancel acknowledgement alone does not establish the final
                 # maker-fill quantity. Verify these exact owned IDs before a
                 # replacement can be evaluated against the new inventory.
+                if self.research is not None:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "phase": "EFFECTIVE_QUOTE", "stage": "PLACEMENT_DEFERRED",
+                        "reason": "CANCEL_REPLACE_VERIFICATION", "quote": None,
+                        "to_place": [self._research_quote(q) for q in plan.to_place],
+                    })
                 if not self.paper:
                     await self._refresh_token_orders(meta, grace_s=0.0)
                     if any(oid in self.state.orders for oid in plan.to_cancel):
@@ -1017,6 +1102,11 @@ class Engine:
                         replace(memory, first_leg_replacement_pending=True))
                 self._dirty[cid].set()
                 return
+        if favorite_config and self.research is not None and not plan.to_place:
+            self._research_emit("BASELINE_DECISION", cid, {
+                "phase": "EFFECTIVE_QUOTE", "stage": "CANCEL_ONLY",
+                "quote": None, "to_cancel": tuple(plan.to_cancel),
+            })
         if favorite_decision and favorite_decision.first_leg_finalize_needed:
             await self._favorite_finalize_orders(cid, first=True)
         if favorite_decision and favorite_decision.pair_finalize_needed:
@@ -1027,6 +1117,12 @@ class Engine:
             # I/O above. Recheck immediately before submitting any new order.
             if (not self.md.connected or self._market_recovery_pending
                     or not self._market_books_fresh(cid)):
+                if favorite_config and self.research is not None:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "phase": "EFFECTIVE_QUOTE", "stage": "SUBMISSION_SUPPRESSED",
+                        "reason": "MARKET_NOT_READY", "quote": None,
+                        "to_place": [self._research_quote(q) for q in plan.to_place],
+                    })
                 self._dirty[cid].set()
                 return
             # LOAD SHED: under rate-budget pressure, skip *new* quotes in calm
@@ -1038,6 +1134,12 @@ class Engine:
                 and regime in (Regime.QUIET, Regime.TRENDING)
             )
             if shed:
+                if favorite_config and self.research is not None:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "phase": "EFFECTIVE_QUOTE", "stage": "SUBMISSION_SUPPRESSED",
+                        "reason": "LOAD_SHED", "quote": None,
+                        "to_place": [self._research_quote(q) for q in plan.to_place],
+                    })
                 log.warning("shed_load", cid=cid[:8], pressure=round(self.gateway.order_pressure, 2))
                 self._dirty[cid].set()  # retry soon
             else:
@@ -1055,6 +1157,13 @@ class Engine:
                     self.user_proc.discard_pending()
                     raise
                 placed_n = len(placed)
+                if favorite_config and self.research is not None:
+                    self._research_emit("BASELINE_DECISION", cid, {
+                        "phase": "EFFECTIVE_QUOTE", "stage": "PLACEMENT_RESULT",
+                        "quote": (self._research_quote(plan.to_place[0])
+                                  if placed_n else None),
+                        "planned_count": len(plan.to_place), "acknowledged_count": placed_n,
+                    })
                 if favorite_config and placed_n:
                     self._favorite_last_reprice[cid] = time.time()
                 self.risk.note_order_result(len(placed) == len(plan.to_place))
@@ -1157,6 +1266,7 @@ class Engine:
             self.state.replace_open_orders(
                 tok, [o for o in live if o.token_id == tok], grace_s=grace_s
             )
+            self._research_order_snapshot(meta.condition_id, tok, "TARGETED_REST", grace_s)
 
     def _maybe_merge(self, cid: str, meta: MarketMeta, p: StrategyProfile,
                      yes_size: float, no_size: float) -> None:
@@ -1260,6 +1370,8 @@ class Engine:
                                     tok, by_token.get(tok, []),
                                     grace_s=0.0 if cid in self._order_state_uncertain else 10.0,
                                 )
+                                self._research_order_snapshot(cid, tok, "PERIODIC_REST",
+                                    0.0 if cid in self._order_state_uncertain else 10.0)
                         if cid in self._favorite_mismatch_pending:
                             tokens = (meta.yes.token_id, meta.no.token_id)
                             recent = any(self.state.has_recent_fill(tok) for tok in tokens)
@@ -1405,6 +1517,7 @@ class Engine:
 
     async def _refresh_book(self, token_id: str) -> None:
         levels = await self.gateway.get_full_book(token_id)
+        rest_receipt = clock() if self.research is not None else (None, None)
         if levels is None:
             return
         bids, asks, book_hash = levels
@@ -1426,10 +1539,69 @@ class Engine:
             log.warning("book_drift_corrected", token=token_id[:12])
             book.apply_snapshot(bids, asks, time.time(), book_hash)
             cid = self._token_cid.get(token_id)
+            if self.research is not None:
+                replacement_seq = self._research_rest_replacements.get(token_id, 0) + 1
+                self._research_rest_replacements[token_id] = replacement_seq
+                self._research_emit("REST_BOOK", cid or "", {
+                    "token_id": token_id, "bids": bids, "asks": asks,
+                    "book_hash": book_hash, "tick_size": book.tick_size,
+                    "connection_generation": self.md.connection_generation,
+                    "rest_replacement_seq": replacement_seq,
+                }, source="REST", received_at_us=rest_receipt[0],
+                    received_monotonic_ns=rest_receipt[1],
+                    connection_generation=self.md.connection_generation)
             if cid:
                 self._wake_cid(cid)
 
     # ── helpers ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _research_quote(quote: Any) -> dict[str, Any] | None:
+        if quote is None:
+            return None
+        return {"token_id": quote.token_id, "side": quote.side.value,
+                "price": quote.price, "size": quote.size}
+
+    def _research_order_snapshot(self, cid: str, token_id: str, reason: str,
+                                 grace_s: float) -> None:
+        capture = getattr(self, "research", None)
+        if capture is None:
+            return
+        try:
+            orders = []
+            for order in self.state.orders_for(token_id):
+                owned = self.state.owned_order(order.order_id)
+                role = ({"favorite_first_leg": "FIRST", "favorite_pair_leg": "PAIR"}.get(str(owned["source"]))
+                        if owned is not None else None)
+                orders.append({"order_id": order.order_id, "side": order.side.value,
+                    "price": order.price, "remaining_qty": order.size, "state": order.state.value,
+                    "role": role})
+            self._research_emit("ORDER_STATE", cid, {"token_id": token_id,
+                "reason": reason, "grace_s": grace_s, "orders": orders}, source="REST")
+        except Exception:
+            # Additional Research reads must not interrupt authoritative resync.
+            capture.failures += 1
+
+    @staticmethod
+    def _research_primitive(value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, dict):
+            return {key: Engine._research_primitive(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [Engine._research_primitive(item) for item in value]
+        return value
+
+    def _research_emit(self, kind: str, cid: str, payload: dict[str, Any], *,
+                       source: str = "ENGINE", received_at_us: int | None = None,
+                       received_monotonic_ns: int | None = None,
+                       connection_generation: int | None = None) -> None:
+        capture = getattr(self, "research", None)
+        if capture is not None:
+            capture.emit(kind, cid, payload, source=source,
+                received_at_us=received_at_us,
+                received_monotonic_ns=received_monotonic_ns,
+                connection_generation=connection_generation)
+
     def _other_token(self, token_id: str) -> str | None:
         cid = self._token_cid.get(token_id)
         return self.metas[cid].other_token(token_id) if cid else None

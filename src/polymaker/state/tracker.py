@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 
 from polymaker.domain import Fill, OpenOrder, OrderState, Side, TradeState
 from polymaker.logging import get_logger
+from polymaker.research.capture import CausalCapture, exchange_us
 from polymaker.state.store import StateStore
 
 log = get_logger("state.tracker")
@@ -61,12 +62,16 @@ class UserEventProcessor:
         on_fill: Callable[[Fill], None] | None = None,
         on_reconcile: Callable[[str], None] | None = None,
         on_maker_fill: Callable[[TradeEvent], None] | None = None,
+        research: CausalCapture | None = None,
+        fill_truth_ready: Callable[[str], bool] | None = None,
     ) -> None:
         self._store = store
         self._on_change = on_change or (lambda _cid: None)
         self._on_fill = on_fill or (lambda _fill: None)
         self._on_reconcile = on_reconcile or (lambda _oid: None)
         self._on_maker_fill = on_maker_fill or (lambda _ev: None)
+        self._research = research
+        self._fill_truth_ready = fill_truth_ready
         self.fill_records: dict[tuple[str, str], TradeEvent] = {}
         self.applied_fill_keys: set[tuple[str, str]] = set()
         self.quarantined_fill_keys: set[tuple[str, str]] = set()
@@ -74,7 +79,7 @@ class UserEventProcessor:
         self._owned = {str(x["order_id"]) for x in store.owned_orders()}
         self._pending: set[tuple[str, Side]] = set()
         self._pending_remaining = 0
-        self._pending_events: list[TradeEvent] = []
+        self._pending_events: list[tuple[TradeEvent, int | None, int | None, int | None]] = []
         self._pending_malformed_order_ids: set[str] = set()
         self._pending_limit = 128
         self._pending_overflow = False
@@ -145,6 +150,7 @@ class UserEventProcessor:
             return
         self.quarantined_orders.add(order_id)
         self._store.mark_owned_order_unresolved(order_id, True)
+        self._order_observe(order_id, {"transition": "QUARANTINED", "reason": reason})
         log.error("trade_quarantined", order_id=order_id, reason=reason)
         if notify:
             self._on_reconcile(order_id)
@@ -166,26 +172,34 @@ class UserEventProcessor:
                        side: Side, qty: float, price: float, source: str = "engine") -> None:
         self._store.register_owned_order(order_id, condition_id, token_id, side, qty, price, source)
         self._owned.add(order_id)
+        self._order_observe(order_id, {"transition": "REGISTERED", "token_id": token_id,
+            "side": side.value, "qty": qty, "price": price, "source": source})
         log.info("owned_order_registered", order_id=order_id, token=token_id[:12], source=source)
         if order_id in self._pending_malformed_order_ids:
             self._pending_malformed_order_ids.discard(order_id)
             self.quarantine_order(order_id, "malformed WS trade referenced this owned order")
         events = self._pending_events
-        for ev in events:
+        for ev, receipt_us, receipt_ns, generation in events:
             if ev.maker_order_id == order_id:
-                self.on_trade(ev, condition_id)
+                self.on_trade(ev, condition_id, received_at_us=receipt_us,
+                    received_monotonic_ns=receipt_ns,
+                    connection_generation=generation)
         self._pending_remaining = max(0, self._pending_remaining - 1)
         if self._pending_overflow:
             self.quarantine_order(order_id, "pending maker-event buffer overflow")
         if self._pending_remaining == 0:
             self.discard_pending()
 
-    def on_trade(self, ev: TradeEvent, condition_id: str, *, source: str = "WS") -> None:
+    def on_trade(self, ev: TradeEvent, condition_id: str, *, source: str = "WS",
+                 received_at_us: int | None = None,
+                 received_monotonic_ns: int | None = None,
+                 connection_generation: int | None = None) -> None:
         oid = ev.maker_order_id
         if not oid or oid not in self._owned:
             if self._pending:
                 if len(self._pending_events) < self._pending_limit:
-                    self._pending_events.append(ev)
+                    self._pending_events.append((ev, received_at_us,
+                        received_monotonic_ns, connection_generation))
                 else:
                     self._pending_overflow = True
             log.debug("foreign_trade_ignored", trade_id=ev.trade_id, order_id=oid)
@@ -223,6 +237,8 @@ class UserEventProcessor:
             self.quarantined_fill_keys.add(key)
             self.quarantined_orders.add(oid)
             self._store.mark_owned_order_unresolved(oid, True)
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "QUARANTINED", received_monotonic_ns)
             log.error("trade_quarantined", trade_id=ev.trade_id, order_id=oid,
                       reason="maker economics contradict registered order")
             if source == "WS":
@@ -235,14 +251,20 @@ class UserEventProcessor:
                  price=ev.price, source=source, status=ev.status.value)
         if source == "REST" and ev.status in (TradeState.MINED, TradeState.CONFIRMED) and key not in self.applied_fill_keys:
             matched = replace(ev, status=TradeState.MATCHED)
-            self.on_trade(matched, condition_id, source="REST")
+            self.on_trade(matched, condition_id, source="REST",
+                received_at_us=received_at_us,
+                received_monotonic_ns=received_monotonic_ns)
             self.fill_records[key] = replace(ev, ts=matched.ts)
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "ACCEPTED", received_monotonic_ns)
             if ev.status is TradeState.CONFIRMED:
                 self._store.clear_inflight(ev.token_id)
             return
         if ev.status is TradeState.MATCHED:
             if key in self.applied_fill_keys:
                 self.fill_records[key] = self._advanced_status(self.fill_records.get(key), ev)
+                self._fill_observe(ev, condition_id, source, received_at_us,
+                    connection_generation, "DUPLICATE", received_monotonic_ns)
                 return
             fill = Fill(ev.token_id, ev.our_side, ev.price, ev.size,
                         f"{len(ev.trade_id)}:{ev.trade_id}{oid}", ev.ts, is_maker=True)
@@ -253,11 +275,15 @@ class UserEventProcessor:
                 prior = self.fill_records.get(key)
                 self.fill_records[key] = self._advanced_status(prior, ev)
                 self.applied_fill_keys.add(key)
+                self._fill_observe(ev, condition_id, source, received_at_us,
+                    connection_generation, "RESTORED", received_monotonic_ns)
                 return
             self._store.mark_inflight(ev.token_id)
             prior = self.fill_records.get(key)
             self.fill_records[key] = self._advanced_status(prior, ev)
             self.applied_fill_keys.add(key)
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "ACCEPTED", received_monotonic_ns)
             log.info("owned_maker_fill_applied", trade_id=ev.trade_id, order_id=oid,
                      token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
                      price=ev.price, source=source, status=ev.status.value)
@@ -275,12 +301,16 @@ class UserEventProcessor:
                 self._on_change(condition_id)
             log.info("trade_status_updated", trade_id=ev.trade_id, order_id=oid,
                      status=ev.status.value)
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "STATUS", received_monotonic_ns)
 
         elif ev.status is TradeState.RETRYING:
             self.fill_records[key] = self._advanced_status(self.fill_records.get(key), ev)
             # tx being retried on-chain — it may still succeed. Keep the
             # optimistic fill and the inflight guard; only FAILED is terminal.
             log.warning("trade_retrying", trade_id=ev.trade_id, order_id=oid, token=ev.token_id[:12])
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "STATUS", received_monotonic_ns)
 
         elif ev.status is TradeState.FAILED:
             if key in self.fill_records:
@@ -289,11 +319,16 @@ class UserEventProcessor:
                 self.fill_records[key] = ev
             self.quarantined_orders.add(oid)
             self._store.mark_owned_order_unresolved(oid, True)
+            self._fill_observe(ev, condition_id, source, received_at_us,
+                connection_generation, "FAILED", received_monotonic_ns)
             log.error("trade_quarantined", trade_id=ev.trade_id, order_id=oid, reason="FAILED")
             if source == "WS":
                 self._on_reconcile(oid)
 
-    def on_order(self, ev: OrderEvent, condition_id: str) -> None:
+    def on_order(self, ev: OrderEvent, condition_id: str, *,
+                 received_at_us: int | None = None,
+                 received_monotonic_ns: int | None = None,
+                 connection_generation: int | None = None) -> None:
         if ev.order_id not in self._owned:
             return
         owned = self._store.owned_order(ev.order_id)
@@ -327,4 +362,59 @@ class UserEventProcessor:
             self._store.upsert_order(
                 OpenOrder(ev.order_id, ev.token_id, ev.side, ev.price, ev.remaining_size, state)
             )
+        self._order_observe(ev.order_id, {"transition": "UPDATE", "status": ev.status,
+            "remaining_size": ev.remaining_size, "size_matched": ev.size_matched,
+            "cancel": ev.is_cancel, "quarantined": ev.order_id in self.quarantined_orders},
+            received_at_us=received_at_us, received_monotonic_ns=received_monotonic_ns,
+            connection_generation=connection_generation)
         self._on_change(condition_id)
+
+    def _order_observe(self, order_id: str, payload: dict[str, object], *,
+                       received_at_us: int | None = None,
+                       received_monotonic_ns: int | None = None,
+                       connection_generation: int | None = None) -> None:
+        if self._research is None:
+            return
+        try:
+            owned = self._store.owned_order(order_id)
+            if owned is None:
+                return
+            role = {"favorite_first_leg": "FIRST", "favorite_pair_leg": "PAIR"}.get(str(owned["source"]))
+            self._research.emit("ORDER_STATE", str(owned["condition_id"]),
+                {"order_id": order_id, "role": role, **payload},
+                source="USER_WS" if received_at_us is not None else "ENGINE",
+                received_at_us=received_at_us, received_monotonic_ns=received_monotonic_ns,
+                connection_generation=connection_generation)
+        except Exception:
+            self._research.failures += 1
+
+    def _fill_observe(self, ev: TradeEvent, cid: str, source: str,
+                      received_at_us: int | None, generation: int | None,
+                      disposition: str, received_monotonic_ns: int | None) -> None:
+        if self._research is None or ev.maker_order_id is None:
+            return
+        try:
+            key = (ev.trade_id, ev.maker_order_id)
+            owned = self._store.owned_order(ev.maker_order_id)
+            role = ({"favorite_first_leg": "FIRST", "favorite_pair_leg": "PAIR"}.get(str(owned["source"]))
+                    if owned is not None else None)
+            effective = self.fill_records.get(key)
+            excluded = (key in self.quarantined_fill_keys or effective is None
+                        or effective.status is TradeState.FAILED)
+            accepted = key in self.applied_fill_keys and not excluded
+            self._research.emit("FILL_REVISION", cid, {
+                "trade_id": ev.trade_id, "maker_order_id": ev.maker_order_id,
+                "token_id": ev.token_id, "side": ev.our_side.value,
+                "price": ev.price, "qty": ev.size, "role": role,
+                "status": ev.status.value, "disposition": disposition,
+                "accepted": accepted,
+                "quarantined": key in self.quarantined_fill_keys
+                    or ev.maker_order_id in self.quarantined_orders,
+                "fill_truth_ready": (self._fill_truth_ready(cid)
+                    if self._fill_truth_ready is not None else None),
+            }, source="REST" if source == "REST" else "USER_WS",
+                exchange_at_us=exchange_us(ev.ts), received_at_us=received_at_us,
+                received_monotonic_ns=received_monotonic_ns,
+                connection_generation=generation)
+        except Exception:
+            self._research.failures += 1
