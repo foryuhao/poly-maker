@@ -209,3 +209,9 @@ Reviewed the cumulative 13-file diff and the repair sections against the accepte
 ### Final Verdict
 
 **PASS**. The two original P0 and four original P1 findings are resolved in the reviewed working tree. The retained P2 items are explicitly deferred. This certifies this uncommitted M4A.2 scope against `m4a1-pass`; any later implementation change requires its own review. Next authorized action is M4A.3 architecture-consistent implementation only.
+
+## Later Checkpoint Metadata — 2026-10-01
+
+This note records a Git checkpoint repair after the independent PASS above; it does not change that historical review verdict or assert a new review. The original `m4a2-pass` tag (`f5618de`) omitted eight integration files that were present in the working tree independently reviewed above. The reviewed code itself passed. The missing M4A.2 files were reconstructed in a separate worktree by copying the six unchanged M4A.2 integration files and removing only the distinct M4A.3 lifecycle blocks from `engine.py` and `favorite_live.py`; `capture.py`, focused tests and the M4A.2 reports already came from `m4a2-pass`. No M4A.3 code is in the reconstructed tree.
+
+The reconstructed code reproduced the review's 561 passed, 2 skipped suite, all 16 focused causal tests, clean targeted Ruff, clean Research-package mypy, and the same 13 pre-existing broader targeted mypy diagnostics. The new `m4a2-reviewed-baseline` tag identifies the complete reconstructed reviewed checkpoint. The original `m4a2-pass` tag remains unchanged for historical integrity. Future M4A.3 review should use `m4a2-reviewed-baseline` as its implementation baseline.
