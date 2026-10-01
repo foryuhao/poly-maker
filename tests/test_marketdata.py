@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from polymaker.domain import Side
 from polymaker.marketdata.parse import (
     parse_book,
@@ -108,3 +111,81 @@ def test_service_forwards_trades_for_flow():
     svc.set_markets([("0xcond", ["yes-tok"])])
     svc._dispatch(LAST_TRADE)
     assert len(trades) == 1 and trades[0].aggressor is Side.BUY
+
+
+async def test_market_ws_bounded_reader_queue_drains_bursts_for_both_tokens():
+    svc = MarketDataService(queue_maxsize=256)
+    svc.set_markets([("0xcond", ["up", "down"])])
+    svc.connected = True
+    svc.connection_generation = 3
+    queue = asyncio.Queue(maxsize=svc._queue_maxsize)
+    original = svc._process_raw
+
+    async def slow_process(raw):
+        await asyncio.sleep(0.0005)
+        await original(raw)
+
+    svc._process_raw = slow_process
+    consumer = asyncio.create_task(svc._consume(queue, 3))
+    latest = {"up": 0.70, "down": 0.30}
+    for i in range(80):
+        token = "up" if i % 2 == 0 else "down"
+        price = 0.10 + i / 1000
+        latest[token] = price
+        frame = {**BOOK, "asset_id": token, "timestamp": str(1783270000000 + i),
+                 "bids": [{"price": str(price), "size": "10"}],
+                 "asks": [{"price": "0.99", "size": "10"}]}
+        queue.put_nowait((3, asyncio.get_running_loop().time(), json.dumps(frame)))
+        await asyncio.sleep(0)
+    await queue.join()
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    assert queue.maxsize == 256 and queue.qsize() == 0
+    assert svc.metrics["processed"] == 80
+    assert svc.book("up").best_bid().price == latest["up"]
+    assert svc.book("down").best_bid().price == latest["down"]
+
+
+async def test_market_ws_consumer_discards_old_generation_backlog():
+    svc = MarketDataService(queue_maxsize=4)
+    svc.set_markets([("0xcond", ["yes-tok"])])
+    svc.connected = True
+    svc.connection_generation = 8
+    queue = asyncio.Queue(maxsize=4)
+    queue.put_nowait((7, asyncio.get_running_loop().time(), json.dumps(BOOK)))
+    consumer = asyncio.create_task(svc._consume(queue, 7))
+    await queue.join()
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    assert svc.metrics["processed"] == 0
+    assert svc.book("yes-tok").snapshot_generation == 0
+
+
+async def test_service_notifies_connection_transitions(monkeypatch):
+    transitions: list[bool] = []
+
+    class FakeSocket:
+        async def send(self, _payload):
+            return None
+
+        def __aiter__(self):
+            async def frames():
+                if False:
+                    yield ""
+            return frames()
+
+    class SocketContext:
+        async def __aenter__(self):
+            return FakeSocket()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("polymaker.marketdata.service.websockets.connect",
+                        lambda *_args, **_kwargs: SocketContext())
+    svc = MarketDataService(on_connection=transitions.append)
+    svc.set_markets([("0xcond", ["yes-tok", "no-tok"])])
+    await svc._connect_and_listen()
+    assert transitions == [True, False]
+    assert svc.connected is False
+    assert svc.disconnected_since > 0

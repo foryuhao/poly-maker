@@ -17,7 +17,12 @@ import websockets
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
 from polymaker.state.tracker import UserEventProcessor
-from polymaker.userstream.parse import normalize_order, normalize_trade
+from polymaker.userstream.parse import (
+    maker_order_id_evidence,
+    normalize_order,
+    normalize_trade,
+    parse_trade,
+)
 
 log = get_logger("userstream.client")
 
@@ -35,6 +40,7 @@ class UserStream:
         journal: Journal | None = None,
         proxy: str | None = None,
         on_reconnect: Callable[[], None] | None = None,
+        on_connection: Callable[[bool], None] | None = None,
     ) -> None:
         self._creds = creds
         self._address = our_address
@@ -45,6 +51,7 @@ class UserStream:
         self._journal = journal
         self._proxy = proxy
         self._on_reconnect = on_reconnect or (lambda: None)
+        self._on_connection = on_connection or (lambda _connected: None)
         self._markets: list[str] = []
         self._stop = asyncio.Event()
         # Connection health. ping_timeout guarantees a dead link flips
@@ -87,6 +94,7 @@ class UserStream:
         async with websockets.connect(self._url, **kwargs) as ws:
             await ws.send(json.dumps(sub))
             self.connected = True
+            self._on_connection(True)
             is_reconnect = self._ever_connected
             self._ever_connected = True
             log.info("user_ws_subscribed", markets=len(self._markets), reconnect=is_reconnect)
@@ -99,6 +107,7 @@ class UserStream:
                     self._handle(raw)
             finally:
                 self.connected = False
+                self._on_connection(False)
                 self.disconnected_since = time.time()
 
     def stop(self) -> None:
@@ -120,6 +129,18 @@ class UserStream:
 
     def _on_trade(self, msg: dict[str, Any]) -> None:
         self._journal_write("user_trade", msg)
+        try:
+            parse_trade(msg)
+        except ValueError as exc:
+            rows = msg.get("maker_orders")
+            exact_ids: set[str] = set()
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    exact_ids.update(maker_order_id_evidence(row).ids)
+            self._proc.on_malformed_trade(exact_ids, f"malformed WS trade: {exc}")
+            return
         for ev in normalize_trade(msg, self._address, self._other_token):
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
             self._proc.on_trade(ev, cond)
@@ -130,6 +151,10 @@ class UserStream:
         if ev is not None:
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
             self._proc.on_order(ev, cond)
+        else:
+            oid = msg.get("id", msg.get("order_id"))
+            if isinstance(oid, str) and oid.strip():
+                self._proc.quarantine_order(oid.strip(), "malformed owned order event")
 
     def _journal_write(self, kind: str, payload: dict[str, Any]) -> None:
         if self._journal is not None:

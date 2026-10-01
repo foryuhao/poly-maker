@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +21,8 @@ from polymaker.alerts import Alerter
 from polymaker.catalog.gamma import GammaClient, fetch_reward_rates, parse_market
 from polymaker.catalog.store import CatalogStore
 from polymaker.config import Config, StrategyProfile
-from polymaker.domain import Fill, MarketMeta, Regime, Side
+from polymaker.domain import Fill, MarketMeta, Regime, Side, TargetQuotes
+from polymaker.execution.filltruth import ReconciliationOutcome, reconcile_owned_order
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.execution.reconciler import reconcile
 from polymaker.journal import Journal
@@ -37,6 +39,15 @@ from polymaker.strategy.estimators import (
     MarkoutTracker,
     VolEstimator,
 )
+from polymaker.strategy.favorite_first import (
+    FavoriteFirstConfig,
+    StrategyMemory,
+    StrategySnapshot,
+    StrategyState,
+)
+from polymaker.strategy.favorite_first import (
+    evaluate as evaluate_favorite,
+)
 from polymaker.strategy.quoting import QuoteInputs, compute_fair_value, construct_quotes
 from polymaker.strategy.regime import RegimeInputs, RegimeMachine
 from polymaker.userstream.client import UserStream
@@ -45,9 +56,15 @@ log = get_logger("engine")
 
 
 class Engine:
-    def __init__(self, cfg: Config, *, paper: bool = False) -> None:
+    def __init__(self, cfg: Config, *, paper: bool = False,
+                 favorite_first: FavoriteFirstConfig | None = None,
+                 market_start_ts: float | None = None) -> None:
+        if favorite_first is not None and market_start_ts is None:
+            raise ValueError("Favorite-First requires the exact market start timestamp")
         self.cfg = cfg
         self.paper = paper
+        self._favorite_bootstrap = (favorite_first, market_start_ts)
+        self._favorite_armed = favorite_first is None
         self._running = False
 
         self.journal = Journal(cfg.paths.journal_dir, enabled=cfg.engine.journal,
@@ -60,9 +77,13 @@ class Engine:
         self.alerter = Alerter(cfg.secrets.alert_webhook_url, proxy=cfg.proxy)
 
         self.md = MarketDataService(on_dirty=self._on_dirty, on_trade=self._on_trade,
+                                    on_connection=self._on_market_ws_connection,
                                     journal=self.journal, proxy=cfg.proxy)
+        self._fill_recovery_pending: set[str] = set()
+        self._fill_recovery_orders: dict[str, set[str]] = {}
+        self._fill_truth_generation: dict[str, int] = {}
         self.user_proc = UserEventProcessor(self.state, on_change=self._wake_cid,
-                                            on_fill=self._on_fill)
+            on_fill=self._on_fill, on_reconcile=self._schedule_order_reconcile)
         self.user: UserStream | None = None
 
         # per-market state
@@ -76,19 +97,41 @@ class Engine:
         self._token_cid: dict[str, str] = {}
         self._locks: dict[str, asyncio.Lock] = {}  # per-market: serialize recompute vs reconcile
         self._halted: set[str] = set()  # markets closed/resolved/not-accepting
+        self._favorite_halt_reasons: dict[str, str] = {}
         self._last_quote_fv: dict[str, float] = {}  # requote suppression
+        self._favorite: dict[str, tuple[float, FavoriteFirstConfig, StrategyMemory]] = {}
+        self._favorite_last_reprice: dict[str, float] = {}
+        self._favorite_last_record: dict[str, tuple[Any, ...]] = {}
+        self._favorite_cutoff_seen: set[str] = set()
+        self._favorite_first_orders: dict[str, set[str]] = {}
+        self._favorite_pair_orders: dict[str, set[str]] = {}
+        self._favorite_first_token: dict[str, str] = {}
+        self._favorite_first_finalized: set[str] = set()
+        self._favorite_pair_terminal: set[str] = set()
+        self._favorite_mismatch_pending: set[str] = set()
+        self._favorite_mismatch_reads: dict[str, int] = {}
+        self._favorite_mismatch_confirmed: set[str] = set()
         # supervised tasks: name -> (factory, task) so a dead task restarts
         self._task_specs: dict[str, Any] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._aux_tasks: list[asyncio.Task[Any]] = []  # fire-and-forget (merges)
         # health / recovery signals
         self._reconcile_now = asyncio.Event()
+        self._market_ws_was_connected = False
+        self._market_recovery_pending = False
+        self._market_connectivity_generation = 0
+        self._market_recovery_generation: int | None = None
+        self._order_state_uncertain: set[str] = set()
         self._user_started = False  # user WS task launched (live mode)
         self._hb_was_down = False
         self._chain_lock = asyncio.Lock()  # serialize on-chain txs (nonce safety)
 
     # ── lifecycle ───────────────────────────────────────────────────────
-    async def start(self) -> None:
+    async def start(self, *, arm_favorite: bool = True) -> None:
+        # The controlled-live wrapper starts all feeds disarmed. The quoter and
+        # final submit guard both enforce this boundary.
+        if self._favorite_bootstrap[0] is not None:
+            self._favorite_armed = arm_favorite
         self._running = True
         await self.gateway.connect()
         await self._resolve_markets()
@@ -98,6 +141,11 @@ class Engine:
         # stale catalog (e.g. old reward min-size) can't mis-size our orders
         await self.refresh_market_metadata()
         await self._startup_reconcile()
+        favorite_config, market_start_ts = self._favorite_bootstrap
+        if favorite_config is not None:
+            assert market_start_ts is not None
+            self.attach_favorite_first(next(iter(self.metas)), market_start_ts,
+                                       favorite_config)
 
         # subscribe feeds
         self.md.set_markets([(cid, [m.yes.token_id, m.no.token_id]) for cid, m in self.metas.items()])
@@ -162,10 +210,18 @@ class Engine:
         self.md.stop()
         if self.user:
             self.user.stop()
-        for t in [*self._tasks.values(), *self._aux_tasks]:
+        tasks = [*self._tasks.values(), *self._aux_tasks]
+        for t in tasks:
             t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         with contextlib.suppress(Exception):
-            await self.gateway.cancel_all()
+            if self._favorite_bootstrap[0] is not None:
+                for meta in self.metas.values():
+                    for token in (meta.yes.token_id, meta.no.token_id):
+                        await self.gateway.cancel_asset(token)
+            else:
+                await self.gateway.cancel_all()
         self.gateway.close()
         self.journal.close()
         self.state.close()
@@ -194,6 +250,9 @@ class Engine:
                 self._locks[meta.condition_id] = asyncio.Lock()
                 for tok in (meta.yes.token_id, meta.no.token_id):
                     self._token_cid[tok] = meta.condition_id
+        favorite_config, _ = self._favorite_bootstrap
+        if favorite_config is not None and len(self.metas) != 1:
+            raise ValueError("Favorite-First requires exactly one resolved market")
 
     async def _fetch_meta(
         self, gamma: GammaClient, slug: str | None, condition_id: str | None,
@@ -221,31 +280,74 @@ class Engine:
         )
 
     async def _startup_reconcile(self) -> None:
+        # Capture exchange-live IDs before cancel-all so persisted ownership can
+        # be reconciled even when the process died between POST and local state.
+        pre_cancel = await self.gateway.open_orders()
+        selected_tokens = set(self._token_cid)
+        favorite_scoped = getattr(self, "_favorite_bootstrap", (None, None))[0] is not None
+        if favorite_scoped:
+            pre_cancel = [o for o in pre_cancel if o.token_id in selected_tokens]
+        active_ids = {o.order_id for o in pre_cancel}
         with contextlib.suppress(Exception):
-            await self.gateway.cancel_all()  # clean slate; heartbeat covers crashes
+            if favorite_scoped:
+                if active_ids:
+                    await self.gateway.cancel(sorted(active_ids))
+            else:
+                await self.gateway.cancel_all()  # normal engine clean slate
         # cancel-all may have partially failed — verify no orders remain, and
         # cancel/adopt any stragglers so we never quote on top of an unknown order
-        with contextlib.suppress(Exception):
-            leftover = await self.gateway.open_orders()
-            if leftover:
-                log.warning("startup_orders_remain", n=len(leftover))
-                for tok in {o.token_id for o in leftover}:
-                    await self.gateway.cancel_asset(tok)
-                still = await self.gateway.open_orders()
-                for tok in self._token_cid:
-                    self.state.replace_open_orders(
-                        tok, [o for o in still if o.token_id == tok], grace_s=0.0
-                    )
-                if still:
-                    log.error("startup_orders_stuck", n=len(still))
-                    self.alerter.alert("startup_orders_stuck",
-                                       f"{len(still)} orders survived cancel-all", critical=True)
+        leftover = await self.gateway.open_orders()
+        if favorite_scoped:
+            leftover = [o for o in leftover if o.token_id in selected_tokens]
+        if leftover:
+            log.warning("startup_orders_remain", n=len(leftover))
+            for tok in {o.token_id for o in leftover}:
+                await self.gateway.cancel_asset(tok)
+            still = await self.gateway.open_orders()
+            if favorite_scoped:
+                still = [o for o in still if o.token_id in selected_tokens]
+            for tok in self._token_cid:
+                self.state.replace_open_orders(
+                    tok, [o for o in still if o.token_id == tok], grace_s=0.0
+                )
+            if still:
+                log.error("startup_orders_stuck", n=len(still))
+                self.alerter.alert("startup_orders_stuck",
+                                   f"{len(still)} orders survived cancel-all", critical=True)
+                raise RuntimeError("startup cannot establish a clean order state")
+        elif favorite_scoped:
+            # A prior process may have persisted an order that the exchange
+            # now confirms absent. Clear that local working view only after
+            # the authoritative selected-market open-order read.
+            for tok in selected_tokens:
+                self.state.replace_open_orders(tok, [], grace_s=0.0)
+        relevant = self.state.owned_orders_for_recovery(
+            since_ts=time.time() - 24 * 60 * 60,
+            active_ids=active_ids,
+            condition_ids=set(self.metas),
+        )
+        for row in relevant:
+            order_id = str(row["order_id"])
+            cid = str(row["condition_id"] or "")
+            if cid:
+                self._invalidate_fill_truth(cid)
+                self._fill_recovery_pending.add(cid)
+                self._fill_recovery_orders.setdefault(cid, set()).add(order_id)
+            if await reconcile_owned_order(order_id, self.gateway, self.user_proc) \
+                    is not ReconciliationOutcome.COMPLETE:
+                raise RuntimeError(f"startup fill reconciliation unresolved for {order_id}")
+            if cid:
+                pending = self._fill_recovery_orders.get(cid, set())
+                pending.discard(order_id)
+                if not pending:
+                    self._fill_recovery_orders.pop(cid, None)
+                    self._fill_recovery_pending.discard(cid)
         # purge positions that leaked in for markets we don't trade (manual UI
         # bets etc.) so they can't distort exposure caps or PnL
         self.state.drop_untracked_positions(set(self._token_cid))
         positions = self._only_traded(await self.gateway.positions())
+        self.state.reconcile_positions(positions)
         if positions:
-            self.state.reconcile_positions(positions)
             log.info("startup_positions", n=len(positions))
 
     def _only_traded(self, positions: dict[str, tuple[float, float]]) -> dict[str, tuple[float, float]]:
@@ -259,6 +361,84 @@ class Engine:
         ev = self._dirty.get(condition_id)
         if ev is not None:
             ev.set()
+        if (self._market_recovery_pending and self.md.connected
+                and self._market_books_fresh(condition_id)):
+            self._reconcile_now.set()
+
+    def _market_books_fresh(self, cid: str) -> bool:
+        meta = self.metas.get(cid)
+        if meta is None or not self.md.connected:
+            return False
+        for token in (meta.yes.token_id, meta.no.token_id):
+            book = self.md.book(token)
+            if (book is None or book.is_empty
+                    or book.snapshot_local_ts < self.md.connected_since
+                    or book.snapshot_generation != self.md.connection_generation):
+                return False
+            bid, ask = book.best_bid(), book.best_ask()
+            if bid is None or ask is None or bid.price >= ask.price:
+                return False
+        return True
+
+    def _invalidate_fill_truth(self, condition_id: str) -> int:
+        generations = getattr(self, "_fill_truth_generation", None)
+        if generations is None:
+            generations = self._fill_truth_generation = {}
+        generation = generations.get(condition_id, 0) + 1
+        generations[condition_id] = generation
+        return generation
+
+    def _can_submit_market(self, expected_generation: int, condition_id: str | None = None,
+                           expected_fill_truth_generation: int | None = None) -> bool:
+        return (
+            self._running
+            and expected_generation == self._market_connectivity_generation
+            and (condition_id is None or expected_fill_truth_generation is None
+                 or expected_fill_truth_generation == getattr(self, "_fill_truth_generation", {}).get(condition_id, 0))
+            and self.md.connected
+            and not self._market_recovery_pending
+            and (condition_id is None or condition_id not in self._fill_recovery_pending)
+            and (condition_id is None or not self.user_proc.has_quarantine_for_condition(condition_id))
+        )
+
+    def favorite_live_user_ready(self) -> bool:
+        """Current authenticated execution feed state for a new live order."""
+        return bool(self._user_started and self.user is not None and self.user.connected)
+
+    def favorite_halt_reason(self, cid: str) -> str | None:
+        """Sticky safety halt for the selected market, including Engine halts."""
+        return self._favorite_halt_reasons.get(cid) or (
+            "MARKET_METADATA_HALT" if cid in self._halted else None
+        )
+
+    def _on_market_ws_connection(self, connected: bool) -> None:
+        if connected:
+            self._market_ws_was_connected = True
+            log.info("market_ws_connected", recovery=self._market_recovery_pending)
+            self._wake_all()
+            return
+        if self._market_ws_was_connected:
+            self._market_connectivity_generation += 1
+            self._market_recovery_pending = True
+            self._market_recovery_generation = self._market_connectivity_generation
+            log.warning("market_ws_blind", markets=len(self.metas))
+        self._market_ws_was_connected = False
+        self._wake_all()
+
+    async def _reconcile_empty(self, cid: str, meta: MarketMeta, profile: StrategyProfile) -> None:
+        live = self.state.orders_for(meta.yes.token_id) + self.state.orders_for(meta.no.token_id)
+        target = TargetQuotes(cid, Regime.HALTED, ())
+        plan = reconcile(target, live, tick=meta.tick_size,
+                         reprice_ticks=profile.reprice_ticks, resize_frac=profile.resize_frac)
+        if not plan.to_cancel:
+            return
+        ok = await self.gateway.cancel(plan.to_cancel)
+        if ok:
+            for oid in plan.to_cancel:
+                self.state.remove_order(oid)
+            log.info("market_ws_orders_cancelled", cid=cid[:8], count=len(plan.to_cancel))
+        else:
+            await self._refresh_token_orders(meta, grace_s=0.0)
 
     def _wake_cid(self, condition_id: str) -> None:
         ev = self._dirty.get(condition_id)
@@ -274,6 +454,39 @@ class Engine:
         immediate REST reconcile before trusting our state again."""
         log.warning("user_ws_reconnected_forcing_reconcile")
         self._reconcile_now.set()
+        rows = self.state.owned_orders_for_recovery(
+            since_ts=time.time() - 24 * 60 * 60,
+            active_ids=set(self.state.orders),
+            condition_ids=set(self.metas),
+        )
+        for row in rows:
+            self._schedule_order_reconcile(str(row["order_id"]))
+
+    def _schedule_order_reconcile(self, order_id: str) -> None:
+        row = self.state.owned_order(order_id)
+        if row is None:
+            return
+        cid = str(row["condition_id"] or "")
+        if cid:
+            pending = self._fill_recovery_orders.setdefault(cid, set())
+            if order_id not in pending:
+                self._invalidate_fill_truth(cid)
+            pending.add(order_id)
+            self._fill_recovery_pending.add(cid)
+        try:
+            asyncio.get_running_loop().create_task(self._reconcile_owned_order(order_id, cid))
+        except RuntimeError:
+            return
+
+    async def _reconcile_owned_order(self, order_id: str, cid: str) -> None:
+        outcome = await reconcile_owned_order(order_id, self.gateway, self.user_proc)
+        if outcome is ReconciliationOutcome.COMPLETE:
+            pending = self._fill_recovery_orders.get(cid, set())
+            pending.discard(order_id)
+            if not pending:
+                self._fill_recovery_orders.pop(cid, None)
+                self._fill_recovery_pending.discard(cid)
+            self._wake_cid(cid)
 
     def _on_trade(self, tp: TradePrint) -> None:
         cid = self._token_cid.get(tp.asset_id)
@@ -309,12 +522,149 @@ class Engine:
         cid = self._token_cid.get(fill.token_id)
         if cid is None:
             return
+        self._invalidate_fill_truth(cid)
+        if cid in self._favorite:
+            self._wake_cid(cid)
         est = self.est[cid]
         fv = est.last_fv if est.last_fv is not None else fill.price
         token_fv = fv if fill.token_id == self.metas[cid].yes.token_id else (1.0 - fv)
         est.markout.record_fill(fill.side, token_fv, fill.ts)
 
     # ── quoter ──────────────────────────────────────────────────────────
+    def attach_favorite_first(self, condition_id: str, market_start_ts: float,
+                              config: FavoriteFirstConfig) -> None:
+        """Opt in one already resolved market; caller supplies all risk parameters."""
+        if self._favorite or len(self.metas) != 1 or condition_id not in self.metas:
+            raise ValueError("Favorite-First requires exactly one resolved market")
+        meta = self.metas[condition_id]
+        if (self.state.position(meta.yes.token_id).size > 0
+                or self.state.position(meta.no.token_id).size > 0
+                or self.state.orders_for(meta.yes.token_id)
+                or self.state.orders_for(meta.no.token_id)):
+            raise ValueError("Favorite-First requires a flat market at attachment")
+        if meta.min_order_size > config.first_leg_qty + 1e-9:
+            raise ValueError("Favorite-First first leg is below the venue minimum")
+        self._favorite[condition_id] = (market_start_ts, config, StrategyMemory())
+        self._favorite_first_orders[condition_id] = set()
+        self._favorite_pair_orders[condition_id] = set()
+        self._wake_cid(condition_id)
+
+    def arm_favorite_first(self, cid: str) -> None:
+        """Cross the controlled-live arm boundary after external preflight."""
+        if (cid not in self._favorite or not self._running or self._favorite_armed
+                or not self._market_books_fresh(cid) or self._market_recovery_pending
+                or not self._user_started or self.user is None or not self.user.connected
+                or self._fill_recovery_pending or self._order_state_uncertain
+                or cid in self._halted):
+            raise RuntimeError("Favorite-First feeds or reconciliation are not ready")
+        meta = self.metas[cid]
+        economics = self._favorite_economics(cid)
+        if (economics["first_qty"] or economics["pair_qty"] or economics["mismatch"]
+                or self.state.orders_for(meta.yes.token_id)
+                or self.state.orders_for(meta.no.token_id)
+                or self._favorite[cid][2] != StrategyMemory()):
+            raise RuntimeError("Favorite-First is not at a flat OBSERVE baseline")
+        self._favorite_armed = True
+        self._wake_cid(cid)
+
+    def disarm_favorite_first(self, cid: str) -> None:
+        self._favorite_armed = False
+        self._wake_cid(cid)
+
+    async def finalize_favorite_market(self, cid: str) -> dict[str, Any]:
+        """Scoped end-of-market cleanup using existing order and fill truth."""
+        self.disarm_favorite_first(cid)
+        meta = self.metas[cid]
+        async with self._locks[cid]:
+            for token in (meta.yes.token_id, meta.no.token_id):
+                await self.gateway.cancel_asset(token)
+            await self._refresh_token_orders(meta, grace_s=0.0)
+            live = self.state.orders_for(meta.yes.token_id) + self.state.orders_for(meta.no.token_id)
+            outcomes = {}
+            for oid in self._favorite_first_orders[cid] | self._favorite_pair_orders[cid]:
+                outcomes[oid] = (await reconcile_owned_order(
+                    oid, self.gateway, self.user_proc)).value
+            positions = await self.gateway.positions()
+            economics = self._favorite_economics(cid)
+            first_side = economics["first_side"]
+            first_qty, pair_qty = economics["first_qty"], economics["pair_qty"]
+            expected_yes = first_qty if first_side == "YES" else pair_qty if first_side else 0.0
+            expected_no = first_qty if first_side == "NO" else pair_qty if first_side else 0.0
+            yes = positions.get(meta.yes.token_id, (0.0, 0.0))[0]
+            no = positions.get(meta.no.token_id, (0.0, 0.0))[0]
+            return {
+                "owned_open_orders": len(live),
+                "fill_truth_complete": all(v == ReconciliationOutcome.COMPLETE.value
+                                           for v in outcomes.values()),
+                "order_reconciliation": outcomes,
+                "position_reconciled": (abs(yes - expected_yes) <= 1e-6
+                                        and abs(no - expected_no) <= 1e-6),
+                "yes_qty": yes, "no_qty": no, "economics": economics,
+            }
+
+    def _favorite_economics(self, cid: str) -> dict[str, Any]:
+        """Read accepted economics from the existing owned-fill tracker."""
+        first_fills = self.user_proc.economic_fills_for_orders(self._favorite_first_orders[cid])
+        pair_fills = self.user_proc.economic_fills_for_orders(self._favorite_pair_orders[cid])
+
+        def totals(fills: list[Any]) -> tuple[float, float]:
+            qty = sum(f.size for f in fills)
+            return qty, sum(f.size * f.price for f in fills) / qty if qty > 0 else 0.0
+
+        first_qty, first_vwap = totals(first_fills)
+        pair_qty, pair_vwap = totals(pair_fills)
+        first_token = self._favorite_first_token.get(cid)
+        meta = self.metas[cid]
+        first_side = ("YES" if first_token == meta.yes.token_id else "NO"
+                      if first_token == meta.no.token_id else None) if first_fills else None
+        first_ts = min((f.ts for f in first_fills), default=None)
+        first_active = [o for o in self.state.orders.values()
+                        if o.order_id in self._favorite_first_orders[cid]]
+        pair_active = [o for o in self.state.orders.values()
+                       if o.order_id in self._favorite_pair_orders[cid]]
+        first_order = first_active[0] if len(first_active) == 1 else None
+        pair_order = pair_active[0] if len(pair_active) == 1 else None
+        first_remaining = min(first_order.size, max(0.0,
+            self._favorite[cid][1].first_leg_qty - first_qty)) if first_order else 0.0
+        pair_remaining = min(pair_order.size, max(0.0, first_qty - pair_qty)) \
+            if pair_order else 0.0
+        expected_yes = first_qty if first_side == "YES" else pair_qty if first_side else 0.0
+        expected_no = first_qty if first_side == "NO" else pair_qty if first_side else 0.0
+        mismatch = (abs(self.state.position(meta.yes.token_id).size - expected_yes) > 1e-6
+                    or abs(self.state.position(meta.no.token_id).size - expected_no) > 1e-6
+                    or len(first_active) > 1 or len(pair_active) > 1
+                    or any(f.token_id != first_token for f in first_fills)
+                    or any(f.token_id == first_token for f in pair_fills))
+        return dict(first_qty=first_qty, first_vwap=first_vwap,
+                    pair_qty=pair_qty, pair_vwap=pair_vwap,
+                    first_side=first_side, first_ts=first_ts,
+                    first_order=first_order, pair_order=pair_order,
+                    first_remaining=first_remaining, pair_remaining=pair_remaining,
+                    mismatch=mismatch)
+
+    async def _favorite_finalize_orders(self, cid: str, *, first: bool) -> None:
+        """Verify terminal order state and accepted fills with existing REST paths."""
+        ids = (self._favorite_first_orders[cid] if first
+               else self._favorite_pair_orders[cid])
+        terminal = self._favorite_first_finalized if first else self._favorite_pair_terminal
+        if cid in terminal:
+            return
+        meta = self.metas[cid]
+        if not self.paper:
+            await self._refresh_token_orders(meta, grace_s=0.0)
+        if any(oid in self.state.orders for oid in ids):
+            return
+        if not self.paper:
+            for oid in ids:
+                outcome = await reconcile_owned_order(oid, self.gateway, self.user_proc)
+                if outcome is not ReconciliationOutcome.COMPLETE:
+                    self._fill_recovery_pending.add(cid)
+                    self._fill_recovery_orders.setdefault(cid, set()).add(oid)
+                    self._invalidate_fill_truth(cid)
+                    return
+        terminal.add(cid)
+        self._wake_cid(cid)
+
     async def _quoter(self, cid: str) -> None:
         debounce = self.cfg.engine.debounce_ms / 1000.0
         base_tick = self.cfg.engine.quoter_tick_s
@@ -342,6 +692,8 @@ class Engine:
     def _next_wake_s(self, cid: str, base_tick: float) -> float:
         now = time.time()
         wake = base_tick
+        if cid in self._favorite:
+            wake = min(wake, 1.0)
         rm = self.regime_m.get(cid)
         if rm is not None:
             cd = rm.cooloff_remaining(now)
@@ -364,6 +716,22 @@ class Engine:
     async def _recompute_locked(self, cid: str) -> None:
         meta = self.metas[cid]
         p = self.profiles[cid]
+        if self._favorite_bootstrap[0] is not None and not self._favorite_armed:
+            await self._reconcile_empty(cid, meta, p)
+            return
+        expected_market_generation = self._market_connectivity_generation
+        expected_fill_truth_generation = self._fill_truth_generation.get(cid, 0)
+        if cid in self._order_state_uncertain:
+            await self._quarantine(meta, reason="order_state_uncertain")
+            return
+        if (cid in self._fill_recovery_pending
+                or self.user_proc.has_quarantine_for_condition(cid)):
+            await self._reconcile_empty(cid, meta, p)
+            return
+        if (not self.md.connected or self._market_recovery_pending
+                or not self._market_books_fresh(cid)):
+            await self._reconcile_empty(cid, meta, p)
+            return
         yes_book = self.md.book(meta.yes.token_id)
         no_book = self.md.book(meta.no.token_id)
         if yes_book is None or yes_book.is_empty:
@@ -412,10 +780,20 @@ class Engine:
         hb_blind = (
             not self.paper
             and self.cfg.engine.heartbeat
-            and self.gateway.heartbeat_failures >= self.cfg.risk.heartbeat_halt_failures
+            and (self.gateway.heartbeat_failures >= self.cfg.risk.heartbeat_halt_failures
+                 or self._hb_was_down)
         )
         halted = cid in self._halted
         blind = market_stale or user_blind or hb_blind or halted
+        if cid in self._favorite:
+            if halted:
+                self._favorite_halt_reasons.setdefault(cid, "MARKET_METADATA_HALT")
+            elif user_blind:
+                self._favorite_halt_reasons.setdefault(cid, "USER_WS_BLIND_HALT")
+            elif market_stale:
+                self._favorite_halt_reasons.setdefault(cid, "MARKET_WS_STALE_HALT")
+            elif hb_blind:
+                self._favorite_halt_reasons.setdefault(cid, "HEARTBEAT_HALT")
         if blind:
             log.warning("market_blind", cid=cid[:8], market_stale=market_stale,
                         user_blind=user_blind, hb_blind=hb_blind, halted=halted)
@@ -428,6 +806,8 @@ class Engine:
 
         rd = self.risk.evaluate(meta, ws_stale=blind,
                                 event_group_cost=self._event_group_cost(meta))
+        if rd.halt and rd.reason not in ("ws_stale",) and cid in self._favorite:
+            self._favorite_halt_reasons.setdefault(cid, f"RISK_HALT:{rd.reason}")
         if rd.halt and rd.reason not in ("ws_stale",):
             self.alerter.alert(
                 f"risk_halt:{rd.reason}", f"risk halt: {rd.reason}",
@@ -452,11 +832,153 @@ class Engine:
             risk_size_scale=rd.size_scale,
         ))
 
+        favorite_config = None
+        favorite_decision = None
+        if cid in self._favorite:
+            start, favorite_config, memory = self._favorite[cid]
+            economics = self._favorite_economics(cid)
+            mismatch = economics["mismatch"]
+            if mismatch and cid not in self._favorite_mismatch_pending:
+                self._favorite_mismatch_pending.add(cid)
+                self._reconcile_now.set()
+            elif not mismatch:
+                self._favorite_mismatch_pending.discard(cid)
+                self._favorite_mismatch_confirmed.discard(cid)
+                self._favorite_mismatch_reads.pop(cid, None)
+            first_side = economics["first_side"]
+            first_qty = economics["first_qty"]
+            pair_qty = economics["pair_qty"]
+            first_order = economics["first_order"]
+            pair_order = economics["pair_order"]
+            strategy_yes = first_qty if first_side == "YES" else pair_qty if first_side else 0.0
+            strategy_no = first_qty if first_side == "NO" else pair_qty if first_side else 0.0
+            strategy_yes_vwap = (economics["first_vwap"] if first_side == "YES"
+                                 else economics["pair_vwap"])
+            strategy_no_vwap = (economics["first_vwap"] if first_side == "NO"
+                                else economics["pair_vwap"])
+            decision = evaluate_favorite(StrategySnapshot(
+                now=now, market_start_ts=start, yes=yes_book.view(), no=no_book.view(),
+                yes_qty=strategy_yes, no_qty=strategy_no,
+                yes_vwap=strategy_yes_vwap, no_vwap=strategy_no_vwap,
+                yes_token=meta.yes.token_id, no_token=meta.no.token_id,
+                tick=meta.tick_size, first_fill_ts=economics["first_ts"],
+                first_leg_side=first_side,
+                first_leg_working_remaining=economics["first_remaining"],
+                first_leg_working_price=first_order.price if first_order else None,
+                first_leg_finalized=cid in self._favorite_first_finalized,
+                pair_working_remaining=economics["pair_remaining"],
+                pair_working_price=pair_order.price if pair_order else None,
+                pair_terminal_authoritative=cid in self._favorite_pair_terminal,
+                venue_min_order_size=meta.min_order_size,
+                account_position_mismatch=cid in self._favorite_mismatch_confirmed,
+            ), memory, favorite_config)
+            favorite_decision = decision
+            self._favorite[cid] = (start, favorite_config, decision.memory)
+            if (now - start >= favorite_config.hard_order_cutoff_s
+                    and cid not in self._favorite_cutoff_seen):
+                self._favorite_cutoff_seen.add(cid)
+                self._reconcile_now.set()
+                for row in self.state.owned_orders():
+                    if row["condition_id"] == cid:
+                        self._schedule_order_reconcile(str(row["order_id"]))
+            desired = (decision.quote if not (blind or rd.halt or rd.reduce_only or mismatch
+                         or (decision.memory.first_leg_side is None
+                             and rd.size_scale < 1.0)) else None)
+            live_now = self.state.orders_for(meta.yes.token_id) + self.state.orders_for(meta.no.token_id)
+            if desired is not None and len(live_now) == 1:
+                active = live_now[0]
+                interval = (favorite_config.urgent_reprice_min_s
+                            if decision.pair_quote_mode is not None
+                            and decision.pair_quote_mode.value in ("AGGRESSIVE", "FORCED")
+                            else favorite_config.normal_reprice_min_s)
+                if (not decision.submin_working_remainder
+                        and active.token_id == desired.token_id and active.side is desired.side
+                        and abs(active.size - desired.size) <= 1e-8
+                        and now - self._favorite_last_reprice.get(cid, -float("inf")) < interval):
+                    desired = type(desired)(desired.token_id, desired.side, active.price, desired.size)
+            tq = TargetQuotes(cid, Regime.HALTED if desired is None else regime,
+                              (desired,) if desired is not None else ())
+            record = (decision.memory.state, desired, decision.memory.pair_trigger,
+                      decision.pair_quote_mode, decision.first_leg_qty,
+                      decision.paired_qty, decision.submin_working_remainder,
+                      decision.memory.residual_reason,
+                      round(decision.peak_locked_pnl, 2)
+                      if decision.peak_locked_pnl is not None else None)
+            if record != self._favorite_last_record.get(cid):
+                self._favorite_last_record[cid] = record
+                active_price = live_now[0].price if len(live_now) == 1 else None
+                fields = dict(market_elapsed=now-start, strategy_state=decision.memory.state.value,
+                              favorite_side=decision.favorite_side,
+                              favorite_probability=decision.favorite_probability,
+                              favorite_confirm_age=decision.favorite_confirm_age,
+                              first_leg_side=decision.memory.first_leg_side,
+                              first_leg_qty=decision.first_leg_qty,
+                              first_leg_vwap=decision.first_leg_vwap,
+                              time_since_first_fill=(now-decision.memory.first_fill_ts
+                                                     if decision.memory.first_fill_ts else None),
+                              paired_qty=decision.paired_qty, unpaired_qty=decision.unpaired_qty,
+                              current_locked_pnl=decision.current_locked_pnl,
+                              peak_locked_pnl=decision.peak_locked_pnl,
+                              trailing_floor=decision.trailing_floor,
+                              pair_quote_mode=(decision.pair_quote_mode.value
+                                               if decision.pair_quote_mode else None),
+                              desired_price=desired.price if desired else None,
+                              active_order_price=active_price,
+                              aggressive_opposite_price=decision.aggressive_opposite_price,
+                              pair_trigger=(decision.memory.pair_trigger.value
+                                            if decision.memory.pair_trigger else None),
+                              yes_bid=bb.price, yes_ask=ba.price, yes_mid=yes_book.view().mid,
+                              no_bid=no_book.view().best_bid, no_ask=no_book.view().best_ask,
+                              no_mid=no_book.view().mid)
+                fields.update(first_fill_time=decision.memory.first_fill_ts,
+                              risk_window_deadline=(decision.memory.first_fill_ts
+                                                    + favorite_config.probation_max_s
+                                                    if decision.memory.first_fill_ts else None),
+                              risk_window_elapsed=(now-decision.memory.first_fill_ts
+                                                   if decision.memory.first_fill_ts else None),
+                              risk_window_remaining=(max(0.0, favorite_config.probation_max_s
+                                                        -(now-decision.memory.first_fill_ts))
+                                                     if decision.memory.first_fill_ts else None),
+                              strategy_first_leg_cumulative_qty=decision.first_leg_qty,
+                              first_leg_target_qty=favorite_config.first_leg_qty,
+                              first_leg_working_remaining=economics["first_remaining"],
+                              venue_min_order_size=meta.min_order_size,
+                              paired_locked_pnl=decision.paired_locked_pnl,
+                              residual_lockable_pnl=decision.residual_lockable_pnl,
+                              total_lockable_pnl=decision.current_locked_pnl,
+                              peak_total_lockable_pnl=decision.peak_locked_pnl,
+                              submin_working_remainder=decision.submin_working_remainder,
+                              unpairable_residual_reason=decision.memory.residual_reason,
+                              strategy_account_position_mismatch=mismatch)
+                log.info("favorite_first_decision", cid=cid[:8], **fields)
+                self.journal.write("favorite_first_decision", {"cid": cid, **fields}, now)
+
         live = self.state.orders_for(meta.yes.token_id) + self.state.orders_for(meta.no.token_id)
+        if favorite_config:
+            # A maker fill can precede its cumulative order WS event. Compare
+            # targets with the remaining quantity implied by accepted owned
+            # fills, without changing StateStore or inventing an order.
+            adjusted = []
+            scoped_ids = self._favorite_first_orders[cid] | self._favorite_pair_orders[cid]
+            for order in live:
+                owned = self.state.owned_order(order.order_id)
+                if owned is not None and order.order_id in scoped_ids:
+                    remaining = max(0.0, float(owned["submitted_qty"])
+                                    - self.user_proc.tracked_trade_qty(order.order_id))
+                    adjusted.append(replace(order, size=min(order.size, remaining)))
+                else:
+                    adjusted.append(order)
+            live = adjusted
         plan = reconcile(tq, live, tick=meta.tick_size,
-                         reprice_ticks=p.reprice_ticks, resize_frac=p.resize_frac)
+                         reprice_ticks=0 if favorite_config else p.reprice_ticks,
+                         resize_frac=0 if favorite_config else p.resize_frac)
         if plan.is_noop:
-            self._maybe_merge(cid, meta, p, pos_yes.size, pos_no.size)
+            if favorite_decision and favorite_decision.first_leg_finalize_needed:
+                await self._favorite_finalize_orders(cid, first=True)
+            if favorite_decision and favorite_decision.pair_finalize_needed:
+                await self._favorite_finalize_orders(cid, first=False)
+            if favorite_config is None:
+                self._maybe_merge(cid, meta, p, pos_yes.size, pos_no.size)
             return
 
         if plan.to_cancel:
@@ -470,8 +992,43 @@ class Engine:
                 await self._refresh_token_orders(meta, grace_s=10.0)
                 self._dirty[cid].set()
                 return
+            if favorite_config and plan.to_place:
+                # A cancel acknowledgement alone does not establish the final
+                # maker-fill quantity. Verify these exact owned IDs before a
+                # replacement can be evaluated against the new inventory.
+                if not self.paper:
+                    await self._refresh_token_orders(meta, grace_s=0.0)
+                    if any(oid in self.state.orders for oid in plan.to_cancel):
+                        self._dirty[cid].set()
+                        return
+                    for oid in plan.to_cancel:
+                        if self.state.owned_order(oid) is None:
+                            continue
+                        if await reconcile_owned_order(oid, self.gateway, self.user_proc) \
+                                is not ReconciliationOutcome.COMPLETE:
+                            self._fill_recovery_pending.add(cid)
+                            self._fill_recovery_orders.setdefault(cid, set()).add(oid)
+                            self._invalidate_fill_truth(cid)
+                            return
+                if (favorite_decision and favorite_decision.memory.first_leg_side is not None
+                        and plan.to_place[0].token_id == self._favorite_first_token.get(cid)):
+                    start, config, memory = self._favorite[cid]
+                    self._favorite[cid] = (start, config,
+                        replace(memory, first_leg_replacement_pending=True))
+                self._dirty[cid].set()
+                return
+        if favorite_decision and favorite_decision.first_leg_finalize_needed:
+            await self._favorite_finalize_orders(cid, first=True)
+        if favorite_decision and favorite_decision.pair_finalize_needed:
+            await self._favorite_finalize_orders(cid, first=False)
         placed_n = 0
         if plan.to_place:
+            # The WS may have dropped while cancellation/reconciliation awaited
+            # I/O above. Recheck immediately before submitting any new order.
+            if (not self.md.connected or self._market_recovery_pending
+                    or not self._market_books_fresh(cid)):
+                self._dirty[cid].set()
+                return
             # LOAD SHED: under rate-budget pressure, skip *new* quotes in calm
             # regimes (cancels/exits above already ran) so we don't inject latency
             # right when the book is busy. Risk regimes always place.
@@ -484,11 +1041,46 @@ class Engine:
                 log.warning("shed_load", cid=cid[:8], pressure=round(self.gateway.order_pressure, 2))
                 self._dirty[cid].set()  # retry soon
             else:
-                placed = await self.gateway.place(plan.to_place, meta)
+                self.user_proc.arm_pending_many([(q.token_id, q.side) for q in plan.to_place])
+                try:
+                    placed = await self.gateway.place(
+                        plan.to_place, meta,
+                        force_post_only=favorite_config is not None,
+                        submit_guard=lambda: self._can_submit_market(
+                            expected_market_generation, cid, expected_fill_truth_generation)
+                            and (favorite_config is None or self._favorite_submit_ok(
+                                cid, plan.to_place, meta)),
+                    )
+                except BaseException:
+                    self.user_proc.discard_pending()
+                    raise
                 placed_n = len(placed)
+                if favorite_config and placed_n:
+                    self._favorite_last_reprice[cid] = time.time()
                 self.risk.note_order_result(len(placed) == len(plan.to_place))
                 for o in placed:
                     self.state.upsert_order(o)
+                    if favorite_config:
+                        if (favorite_decision and
+                                (favorite_decision.memory.first_leg_side is None
+                                 or o.token_id == self._favorite_first_token.get(cid))):
+                            self._favorite_first_orders[cid].add(o.order_id)
+                            self._favorite_first_token[cid] = o.token_id
+                            start, config, memory = self._favorite[cid]
+                            self._favorite[cid] = (start, config,
+                                replace(memory, first_leg_replacement_pending=False))
+                            source = "favorite_first_leg"
+                        elif favorite_decision and favorite_decision.memory.first_leg_side is not None:
+                            self._favorite_pair_orders[cid].add(o.order_id)
+                            self._favorite_pair_terminal.discard(cid)
+                            source = "favorite_pair_leg"
+                        else:
+                            source = "engine"
+                    else:
+                        source = "engine"
+                    self.user_proc.register_order(o.order_id, meta.condition_id, o.token_id,
+                                                  o.side, o.size, o.price, source)
+                self.user_proc.discard_pending()
                 if len(placed) < len(plan.to_place):
                     # QUARANTINE: a failed/partial batch may still have posted
                     # orders we don't have ids for. Cancel everything on these
@@ -499,16 +1091,64 @@ class Engine:
                  place=placed_n, cancel=len(plan.to_cancel),
                  pos_yes=round(pos_yes.size, 1), pos_no=round(pos_no.size, 1),
                  tox=round(est.markout.toxicity, 3), flowz=round(est.flow.z, 2))
-        self._maybe_merge(cid, meta, p, pos_yes.size, pos_no.size)
+        if favorite_config is None:
+            self._maybe_merge(cid, meta, p, pos_yes.size, pos_no.size)
+
+    def _favorite_submit_ok(self, cid: str, quotes: list[Any], meta: MarketMeta) -> bool:
+        if not self._favorite_armed:
+            return False
+        if not self.paper and not self.favorite_live_user_ready():
+            return False
+        if self.favorite_halt_reason(cid) is not None:
+            return False
+        start, config, memory = self._favorite[cid]
+        elapsed = time.time() - start
+        if elapsed >= config.hard_order_cutoff_s or len(quotes) != 1:
+            return False
+        if not self._market_books_fresh(cid):
+            return False
+        q = quotes[0]
+        if (q.side is not Side.BUY or q.size + 1e-9 < meta.min_order_size
+                or q.size > config.first_leg_qty + 1e-8):
+            return False
+        book = self.md.book(q.token_id)
+        ask = book.best_ask() if book is not None else None
+        if ask is None or q.price >= ask.price:
+            return False
+        economics = self._favorite_economics(cid)
+        if economics["mismatch"]:
+            return False
+        first_qty = economics["first_qty"]
+        pair_qty = economics["pair_qty"]
+        if first_qty <= 1e-8:
+            return (elapsed >= config.entry_start_s and elapsed < config.last_new_entry_s
+                    and q.size <= config.first_leg_qty + 1e-8)
+        first_token = self._favorite_first_token.get(cid)
+        if q.token_id == first_token:
+            return (memory.state is StrategyState.FIRST_LEG_RISK_WINDOW
+                    and cid not in self._favorite_first_finalized
+                    and memory.first_fill_ts is not None
+                    and time.time() < memory.first_fill_ts + config.probation_max_s
+                    and q.size <= config.first_leg_qty - first_qty + 1e-8)
+        opposite_token = (meta.no.token_id if memory.first_leg_side == "YES"
+                          else meta.yes.token_id)
+        unpaired = first_qty - pair_qty
+        return (memory.state in (StrategyState.RUNNER, StrategyState.PAIR_STOP,
+                                 StrategyState.FORCED_PAIR)
+                and q.token_id == opposite_token and q.size <= unpaired + 1e-8)
 
     async def _quarantine(self, meta: MarketMeta, reason: str) -> None:
         """Cancel all orders on a market's tokens and resync state from REST."""
+        cid = meta.condition_id
+        self._order_state_uncertain.add(cid)
         log.warning("quarantine", cid=meta.condition_id[:8], reason=reason)
         for tok in (meta.yes.token_id, meta.no.token_id):
-            await self.gateway.cancel_asset(tok)
-            for o in self.state.orders_for(tok):
-                self.state.remove_order(o.order_id)
-        await self._refresh_token_orders(meta)
+            if await self.gateway.cancel_asset(tok):
+                for o in self.state.orders_for(tok):
+                    self.state.remove_order(o.order_id)
+        await self._refresh_token_orders(meta, grace_s=0.0)
+        self._order_state_uncertain.discard(cid)
+        self._wake_cid(cid)
 
     async def _refresh_token_orders(self, meta: MarketMeta, grace_s: float = 0.0) -> None:
         """Open-orders resync for one market's tokens (grace_s=0 = authoritative)."""
@@ -556,15 +1196,16 @@ class Engine:
                 log.critical("heartbeat_down_halting", failures=self.gateway.heartbeat_failures)
                 self._wake_all()
             elif ok and self._hb_was_down:
-                # recovered: our server-side orders were wiped — drop local
-                # order state, resync authoritatively, then resume quoting
-                self._hb_was_down = False
+                # Only resume after every authoritative order snapshot succeeds.
                 log.warning("heartbeat_recovered_resyncing")
-                self.state.clear_orders()
-                for meta in self.metas.values():
-                    with contextlib.suppress(Exception):
+                try:
+                    for meta in self.metas.values():
                         await self._refresh_token_orders(meta, grace_s=0.0)
-                self._wake_all()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("heartbeat_recovery_resync_failed", err=str(exc))
+                else:
+                    self._hb_was_down = False
+                    self._wake_all()
             await asyncio.sleep(self.cfg.engine.heartbeat_interval_s)
 
     async def _reconcile_loop(self) -> None:
@@ -579,6 +1220,12 @@ class Engine:
                 )
             forced = self._reconcile_now.is_set()
             self._reconcile_now.clear()
+            recovery_generation = (
+                self._market_recovery_generation
+                if self._market_recovery_pending and self.md.connected
+                and all(self._market_books_fresh(cid) for cid in self.metas)
+                else None
+            )
             rounds += 1
             try:
                 # a MATCHED whose settlement event was lost would block a token's
@@ -603,12 +1250,46 @@ class Engine:
                     if lock is None:
                         continue
                     async with lock:
+                        market_orders_reconciled = all(
+                            self.state.inflight(tok) == 0
+                            for tok in (meta.yes.token_id, meta.no.token_id)
+                        )
                         for tok in (meta.yes.token_id, meta.no.token_id):
                             if self.state.inflight(tok) == 0:
-                                self.state.replace_open_orders(tok, by_token.get(tok, []))
+                                self.state.replace_open_orders(
+                                    tok, by_token.get(tok, []),
+                                    grace_s=0.0 if cid in self._order_state_uncertain else 10.0,
+                                )
+                        if cid in self._favorite_mismatch_pending:
+                            tokens = (meta.yes.token_id, meta.no.token_id)
+                            recent = any(self.state.has_recent_fill(tok) for tok in tokens)
+                            if not recent and all(self.state.inflight(tok) == 0 for tok in tokens):
+                                if self._favorite_economics(cid)["mismatch"]:
+                                    reads = self._favorite_mismatch_reads.get(cid, 0) + 1
+                                    self._favorite_mismatch_reads[cid] = reads
+                                    if reads >= 2:
+                                        self._favorite_mismatch_confirmed.add(cid)
+                                    else:
+                                        self._reconcile_now.set()
+                                else:
+                                    self._favorite_mismatch_pending.discard(cid)
+                                    self._favorite_mismatch_reads.pop(cid, None)
+                                self._wake_cid(cid)
+                        if market_orders_reconciled:
+                            self._order_state_uncertain.discard(cid)
                 if forced:
                     log.info("forced_reconcile_done", positions=len(positions),
                              open_orders=len(live))
+                    self._wake_all()
+                if (self._running and recovery_generation is not None
+                        and recovery_generation == self._market_recovery_generation
+                        and self._market_recovery_pending and self.md.connected
+                        and not self._order_state_uncertain
+                        and all(self._market_books_fresh(cid) for cid in self.metas)):
+                    self._market_recovery_pending = False
+                    self._market_recovery_generation = None
+                    log.info("market_reconcile_after_ws_recovery", markets=len(self.metas))
+                    log.info("market_ws_trading_resumed", markets=len(self.metas))
                     self._wake_all()
             except Exception as exc:  # noqa: BLE001
                 log.warning("reconcile_error", err=str(exc))
@@ -669,6 +1350,8 @@ class Engine:
             accepting = bool(raw.get("acceptingOrders", True))
             closed = bool(raw.get("closed", False))
             if closed or not accepting:
+                if cid in self._favorite:
+                    self._favorite_halt_reasons.setdefault(cid, "MARKET_METADATA_HALT")
                 if cid not in self._halted:
                     self._halted.add(cid)
                     log.critical("market_halted_by_meta", cid=cid[:8], closed=closed,

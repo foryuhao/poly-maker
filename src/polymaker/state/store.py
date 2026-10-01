@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS order_log (
     order_id  TEXT PRIMARY KEY,
     token_id  TEXT, side TEXT, price REAL, size REAL, state TEXT, ts REAL
 );
+CREATE TABLE IF NOT EXISTS owned_orders (
+    order_id TEXT PRIMARY KEY, condition_id TEXT, token_id TEXT, side TEXT,
+    submitted_qty REAL, submitted_price REAL, created_ts REAL, source TEXT,
+    unresolved INT NOT NULL DEFAULT 1
+);
 CREATE TABLE IF NOT EXISTS pnl_snapshots (
     ts        REAL PRIMARY KEY,
     equity    REAL, net_cash REAL, inventory_value REAL, daily_pnl REAL
@@ -53,6 +58,9 @@ class StateStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(owned_orders)")}
+        if "unresolved" not in columns:
+            self._conn.execute("ALTER TABLE owned_orders ADD COLUMN unresolved INT NOT NULL DEFAULT 1")
         self._conn.commit()
 
         self.positions: dict[str, Position] = {}
@@ -67,9 +75,62 @@ class StateStore:
     def close(self) -> None:
         self._conn.close()
 
+    def register_owned_order(self, order_id: str, condition_id: str, token_id: str,
+                             side: Side, qty: float, price: float, source: str) -> None:
+        if not isinstance(order_id, str) or not order_id.strip():
+            raise ValueError("owned order requires a usable exchange order id")
+        self._conn.execute("INSERT OR REPLACE INTO owned_orders"
+            "(order_id,condition_id,token_id,side,submitted_qty,submitted_price,created_ts,source,unresolved)"
+            " VALUES(?,?,?,?,?,?,?,?,1)",
+            (order_id.strip(), condition_id, token_id, side.value, qty, price, time.time(), source))
+        self._conn.commit()
+
+    def owned_order(self, order_id: str) -> dict[str, object] | None:
+        row = self._conn.execute("SELECT * FROM owned_orders WHERE order_id=?", (order_id,)).fetchone()
+        return dict(row) if row else None
+
+    def owned_orders(self) -> list[dict[str, object]]:
+        return [dict(r) for r in self._conn.execute("SELECT * FROM owned_orders")]
+
+    def owned_orders_for_recovery(self, *, since_ts: float, active_ids: set[str],
+                                  condition_ids: set[str], limit: int = 500) -> list[dict[str, object]]:
+        scope = ""
+        scope_args: list[object] = []
+        if condition_ids:
+            placeholders = ",".join("?" for _ in condition_ids)
+            scope = f" AND condition_id IN ({placeholders})"
+            scope_args = sorted(condition_ids)
+        # Safety population is never capped. The cap applies only to recent,
+        # already resolved history used as a bounded checksum/recovery window.
+        rows = [dict(r) for r in self._conn.execute(
+            f"SELECT * FROM owned_orders WHERE unresolved=1{scope}", scope_args)]
+        found = {str(r["order_id"]) for r in rows}
+        scoped_active = active_ids - found
+        if scoped_active:
+            placeholders = ",".join("?" for _ in scoped_active)
+            active_scope = scope if condition_ids else ""
+            rows.extend(dict(r) for r in self._conn.execute(
+                f"SELECT * FROM owned_orders WHERE order_id IN ({placeholders}){active_scope}",
+                (*sorted(scoped_active), *scope_args)))
+        found = {str(r["order_id"]) for r in rows}
+        recent = [dict(r) for r in self._conn.execute(
+            f"SELECT * FROM owned_orders WHERE unresolved=0 AND created_ts>=?{scope} "
+            "ORDER BY created_ts DESC LIMIT ?", (since_ts, *scope_args, limit))]
+        rows.extend(r for r in recent if str(r["order_id"]) not in found)
+        return rows
+
+    def mark_owned_order_unresolved(self, order_id: str, unresolved: bool) -> None:
+        self._conn.execute("UPDATE owned_orders SET unresolved=? WHERE order_id=?",
+                           (int(unresolved), order_id))
+        self._conn.commit()
+
     # ── positions ───────────────────────────────────────────────────────
     def position(self, token_id: str) -> Position:
         return self.positions.get(token_id, Position(token_id))
+
+    def has_recent_fill(self, token_id: str, within_s: float = 5.0) -> bool:
+        """Whether a just-applied fill may still lead the account snapshot."""
+        return time.time() - self._last_fill_ts.get(token_id, 0.0) < within_s
 
     def apply_fill(self, fill: Fill) -> bool:
         """Apply a fill optimistically to inventory + avg price.

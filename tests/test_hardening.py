@@ -27,9 +27,10 @@ def test_replayed_matched_after_confirmed_not_double_applied(tmp_path):
     at CONFIRMED."""
     s = StateStore(tmp_path / "s.db")
     p = UserEventProcessor(s)
-    ev = TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.MATCHED, 1.0)
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .5)
+    ev = TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.MATCHED, 1.0, "o1")
     p.on_trade(ev, "cid")
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.CONFIRMED, 2.0), "cid")
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.CONFIRMED, 2.0, "o1"), "cid")
     assert s.position("tok").size == 100
     p.on_trade(ev, "cid")  # replayed MATCHED after confirm
     assert s.position("tok").size == 100  # NOT 200
@@ -55,7 +56,8 @@ def test_duplicate_fill_side_effects_skipped(tmp_path):
     s = StateStore(tmp_path / "s.db")
     fills, changes = [], []
     p = UserEventProcessor(s, on_change=changes.append, on_fill=fills.append)
-    ev = TradeEvent("tok", Side.BUY, 0.5, 50, "t1", TradeState.MATCHED, 1.0)
+    p.register_order("o1", "cid", "tok", Side.BUY, 50, .5)
+    ev = TradeEvent("tok", Side.BUY, 0.5, 50, "t1", TradeState.MATCHED, 1.0, "o1")
     p.on_trade(ev, "cid")
     p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 50, "t1", TradeState.CONFIRMED, 2.0), "cid")
     n_fills, n_changes = len(fills), len(changes)
@@ -65,19 +67,21 @@ def test_duplicate_fill_side_effects_skipped(tmp_path):
     s.close()
 
 
-def test_retrying_keeps_fill_failed_reverses_once(tmp_path):
+def test_retrying_keeps_fill_failed_quarantines_without_reversal(tmp_path):
     """RETRYING is not terminal (tx may still land) -> keep the fill.
     FAILED reverses exactly once, even if FAILED is replayed."""
     s = StateStore(tmp_path / "s.db")
     p = UserEventProcessor(s)
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.MATCHED, 1.0), "cid")
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.RETRYING, 2.0), "cid")
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .5)
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.MATCHED, 1.0, "o1"), "cid")
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.RETRYING, 2.0, "o1"), "cid")
     assert s.position("tok").size == 100  # retrying: unchanged
     assert s.inflight("tok") == 1
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.FAILED, 3.0), "cid")
-    assert s.position("tok").size == 0  # reversed
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.FAILED, 4.0), "cid")
-    assert s.position("tok").size == 0  # replayed FAILED: no double reverse
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.FAILED, 3.0, "o1"), "cid")
+    assert s.position("tok").size == 100
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "t1", TradeState.FAILED, 4.0, "o1"), "cid")
+    assert s.position("tok").size == 100
+    assert "o1" in p.quarantined_orders
     s.close()
 
 
@@ -144,7 +148,7 @@ async def test_place_failure_triggers_quarantine(tmp_path, meta):
     eng = _mk_engine(tmp_path, meta)
     cancelled_assets: list[str] = []
 
-    async def failing_place(quotes, m):  # posts may or may not have landed
+    async def failing_place(quotes, m, **_kwargs):  # posts may or may not have landed
         return []
 
     async def spy_cancel_asset(asset_id):
@@ -175,7 +179,7 @@ async def test_cancel_failure_keeps_orders_and_skips_placement(tmp_path, meta):
     async def failing_cancel(order_ids):
         return False
 
-    async def spy_place(quotes, m):
+    async def spy_place(quotes, m, **_kwargs):
         placed_calls.append(len(quotes))
         return []
 

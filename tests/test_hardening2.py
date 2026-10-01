@@ -79,7 +79,7 @@ async def test_load_shed_skips_new_quotes_under_pressure(tmp_path, meta):
     _feed_book(eng, meta)
     placed_calls: list[int] = []
 
-    async def spy_place(quotes, m):
+    async def spy_place(quotes, m, **_kwargs):
         placed_calls.append(len(quotes))
         return []
 

@@ -40,6 +40,39 @@ halt_before_hours   = 2
 exit_urgency_s      = 900
 merge_min_size      = 20.0
 
+# M1 PAPER baseline for one 300-second BTC Up/Down market. These values are
+# conservative starting settings and have not been tuned for profitability.
+[profiles.btc5m-survival]
+micro_levels         = 3
+flow_ewma_halflife_s = 8
+gamma                = 0.6
+delta_min_ticks      = 2
+c_vol                = 1.2
+c_tox                = 2.0
+vol_short_halflife_s = 3
+vol_long_halflife_s  = 30
+base_size_usdc       = 5
+q_max_usdc           = 20
+q_soft_frac          = 0.5
+layers               = 1
+layer_step_ticks     = 2
+reward_size_mult     = 1.0
+reprice_ticks        = 2
+resize_frac          = 0.5
+min_edge_ticks       = 1
+event_cooloff_s      = 5
+event_jump_ticks     = 8
+event_sweep_levels   = 3
+event_sweep_mult     = 4
+event_sweep_frac     = 0.8
+trend_flow_z         = 2.0
+trend_vol_ratio      = 3.0
+end_date_taper_days  = 0.00347
+reduce_only_hours    = 0.01667
+halt_before_hours    = 0.00333
+exit_urgency_s       = 20
+merge_min_size       = 20
+
 
 # romania-pm: "Next PM of Romania" — Alexandru Nazare leg. Live sample 2026-07-06:
 # price ~0.487/0.488 (near 50/50 -> max reward score, low extremity), tick 0.001,

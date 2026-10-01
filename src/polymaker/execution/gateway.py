@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import math
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -30,6 +31,23 @@ from polymaker.logging import get_logger
 log = get_logger("execution.gateway")
 
 _T = TypeVar("_T")
+
+
+class GatewayReadError(RuntimeError):
+    """An authoritative Gateway snapshot could not be fetched or parsed."""
+
+
+class PlacementUnknown(RuntimeError):
+    """A POST may have reached the exchange, but no usable order result arrived."""
+
+
+def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
+    """Unwrap only the two supported placement envelope shapes."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict):
+        return raw[0]
+    return None
 
 
 def _tick_str(tick: float) -> str:
@@ -147,10 +165,23 @@ class ExecutionGateway:
             log.warning("clock_check_failed", err=str(exc))
 
     # ── placement ───────────────────────────────────────────────────────
-    async def place(self, quotes: list[Quote], meta: MarketMeta) -> list[OpenOrder]:
+    async def place(
+        self, quotes: list[Quote], meta: MarketMeta, *,
+        submit_guard: Callable[[], bool] | None = None,
+        force_post_only: bool = False,
+        strict_placement: bool = False,
+    ) -> list[OpenOrder]:
         if not quotes:
             return []
+        if any(q.size + 1e-9 < meta.min_order_size for q in quotes):
+            log.warning("order_below_venue_minimum", cid=meta.condition_id[:8],
+                        minimum=meta.min_order_size,
+                        sizes=[q.size for q in quotes])
+            return []
         await self._order_bucket.acquire(len(quotes))
+        if submit_guard is not None and not submit_guard():
+            log.info("order_place_aborted_stale_connectivity", cid=meta.condition_id[:8])
+            return []
         ts = time.time()
         self._journal_write("orders_out", [asdict(q) for q in quotes], ts)
 
@@ -173,11 +204,29 @@ class ExecutionGateway:
                     options=opts,
                 )
                 args.append(PostOrdersV2Args(order=signed, orderType=OrderType.GTC))
-            resp = self._client.post_orders(args, post_only=self._cfg.execution.post_only)
-            return self._parse_place_response(resp, quotes)
+            if submit_guard is not None and not submit_guard():
+                log.info("order_place_aborted_stale_connectivity", cid=meta.condition_id[:8])
+                return []
+            try:
+                resp = self._client.post_orders(
+                    args, post_only=(True if force_post_only else self._cfg.execution.post_only)
+                )
+            except Exception as exc:
+                raise PlacementUnknown("order POST outcome is unknown") from exc
+            try:
+                return self._parse_place_response(resp, quotes)
+            except PlacementUnknown:
+                raise
+            except Exception as exc:
+                raise PlacementUnknown("order POST response could not be parsed") from exc
 
         try:
             return await self._io(_place)
+        except PlacementUnknown:
+            if strict_placement:
+                raise
+            log.error("place_outcome_unknown", n=len(quotes))
+            return []
         except Exception as exc:  # noqa: BLE001 - surface + continue; engine handles error rate
             log.error("place_failed", err=str(exc), n=len(quotes))
             return []
@@ -187,17 +236,45 @@ class ExecutionGateway:
         return OpenOrder(oid, q.token_id, q.side, q.price, q.size, OrderState.LIVE)
 
     def _parse_place_response(self, resp: Any, quotes: list[Quote]) -> list[OpenOrder]:
-        """Map a batch post response to OpenOrders. Tolerant of shape variants;
-        the user-WS order events + REST snapshot reconcile anything we miss."""
-        items = resp if isinstance(resp, list) else resp.get("orders", resp.get("data", []))
+        """Map a post_orders response to OpenOrders without guessing on shape."""
+        normalized = _normalize_place_response(resp)
+        # This client call submits one quote; a multi-result response cannot be
+        # deterministically attributed to that placement.
+        if normalized is None or len(quotes) != 1:
+            log.warning(
+                "place_response_invalid_shape",
+                response_type=type(resp).__name__,
+                list_length=len(resp) if isinstance(resp, list) else None,
+                dict_keys=sorted(str(k) for k in resp) if isinstance(resp, dict) else None,
+            )
+            raise PlacementUnknown("order POST response omitted order results")
         out: list[OpenOrder] = []
-        for q, item in zip(quotes, items if isinstance(items, list) else [], strict=False):
-            oid = _first(item, "orderID", "orderId", "order_id", "id", "hash")
-            if not oid:
-                log.warning("place_response_missing_id", item=str(item)[:120])
-                continue
-            out.append(OpenOrder(str(oid), q.token_id, q.side, q.price, q.size, OrderState.LIVE))
+        q, item = quotes[0], normalized
+        if item.get("success") is False:
+            return []  # explicit exchange rejection
+        # orderID is the placement API field. Check other familiar spellings
+        # only for contradictions; they are not accepted as placement aliases.
+        usable_ids = {str(item[k]).strip() for k in ("orderID", "order_id", "orderId", "id")
+                      if isinstance(item.get(k), str) and item[k].strip()}
+        if len(usable_ids) > 1:
+            raise PlacementUnknown("order POST response contained conflicting order ids")
+        oid = item.get("orderID")
+        if not isinstance(oid, str) or not oid.strip():
+            log.warning(
+                "place_response_missing_id",
+                response_type=type(resp).__name__,
+                list_length=len(resp) if isinstance(resp, list) else None,
+                dict_keys=sorted(str(k) for k in item),
+                success=item.get("success"),
+                success_type=type(item.get("success")).__name__,
+                status=item.get("status"),
+                order_id_type=type(oid).__name__,
+                order_id_length=len(oid) if isinstance(oid, str) else None,
+            )
+            raise PlacementUnknown("order POST response had no usable order id")
+        out.append(OpenOrder(oid.strip(), q.token_id, q.side, q.price, q.size, OrderState.LIVE))
         return out
+
 
     # ── cancellation ────────────────────────────────────────────────────
     async def cancel(self, order_ids: list[str]) -> bool:
@@ -232,6 +309,26 @@ class ExecutionGateway:
             return True
         except Exception as exc:  # noqa: BLE001
             log.error("cancel_asset_failed", err=str(exc), token=asset_id[:12])
+            return False
+
+    async def cancel_market_asset(self, market: str, asset_id: str) -> bool:
+        """Cancel orders scoped to one market and asset, for uncertain placement cleanup."""
+        if self._paper:
+            return True
+
+        def _cancel() -> None:
+            from py_clob_client_v2.clob_types import OrderMarketCancelParams
+
+            self._client.cancel_market_orders(
+                OrderMarketCancelParams(market=market, asset_id=asset_id)
+            )
+
+        try:
+            await self._io(_cancel)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.error("cancel_market_asset_failed", err=str(exc), market=market[:12],
+                      token=asset_id[:12])
             return False
 
     async def cancel_all(self) -> None:
@@ -443,59 +540,160 @@ class ExecutionGateway:
 
     # ── reads ───────────────────────────────────────────────────────────
     async def open_orders(self) -> list[OpenOrder]:
-        if self._paper or self._client is None:
+        if self._paper:
             return []
+        if self._client is None:
+            raise GatewayReadError("open orders unavailable: CLOB client is not connected")
 
         def _get() -> list[OpenOrder]:
+            from polymaker.userstream.parse import strict_number
+
             raw = self._client.get_open_orders()
-            rows = raw if isinstance(raw, list) else raw.get("data", raw.get("orders", []))
+            if isinstance(raw, list):
+                rows = raw
+            elif isinstance(raw, dict):
+                rows = raw.get("data", raw.get("orders"))
+            else:
+                raise GatewayReadError("open orders returned an invalid response")
+            if not isinstance(rows, list):
+                raise GatewayReadError("open orders response omitted its order list")
             out = []
             for r in rows:
                 try:
+                    if not isinstance(r, dict):
+                        raise TypeError("order row is not an object")
+                    order_id = _first(r, "id", "orderID", "order_id")
+                    if not isinstance(order_id, str) or not order_id.strip():
+                        raise ValueError("order row has no valid exchange order id")
+                    asset_id = r["asset_id"]
+                    if not isinstance(asset_id, str) or not asset_id.strip():
+                        raise ValueError("order row has no valid asset id")
                     side = Side(str(r["side"]).upper())
-                    remaining = float(r.get("original_size", r.get("size", 0))) - float(
-                        r.get("size_matched", 0)
-                    )
+                    original_size = strict_number(r.get("original_size", r.get("size", 0)))
+                    size_matched = strict_number(r.get("size_matched", 0))
+                    if original_size < 0 or size_matched < 0 or size_matched > original_size:
+                        raise ValueError("order row has invalid cumulative size")
+                    remaining = original_size - size_matched
+                    price = strict_number(r["price"])
                     out.append(
                         OpenOrder(
-                            str(_first(r, "id", "orderID", "order_id")),
-                            str(r["asset_id"]),
+                            order_id.strip(),
+                            asset_id.strip(),
                             side,
-                            float(r["price"]),
+                            price,
                             remaining,
                             OrderState.LIVE,
                         )
                     )
-                except (KeyError, ValueError, TypeError):
-                    continue
+                except (KeyError, ValueError, TypeError) as exc:
+                    raise GatewayReadError("open orders contained an invalid order row") from exc
             return out
 
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
             log.warning("open_orders_failed", err=str(exc))
-            return []
+            if isinstance(exc, GatewayReadError):
+                raise
+            raise GatewayReadError("open orders snapshot failed") from exc
 
     async def positions(self) -> dict[str, tuple[float, float]]:
         """{token_id: (size, avg_price)} from the data API (reconcile use).
 
         Queries the FUNDER (where positions live), not the signer EOA.
         """
+        if self._paper:
+            return {}
         user = self.funder
-        if not user or not user.startswith("0x") or user == "0xPAPER":
-            return {}
+        if not user or not user.startswith("0x"):
+            raise GatewayReadError("positions unavailable: funder address is unknown")
         try:
+            from polymaker.userstream.parse import strict_number
+
             async with httpx.AsyncClient(timeout=15.0) as c:
-                r = await c.get(f"{self._data_host}/positions", params={"user": user})
-                r.raise_for_status()
-                return {
-                    str(p["asset"]): (float(p["size"]), float(p.get("avgPrice", 0)))
-                    for p in r.json()
-                    if float(p.get("size", 0)) > 0
-                }
-        except (httpx.HTTPError, KeyError, ValueError) as exc:
+                url = f"{self._data_host.rstrip('/')}/v2/positions"
+                positions: dict[str, tuple[float, float]] = {}
+                cursor: str | None = None
+                seen_cursors: set[str] = set()
+                while True:
+                    params: dict[str, str] = {"user": user}
+                    if cursor is not None:
+                        params["cursor"] = cursor
+                    r = await c.get(url, params=params)
+                    r.raise_for_status()
+                    payload = r.json()
+                    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                        raise GatewayReadError("positions response omitted its v2 data list")
+                    pagination = payload.get("pagination")
+                    if not isinstance(pagination, dict) or "next_cursor" not in pagination:
+                        raise GatewayReadError("positions response omitted its v2 pagination cursor")
+                    for row in payload["data"]:
+                        if not isinstance(row, dict):
+                            raise GatewayReadError("positions response contained an invalid row")
+                        token_id = row.get("token_id")
+                        if not isinstance(token_id, str) or not token_id.strip():
+                            raise GatewayReadError("positions row omitted its token_id")
+                        try:
+                            size = strict_number(row["current_size"])
+                            avg_price = strict_number(row["avg_price"])
+                        except (KeyError, TypeError, ValueError) as exc:
+                            raise GatewayReadError("positions row omitted valid current_size/avg_price") from exc
+                        if not math.isfinite(size) or not math.isfinite(avg_price) or size < 0:
+                            raise GatewayReadError("positions row contained invalid position values")
+                        if size > 0:
+                            positions[token_id] = (size, avg_price)
+                    next_cursor = pagination["next_cursor"]
+                    if next_cursor is None:
+                        return positions
+                    if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors:
+                        raise GatewayReadError("positions response contained an invalid pagination cursor")
+                    seen_cursors.add(next_cursor)
+                    cursor = next_cursor
+        except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
             log.warning("positions_failed", err=str(exc))
-            return {}
+            raise GatewayReadError("positions snapshot failed") from exc
+        except GatewayReadError:
+            raise
+
+    async def get_order(self, order_id: str) -> dict[str, Any]:
+        """Strict authenticated CLOB order read; malformed/failed is UNKNOWN."""
+        if self._paper or self._client is None:
+            raise GatewayReadError("order read unavailable")
+        def _get() -> dict[str, Any]:
+            row = self._client.get_order(order_id)
+            if not isinstance(row, dict) or not row:
+                raise GatewayReadError("order read returned malformed data")
+            oid = row.get("id", row.get("orderID", row.get("order_id")))
+            if not isinstance(oid, str) or oid.strip() != order_id:
+                raise GatewayReadError("order read returned a different order")
+            from polymaker.userstream.parse import normalize_order
+            if normalize_order(row) is None:
+                raise GatewayReadError("order read omitted valid cumulative order fields")
+            return row
+        try:
+            return await self._io(_get)
+        except Exception as exc:
+            if isinstance(exc, GatewayReadError):
+                raise
+            raise GatewayReadError("order read failed") from exc
+
+    async def get_trades(self, *, market: str | None = None, asset_id: str | None = None) -> list[dict[str, Any]]:
+        """Strict authenticated trade history read using supported V2 filters."""
+        if self._paper or self._client is None:
+            raise GatewayReadError("trade read unavailable")
+        def _get() -> list[dict[str, Any]]:
+            from py_clob_client_v2.clob_types import TradeParams
+            params = TradeParams(market=market, asset_id=asset_id)
+            rows = self._client.get_trades(params)
+            if not isinstance(rows, list) or any(not isinstance(x, dict) for x in rows):
+                raise GatewayReadError("trade history returned malformed data")
+            return rows
+        try:
+            return await self._io(_get)
+        except Exception as exc:
+            if isinstance(exc, GatewayReadError):
+                raise
+            raise GatewayReadError("trade history read failed") from exc
 
     async def balance_allowance(self) -> dict[str, Any]:
         """Collateral balance/allowance snapshot (for `doctor`)."""
@@ -515,6 +713,28 @@ class ExecutionGateway:
         except Exception as exc:  # noqa: BLE001
             log.warning("balance_allowance_failed", err=str(exc))
             return {}
+
+    async def required_collateral_spenders(self, meta: MarketMeta) -> tuple[str, ...]:
+        """Resolve the exchange used by this client's signed BUY order path."""
+        if self._client is None:
+            return ()
+        from py_clob_client_v2.config import get_contract_config
+
+        def _resolve() -> tuple[str, ...]:
+            # create_order resolves the same cached version and uses neg_risk
+            # from the market-specific options passed by place().
+            version = self._client._ClobClient__resolve_version()  # noqa: SLF001
+            contracts = get_contract_config(self._client.chain_id)
+            if version == 2:
+                return (contracts.neg_risk_exchange_v2 if meta.neg_risk else contracts.exchange_v2,)
+            if version == 1:
+                return (contracts.neg_risk_exchange if meta.neg_risk else contracts.exchange,)
+            return ()
+
+        try:
+            return await self._io(_resolve)
+        except Exception:  # noqa: BLE001 - unknown spender fails preflight closed
+            return ()
 
     def _journal_write(self, kind: str, payload: Any, ts: float) -> None:
         if self._journal is not None:

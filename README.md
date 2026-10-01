@@ -145,3 +145,12 @@ sells rather than merging.
 ## License
 
 MIT
+
+### FavoriteFirst run review
+
+A completed `favorite-first-live --once` market writes `raw.log`, `events.jsonl`,
+`run.json`, and `chat_report.md` under `logs/runs/<run_id>/` (or the configured
+log directory). Upload `chat_report.md` for routine strategy review. Inspect
+`raw.log` for engineering anomalies. Run `uv run polymaker favorite-first-report
+--last 10` for a structured multi-market summary. Settlement and rebates stay
+`unknown` until an authoritative source supplies them.

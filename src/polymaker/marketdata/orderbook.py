@@ -59,7 +59,8 @@ class BookView:
 class OrderBook:
     """YES-canonical L2 book for one market."""
 
-    __slots__ = ("bids", "asks", "tick_size", "last_update_ts", "local_ts", "book_hash")
+    __slots__ = ("bids", "asks", "tick_size", "last_update_ts", "local_ts",
+                 "snapshot_local_ts", "snapshot_generation", "book_hash")
 
     def __init__(self, tick_size: float = 0.001) -> None:
         # price -> size. bids and asks both ascending in price.
@@ -68,6 +69,8 @@ class OrderBook:
         self.tick_size = tick_size
         self.last_update_ts: float = 0.0  # exchange timestamp (informational)
         self.local_ts: float = 0.0  # local receive time — used for staleness (skew-proof)
+        self.snapshot_local_ts: float = 0.0
+        self.snapshot_generation: int = 0
         self.book_hash: str | None = None
 
     # ── mutation ────────────────────────────────────────────────────────
@@ -82,6 +85,7 @@ class OrderBook:
         self.asks = SortedDict({p: s for p, s in asks if s > 0})
         self.last_update_ts = ts
         self.local_ts = time.time()
+        self.snapshot_local_ts = self.local_ts
         self.book_hash = book_hash
 
     def apply_delta(self, side: Side, price: float, size: float, ts: float) -> None:

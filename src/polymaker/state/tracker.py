@@ -14,7 +14,7 @@ each match. We apply the fill optimistically at MATCHED and reverse it on FAILED
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from polymaker.domain import Fill, OpenOrder, OrderState, Side, TradeState
 from polymaker.logging import get_logger
@@ -32,6 +32,8 @@ class TradeEvent:
     trade_id: str
     status: TradeState
     ts: float
+    maker_order_id: str | None = None
+    market_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,11 @@ class OrderEvent:
     price: float
     remaining_size: float  # original - matched
     is_cancel: bool = False
+    original_size: float = 0.0
+    size_matched: float = 0.0
+    status: str = ""
+    associate_trades: tuple[str, ...] = ()
+    market_id: str | None = None
 
 
 class UserEventProcessor:
@@ -52,52 +59,267 @@ class UserEventProcessor:
         store: StateStore,
         on_change: Callable[[str], None] | None = None,
         on_fill: Callable[[Fill], None] | None = None,
+        on_reconcile: Callable[[str], None] | None = None,
+        on_maker_fill: Callable[[TradeEvent], None] | None = None,
     ) -> None:
         self._store = store
         self._on_change = on_change or (lambda _cid: None)
         self._on_fill = on_fill or (lambda _fill: None)
-        # trade_id -> applied Fill, so FAILED can reverse exactly what we applied
-        self._applied: dict[str, Fill] = {}
+        self._on_reconcile = on_reconcile or (lambda _oid: None)
+        self._on_maker_fill = on_maker_fill or (lambda _ev: None)
+        self.fill_records: dict[tuple[str, str], TradeEvent] = {}
+        self.applied_fill_keys: set[tuple[str, str]] = set()
+        self.quarantined_fill_keys: set[tuple[str, str]] = set()
+        self.quarantined_orders: set[str] = set()
+        self._owned = {str(x["order_id"]) for x in store.owned_orders()}
+        self._pending: set[tuple[str, Side]] = set()
+        self._pending_remaining = 0
+        self._pending_events: list[TradeEvent] = []
+        self._pending_malformed_order_ids: set[str] = set()
+        self._pending_limit = 128
+        self._pending_overflow = False
 
-    def on_trade(self, ev: TradeEvent, condition_id: str) -> None:
+    def arm_pending(self, token_id: str, side: Side) -> None:
+        self.arm_pending_many([(token_id, side)])
+
+    def arm_pending_many(self, orders: list[tuple[str, Side]]) -> None:
+        if self._pending:
+            raise RuntimeError("placement capture already armed")
+        self._pending = set(orders)
+        self._pending_remaining = len(orders)
+        self._pending_events = []
+        self._pending_overflow = False
+
+    def discard_pending(self) -> None:
+        self._pending, self._pending_events, self._pending_remaining = set(), [], 0
+        self._pending_overflow = False
+        self._pending_malformed_order_ids.clear()
+
+    def owned_record(self, order_id: str) -> dict[str, object] | None:
+        return self._store.owned_order(order_id)
+
+    def owned_candidates(self, token_id: str, side: Side) -> list[str]:
+        return [str(r["order_id"]) for r in self._store.owned_orders()
+                if r["token_id"] == token_id and r["side"] == side.value]
+
+    def tracked_trade_qty(self, order_id: str) -> float:
+        return sum(self.fill_records[key].size for key in self.applied_fill_keys
+                   if key[1] == order_id and key in self.fill_records
+                   and key not in self.quarantined_fill_keys
+                   and self.fill_records[key].status is not TradeState.FAILED)
+
+    def economic_fills_for_order(self, order_id: str) -> list[TradeEvent]:
+        return [self.fill_records[key] for key in self.applied_fill_keys
+                if key[1] == order_id and key in self.fill_records
+                and key not in self.quarantined_fill_keys
+                and self.fill_records[key].status is not TradeState.FAILED]
+
+    def economic_fills_for_orders(self, order_ids: set[str]) -> list[TradeEvent]:
+        return [fill for oid in order_ids for fill in self.economic_fills_for_order(oid)]
+
+    def has_quarantine_for_condition(self, condition_id: str) -> bool:
+        return any((row := self._store.owned_order(oid)) is not None
+                   and row["condition_id"] == condition_id for oid in self.quarantined_orders)
+
+    def has_unresolved_fill_key(self, order_id: str) -> bool:
+        return any(oid == order_id for _tid, oid in self.quarantined_fill_keys)
+
+    def has_failed_fill(self, order_id: str) -> bool:
+        return any(oid == order_id and ev.status is TradeState.FAILED
+                   for (_trade_id, oid), ev in self.fill_records.items())
+
+    @staticmethod
+    def _advanced_status(prior: TradeEvent | None, event: TradeEvent) -> TradeEvent:
+        """Keep the furthest observed non-failed lifecycle state on replay."""
+        if prior is None or event.status is TradeState.FAILED:
+            return event
+        if prior.status is TradeState.FAILED:
+            return prior
+        rank = {TradeState.RETRYING: 1.5, TradeState.MATCHED: 1,
+                TradeState.MINED: 2, TradeState.CONFIRMED: 3}
+        return replace(event, status=max((prior.status, event.status), key=rank.__getitem__),
+                       ts=prior.ts if prior.ts > 0 else event.ts)
+
+    def quarantine_order(self, order_id: str, reason: str, *, notify: bool = True) -> None:
+        if order_id not in self._owned:
+            return
+        self.quarantined_orders.add(order_id)
+        self._store.mark_owned_order_unresolved(order_id, True)
+        log.error("trade_quarantined", order_id=order_id, reason=reason)
+        if notify:
+            self._on_reconcile(order_id)
+
+    def on_malformed_trade(self, order_ids: set[str] | list[str], reason: str) -> None:
+        """Quarantine only exact registered maker IDs from an unparseable event."""
+        for order_id in set(order_ids):
+            if not isinstance(order_id, str) or not order_id.strip():
+                continue
+            order_id = order_id.strip()
+            if order_id in self._owned:
+                self.quarantine_order(order_id, reason)
+            elif self._pending:
+                # A fill can arrive before POST returns its ID. Hold only the
+                # raw exact ID; registration will establish ownership later.
+                self._pending_malformed_order_ids.add(order_id)
+
+    def register_order(self, order_id: str, condition_id: str, token_id: str,
+                       side: Side, qty: float, price: float, source: str = "engine") -> None:
+        self._store.register_owned_order(order_id, condition_id, token_id, side, qty, price, source)
+        self._owned.add(order_id)
+        log.info("owned_order_registered", order_id=order_id, token=token_id[:12], source=source)
+        if order_id in self._pending_malformed_order_ids:
+            self._pending_malformed_order_ids.discard(order_id)
+            self.quarantine_order(order_id, "malformed WS trade referenced this owned order")
+        events = self._pending_events
+        for ev in events:
+            if ev.maker_order_id == order_id:
+                self.on_trade(ev, condition_id)
+        self._pending_remaining = max(0, self._pending_remaining - 1)
+        if self._pending_overflow:
+            self.quarantine_order(order_id, "pending maker-event buffer overflow")
+        if self._pending_remaining == 0:
+            self.discard_pending()
+
+    def on_trade(self, ev: TradeEvent, condition_id: str, *, source: str = "WS") -> None:
+        oid = ev.maker_order_id
+        if not oid or oid not in self._owned:
+            if self._pending:
+                if len(self._pending_events) < self._pending_limit:
+                    self._pending_events.append(ev)
+                else:
+                    self._pending_overflow = True
+            log.debug("foreign_trade_ignored", trade_id=ev.trade_id, order_id=oid)
+            return
+        key = (ev.trade_id, oid)
+        owned = self._store.owned_order(oid)
+        assert owned is not None
+        try:
+            expected_side = Side(str(owned["side"]))
+            expected_qty = float(owned["submitted_qty"])
+            expected_price = float(owned["submitted_price"])
+        except (ValueError, TypeError, KeyError):
+            expected_side, expected_qty, expected_price = None, -1.0, float("nan")
+        observed_prior = sum(event.size for prior_key, event in self.fill_records.items()
+                             if prior_key[1] == oid and prior_key in self.applied_fill_keys
+                             and prior_key not in self.quarantined_fill_keys
+                             and event.status is not TradeState.FAILED and prior_key != key)
+        mismatch = (
+            ev.token_id != owned["token_id"]
+            or ev.our_side is not expected_side
+            or condition_id != owned["condition_id"]
+            or (ev.market_id is not None and ev.market_id != owned["condition_id"])
+            or not (0 <= ev.size <= expected_qty)
+            or (ev.our_side is Side.BUY and ev.price > expected_price + 1e-6)
+            or (ev.our_side is Side.SELL and ev.price < expected_price - 1e-6)
+            or observed_prior + ev.size > expected_qty + 1e-6
+        )
+        prior = self.fill_records.get(key)
+        if prior is not None and (prior.token_id != ev.token_id or prior.our_side is not ev.our_side
+                                  or abs(prior.price-ev.price) > 1e-6
+                                  or abs(prior.size-ev.size) > 1e-6):
+            mismatch = True
+        if mismatch:
+            self.fill_records.setdefault(key, ev)
+            self.quarantined_fill_keys.add(key)
+            self.quarantined_orders.add(oid)
+            self._store.mark_owned_order_unresolved(oid, True)
+            log.error("trade_quarantined", trade_id=ev.trade_id, order_id=oid,
+                      reason="maker economics contradict registered order")
+            if source == "WS":
+                self._on_reconcile(oid)
+            return
+        if ev.size == 0:
+            return
+        log.info("owned_maker_fill_seen", trade_id=ev.trade_id, order_id=oid,
+                 token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
+                 price=ev.price, source=source, status=ev.status.value)
+        if source == "REST" and ev.status in (TradeState.MINED, TradeState.CONFIRMED) and key not in self.applied_fill_keys:
+            matched = replace(ev, status=TradeState.MATCHED)
+            self.on_trade(matched, condition_id, source="REST")
+            self.fill_records[key] = replace(ev, ts=matched.ts)
+            if ev.status is TradeState.CONFIRMED:
+                self._store.clear_inflight(ev.token_id)
+            return
         if ev.status is TradeState.MATCHED:
-            if ev.trade_id in self._applied:
-                return  # idempotent: already counted this match (in-memory fast path)
-            fill = Fill(ev.token_id, ev.our_side, ev.price, ev.size, ev.trade_id, ev.ts, is_maker=True)
+            if key in self.applied_fill_keys:
+                self.fill_records[key] = self._advanced_status(self.fill_records.get(key), ev)
+                return
+            fill = Fill(ev.token_id, ev.our_side, ev.price, ev.size,
+                        f"{len(ev.trade_id)}:{ev.trade_id}{oid}", ev.ts, is_maker=True)
             if not self._store.apply_fill(fill):
                 # duplicate at the persistent layer (replay after CONFIRMED or
-                # across restarts) — apply NO side effects
+                # across restarts): restore evidence in this session but apply
+                # NO economic side effects.
+                prior = self.fill_records.get(key)
+                self.fill_records[key] = self._advanced_status(prior, ev)
+                self.applied_fill_keys.add(key)
                 return
             self._store.mark_inflight(ev.token_id)
-            self._applied[ev.trade_id] = fill
+            prior = self.fill_records.get(key)
+            self.fill_records[key] = self._advanced_status(prior, ev)
+            self.applied_fill_keys.add(key)
+            log.info("owned_maker_fill_applied", trade_id=ev.trade_id, order_id=oid,
+                     token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
+                     price=ev.price, source=source, status=ev.status.value)
             self._on_fill(fill)
+            self._on_maker_fill(ev)
             self._on_change(condition_id)
 
         elif ev.status in (TradeState.CONFIRMED, TradeState.MINED):
-            if ev.trade_id in self._applied and ev.status is TradeState.CONFIRMED:
+            prior = self.fill_records.get(key)
+            self.fill_records[key] = (replace(ev, ts=prior.ts if prior and prior.ts > 0 else ev.ts)
+                                      if source == "REST" and ev.status is TradeState.CONFIRMED
+                                      else self._advanced_status(prior, ev))
+            if key in self.fill_records and ev.status is TradeState.CONFIRMED:
                 self._store.clear_inflight(ev.token_id)
-                # keep the fill; it's now settled
-                self._applied.pop(ev.trade_id, None)
                 self._on_change(condition_id)
+            log.info("trade_status_updated", trade_id=ev.trade_id, order_id=oid,
+                     status=ev.status.value)
 
         elif ev.status is TradeState.RETRYING:
+            self.fill_records[key] = self._advanced_status(self.fill_records.get(key), ev)
             # tx being retried on-chain — it may still succeed. Keep the
             # optimistic fill and the inflight guard; only FAILED is terminal.
-            log.warning("trade_retrying", trade_id=ev.trade_id, token=ev.token_id[:12])
+            log.warning("trade_retrying", trade_id=ev.trade_id, order_id=oid, token=ev.token_id[:12])
 
         elif ev.status is TradeState.FAILED:
-            prior = self._applied.pop(ev.trade_id, None)
-            if prior is not None:
-                # reverse the optimistic fill (idempotent via the :reverse id)
-                self._store.apply_fill(
-                    Fill(prior.token_id, prior.side.opposite, prior.price, prior.size,
-                         f"{prior.trade_id}:reverse", prior.ts, is_maker=True)
-                )
-                self._store.clear_inflight(ev.token_id)
-                log.warning("trade_failed_reversed", trade_id=ev.trade_id, token=ev.token_id[:12])
-                self._on_change(condition_id)
+            if key in self.fill_records:
+                self.fill_records[key] = replace(self.fill_records[key], status=ev.status)
+            else:
+                self.fill_records[key] = ev
+            self.quarantined_orders.add(oid)
+            self._store.mark_owned_order_unresolved(oid, True)
+            log.error("trade_quarantined", trade_id=ev.trade_id, order_id=oid, reason="FAILED")
+            if source == "WS":
+                self._on_reconcile(oid)
 
     def on_order(self, ev: OrderEvent, condition_id: str) -> None:
+        if ev.order_id not in self._owned:
+            return
+        owned = self._store.owned_order(ev.order_id)
+        if (owned is None or ev.token_id != owned["token_id"]
+                or ev.side.value != owned["side"]
+                or condition_id != owned["condition_id"]
+                or (ev.market_id is not None and ev.market_id != owned["condition_id"])
+                or abs(ev.original_size - float(owned["submitted_qty"])) > 1e-6
+                or abs(ev.price - float(owned["submitted_price"])) > 1e-6):
+            self.quarantine_order(ev.order_id, "order event economics contradict registry")
+            return
+        qty = self.tracked_trade_qty(ev.order_id)
+        gap = ev.size_matched > qty + 1e-6 or qty > ev.size_matched + 1e-6
+        missing_assoc = bool(ev.associate_trades) and not set(ev.associate_trades).issubset(
+            {tid for tid, oid in self.applied_fill_keys if oid == ev.order_id
+             and (tid, oid) not in self.quarantined_fill_keys
+             and self.fill_records.get((tid, oid), None) is not None
+             and self.fill_records[(tid, oid)].status is not TradeState.FAILED})
+        log.info("order_match_checksum", order_id=ev.order_id, venue_qty=ev.size_matched,
+                 tracked_qty=qty, status=ev.status)
+        if gap or missing_assoc:
+            self.quarantined_orders.add(ev.order_id)
+            self._store.mark_owned_order_unresolved(ev.order_id, True)
+            log.warning("fill_gap_detected", order_id=ev.order_id, venue_qty=ev.size_matched,
+                        tracked_qty=qty, associate_trades_missing=missing_assoc)
+            self._on_reconcile(ev.order_id)
         if ev.is_cancel or ev.remaining_size <= 0:
             self._store.remove_order(ev.order_id)
         else:

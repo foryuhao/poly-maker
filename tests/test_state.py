@@ -56,6 +56,37 @@ def test_reconcile_positions_skips_inflight_and_recent(tmp_path):
     s.close()
 
 
+def test_recovery_selection_never_caps_unresolved_or_active(tmp_path):
+    s = StateStore(tmp_path / "recovery.db")
+    try:
+        for i in range(600):
+            s.register_owned_order(f"unresolved-{i}", "cid", "tok", Side.BUY, 1, .2, "test")
+        rows = s.owned_orders_for_recovery(since_ts=10**12, active_ids=set(), condition_ids={"cid"})
+        assert len(rows) == 600
+    finally:
+        s.close()
+
+
+def test_recovery_selection_caps_only_recent_resolved_and_keeps_active(tmp_path):
+    import time
+    s = StateStore(tmp_path / "recovery.db")
+    try:
+        for i in range(600):
+            oid = f"recent-{i}"
+            s.register_owned_order(oid, "cid", "tok", Side.BUY, 1, .2, "test")
+            s.mark_owned_order_unresolved(oid, False)
+        s.register_owned_order("active-old", "cid", "tok", Side.BUY, 1, .2, "test")
+        s.mark_owned_order_unresolved("active-old", False)
+        s._conn.execute("UPDATE owned_orders SET created_ts=0 WHERE order_id='active-old'")
+        rows = s.owned_orders_for_recovery(since_ts=time.time()-10,
+            active_ids={"active-old"}, condition_ids={"cid"}, limit=500)
+        ids = {str(r["order_id"]) for r in rows}
+        assert len(ids) == 501
+        assert "active-old" in ids
+    finally:
+        s.close()
+
+
 def test_state_persists_across_restart(tmp_path):
     db = tmp_path / "s.db"
     s = StateStore(db)
@@ -73,10 +104,11 @@ def test_matched_then_confirmed(tmp_path):
     s = StateStore(tmp_path / "s.db")
     changed: list[str] = []
     p = UserEventProcessor(s, on_change=changed.append)
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0), "cid")
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .5)
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0, "o1"), "cid")
     assert s.position("tok").size == 100
     assert s.inflight("tok") == 1
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.CONFIRMED, 2.0), "cid")
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.CONFIRMED, 2.0, "o1"), "cid")
     assert s.inflight("tok") == 0
     assert s.position("tok").size == 100  # settled
     assert changed == ["cid", "cid"]
@@ -86,30 +118,36 @@ def test_matched_then_confirmed(tmp_path):
 def test_matched_is_idempotent(tmp_path):
     s = StateStore(tmp_path / "s.db")
     p = UserEventProcessor(s)
-    ev = TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0)
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .5)
+    ev = TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0, "o1")
     p.on_trade(ev, "cid")
     p.on_trade(ev, "cid")  # duplicate MATCHED for same trade id
     assert s.position("tok").size == 100  # not doubled
     s.close()
 
 
-def test_failed_trade_reverses_fill(tmp_path):
+def test_failed_trade_quarantines_without_blind_reversal(tmp_path):
     s = StateStore(tmp_path / "s.db")
     p = UserEventProcessor(s)
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0), "cid")
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .5)
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.MATCHED, 1.0, "o1"), "cid")
     assert s.position("tok").size == 100
-    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.FAILED, 2.0), "cid")
-    assert s.position("tok").size == 0  # rolled back
-    assert s.inflight("tok") == 0
+    p.on_trade(TradeEvent("tok", Side.BUY, 0.5, 100, "trade1", TradeState.FAILED, 2.0, "o1"), "cid")
+    assert s.position("tok").size == 100
+    assert s.inflight("tok") == 1
+    assert "o1" in p.quarantined_orders
     s.close()
 
 
 def test_order_event_upsert_and_cancel(tmp_path):
     s = StateStore(tmp_path / "s.db")
     p = UserEventProcessor(s)
-    p.on_order(OrderEvent("o1", "tok", Side.BUY, 0.49, 100), "cid")
+    p.register_order("o1", "cid", "tok", Side.BUY, 100, .49)
+    p.on_order(OrderEvent("o1", "tok", Side.BUY, 0.49, 100, original_size=100,
+                          size_matched=0), "cid")
     assert len(s.orders_for("tok")) == 1
-    p.on_order(OrderEvent("o1", "tok", Side.BUY, 0.49, 0, is_cancel=True), "cid")
+    p.on_order(OrderEvent("o1", "tok", Side.BUY, 0.49, 0, is_cancel=True,
+                          original_size=100, size_matched=100), "cid")
     assert len(s.orders_for("tok")) == 0
     s.close()
 

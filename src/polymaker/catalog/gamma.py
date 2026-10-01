@@ -59,6 +59,18 @@ class GammaClient:
             log.warning("markets_by_condition_failed", err=str(exc))
         return out
 
+    async def market_by_slug(self, slug: str) -> dict[str, Any] | None:
+        """Fetch one exact slug without scanning a tag or paginating the catalog."""
+        try:
+            r = await self._client.get("/markets", params={"slug": slug, "limit": 1})
+            r.raise_for_status()
+            for market in r.json():
+                if market.get("slug") == slug:
+                    return market
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            log.warning("market_by_slug_failed", slug=slug, err=str(exc))
+        return None
+
     async def resolve_tag_id(self, slug: str) -> str | None:
         try:
             r = await self._client.get(f"/tags/slug/{slug}")

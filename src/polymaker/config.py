@@ -15,9 +15,49 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from dotenv import dotenv_values, load_dotenv
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ConfigAliasError(ValueError):
+    """A live credential alias is invalid or disagrees with its counterpart."""
+
+
+def _key_identity(value: str) -> str:
+    """Compare harmless textual variants without exposing key material."""
+    key = value.strip()
+    if key[:2].lower() == "0x":
+        key = key[2:]
+    return key.lower() if key and all(char in "0123456789abcdefABCDEF" for char in key) else key
+
+
+def _address_identity(value: str, name: str) -> str:
+    from web3 import Web3
+
+    address = value.strip()
+    if not address:
+        return ""
+    if not Web3.is_address(address):
+        raise ConfigAliasError(f"CONFIG_INVALID_ADDRESS: {name}")
+    return Web3.to_checksum_address(address)
+
+
+def _resolve_alias_pair(source: dict[str, Any], legacy: str, canonical: str,
+                        *, address: bool = False) -> str | None:
+    """Resolve one alias pair or fail before constructing live clients."""
+    present = [name for name in (legacy, canonical) if name in source]
+    if not present:
+        return None
+    normalized = {
+        name: (_address_identity(str(source[name] or ""), name) if address
+               else _key_identity(str(source[name] or "")))
+        for name in present
+    }
+    if len(present) == 2 and normalized[legacy] != normalized[canonical]:
+        raise ConfigAliasError(
+            f"CONFIG_ALIAS_CONFLICT: {legacy} and {canonical} are both set but differ")
+    return normalized[present[0]] if address else str(source[present[0]] or "").strip()
 
 
 class WalletConfig(BaseModel):
@@ -164,8 +204,24 @@ class Secrets(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    pk: str = Field(default="", alias="PK")
-    browser_address: str = Field(default="", alias="BROWSER_ADDRESS")
+    def __init__(self, **values: Any) -> None:
+        env_file = values.get("_env_file", self.model_config.get("env_file"))
+        source: dict[str, Any] = dict(dotenv_values(env_file)) if env_file is not None else {}
+        source.update(os.environ)
+        for legacy, canonical, address in (
+            ("PK", "POLYMARKET_PRIVATE_KEY", False),
+            ("BROWSER_ADDRESS", "POLYMARKET_WALLET_ADDRESS", True),
+        ):
+            explicit = {name: values[name] for name in (legacy, canonical) if name in values}
+            resolved = _resolve_alias_pair(explicit or source, legacy, canonical, address=address)
+            if resolved is not None:
+                values[legacy] = resolved
+                values.pop(canonical, None)
+        super().__init__(**values)
+
+    pk: str = Field(default="", validation_alias=AliasChoices("PK", "POLYMARKET_PRIVATE_KEY"))
+    browser_address: str = Field(default="", validation_alias=AliasChoices(
+        "BROWSER_ADDRESS", "POLYMARKET_WALLET_ADDRESS"))
     polygon_rpc: str | None = Field(default=None, alias="POLYGON_RPC")
     alert_webhook_url: str | None = Field(default=None, alias="ALERT_WEBHOOK_URL")
     # Polymarket builder API creds (self-generated via L2 auth: clob.create_builder_api_key)

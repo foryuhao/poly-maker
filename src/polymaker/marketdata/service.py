@@ -45,12 +45,15 @@ class MarketDataService:
         on_trade: TradeCb | None = None,
         journal: Journal | None = None,
         proxy: str | None = None,
+        on_connection: Callable[[bool], None] | None = None,
+        queue_maxsize: int = 2048,
     ) -> None:
         self._url = url
         self._on_dirty = on_dirty or (lambda _c, _t: None)
         self._on_trade = on_trade or (lambda _tp: None)
         self._journal = journal
         self._proxy = proxy
+        self._on_connection = on_connection or (lambda _connected: None)
         self.books: dict[str, OrderBook] = {}
         self._token_condition: dict[str, str] = {}
         self._subs: list[str] = []
@@ -62,6 +65,10 @@ class MarketDataService:
         # genuinely down connection is. Book-mutation recency can't tell the two
         # apart on a thin market, so we gate on connection liveness instead.
         self.disconnected_since: float = 0.0
+        self.connected_since: float = 0.0
+        self.connection_generation: int = 0
+        self._queue_maxsize = queue_maxsize
+        self.metrics = {"received": 0, "processed": 0, "queue_full": 0, "processing_lag_ms": 0.0}
 
     # ── subscription management ─────────────────────────────────────────
     def set_markets(self, markets: list[tuple[str, list[str]]]) -> None:
@@ -121,13 +128,53 @@ class MarketDataService:
             self._ws = ws
             await ws.send(json.dumps({"assets_ids": self._subs, "type": "market"}))
             self.connected = True
+            self.connection_generation += 1
+            self.connected_since = time.time()
+            self._on_connection(True)
             log.info("market_ws_subscribed", n=len(self._subs))
+            queue: asyncio.Queue[tuple[int, float, str | bytes]] = asyncio.Queue(maxsize=self._queue_maxsize)
+            generation = self.connection_generation
+            consumer = asyncio.create_task(self._consume(queue, generation), name="market-ws-consumer")
             try:
                 async for raw in ws:
-                    self._handle(raw)
+                    self.metrics["received"] += 1
+                    try:
+                        queue.put_nowait((generation, time.monotonic(), raw))
+                    except asyncio.QueueFull as exc:
+                        self.metrics["queue_full"] += 1
+                        log.error("market_ws_queue_full", depth=queue.qsize(), maxsize=self._queue_maxsize,
+                                  received=self.metrics["received"], processed=self.metrics["processed"])
+                        raise RuntimeError("market WS local processing queue full") from exc
             finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
                 self.connected = False
                 self.disconnected_since = time.time()
+                self._on_connection(False)
+
+    async def _consume(self, queue: asyncio.Queue[tuple[int, float, str | bytes]], generation: int) -> None:
+        last_stats = time.monotonic()
+        while True:
+            queued_generation, received_at, raw = await queue.get()
+            try:
+                if queued_generation == generation == self.connection_generation and self.connected:
+                    await self._process_raw(raw)
+                    self.metrics["processed"] += 1
+                    self.metrics["processing_lag_ms"] = (time.monotonic() - received_at) * 1000
+            finally:
+                queue.task_done()
+            now = time.monotonic()
+            if now - last_stats >= 5:
+                log.info("market_ws_ingest_stats", received=self.metrics["received"],
+                         processed=self.metrics["processed"], queue_depth=queue.qsize(),
+                         processing_lag_ms=round(self.metrics["processing_lag_ms"], 1),
+                         queue_full=self.metrics["queue_full"])
+                last_stats = now
+            # Let the socket reader run even when the bounded queue stays nonempty.
+            await asyncio.sleep(0)
+
+    async def _process_raw(self, raw: str | bytes) -> None:
+        self._handle(raw)
 
     def stop(self) -> None:
         self._stop.set()
@@ -162,6 +209,7 @@ class MarketDataService:
         if upd.tick_size:
             book.set_tick_size(upd.tick_size)
         book.apply_snapshot(upd.bids, upd.asks, upd.ts, upd.book_hash)
+        book.snapshot_generation = self.connection_generation
         self._journal_write("book", msg, upd.ts)
         self._wake(upd.asset_id)
 

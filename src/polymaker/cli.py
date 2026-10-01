@@ -226,6 +226,85 @@ def run(
         console.print("\n[yellow]Stopped.[/yellow]")
 
 
+@app.command(name="btc5m-paper")
+def btc5m_paper(
+    config_dir: str = typer.Option("config", help="config directory"),
+    once: bool = typer.Option(False, "--once", help="run one 5-minute market session"),
+    shutdown_buffer_s: float = typer.Option(15.0, "--shutdown-buffer-s", min=0.0,
+                                            help="stop quoting this many seconds before expiry"),
+) -> None:
+    """Run BTC 5-minute markets using PAPER mode only."""
+    from polymaker.btc5m import run_btc5m_paper
+    from polymaker.logging import configure
+
+    cfg = Config.load(config_dir)
+    configure(json_file=Path(cfg.paths.log_dir) / "paper.jsonl")
+    console.print("[bold green]Starting BTC5m polymaker[/bold green] (PAPER)…")
+    try:
+        asyncio.run(run_btc5m_paper(config_dir, once=once,
+                                    shutdown_buffer_s=shutdown_buffer_s))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopped.[/yellow]")
+
+
+@app.command(name="favorite-first-live")
+def favorite_first_live(
+    config_dir: str = typer.Option("config", help="config directory"),
+    once: bool = typer.Option(False, "--once", help="arm exactly one live BTC5m market"),
+    preflight_only: bool = typer.Option(False, "--preflight-only",
+                                        help="never arm or place; may cancel selected-market orders"),
+) -> None:
+    """Run one controlled FavoriteFirst live market or stop after preflight."""
+    from polymaker.favorite_live import LiveResult, run_favorite_first_live
+    from polymaker.logging import configure
+
+    if once == preflight_only:
+        raise typer.BadParameter("choose exactly one of --once or --preflight-only")
+    cfg = Config.load(config_dir)
+    configure(json_file=Path(cfg.paths.log_dir) / "favorite-first-live.jsonl")
+    result = asyncio.run(run_favorite_first_live(
+        config_dir, console, preflight_only=preflight_only))
+    console.print(f"Result: {result.value}")
+    raise typer.Exit(0 if result in (LiveResult.PREFLIGHT_PASS, LiveResult.COMPLETED,
+                                      LiveResult.UNPAIRABLE_RESIDUAL) else 1)
+
+
+@app.command(name="favorite-first-report")
+def favorite_first_report(
+    last: int = typer.Option(10, "--last", min=1, help="recent completed runs"),
+    config_dir: str = typer.Option("config", help="config directory"),
+) -> None:
+    """Summarize completed FavoriteFirst runs from structured run artifacts."""
+    from polymaker.favorite_report import aggregate
+
+    cfg = Config.load(config_dir)
+    console.print(aggregate(Path(cfg.paths.log_dir) / "runs", last))
+
+
+@app.command(name="settlement-sweep")
+def settlement_sweep(
+    once: bool = typer.Option(False, "--once", help="execute one live settlement sweep"),
+    preflight_only: bool = typer.Option(False, "--preflight-only",
+                                        help="read wallet state without any settlement transaction"),
+    config_dir: str = typer.Option("config", help="config directory"),
+) -> None:
+    """Recycle funder-owned complete sets and resolved outcomes; never place orders."""
+    if once == preflight_only:
+        raise typer.BadParameter("choose exactly one of --once or --preflight-only")
+    from polymaker.settlement_sweep import preflight, sweep
+
+    cfg = Config.load(config_dir)
+    if preflight_only:
+        row = preflight(cfg, print_plan=console.print)
+        console.print(f"Settlement preflight: {row['status']} | {row['artifact_dir']}")
+        raise typer.Exit(0 if row["status"] == "PREFLIGHT_PASS" else 1)
+    row = sweep(cfg, print_plan=console.print)
+    console.print(f"Settlement: {row['status']} | {row['artifact_dir']}")
+    for gate, value in row["static_gates"].items():
+        console.print(f"{gate}: {value}")
+    raise typer.Exit(0 if row["status"] in ("CONFIRMED", "NOTHING_TO_DO") else 1)
+
+
 @app.command()
 def livetest(
     config_dir: str = typer.Option("config", help="config directory"),
@@ -236,6 +315,18 @@ def livetest(
 
     cfg = Config.load(config_dir)
     ok = asyncio.run(run_livetest(cfg, console, notional))
+    raise typer.Exit(0 if ok else 1)
+
+
+@app.command()
+def filltest(config_dir: str = typer.Option("config", help="config directory")) -> None:
+    """Wait for one low-risk BTC5m maker fill and verify its WS and position state."""
+    from polymaker.filltest import run_filltest
+    from polymaker.logging import configure
+
+    cfg = Config.load(config_dir)
+    configure(json_file=Path(cfg.paths.log_dir) / "filltest.jsonl")
+    ok = asyncio.run(run_filltest(cfg))
     raise typer.Exit(0 if ok else 1)
 
 
