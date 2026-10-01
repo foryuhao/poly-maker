@@ -407,8 +407,20 @@ class DatasetManifest(ResearchRecord):
     event_watermark: NonnegativeInt
     gap_count: NonnegativeInt
     close_status: Literal["OPEN", "COMPLETE", "INCOMPLETE"]
+    accepted_count: NonnegativeInt = 0
+    persisted_count: NonnegativeInt = 0
+    rejected_full: NonnegativeInt = 0
+    rejected_closed: NonnegativeInt = 0
+    lost_event_ranges: tuple[tuple[NonnegativeInt, NonnegativeInt], ...] = ()
+    writer_error: str | None = None
+    queue_high_water: NonnegativeInt = 0
+    observer_failures: NonnegativeInt = 0
+    lost_event_count: NonnegativeInt = 0
+    lost_ranges_truncated: NonnegativeInt = 0
+    lost_reason_counts: Mapping[str, NonnegativeInt] = Field(default_factory=dict)
 
-    @field_validator("payload_versions", "file_sha256", "effective_strategy_config", "split_boundaries_us")
+    @field_validator("payload_versions", "file_sha256", "effective_strategy_config",
+                     "split_boundaries_us", "lost_reason_counts")
     @classmethod
     def freeze_mapping(cls, values: Mapping[str, Any]) -> Mapping[str, Any]:
         if any(key.lower() in {"private_key", "api_secret", "builder_secret", "builder_key",
@@ -419,7 +431,8 @@ class DatasetManifest(ResearchRecord):
             raise ValueError("manifest contains a non-finite value")
         return MappingProxyType(dict(values))
 
-    @field_serializer("payload_versions", "file_sha256", "effective_strategy_config", "split_boundaries_us")
+    @field_serializer("payload_versions", "file_sha256", "effective_strategy_config",
+                      "split_boundaries_us", "lost_reason_counts")
     def serialize_mapping(self, values: Mapping[str, Any]) -> dict[str, Any]:
         return dict(values)
 

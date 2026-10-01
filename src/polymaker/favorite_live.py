@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -35,6 +36,7 @@ from polymaker.favorite_report import (
     write_artifacts,
 )
 from polymaker.research.observer import ResearchConfig, ResearchObserver
+from polymaker.research.schema import DatasetManifest
 from polymaker.research.writer import ResearchWriter
 from polymaker.strategy.favorite_first import FavoriteFirstConfig, StrategyState
 
@@ -602,8 +604,26 @@ async def run_favorite_first_live(
             try:
                 observer = ResearchObserver(research_config)
                 assert observer.queue is not None
+                public_config = effective_config(CONTROLLED_CONFIG)
+                config_bytes = json.dumps(public_config, sort_keys=True,
+                                          separators=(",", ":")).encode()
+                config_hash = hashlib.sha256(config_bytes).hexdigest()
+                manifest = DatasetManifest(
+                    schema_version=1, dataset_id="m4a", session_id=artifact_dir.name,
+                    code_commit="UNKNOWN", strategy_config_id=config_hash,
+                    effective_strategy_config=public_config, config_sha256=config_hash,
+                    feature_version=None, label_version=None, policy_version=None,
+                    execution_version=None,
+                    payload_versions={"ResearchEvent": 1, "Episode": 1, "StateSnapshot": 1},
+                    condition_id=meta.condition_id, market_slug=meta.slug,
+                    yes_token_id=meta.yes.token_id, no_token_id=meta.no.token_id,
+                    split_boundaries_us={}, started_at_us=time.time_ns() // 1000,
+                    ended_at_us=None, file_sha256={}, event_watermark=0,
+                    gap_count=0, close_status="OPEN")
                 research_writer = ResearchWriter(Path(research_config.output_root),
-                    "m4a", artifact_dir.name, observer.queue)
+                    "m4a", artifact_dir.name, observer.queue, manifest=manifest,
+                    flush_interval_s=research_config.flush_interval_s,
+                    fsync_interval_s=research_config.fsync_interval_s)
                 research_writer.start()
                 research_kwargs = {"research_observer": observer,
                                    "research_session_id": artifact_dir.name}
@@ -614,6 +634,11 @@ async def run_favorite_first_live(
             cfg, paper=False, favorite_first=CONTROLLED_CONFIG, market_start_ts=epoch,
             **research_kwargs,
         )
+        if research_writer is not None:
+            def research_failure_count() -> int:
+                capture = getattr(engine, "research", None)
+                return observer.failures + (capture.failures if capture is not None else 0)
+            research_writer.failure_count_provider = research_failure_count
         await engine.start(arm_favorite=False)
         if len(engine.metas) != 1 or meta.condition_id not in engine.metas:
             raise PreflightError("Engine resolved a different market")
@@ -721,7 +746,11 @@ async def run_favorite_first_live(
             lifecycle = getattr(engine, "research_lifecycle", None)
             if lifecycle is not None and research_writer is not None:
                 try:
-                    if research_writer.error is not None:
+                    research_capture = getattr(engine, "research", None)
+                    if (research_writer.error is not None
+                            or research_writer.queue.counters.rejected_full
+                            or (research_capture is not None
+                                and research_capture.lost_events)):
                         await lifecycle.close("WRITER_FAILURE")
                 except Exception:
                     capture = getattr(engine, "research", None)

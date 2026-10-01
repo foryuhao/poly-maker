@@ -156,6 +156,8 @@ class EpisodeLifecycle:
         if (event.condition_id not in (self.condition_id, "") or self._closed
                 or self.capture_status != "OPEN"):
             return
+        if self.capture.lost_events:
+            self.quality_reasons.add("RESEARCH_PERSISTENCE_GAP")
         if self.episode_id is None:
             self.prefill.append((event.event_seq, event.available_at_us))
             while self.prefill and event.available_at_us - self.prefill[0][1] > self.prefill_us:
@@ -468,6 +470,7 @@ class EpisodeLifecycle:
             "quality_reasons": tuple(sorted(self.quality_reasons))})
         if not self.capture.observer.observe(row):
             self.capture.failures += 1
+            self.quality_reasons.add("RESEARCH_PERSISTENCE_GAP")
 
     def _book_state(self, token: str, now_us: int) -> dict[str, Any]:
         book = self.books.get(token)
@@ -507,6 +510,9 @@ class EpisodeLifecycle:
         self.snapshot_seq += 1
         fq, fc, pq, pc = self._inventory()
         paired = min(fq, pq)
+        queue = self.capture.observer.queue
+        if self.capture.lost_events or (queue is not None and queue.counters.rejected_full):
+            self.quality_reasons.add("RESEARCH_PERSISTENCE_GAP")
         yq, nq = (fq, pq) if self.first_side == "YES" else (pq, fq)
         ybook = self._book_state(self.yes_token_id, now_us)
         nbook = self._book_state(self.no_token_id, now_us)
@@ -629,6 +635,7 @@ class EpisodeLifecycle:
             "quality_reasons": tuple(sorted(reasons))})
         if not self.capture.observer.observe(row):
             self.capture.failures += 1
+            self.quality_reasons.add("RESEARCH_PERSISTENCE_GAP")
 
     def _finish(self, seq: int, now_us: int, mono: int, status: str,
                 reason: str | None) -> None:

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from decimal import Decimal
+from threading import Event
 
 from polymaker.domain import Side, TradeState
 from polymaker.execution.filltruth import ReconciliationOutcome, reconcile_owned_order_once
@@ -11,6 +13,7 @@ from polymaker.research.capture import CausalCapture
 from polymaker.research.lifecycle import EpisodeLifecycle
 from polymaker.research.observer import ResearchConfig, ResearchObserver
 from polymaker.research.schema import Episode, ResearchEvent, StateSnapshot
+from polymaker.research.writer import ResearchWriter
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import OrderEvent, TradeEvent, UserEventProcessor
 from polymaker.userstream.parse import normalize_order
@@ -320,8 +323,8 @@ def test_terminal_baseline_emits_immediate_material_snapshot_and_keeps_cadence(m
     assert not [e for e in records(rows, ResearchEvent) if e.kind == "ORDER_SUBMIT"]
 
 
-def test_late_writer_failure_revises_complete_episode_without_rewriting_it(monkeypatch):
-    lifecycle, _cap, emit, rows, current = rig(monkeypatch, end_us=103_000_000)
+def test_late_writer_failure_revises_complete_episode_without_rewriting_it(monkeypatch, tmp_path):
+    lifecycle, capture, emit, rows, current = rig(monkeypatch, end_us=103_000_000)
     emit("CONNECTION", {"stream": "market", "state": "UP"})
     emit("CONNECTION", {"stream": "user", "state": "UP"})
     emit("FILL_REVISION", fill(), at=101_000_000)
@@ -351,6 +354,67 @@ def test_late_writer_failure_revises_complete_episode_without_rewriting_it(monke
     count = len(records(rows, Episode))
     asyncio.run(lifecycle.close("WRITER_FAILURE"))
     assert len(records(rows, Episode)) == count
+    queue = capture.observer.queue
+    assert queue is not None
+    writer = ResearchWriter(tmp_path, "m4a", "session", queue)
+    writer.start()
+    assert writer.close()
+    persisted = [Episode.model_validate_json(line) for line in
+                 (writer.directory / "episodes.jsonl").read_text().splitlines()]
+    assert [row.revision for row in persisted] == list(range(1, count + 1))
+    assert persisted[-2].capture_status == "COMPLETE"
+    assert persisted[-1].capture_status == "CENSORED"
+
+
+def test_causal_capture_gap_invalidates_later_snapshot_without_backdating(monkeypatch):
+    _lifecycle, capture, emit, rows, _current = rig(monkeypatch)
+    emit("FILL_REVISION", fill(), at=101_000_000)
+    earlier = records(rows, StateSnapshot)[-1]
+    emit("BOOK", {"bad": object()}, at=101_100_000)
+    emit("FILL_REVISION", fill(role="PAIR", trade="p", order="pair"), at=101_200_000)
+    later = records(rows, StateSnapshot)[-1]
+    assert capture.lost_events == 1
+    assert earlier.coverage_valid is False  # no books yet, but no persistence gap
+    assert "RESEARCH_PERSISTENCE_GAP" not in earlier.quality_reasons
+    assert "RESEARCH_PERSISTENCE_GAP" in later.quality_reasons
+    assert not later.coverage_valid
+
+
+def test_failed_writer_keeps_complete_episode_but_invalidates_session(monkeypatch, tmp_path):
+    lifecycle, capture, emit, _rows, _current = rig(monkeypatch, end_us=103_000_000)
+    queue = capture.observer.queue
+    assert queue is not None
+    writer = ResearchWriter(tmp_path, "m4a", "session", queue)
+    writer.start()
+    assert writer.ready.wait(2)
+    emit("CONNECTION", {"stream": "market", "state": "UP"})
+    emit("CONNECTION", {"stream": "user", "state": "UP"})
+    emit("FILL_REVISION", fill(), at=101_000_000)
+    lifecycle.tick(102_000_000, 10_100_000_000 + 1_000_000_000)
+    lifecycle.tick(103_000_000, 10_100_000_000 + 2_000_000_000)
+    assert lifecycle.capture_status == "COMPLETE"
+    queue._queue.join()
+    closed = Event()
+    original_close = queue.close_producer
+
+    def signaled_close():
+        original_close()
+        closed.set()
+
+    queue.close_producer = signaled_close
+    writer._write = lambda _item, _files: (_ for _ in ()).throw(OSError("late write"))
+    emit("SAFETY", {"transition": "AFTER_COMPLETE"}, at=103_100_000)
+    assert closed.wait(2)
+    asyncio.run(lifecycle.close("WRITER_FAILURE"))
+    assert not writer.close()
+    persisted = [Episode.model_validate_json(line) for line in
+                 (writer.directory / "episodes.jsonl").read_text().splitlines()]
+    assert persisted[-1].capture_status == "COMPLETE"
+    assert all(row.capture_status != "CENSORED" for row in persisted)
+    manifest = json.loads((writer.directory / "manifest.json").read_text())
+    quality = json.loads((writer.directory / "quality.json").read_text())
+    assert manifest["close_status"] == "INCOMPLETE"
+    assert quality["status"] == "DEGRADED" and quality["clean_close"] is False
 
 
 def test_parser_tracker_cancellation_removes_research_working_order(monkeypatch):

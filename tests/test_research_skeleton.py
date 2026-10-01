@@ -218,9 +218,12 @@ def test_enqueue_rejected_while_writer_close_is_draining(tmp_path: Path):
     finally:
         release_write.set()
         closer.join(2)
-    assert not closer.is_alive() and closed == [True]
+    assert not closer.is_alive() and closed == [False]
     rows = (writer.directory / "events.jsonl").read_text().splitlines()
     assert [json.loads(row)["event_seq"] for row in rows] == [1]
+    manifest = json.loads((writer.directory / "manifest.json").read_text())
+    assert manifest["close_status"] == "INCOMPLETE"
+    assert manifest["rejected_closed"] == 1
 
 
 def test_payload_rejects_credentials():
