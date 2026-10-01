@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from threading import Lock
-from typing import Any
+from typing import Any, TypeVar
 
 from polymaker.research.observer import ResearchObserver
 from polymaker.research.schema import ResearchEvent
+
+T = TypeVar("T")
 
 
 def clock() -> tuple[int, int]:
@@ -32,6 +34,20 @@ class CausalCapture:
         self._seq = 0
         self._last_us = 0
         self.failures = 0
+        self.lost_events = 0
+        self._listeners: list[Callable[[ResearchEvent], None]] = []
+
+    def add_listener(self, listener: Callable[[ResearchEvent], None]) -> None:
+        with self._lock:
+            self._listeners.append(listener)
+
+    def synchronized(self, callback: Callable[[int, int, int], T]) -> T:
+        """Copy a projection at one causal event boundary."""
+        with self._lock:
+            available, mono = clock()
+            available = max(available, self._last_us)
+            self._last_us = available
+            return callback(self._seq, available, mono)
 
     @property
     def enabled(self) -> bool:
@@ -61,6 +77,14 @@ class CausalCapture:
                     "payload": ({**payload, "received_monotonic_ns": received_monotonic_ns}
                                 if received_monotonic_ns is not None else payload),
                 })
-                self.observer.observe(record)
+                admitted = self.observer.observe(record)
+                if admitted:
+                    for listener in self._listeners:
+                        try:
+                            listener(record)
+                        except Exception:
+                            self.failures += 1
+                else:
+                    self.lost_events += 1
         except Exception:
             self.failures += 1

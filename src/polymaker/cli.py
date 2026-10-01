@@ -253,17 +253,20 @@ def favorite_first_live(
     once: bool = typer.Option(False, "--once", help="arm exactly one live BTC5m market"),
     preflight_only: bool = typer.Option(False, "--preflight-only",
                                         help="never arm or place; may cancel selected-market orders"),
+    research: bool = typer.Option(False, "--research", help="capture M4A causal events"),
 ) -> None:
     """Run one controlled FavoriteFirst live market or stop after preflight."""
     from polymaker.favorite_live import LiveResult, run_favorite_first_live
     from polymaker.logging import configure
+    from polymaker.research.observer import ResearchConfig
 
     if once == preflight_only:
         raise typer.BadParameter("choose exactly one of --once or --preflight-only")
     cfg = Config.load(config_dir)
     configure(json_file=Path(cfg.paths.log_dir) / "favorite-first-live.jsonl")
     result = asyncio.run(run_favorite_first_live(
-        config_dir, console, preflight_only=preflight_only))
+        config_dir, console, preflight_only=preflight_only,
+        research_config=ResearchConfig(enabled=research)))
     console.print(f"Result: {result.value}")
     raise typer.Exit(0 if result in (LiveResult.PREFLIGHT_PASS, LiveResult.COMPLETED,
                                       LiveResult.UNPAIRABLE_RESIDUAL) else 1)

@@ -15,6 +15,7 @@ import asyncio
 import itertools
 import math
 import time
+import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -27,6 +28,7 @@ from polymaker.domain import MarketMeta, OpenOrder, OrderState, Quote, Side
 from polymaker.execution.ratelimit import TokenBucket
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
+from polymaker.research.capture import CausalCapture
 
 log = get_logger("execution.gateway")
 
@@ -61,10 +63,12 @@ class ExecutionGateway:
         journal: Journal | None = None,
         *,
         paper: bool = False,
+        research: CausalCapture | None = None,
     ) -> None:
         self._cfg = cfg
         self._paper = paper
         self._journal = journal
+        self._research = research
         self._client: Any = None  # py_clob_client_v2.ClobClient
         self._creds: Any = None
         self._address: str = ""  # signer EOA
@@ -186,9 +190,22 @@ class ExecutionGateway:
         self._journal_write("orders_out", [asdict(q) for q in quotes], ts)
 
         if self._paper:
-            return [self._paper_order(q) for q in quotes]
+            placed = [self._paper_order(q) for q in quotes]
+            if self._research is not None:
+                paper_request_id = uuid.uuid4().hex
+                self._order_observe("ORDER_SUBMIT", meta.condition_id, {"request_id": paper_request_id, "quotes": [self._research_quote(q) for q in quotes], "paper": True})
+                self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": paper_request_id, "order_ids": [o.order_id for o in placed], "outcome": "ACK", "paper": True})
+            return placed
+
+        attempted = False
+        request_id = uuid.uuid4().hex if self._research is not None else None
+        if request_id is not None:
+            self._order_observe("ORDER_SUBMIT", meta.condition_id,
+                {"request_id": request_id, "quotes": [self._research_quote(q) for q in quotes],
+                 "paper": False})
 
         def _place() -> list[OpenOrder]:
+            nonlocal attempted
             from py_clob_client_v2.clob_types import (
                 OrderArgsV2,
                 OrderType,
@@ -207,6 +224,7 @@ class ExecutionGateway:
             if submit_guard is not None and not submit_guard():
                 log.info("order_place_aborted_stale_connectivity", cid=meta.condition_id[:8])
                 return []
+            attempted = True
             try:
                 resp = self._client.post_orders(
                     args, post_only=(True if force_post_only else self._cfg.execution.post_only)
@@ -221,13 +239,20 @@ class ExecutionGateway:
                 raise PlacementUnknown("order POST response could not be parsed") from exc
 
         try:
-            return await self._io(_place)
+            placed = await self._io(_place)
+            if request_id is not None:
+                self._order_observe("ORDER_ACK", meta.condition_id,
+                    {"request_id": request_id, "order_ids": [o.order_id for o in placed],
+                     "outcome": "ACK" if placed else "REJECTED" if attempted else "ABORTED"})
+            return placed
         except PlacementUnknown:
+            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "UNKNOWN"})
             if strict_placement:
                 raise
             log.error("place_outcome_unknown", n=len(quotes))
             return []
         except Exception as exc:  # noqa: BLE001 - surface + continue; engine handles error rate
+            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "FAILED", "error_type": type(exc).__name__})
             log.error("place_failed", err=str(exc), n=len(quotes))
             return []
 
@@ -283,14 +308,18 @@ class ExecutionGateway:
         if not order_ids or self._paper:
             return True
         await self._cancel_bucket.acquire(1)
+        request_id = uuid.uuid4().hex if self._research is not None else None
+        self._order_observe("CANCEL_REQUEST", "", {"request_id": request_id, "order_ids": tuple(order_ids), "scope": "IDS"})
 
         def _cancel() -> None:
             self._client.cancel_orders(order_ids)
 
         try:
             await self._io(_cancel)
+            self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "order_ids": tuple(order_ids), "outcome": "ACK"})
             return True
         except Exception as exc:  # noqa: BLE001
+            self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "order_ids": tuple(order_ids), "outcome": "UNKNOWN", "error_type": type(exc).__name__})
             log.error("cancel_failed", err=str(exc), n=len(order_ids))
             return False
 
@@ -298,6 +327,8 @@ class ExecutionGateway:
         """Cancel every order on one token (idempotent quarantine primitive)."""
         if self._paper:
             return True
+        request_id = uuid.uuid4().hex if self._research is not None else None
+        self._order_observe("CANCEL_REQUEST", "", {"request_id": request_id, "token_id": asset_id, "scope": "ASSET"})
 
         def _cancel() -> None:
             from py_clob_client_v2.clob_types import OrderMarketCancelParams
@@ -306,8 +337,10 @@ class ExecutionGateway:
 
         try:
             await self._io(_cancel)
+            self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "token_id": asset_id, "outcome": "ACK"})
             return True
         except Exception as exc:  # noqa: BLE001
+            self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "token_id": asset_id, "outcome": "UNKNOWN", "error_type": type(exc).__name__})
             log.error("cancel_asset_failed", err=str(exc), token=asset_id[:12])
             return False
 
@@ -315,6 +348,8 @@ class ExecutionGateway:
         """Cancel orders scoped to one market and asset, for uncertain placement cleanup."""
         if self._paper:
             return True
+        request_id = uuid.uuid4().hex if self._research is not None else None
+        self._order_observe("CANCEL_REQUEST", market, {"request_id": request_id, "token_id": asset_id, "scope": "MARKET_ASSET"})
 
         def _cancel() -> None:
             from py_clob_client_v2.clob_types import OrderMarketCancelParams
@@ -325,8 +360,10 @@ class ExecutionGateway:
 
         try:
             await self._io(_cancel)
+            self._order_observe("CANCEL_ACK", market, {"request_id": request_id, "token_id": asset_id, "outcome": "ACK"})
             return True
         except Exception as exc:  # noqa: BLE001
+            self._order_observe("CANCEL_ACK", market, {"request_id": request_id, "token_id": asset_id, "outcome": "UNKNOWN", "error_type": type(exc).__name__})
             log.error("cancel_market_asset_failed", err=str(exc), market=market[:12],
                       token=asset_id[:12])
             return False
@@ -334,8 +371,24 @@ class ExecutionGateway:
     async def cancel_all(self) -> None:
         if self._paper or self._client is None:
             return
-        await self._io(self._client.cancel_all)
+        request_id = uuid.uuid4().hex if self._research is not None else None
+        self._order_observe("CANCEL_REQUEST", "", {"request_id": request_id, "scope": "ALL"})
+        try:
+            await self._io(self._client.cancel_all)
+        except BaseException:
+            self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "scope": "ALL", "outcome": "UNKNOWN"})
+            raise
+        self._order_observe("CANCEL_ACK", "", {"request_id": request_id, "scope": "ALL", "outcome": "ACK"})
         log.info("cancel_all_sent")
+
+    def _order_observe(self, kind: str, cid: str, payload: dict[str, Any]) -> None:
+        if self._research is not None:
+            self._research.emit(kind, cid, payload)
+
+    @staticmethod
+    def _research_quote(quote: Quote) -> dict[str, Any]:
+        return {"token_id": quote.token_id, "side": quote.side.value,
+                "price": quote.price, "size": quote.size}
 
     # ── market (taker) orders — used by moneydoctor, NOT the maker strategy ──
     async def market_order(

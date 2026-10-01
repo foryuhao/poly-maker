@@ -9,7 +9,8 @@ from typing import Any
 
 from polymaker.execution.gateway import GatewayReadError
 from polymaker.logging import get_logger
-from polymaker.state.tracker import OrderEvent, TradeEvent, UserEventProcessor
+from polymaker.research.capture import clock
+from polymaker.state.tracker import TradeEvent, UserEventProcessor
 from polymaker.userstream.parse import (
     MalformedMakerLeg,
     maker_order_id_evidence,
@@ -77,6 +78,7 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
         row = await gateway.get_order(order_id)
         _check_active_order_deadline(active_order_deadline)
         trades = await gateway.get_trades(market=str(owned["condition_id"]))
+        research_receipt = clock() if processor._research is not None else (None, None)
         _check_active_order_deadline(active_order_deadline)
         order_ev = normalize_order(row)
         _check_active_order_deadline(active_order_deadline)
@@ -127,7 +129,9 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                 processor.on_trade(TradeEvent(leg.asset_id, leg.side, leg.price,
                     leg.matched_amount, parsed.trade_id, parsed.status,
                     parsed.timestamp, leg.order_id, parsed.market or None),
-                    parsed.market or str(owned["condition_id"]), source="REST")
+                    parsed.market or str(owned["condition_id"]), source="REST",
+                    received_at_us=research_receipt[0],
+                    received_monotonic_ns=research_receipt[1])
                 _check_active_order_deadline(active_order_deadline)
                 after_qty = processor.tracked_trade_qty(order_id)
                 _check_active_order_deadline(active_order_deadline)
