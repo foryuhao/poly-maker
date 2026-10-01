@@ -3,20 +3,21 @@
 Current program: M4 — Dynamic Exit EV Research
 Current milestone: M4A — Research Telemetry
 Current slice: M4A.1 — Schema + Isolation Skeleton
-Status: READY FOR IMPLEMENTATION (architecture only; no M4A code or review yet)
+Status: **PASS**
 
 Stable rollback: `m3c-settlement-live-pass` (`fff2842`)
+Implementation baseline: `m4a-implementation-ready` (`9c28bca`)
 
 Research: `docs/research/DYNAMIC_EV_EXIT_RESEARCH_DESIGN.md`
 Program architecture: `docs/architecture/M4_ARCHITECTURE.md`
 Milestone architecture: `docs/architecture/M4A_ARCHITECTURE.md`
-Latest implementation: N/A
-Latest review: N/A
+Latest implementation: `docs/reports/M4A_1_IMPLEMENTATION_REPORT.md`
+Latest review: `docs/reviews/M4A_1_REVIEW.md`
 
-Architecture decisions: M4 remains fixed minimum-scale FavoriteFirst entry and research-only post-first-fill Exit EV. M4A captures actual causal state and Fill Truth through T+300 via a default-off, isolated observer; quantities are generic. Existing live wrapper handles one committed market per invocation. Raw journal alone lacks causal clocks and complete book-mutation evidence; M4A must add observation-only capture. The architecture has not changed live safety semantics.
+M4A.1 implemented the capture schema, default-off observer, bounded nonblocking queue and writer skeleton. No live hooks or trading semantics changed. The Reviewer found a P1 clean-close race. Worker repaired admission/close coordination and added deterministic concurrent tests. Current full suite: 545 passed, 2 skipped; targeted Ruff and Research-source mypy clean. Independent re-review verified the P1 repair and recorded PASS for the current uncommitted working tree. Repository-wide Ruff/mypy debt and the Reviewer's three P2 issues remain deferred.
 
-Attempted/completed: inspected code and Research Design at `fff2842`; moved the previously untracked Research Design to its required canonical path without content edits; created the M4 program and M4A technical architecture. No implementation, testing, review or collection gate has occurred. The source research file was untracked before normalization; `git mv` was used after staging it so Git records its canonical path.
+Architecture decisions remain: M4 is fixed minimum-scale FavoriteFirst entry and research-only post-first-fill Exit EV. M4A must eventually capture causal state and Fill Truth through T+300 through an isolated observer; quantities are generic. Existing live wrapper handles one committed market per invocation. Raw journal lacks causal clocks and complete book-mutation evidence, so later M4A slices must add observation-only capture.
 
-Open/deferred: raw-journal byte-offset provenance is unavailable without a proven capture seam; M4A therefore requires self-contained sanitized applied events. Continuous multi-market orchestration is separate future operational work. BTC reference feed, execution calibration, online residual valuation, model choice and live control remain deferred.
+Open/deferred: M4A.2 live event hooks and clocks; M4A.3 Episode/state lifecycle; M4A.4 durability/GAP/manifest; M4A.5 audit and collection gate. Raw-journal byte-offset provenance remains unavailable without a proven seam. Continuous multi-market orchestration, BTC reference feed, execution calibration, online residual valuation, model choice and live control remain deferred.
 
-Next authorized action: implement **M4A.1 only** against `docs/architecture/M4A_ARCHITECTURE.md`; do not implement M4A.2+ or claim M4A PASS.
+Next authorized action: **M4A.2 architecture-consistent implementation only.** Do not begin M4A.3 or later slices.
