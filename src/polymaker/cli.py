@@ -37,6 +37,51 @@ def version() -> None:
     console.print(f"polymaker {__version__}")
 
 
+@app.command("research-audit")
+def research_audit(
+    input_path: Path = typer.Argument(..., help="completed Research session or dataset directory"),  # noqa: B008
+    output_dir: Path = typer.Option(Path("research_audits"), help="derived audit output root"),  # noqa: B008
+    real_sessions_file: Path | None = typer.Option(None, help="optional, non-authoritative LIVE assertions"),  # noqa: B008
+    timing_file: Path | None = typer.Option(None, help="optional, non-authoritative timing assertions"),  # noqa: B008
+) -> None:
+    """Read persisted M4A evidence and report integrity and readiness separately."""
+    import json
+
+    from polymaker.research.audit import audit_collection, write_audit
+
+    if not input_path.is_dir():
+        raise typer.BadParameter("Research session or dataset directory does not exist")
+    artifacts = ("manifest.json", "quality.json", "events.jsonl",
+                 "episodes.jsonl", "states.jsonl")
+    # A damaged session is still a candidate when any other raw M4A artifact
+    # survives. An unrelated directory with no raw artifact is ignored.
+    children = sorted(path for path in input_path.iterdir() if path.is_dir())
+    candidates = [path for path in children if any((path / name).exists() for name in artifacts)]
+    sessions = ([input_path] if any((input_path / name).exists() for name in artifacts)
+                or not children else candidates)
+    if not sessions:
+        raise typer.BadParameter("dataset contains no Research session artifacts")
+    try:
+        real = (json.loads(real_sessions_file.read_text(encoding="utf-8"))
+                if real_sessions_file else None)
+        timing = (json.loads(timing_file.read_text(encoding="utf-8"))
+                  if timing_file else None)
+        if real is not None and not isinstance(real, dict):
+            raise ValueError("real-session attestations must be an object")
+        if timing is not None and not isinstance(timing, dict):
+            raise ValueError("timing evidence must be an object")
+        result = audit_collection(sessions, real_sessions=real, timing_evidence=timing)
+        target = output_dir / input_path.parent.name / input_path.name
+        write_audit(result, target)
+    except (OSError, ValueError, TypeError) as exc:
+        raise typer.BadParameter(f"audit input/output invalid: {type(exc).__name__}") from exc
+    console.print(f"M4A audit: {result['overall']} | integrity {result['integrity']} | "
+                  f"collection {result['collection']} | timing {result['timing']['status']} | "
+                  f"isolation {result['isolation']['status']}")
+    console.print(f"Reports: {target / 'audit.json'}, {target / 'audit_report.md'}")
+    raise typer.Exit(0 if result["overall"] == "PASS" else 1 if result["overall"] == "FAIL" else 2)
+
+
 @app.command()
 def scan(
     config_dir: str = typer.Option("config", help="config directory"),
