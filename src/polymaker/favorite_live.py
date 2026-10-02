@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import math
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -34,6 +33,12 @@ from polymaker.favorite_report import (
     gross_paired_pnl,
     run_id,
     write_artifacts,
+)
+from polymaker.research.identity import (
+    ResearchConfigIdentity,
+    normalize_favorite_config,
+    research_config_identity,
+    validate_research_config_identity,
 )
 from polymaker.research.observer import ResearchConfig, ResearchObserver
 from polymaker.research.schema import DatasetManifest
@@ -80,10 +85,29 @@ PREFLIGHT_TIMEOUT_S = 45.0
 
 
 def effective_config(config: FavoriteFirstConfig) -> dict[str, Any]:
-    values = asdict(config)
-    values.pop("probation_passive_offset_ticks")
-    values["first_leg_risk_window_s"] = values.pop("probation_max_s")
-    return values
+    return normalize_favorite_config(config)
+
+
+def research_manifest(identity: ResearchConfigIdentity, meta: MarketMeta, *,
+                      started_at_us: int, code_commit: str = "UNKNOWN") -> DatasetManifest:
+    """Build the live session Manifest from its already-owned identity."""
+    validate_research_config_identity(identity, identity.strategy_config,
+                                      dataset_id=identity.dataset_id,
+                                      session_id=identity.session_id)
+    return DatasetManifest(
+        schema_version=1, dataset_id=identity.dataset_id,
+        session_id=identity.session_id, code_commit=code_commit,
+        strategy_config_id=identity.config_id,
+        effective_strategy_config=identity.effective_config,
+        config_sha256=identity.config_id,
+        feature_version=None, label_version=None, policy_version=None,
+        execution_version=None,
+        payload_versions={"ResearchEvent": 1, "Episode": 1, "StateSnapshot": 1},
+        condition_id=meta.condition_id, market_slug=meta.slug,
+        yes_token_id=meta.yes.token_id, no_token_id=meta.no.token_id,
+        split_boundaries_us={}, started_at_us=started_at_us,
+        ended_at_us=None, file_sha256={}, event_watermark=0,
+        gap_count=0, close_status="OPEN")
 
 
 def validate_meta(meta: MarketMeta, slug: str, epoch: int, qty: float) -> None:
@@ -604,29 +628,18 @@ async def run_favorite_first_live(
             try:
                 observer = ResearchObserver(research_config)
                 assert observer.queue is not None
-                public_config = effective_config(CONTROLLED_CONFIG)
-                config_bytes = json.dumps(public_config, sort_keys=True,
-                                          separators=(",", ":")).encode()
-                config_hash = hashlib.sha256(config_bytes).hexdigest()
-                manifest = DatasetManifest(
-                    schema_version=1, dataset_id="m4a", session_id=artifact_dir.name,
-                    code_commit="UNKNOWN", strategy_config_id=config_hash,
-                    effective_strategy_config=public_config, config_sha256=config_hash,
-                    feature_version=None, label_version=None, policy_version=None,
-                    execution_version=None,
-                    payload_versions={"ResearchEvent": 1, "Episode": 1, "StateSnapshot": 1},
-                    condition_id=meta.condition_id, market_slug=meta.slug,
-                    yes_token_id=meta.yes.token_id, no_token_id=meta.no.token_id,
-                    split_boundaries_us={}, started_at_us=time.time_ns() // 1000,
-                    ended_at_us=None, file_sha256={}, event_watermark=0,
-                    gap_count=0, close_status="OPEN")
+                identity = research_config_identity(CONTROLLED_CONFIG, dataset_id="m4a",
+                                                     session_id=artifact_dir.name)
+                manifest = research_manifest(identity, meta,
+                                             started_at_us=time.time_ns() // 1000)
                 research_writer = ResearchWriter(Path(research_config.output_root),
-                    "m4a", artifact_dir.name, observer.queue, manifest=manifest,
+                    identity.dataset_id, identity.session_id, observer.queue, manifest=manifest,
                     flush_interval_s=research_config.flush_interval_s,
                     fsync_interval_s=research_config.fsync_interval_s)
                 research_writer.start()
                 research_kwargs = {"research_observer": observer,
-                                   "research_session_id": artifact_dir.name}
+                                   "research_session_id": identity.session_id,
+                                   "research_config_identity": identity}
             except Exception as exc:  # Research must not prevent trading startup.
                 research_writer = None
                 console.print(f"Research capture unavailable: {type(exc).__name__}")

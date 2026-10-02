@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
-import json
 import time
 import uuid
 from dataclasses import asdict, replace
@@ -35,6 +33,11 @@ from polymaker.marketdata.parse import TradePrint
 from polymaker.marketdata.service import MarketDataService
 from polymaker.merge import Merger
 from polymaker.research.capture import CausalCapture, clock
+from polymaker.research.identity import (
+    ResearchConfigIdentity,
+    research_config_identity,
+    validate_research_config_identity,
+)
 from polymaker.research.lifecycle import EpisodeLifecycle
 from polymaker.research.observer import ResearchObserver
 from polymaker.risk.manager import RiskManager
@@ -67,7 +70,8 @@ class Engine:
                  favorite_first: FavoriteFirstConfig | None = None,
                  market_start_ts: float | None = None,
                  research_observer: ResearchObserver | None = None,
-                 research_session_id: str | None = None) -> None:
+                 research_session_id: str | None = None,
+                 research_config_identity: ResearchConfigIdentity | None = None) -> None:
         if favorite_first is not None and market_start_ts is None:
             raise ValueError("Favorite-First requires the exact market start timestamp")
         self.cfg = cfg
@@ -77,6 +81,7 @@ class Engine:
         self._running = False
         self.research = (CausalCapture(research_observer, research_session_id or uuid.uuid4().hex)
                          if research_observer is not None and research_observer.config.enabled else None)
+        self.research_config_identity = research_config_identity
         self.research_lifecycle: EpisodeLifecycle | None = None
 
         self.journal = Journal(cfg.paths.journal_dir, enabled=cfg.engine.journal,
@@ -587,14 +592,20 @@ class Engine:
         self._favorite_pair_orders[condition_id] = set()
         if self.research is not None:
             try:
-                digest = hashlib.sha256(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()
+                identity = self.research_config_identity
+                if identity is None:
+                    identity = research_config_identity(config, dataset_id="m4a",
+                                                        session_id=self.research.session_id)
+                    self.research_config_identity = identity
+                validate_research_config_identity(identity, config, dataset_id="m4a",
+                                                  session_id=self.research.session_id)
                 rcfg = self.research.observer.config
                 self.research_lifecycle = EpisodeLifecycle(self.research,
-                    dataset_id="m4a", market_slug=meta.slug, condition_id=condition_id,
+                    dataset_id=identity.dataset_id, market_slug=meta.slug, condition_id=condition_id,
                     yes_token_id=meta.yes.token_id, no_token_id=meta.no.token_id,
                     market_start_us=int(market_start_ts * 1_000_000),
                     market_end_us=int((market_start_ts + 300) * 1_000_000),
-                    strategy_version="FavoriteFirst-v0.3", strategy_config_id=digest,
+                    strategy_version="FavoriteFirst-v0.3", strategy_config_id=identity.config_id,
                     venue_min_order_qty=meta.min_order_size,
                     forced_pair_s=config.forced_pair_start_s,
                     order_cutoff_s=config.hard_order_cutoff_s,

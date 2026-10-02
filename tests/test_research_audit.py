@@ -5,14 +5,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from polymaker.cli import app
+from polymaker.config import Config, PathsConfig
+from polymaker.domain import TokenMeta
+from polymaker.engine import Engine
+from polymaker.favorite_live import CONTROLLED_CONFIG, research_manifest
 from polymaker.research.audit import _coverage_passes, audit_collection, audit_session, write_audit
 from polymaker.research.capture import CausalCapture
+from polymaker.research.identity import (
+    canonical_config_bytes,
+    research_config_identity,
+)
 from polymaker.research.lifecycle import EpisodeLifecycle
 from polymaker.research.observer import ResearchConfig, ResearchObserver
 from polymaker.research.schema import DatasetManifest
@@ -23,26 +32,54 @@ def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, name: str = "ses
             end_us: int = 104_000_000, stop_us: int | None = None,
             duplicate_fill: bool = False, mutations: bool = False,
             terminal_cancel: bool = False, terminal_decision: bool = True,
-            terminal_state: str = "COMPLETE") -> Path:
+            terminal_state: str = "COMPLETE", runtime_meta=None) -> Path:
     current = [100_000_000, 100_000_000_000]
     monkeypatch.setattr("polymaker.research.capture.clock", lambda: tuple(current))
     observer = ResearchObserver(ResearchConfig(enabled=True))
     assert observer.queue is not None
-    capture = CausalCapture(observer, name)
-    lifecycle = EpisodeLifecycle(capture, dataset_id="m4a", market_slug="slug",
-        condition_id="condition", yes_token_id="yes", no_token_id="no",
-        market_start_us=0, market_end_us=end_us, strategy_version="test",
-        strategy_config_id="public", venue_min_order_qty=1)
-    config_hash = hashlib.sha256(b"{}").hexdigest()
-    manifest = DatasetManifest(schema_version=1, dataset_id="m4a", session_id=name,
-        code_commit="0" * 40, strategy_config_id="public", effective_strategy_config={},
-        config_sha256=config_hash, feature_version=None, label_version=None,
-        policy_version=None, execution_version=None,
-        payload_versions={"ResearchEvent": 1, "Episode": 1, "StateSnapshot": 1},
-        condition_id="condition", market_slug="slug", yes_token_id="yes",
-        no_token_id="no", split_boundaries_us={}, started_at_us=100_000_000,
-        ended_at_us=None, file_sha256={}, event_watermark=0, gap_count=0,
-        close_status="OPEN")
+    engine = None
+    if runtime_meta is None:
+        capture = CausalCapture(observer, name)
+        lifecycle = EpisodeLifecycle(capture, dataset_id="m4a", market_slug="slug",
+            condition_id="condition", yes_token_id="yes", no_token_id="no",
+            market_start_us=0, market_end_us=end_us, strategy_version="test",
+            strategy_config_id="public", venue_min_order_qty=1)
+        config_id = "public"
+        public_config = {}
+        config_hash = hashlib.sha256(b"{}").hexdigest()
+    else:
+        # Same session context as the live wrapper, with real Engine attachment.
+        identity = research_config_identity(CONTROLLED_CONFIG, dataset_id="m4a",
+                                             session_id=name)
+        cfg = Config(paths=PathsConfig(db=str(tmp_path / "runtime.db"),
+            journal_dir=str(tmp_path / "journal"), log_dir=str(tmp_path / "logs")))
+        engine = Engine(cfg, paper=True, favorite_first=CONTROLLED_CONFIG,
+            market_start_ts=0, research_observer=observer, research_session_id=name,
+            research_config_identity=identity)
+        engine.metas["condition"] = replace(runtime_meta, condition_id="condition",
+            slug="slug", tokens=(TokenMeta("yes", "Yes"), TokenMeta("no", "No")),
+            min_order_size=1)
+        engine.attach_favorite_first("condition", 0, CONTROLLED_CONFIG)
+        assert engine.research is not None and engine.research_lifecycle is not None
+        capture = engine.research
+        lifecycle = engine.research_lifecycle
+        config_id = identity.config_id
+        public_config = identity.effective_config
+        config_hash = identity.config_id
+    if engine is None:
+        manifest = DatasetManifest(schema_version=1, dataset_id="m4a", session_id=name,
+            code_commit="0" * 40, strategy_config_id=config_id,
+            effective_strategy_config=public_config,
+            config_sha256=config_hash, feature_version=None, label_version=None,
+            policy_version=None, execution_version=None,
+            payload_versions={"ResearchEvent": 1, "Episode": 1, "StateSnapshot": 1},
+            condition_id="condition", market_slug="slug", yes_token_id="yes",
+            no_token_id="no", split_boundaries_us={}, started_at_us=100_000_000,
+            ended_at_us=None, file_sha256={}, event_watermark=0, gap_count=0,
+            close_status="OPEN")
+    else:
+        manifest = research_manifest(identity, engine.metas["condition"],
+                                     started_at_us=100_000_000, code_commit="0" * 40)
     writer = ResearchWriter(tmp_path, "m4a", name, observer.queue, manifest=manifest)
     writer.start()
 
@@ -87,7 +124,120 @@ def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, name: str = "ses
         lifecycle.tick(at, at * 1000)
     asyncio.run(lifecycle.close())
     assert writer.close()
+    if engine is not None:
+        engine.gateway.close()
+        engine.state.close()
+        engine.catalog.close()
     return writer.directory
+
+
+def test_runtime_first_fill_uses_one_config_identity_and_audits(tmp_path, monkeypatch, meta):
+    path = session(tmp_path, monkeypatch, runtime_meta=meta)
+    manifest = json.loads((path / "manifest.json").read_text())
+    episodes = rows(path, "episodes.jsonl")
+    assert episodes and episodes[0]["first_order_id"] == "first"
+    assert manifest["strategy_config_id"] == manifest["config_sha256"]
+    assert {row["strategy_config_id"] for row in episodes} == {manifest["strategy_config_id"]}
+    result = audit_session(path)
+    assert "identity" not in gates(result), result["issues"]
+    assert result["integrity"] == "PASS", result["issues"]
+    assert audit_collection([path])["overall"] != "PASS"
+
+
+@pytest.mark.parametrize("tamper", ["forged_values", "different_config", "digest"])
+def test_engine_rejects_claimed_identity_before_research_attach(tmp_path, meta, tamper):
+    actual = CONTROLLED_CONFIG
+    identity = research_config_identity(actual, dataset_id="m4a", session_id="session")
+    if tamper == "forged_values":
+        other = research_config_identity(replace(actual, max_pair_loss_usd=0.75),
+                                         dataset_id="m4a", session_id="session")
+        identity = replace(identity, normalized_items=other.normalized_items,
+                           config_id=other.config_id)
+        assert actual.max_pair_loss_usd == 0.50
+        assert identity.effective_config["max_pair_loss_usd"] == 0.75
+    elif tamper == "different_config":
+        identity = research_config_identity(replace(actual, max_pair_loss_usd=0.75),
+                                            dataset_id="m4a", session_id="session")
+    else:
+        identity = replace(identity, config_id="0" * 64)
+    observer = ResearchObserver(ResearchConfig(enabled=True))
+    cfg = Config(paths=PathsConfig(db=str(tmp_path / "runtime.db"),
+        journal_dir=str(tmp_path / "journal"), log_dir=str(tmp_path / "logs")))
+    engine = Engine(cfg, paper=True, favorite_first=actual, market_start_ts=0,
+        research_observer=observer, research_session_id="session",
+        research_config_identity=identity)
+    try:
+        engine.metas[meta.condition_id] = meta
+        engine.attach_favorite_first(meta.condition_id, 0, actual)
+        assert engine.research is not None
+        assert engine.research.failures == 1
+        assert engine.research_lifecycle is None
+        assert observer.queue is not None and observer.queue.empty()
+        assert engine._favorite[meta.condition_id][1] is actual
+        if tamper != "different_config":
+            with pytest.raises(ValueError, match="effective strategy config"):
+                research_manifest(identity, meta, started_at_us=0)
+    finally:
+        engine.gateway.close()
+        engine.state.close()
+        engine.catalog.close()
+
+
+def test_rejected_engine_identity_cannot_certify_writer_session(tmp_path, meta):
+    actual = CONTROLLED_CONFIG
+    identity = research_config_identity(replace(actual, max_pair_loss_usd=0.75),
+                                        dataset_id="m4a", session_id="session")
+    observer = ResearchObserver(ResearchConfig(enabled=True))
+    assert observer.queue is not None
+    manifest = research_manifest(identity, meta, started_at_us=0,
+                                 code_commit="0" * 40)
+    writer = ResearchWriter(tmp_path, "m4a", "session", observer.queue,
+                            manifest=manifest)
+    writer.start()
+    cfg = Config(paths=PathsConfig(db=str(tmp_path / "runtime.db"),
+        journal_dir=str(tmp_path / "journal"), log_dir=str(tmp_path / "logs")))
+    engine = Engine(cfg, paper=True, favorite_first=actual, market_start_ts=0,
+        research_observer=observer, research_session_id="session",
+        research_config_identity=identity)
+    try:
+        assert engine.research is not None
+        writer.failure_count_provider = lambda: engine.research.failures
+        engine.metas[meta.condition_id] = meta
+        engine.attach_favorite_first(meta.condition_id, 0, actual)
+        assert engine.research.failures == 1
+        assert engine.research_lifecycle is None
+        assert not writer.close()
+        persisted = json.loads((writer.directory / "manifest.json").read_text())
+        assert persisted["close_status"] == "INCOMPLETE"
+        assert rows(writer.directory, "episodes.jsonl") == []
+    finally:
+        engine.gateway.close()
+        engine.state.close()
+        engine.catalog.close()
+
+
+def test_persisted_episode_config_mismatch_fails_audit(tmp_path, monkeypatch, meta):
+    path = session(tmp_path, monkeypatch, runtime_meta=meta)
+    episodes = rows(path, "episodes.jsonl")
+    episodes[0]["strategy_config_id"] = "0" * 64
+    replace_rows(path, "episodes.jsonl", episodes)
+    result = audit_session(path)
+    assert result["integrity"] == "FAIL"
+    assert "identity" in gates(result)
+
+
+def test_canonical_config_identity_is_deterministic():
+    identity = research_config_identity(CONTROLLED_CONFIG, dataset_id="m4a", session_id="one")
+    same = research_config_identity(replace(CONTROLLED_CONFIG), dataset_id="m4a",
+                                    session_id="two")
+    assert identity.config_id == same.config_id
+    values = identity.effective_config
+    assert canonical_config_bytes(values) == canonical_config_bytes(dict(reversed(list(values.items()))))
+    assert identity.config_id == hashlib.sha256(
+        canonical_config_bytes(dict(reversed(list(values.items()))))).hexdigest()
+    assert identity.config_id != research_config_identity(
+        replace(CONTROLLED_CONFIG, max_pair_loss_usd=0.75), dataset_id="m4a",
+        session_id="one").config_id
 
 
 def rows(path: Path, name: str) -> list[dict]:
