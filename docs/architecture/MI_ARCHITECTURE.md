@@ -26,6 +26,73 @@ venue precision, invalid account read, or missing output persistence stops the
 session. The runtime owns no execution gateway, user-stream processor, or
 order writer. No M2B path is defined here.
 
+## M2B-0A generic live authorization supplement — 2026-10-04
+
+The user separately authorized a bounded, code-only extraction of the
+FavoriteFirst live write authorization gate. This supplement covers that
+extraction only; it grants MI no order, cancel, or micro-live capability.
+`src/polymaker/live_authorization.py` validates explicit write mode and arm
+intent, live gateway mode, configured signer/funder/signature type, connected
+gateway identity, and authentication. It performs no network or strategy work.
+FavoriteFirst still owns its existing $12 collateral/allowance rule, flat
+startup, feed/user-stream/Fill Truth readiness, and Engine arm state.
+After the M2B-0A Review identified an Engine bypass, the bounded repair makes
+non-paper FavoriteFirst start disarmed, requires both generic authorization
+and FavoriteFirst preflight at Engine arm, and rechecks authorization in the
+final FavoriteFirst submit guard. It does not change MI or generic quoting.
+The authorization result now carries the validated signer, funder, and
+signature mode as an immutable execution identity. Engine arms only when that
+identity matches its current validated identity, and each FavoriteFirst submit
+requires the current identity to still match the arm identity. A coherent
+account change cannot inherit the prior arm capability.
+
+M2B-0B must separately establish the official spendable cash and account-wide
+order reservation contract. No MI dollar threshold is accepted here; the $25
+candidate remains design discussion only. A send-enabled MI runtime must not
+be wired until the generic gate and cash contract pass independent review.
+
+## M2B-0B MI cash / reservation supplement — 2026-10-04
+
+M2B-0A is CLOSED / PASS for its reviewed working tree; its Git checkpoint is
+still pending. The user explicitly authorized this separate code-only M2B-0B
+slice. The MI micro-live capital requirement for this slice is exactly $25,
+outside the strategy-neutral Generic Live Authorization Gate. This does not
+authorize MI order submission or cancellation.
+
+`src/polymaker/mi_cash_reservation.py` consumes an authorized
+`LiveExecutionIdentity` and a fresh matching configured/connected identity.
+It reads the existing official CLOB collateral `balance` field in integer
+micro-units and the unfiltered, fully paginated account open-order list through
+the existing gateway. [Polymarket's order lifecycle documentation](https://docs.polymarket.com/concepts/order-lifecycle)
+defines new-order capacity as balance less amounts committed to existing open
+orders. This bounded slice admits the balance as confirmed spendable only when
+the account-wide open-order list is **empty**. Any existing order, missing or
+invalid official read, non-live gateway, or identity mismatch denies readiness.
+This is a conservative gate; it does not estimate open-order notional. The
+allowance field is a separate future execution readiness concern and never
+enters the reservation sum.
+
+All ordinary `MICashReservationBook` instances use one module-private
+process authority. Its shared lock atomically checks
+`confirmed_collateral - active_local_reservations >= $25` across the collateral
+funder's entire local pool, even when two authorized signers share that funder,
+and creates one ACTIVE
+reservation bound to the canonical `LiveExecutionIdentity` and existing market
+`condition_id`. Repeating the same request returns the active record without
+another debit. Release changes that record to RELEASED exactly once; a stale
+release cannot release a later reservation. The book is **process-local and
+in-memory**: no restart, cross-process, or external-actor exclusivity is
+claimed. No order, fill, cancel, settlement, or market timer automatically
+releases capital in this slice. Future M2B execution must enforce that its
+matching reservation remains ACTIVE; this slice contains no MI write path.
+
+The initial M2B-0B implementation placed its lock and records on each book
+instance. Independent Review found two instances could each reserve the same
+collateral. The bounded repair moved the lock, records, active index, and ID
+namespace behind the single process authority; no caller-supplied alternate
+production authority exists. Tests isolate state by replacing only the
+module-private authority through a test fixture.
+
 Expected files for this slice: `src/polymaker/mi_live.py`,
 `src/polymaker/mi_readonly_account.py`, `tests/test_mi_live.py`, additive CLI
 entry, generic market-book readiness extraction, an optional no-cache/strict

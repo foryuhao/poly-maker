@@ -28,6 +28,11 @@ from polymaker.execution.filltruth import ReconciliationOutcome, reconcile_owned
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.execution.reconciler import reconcile
 from polymaker.journal import Journal
+from polymaker.live_authorization import (
+    LiveAuthorizationResult,
+    authorize_live_write,
+    live_authorization_request,
+)
 from polymaker.logging import get_logger
 from polymaker.marketdata.parse import TradePrint
 from polymaker.marketdata.service import MarketDataService
@@ -78,6 +83,7 @@ class Engine:
         self.paper = paper
         self._favorite_bootstrap = (favorite_first, market_start_ts)
         self._favorite_armed = favorite_first is None
+        self._favorite_live_authorization: LiveAuthorizationResult | None = None
         self._running = False
         self.research = (CausalCapture(research_observer, research_session_id or uuid.uuid4().hex)
                          if research_observer is not None and research_observer.config.enabled else None)
@@ -148,10 +154,13 @@ class Engine:
 
     # ── lifecycle ───────────────────────────────────────────────────────
     async def start(self, *, arm_favorite: bool = True) -> None:
-        # The controlled-live wrapper starts all feeds disarmed. The quoter and
-        # final submit guard both enforce this boundary.
+        # Non-paper FavoriteFirst can only arm through arm_favorite_first(),
+        # after the controlled wrapper's generic and strategy preflights.
         if self._favorite_bootstrap[0] is not None:
-            self._favorite_armed = arm_favorite
+            if not self.paper and arm_favorite:
+                raise RuntimeError("live Favorite-First must start disarmed")
+            self._favorite_armed = arm_favorite if self.paper else False
+            self._favorite_live_authorization = None
         self._running = True
         await self.gateway.connect()
         await self._resolve_markets()
@@ -604,8 +613,26 @@ class Engine:
                 self.research.failures += 1
         self._wake_cid(condition_id)
 
-    def arm_favorite_first(self, cid: str) -> None:
-        """Cross the controlled-live arm boundary after external preflight."""
+    def arm_favorite_first(
+        self, cid: str, *, authorization: LiveAuthorizationResult | None = None,
+        readiness: Any = None,
+    ) -> None:
+        """Cross the only non-paper FavoriteFirst arm boundary."""
+        if not self.paper:
+            if (authorization is None or authorization.authorized is not True
+                    or authorization.identity is None):
+                raise RuntimeError("Favorite-First live authorization is required")
+            if readiness is None:
+                raise RuntimeError("Favorite-First live readiness is required")
+            from polymaker.favorite_live import validate_preflight
+
+            validate_preflight(readiness)
+            current_authorization = authorize_live_write(live_authorization_request(
+                self.cfg, self.gateway, explicit_write_mode=True, armed=True,
+            ))
+            if (not current_authorization.authorized
+                    or current_authorization.identity != authorization.identity):
+                raise RuntimeError("Favorite-First live authorization is no longer valid")
         if (cid not in self._favorite or not self._running or self._favorite_armed
                 or not self._market_books_fresh(cid) or self._market_recovery_pending
                 or not self._user_started or self.user is None or not self.user.connected
@@ -619,11 +646,14 @@ class Engine:
                 or self.state.orders_for(meta.no.token_id)
                 or self._favorite[cid][2] != StrategyMemory()):
             raise RuntimeError("Favorite-First is not at a flat OBSERVE baseline")
+        if not self.paper:
+            self._favorite_live_authorization = current_authorization
         self._favorite_armed = True
         self._wake_cid(cid)
 
     def disarm_favorite_first(self, cid: str) -> None:
         self._favorite_armed = False
+        self._favorite_live_authorization = None
         self._wake_cid(cid)
 
     async def finalize_favorite_market(self, cid: str) -> dict[str, Any]:
@@ -1176,6 +1206,9 @@ class Engine:
                 log.warning("shed_load", cid=cid[:8], pressure=round(self.gateway.order_pressure, 2))
                 self._dirty[cid].set()  # retry soon
             else:
+                if favorite_config and not self.paper and not self._favorite_write_authorized():
+                    log.warning("favorite_live_authorization_changed", cid=cid[:8])
+                    return
                 self.user_proc.arm_pending_many([(q.token_id, q.side) for q in plan.to_place])
                 try:
                     placed = await self.gateway.place(
@@ -1239,6 +1272,8 @@ class Engine:
     def _favorite_submit_ok(self, cid: str, quotes: list[Any], meta: MarketMeta) -> bool:
         if not self._favorite_armed:
             return False
+        if not self.paper and not self._favorite_write_authorized():
+            return False
         if not self.paper and not self.favorite_live_user_ready():
             return False
         if self.favorite_halt_reason(cid) is not None:
@@ -1278,6 +1313,15 @@ class Engine:
         return (memory.state in (StrategyState.RUNNER, StrategyState.PAIR_STOP,
                                  StrategyState.FORCED_PAIR)
                 and q.token_id == opposite_token and q.size <= unpaired + 1e-8)
+
+    def _favorite_write_authorized(self) -> bool:
+        receipt = self._favorite_live_authorization
+        if receipt is None or receipt.authorized is not True or receipt.identity is None:
+            return False
+        current = authorize_live_write(live_authorization_request(
+            self.cfg, self.gateway, explicit_write_mode=True, armed=self._favorite_armed,
+        ))
+        return current.authorized is True and current.identity == receipt.identity
 
     async def _quarantine(self, meta: MarketMeta, reason: str) -> None:
         """Cancel all orders on a market's tokens and resync state from REST."""

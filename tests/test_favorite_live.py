@@ -5,17 +5,18 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from rich.console import Console
 
 from polymaker.btc5m import slug_for_epoch
-from polymaker.config import Config, MarketEntry, PathsConfig
+from polymaker.config import Config, MarketEntry, PathsConfig, Secrets
 from polymaker.domain import OpenOrder, OrderState, Quote, Side
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.favorite_live import (
@@ -33,6 +34,11 @@ from polymaker.favorite_live import (
     run_favorite_first_live,
     validate_meta,
     validate_preflight,
+)
+from polymaker.live_authorization import (
+    LiveAuthorizationResult,
+    authorize_live_write,
+    live_authorization_request,
 )
 from polymaker.strategy.favorite_first import (
     StrategyMemory,
@@ -239,6 +245,7 @@ async def test_favorite_final_submit_requires_current_user_ws(tmp_path, meta):
     cid = meta.condition_id
     try:
         eng.paper = False  # Exercise the controlled live guard with no network call.
+        eng._favorite_write_authorized = lambda: True  # This test isolates the user-WS guard.
         eng._user_started = True
         eng.user = SimpleNamespace(connected=True, disconnected_since=0)
         q = Quote(meta.yes.token_id, Side.BUY, 0.62, 5)
@@ -347,6 +354,217 @@ async def test_disarmed_engine_quoter_cannot_place_before_preflight(tmp_path, me
         eng.catalog.close()
 
 
+def _offline_live_favorite_engine(tmp_path, meta):
+    """Configure only synthetic identity evidence; never connect a live client."""
+    from eth_account import Account
+
+    key = "0x" + "1" * 64
+    signer = Account.from_key(key).address
+    eng = _engine_with_market(tmp_path, meta)
+    eng.cfg.secrets = Secrets(PK=key, BROWSER_ADDRESS=signer, _env_file=None)
+    eng.cfg.wallet.signature_type = 0
+    eng.attach_favorite_first(meta.condition_id, 900, CONTROLLED_CONFIG)
+    eng._favorite_bootstrap = (CONTROLLED_CONFIG, 900)
+    eng._favorite_armed = False
+    eng.paper = False
+    eng.gateway._paper = False
+    eng.gateway._address = signer
+    eng.gateway._funder = signer
+    eng.gateway._creds = object()
+    eng.user = SimpleNamespace(connected=True)
+    eng._user_started = True
+    eng._market_books_fresh = lambda _cid: True
+    authorization = authorize_live_write(live_authorization_request(
+        eng.cfg, eng.gateway, explicit_write_mode=True, armed=True,
+    ))
+    assert authorization.authorized
+    return eng, authorization
+
+
+async def test_nonpaper_favorite_start_and_run_forever_cannot_auto_arm(tmp_path, meta):
+    eng, _authorization = _offline_live_favorite_engine(tmp_path, meta)
+    eng.gateway.connect = AsyncMock(side_effect=AssertionError("network must not start"))
+    try:
+        with pytest.raises(RuntimeError, match="start disarmed"):
+            await eng.start(arm_favorite=True)
+        with pytest.raises(RuntimeError, match="start disarmed"):
+            await eng.run_forever()
+        assert not eng._favorite_armed
+        eng.gateway.connect.assert_not_awaited()
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
+
+
+def test_direct_favorite_arm_requires_both_authorization_and_readiness(tmp_path, meta):
+    eng, authorization = _offline_live_favorite_engine(tmp_path, meta)
+    try:
+        with pytest.raises(RuntimeError, match="authorization is required"):
+            eng.arm_favorite_first(meta.condition_id, readiness=READY)
+        with pytest.raises(RuntimeError, match="authorization is required"):
+            eng.arm_favorite_first(
+                meta.condition_id, authorization=LiveAuthorizationResult(False, "DENIED"),
+                readiness=READY,
+            )
+        with pytest.raises(RuntimeError, match="readiness is required"):
+            eng.arm_favorite_first(meta.condition_id, authorization=authorization)
+        with pytest.raises(PreflightError, match="usable collateral"):
+            eng.arm_favorite_first(
+                meta.condition_id, authorization=authorization,
+                readiness=replace(READY, balance_usd=11.99),
+            )
+        assert not eng._favorite_armed
+        eng.arm_favorite_first(meta.condition_id, authorization=authorization, readiness=READY)
+        assert eng._favorite_armed and eng._favorite_live_authorization is not None
+        eng.disarm_favorite_first(meta.condition_id)
+        assert not eng._favorite_armed and eng._favorite_live_authorization is None
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
+
+
+def test_favorite_arm_rejects_authorization_for_previous_identity(tmp_path, meta):
+    from eth_account import Account
+
+    eng, authorization = _offline_live_favorite_engine(tmp_path, meta)
+    key_b = "0x" + "2" * 64
+    signer_b = Account.from_key(key_b).address
+    try:
+        eng.cfg.secrets = Secrets(PK=key_b, BROWSER_ADDRESS=signer_b, _env_file=None)
+        eng.gateway._address = signer_b
+        eng.gateway._funder = signer_b
+        assert authorize_live_write(live_authorization_request(
+            eng.cfg, eng.gateway, explicit_write_mode=True, armed=True,
+        )).authorized
+        with pytest.raises(RuntimeError, match="no longer valid"):
+            eng.arm_favorite_first(meta.condition_id, authorization=authorization, readiness=READY)
+        assert not eng._favorite_armed
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
+
+
+@pytest.mark.parametrize("identity_change", ["none", "config", "gateway", "both"])
+async def test_favorite_submit_authorization_is_bound_to_arm_identity(
+    tmp_path, meta, monkeypatch, identity_change,
+):
+    from eth_account import Account
+
+    eng, authorization = _offline_live_favorite_engine(tmp_path, meta)
+    post_orders = Mock(return_value={"success": True, "orderID": "fake-order"})
+    create_order = Mock(return_value=object())
+    eng.gateway._client = SimpleNamespace(create_order=create_order, post_orders=post_orders)
+    eng._favorite[meta.condition_id] = (time.time() - 50, CONTROLLED_CONFIG, StrategyMemory())
+    monkeypatch.setattr(eng.md, "book", lambda _token: SimpleNamespace(
+        best_ask=lambda: SimpleNamespace(price=0.70),
+    ))
+    q = Quote(meta.yes.token_id, Side.BUY, 0.62, 5)
+    try:
+        eng.arm_favorite_first(meta.condition_id, authorization=authorization, readiness=READY)
+        key_b = "0x" + "2" * 64
+        signer_b = Account.from_key(key_b).address
+        if identity_change in ("config", "both"):
+            eng.cfg.secrets = Secrets(PK=key_b, BROWSER_ADDRESS=signer_b, _env_file=None)
+        if identity_change in ("gateway", "both"):
+            eng.gateway._address = signer_b
+            eng.gateway._funder = signer_b
+        if identity_change == "both":
+            assert authorize_live_write(live_authorization_request(
+                eng.cfg, eng.gateway, explicit_write_mode=True, armed=True,
+            )).authorized
+
+        allowed = identity_change == "none"
+        assert eng._favorite_write_authorized() is allowed
+        assert eng._favorite_submit_ok(meta.condition_id, [q], meta) is allowed
+        placed = await eng.gateway.place(
+            [q], meta,
+            submit_guard=lambda: eng._favorite_submit_ok(meta.condition_id, [q], meta),
+            force_post_only=True,
+        )
+        assert len(placed) == int(allowed)
+        assert post_orders.call_count == int(allowed)
+        assert create_order.call_count == int(allowed)
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
+
+
+async def test_favorite_identity_change_blocks_engine_gateway_place(tmp_path, meta):
+    from eth_account import Account
+
+    key_a = "0x" + "1" * 64
+    signer_a = Account.from_key(key_a).address
+    key_b = "0x" + "2" * 64
+    signer_b = Account.from_key(key_b).address
+    for changed in (False, True):
+        path = tmp_path / ("changed" if changed else "stable")
+        path.mkdir()
+        eng = _paper_engine(path, meta)
+        eng.cfg.secrets = Secrets(PK=key_a, BROWSER_ADDRESS=signer_a, _env_file=None)
+        eng.cfg.wallet.signature_type = 0
+        eng.paper = False
+        eng.gateway._paper = False
+        eng.gateway._address = signer_a
+        eng.gateway._funder = signer_a
+        eng.gateway._creds = object()
+        eng.user = SimpleNamespace(connected=True)
+        eng._user_started = True
+        eng._favorite_live_authorization = authorize_live_write(live_authorization_request(
+            eng.cfg, eng.gateway, explicit_write_mode=True, armed=True,
+        ))
+        eng.gateway.place = AsyncMock(return_value=[OpenOrder(
+            "fake-order", meta.yes.token_id, Side.BUY, 0.62, 5, OrderState.LIVE,
+        )])
+        try:
+            if changed:
+                eng.cfg.secrets = Secrets(PK=key_b, BROWSER_ADDRESS=signer_b, _env_file=None)
+                eng.gateway._address = signer_b
+                eng.gateway._funder = signer_b
+                assert authorize_live_write(live_authorization_request(
+                    eng.cfg, eng.gateway, explicit_write_mode=True, armed=True,
+                )).authorized
+            await eng._recompute(meta.condition_id)
+            if changed:
+                eng.gateway.place.assert_not_awaited()
+            else:
+                eng.gateway.place.assert_awaited_once()
+        finally:
+            eng.gateway.close()
+            eng.state.close()
+            eng.catalog.close()
+
+
+async def test_favorite_live_submit_guard_rejects_forged_armed_flag(tmp_path, meta):
+    eng, authorization = _offline_live_favorite_engine(tmp_path, meta)
+    post_orders = Mock(side_effect=AssertionError("real order POST must not run"))
+    eng.gateway._client = SimpleNamespace(post_orders=post_orders)
+    try:
+        eng._favorite_armed = True  # Simulate a mistaken state write without arm authorization.
+        q = Quote(meta.yes.token_id, Side.BUY, 0.62, 5)
+        assert not eng._favorite_submit_ok(meta.condition_id, [q], meta)
+        assert await eng.gateway.place(
+            [q], meta, submit_guard=lambda: eng._favorite_submit_ok(meta.condition_id, [q], meta),
+            force_post_only=True,
+        ) == []
+        eng._favorite_armed = False
+        eng.arm_favorite_first(meta.condition_id, authorization=authorization, readiness=READY)
+        eng.gateway._creds = None  # Identity evidence is rechecked immediately before POST.
+        assert not eng._favorite_submit_ok(meta.condition_id, [q], meta)
+        assert await eng.gateway.place(
+            [q], meta, submit_guard=lambda: eng._favorite_submit_ok(meta.condition_id, [q], meta),
+            force_post_only=True,
+        ) == []
+        post_orders.assert_not_called()
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
+
+
 async def test_favorite_startup_cleans_selected_orders_only(tmp_path, meta):
     eng = _engine_with_market(tmp_path, meta)
     selected = OpenOrder("selected", meta.yes.token_id, Side.BUY, 0.62, 5, OrderState.LIVE)
@@ -396,14 +614,18 @@ class Clock:
 
 
 def setup_session(meta, monkeypatch, tmp_path):
+    from eth_account import Account
+
     epoch = 900
+    test_key = "0x" + "1" * 64
+    test_signer = Account.from_key(test_key).address
     selected = replace(
         meta,
         slug=slug_for_epoch(epoch),
         end_date_iso=datetime.fromtimestamp(epoch + 300, UTC).isoformat(),
     )
     cfg = SimpleNamespace(
-        secrets=SimpleNamespace(pk="present", browser_address="0x" + "1" * 40),
+        secrets=SimpleNamespace(pk=test_key, browser_address=test_signer),
         wallet=SimpleNamespace(signature_type=2),
         engine=SimpleNamespace(heartbeat=True, journal=True),
         paths=SimpleNamespace(journal_dir=str(tmp_path)),
@@ -421,7 +643,8 @@ def setup_session(meta, monkeypatch, tmp_path):
             created.append(self)
             self.cfg = cfg
             self.metas = {selected.condition_id: selected}
-            self.gateway = SimpleNamespace(address="0x" + "1" * 40, funder="0x" + "1" * 40)
+            self.gateway = SimpleNamespace(address=test_signer, funder=test_signer,
+                                           creds=object(), _paper=False)
             self._favorite = {
                 selected.condition_id: (
                     epoch,
@@ -436,8 +659,9 @@ def setup_session(meta, monkeypatch, tmp_path):
         async def start(self, *, arm_favorite):
             assert not arm_favorite
 
-        def arm_favorite_first(self, cid):
+        def arm_favorite_first(self, cid, *, authorization, readiness):
             assert cid == selected.condition_id
+            assert authorization.authorized and readiness == READY
             self.armed = True
 
         def disarm_favorite_first(self, cid):
@@ -531,6 +755,38 @@ async def test_live_wrapper_never_arms_when_preflight_fails(
         config_loader=lambda _: cfg,
         resolver=resolver,
         engine_factory=factory,
+    )
+    assert result is LiveResult.ABORTED_BEFORE_TRADING
+    assert len(created) == 1 and not created[0].armed and created[0].stopped
+
+
+@pytest.mark.parametrize(
+    "gateway_change",
+    [
+        {"creds": None},
+        {"address": "0x" + "2" * 40},
+        {"funder": "0x" + "2" * 40},
+        {"_paper": True},
+    ],
+)
+async def test_favorite_final_generic_gate_denies_without_arming(
+    meta, monkeypatch, tmp_path, gateway_change,
+):
+    selected, cfg, factory, created = setup_session(meta, monkeypatch, tmp_path)
+
+    class ChangedGatewayEngine(factory):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            for name, value in gateway_change.items():
+                setattr(self.gateway, name, value)
+
+    clock = Clock()
+    result = await run_favorite_first_live(
+        "ignored", Console(quiet=True), preflight_only=False,
+        now=clock.now, sleep=clock.sleep,
+        config_loader=lambda _: cfg,
+        resolver=lambda _cfg, _slug: asyncio.sleep(0, result=selected),
+        engine_factory=ChangedGatewayEngine,
     )
     assert result is LiveResult.ABORTED_BEFORE_TRADING
     assert len(created) == 1 and not created[0].armed and created[0].stopped

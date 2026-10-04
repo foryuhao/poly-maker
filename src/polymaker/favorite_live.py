@@ -34,6 +34,11 @@ from polymaker.favorite_report import (
     run_id,
     write_artifacts,
 )
+from polymaker.live_authorization import (
+    authorize_live_write,
+    live_authorization_request,
+    validate_live_identity,
+)
 from polymaker.research.identity import (
     ResearchConfigIdentity,
     normalize_favorite_config,
@@ -196,25 +201,9 @@ def collateral_readiness(
 
 
 def _wallet_identity(cfg: Config, engine: Any) -> bool:
-    if not cfg.secrets.pk or not cfg.secrets.browser_address:
-        return False
-    if cfg.wallet.signature_type not in (0, 1, 2, 3):
-        return False
-    try:
-        from eth_account import Account
-        from web3 import Web3
-
-        signer = Account.from_key(cfg.secrets.pk).address
-        funder = Web3.to_checksum_address(cfg.secrets.browser_address)
-        if cfg.wallet.signature_type == 0 and signer != funder:
-            return False
-        return (
-            engine.gateway.address.lower() == signer.lower()
-            and engine.gateway.funder.lower() == funder.lower()
-            and bool(engine.gateway.creds)
-        )
-    except (ValueError, TypeError, AttributeError):
-        return False
+    return validate_live_identity(live_authorization_request(
+        cfg, getattr(engine, "gateway", None), explicit_write_mode=False, armed=False,
+    )).authorized
 
 
 def _selected_orders(orders: list[Any], meta: MarketMeta) -> list[Any]:
@@ -699,7 +688,7 @@ async def run_favorite_first_live(
         validate_meta(latest, slug, epoch, favorite_config.first_leg_qty)
         if latest.condition_id != meta.condition_id or latest.tokens != meta.tokens:
             raise PreflightError("committed market identity changed")
-        await _preflight(
+        final_preflight = await _preflight(
             engine,
             cfg,
             live_meta,
@@ -709,7 +698,18 @@ async def run_favorite_first_live(
         )
         if now() >= epoch:
             raise PreflightError("final preflight missed selected market start")
-        engine.arm_favorite_first(meta.condition_id)
+        # Strategy-specific readiness remains in _preflight; this is the
+        # independent, explicit write-authorization boundary.
+        if not final_preflight.wallet_ready or not final_preflight.credential_ready:
+            raise PreflightError("live account authorization unavailable")
+        authorization = authorize_live_write(live_authorization_request(
+            cfg, engine.gateway, explicit_write_mode=True, armed=True,
+        ))
+        if not authorization.authorized:
+            raise PreflightError(f"live write authorization denied: {authorization.reason}")
+        engine.arm_favorite_first(
+            meta.condition_id, authorization=authorization, readiness=final_preflight,
+        )
         armed = True
         phase = "armed market lifecycle"
         console.print("ARMED: exactly one BTC5m market")
