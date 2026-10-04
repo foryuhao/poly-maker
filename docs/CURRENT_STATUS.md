@@ -1,5 +1,21 @@
 # Current Project Status
 
+## Active MakerInventory work
+
+Current program: MakerInventory (MI) Baseline 1.0
+Current milestone / slice: M1 — Pure Strategy Core (M1.1 repair complete)
+Status: M1 CLOSED / PASS; M1.1 independent Re-review PASS. The reviewed MI checkpoint is the `feat(mi): complete MakerInventory M1 baseline` commit containing this status entry.
+Canonical predecessor baseline: pre-MI archival commit `19c322a` on `m4-dynamic-ev` (not an MI Review PASS)
+Latest architecture: `docs/architecture/MI_ARCHITECTURE.md` (reconstructed from BTC5m Maker Inventory SOP v0.2 and repository; not yet accepted)
+Latest implementation report: `docs/reports/MI_M1_IMPLEMENTATION_REPORT.md`
+Latest review: `docs/reviews/MI_M1_REVIEW.md` (original NEEDS FIX preserved; M1.1 final Re-review PASS)
+Current blocker: None for M1. The reconstructed MI architecture remains a draft requiring acceptance/revision before M2 implementation.
+Next authorized action: Verify the complete MI M1 Git checkpoint, then decide M2 architecture and authorization from that baseline.
+Explicitly unauthorized next actions: M2 implementation before architecture acceptance/authorization, live wiring, authenticated MI orders, Merge and Settlement.
+Pre-existing dirty files retained: `livecfg/config.toml` and local `research_outputs/`
+
+## Prior M4 program state
+
 Current program: M4 — Dynamic Exit EV Research
 Current milestone: M4A — Research Telemetry
 Completed slice: M4A.5 — Audit + Acceptance Harness
