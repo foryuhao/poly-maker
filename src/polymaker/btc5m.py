@@ -46,20 +46,28 @@ def choose_epoch(now: float, shutdown_buffer_s: float = 15.0) -> int:
     return epoch + PERIOD_S if epoch + PERIOD_S - now <= shutdown_buffer_s else epoch
 
 
-async def resolve_btc5m_market(cfg: Config, slug: str) -> MarketMeta:
+async def resolve_btc5m_market(
+    cfg: Config, slug: str, *, cache: bool = True, strict_metadata: bool = False
+) -> MarketMeta:
     """Resolve an exact BTC5m slug through Gamma and cache its parsed metadata."""
     async with GammaClient(cfg.wallet.gamma_host) as gamma:
         raw = await gamma.market_by_slug(slug)
     if raw is None:
         raise LookupError(f"Gamma has no active market for {slug}")
+    if strict_metadata and (
+        raw.get("orderMinSize") in (None, "", 0)
+        or raw.get("orderPriceMinTickSize") in (None, "", 0)
+    ):
+        raise LookupError(f"Gamma market {slug} omitted MI-required venue metadata")
     meta = parse_market(raw)
     if meta is None or meta.slug != slug:
         raise LookupError(f"Gamma market {slug} is unavailable or unusable")
-    store = CatalogStore(cfg.paths.db)
-    try:
-        store.upsert_market(meta)
-    finally:
-        store.close()
+    if cache:
+        store = CatalogStore(cfg.paths.db)
+        try:
+            store.upsert_market(meta)
+        finally:
+            store.close()
     return meta
 
 

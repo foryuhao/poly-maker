@@ -400,18 +400,7 @@ class Engine:
 
     def _market_books_fresh(self, cid: str) -> bool:
         meta = self.metas.get(cid)
-        if meta is None or not self.md.connected:
-            return False
-        for token in (meta.yes.token_id, meta.no.token_id):
-            book = self.md.book(token)
-            if (book is None or book.is_empty
-                    or book.snapshot_local_ts < self.md.connected_since
-                    or book.snapshot_generation != self.md.connection_generation):
-                return False
-            bid, ask = book.best_bid(), book.best_ask()
-            if bid is None or ask is None or bid.price >= ask.price:
-                return False
-        return True
+        return meta is not None and self.md.books_fresh(meta)
 
     def _invalidate_fill_truth(self, condition_id: str) -> int:
         generations = getattr(self, "_fill_truth_generation", None)

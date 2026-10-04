@@ -7,6 +7,32 @@ Reviewed live predecessor: `m4a-a1-pass` (`97ab0f9`); `19c322a` is an archival c
 Requirement source: user-attached `BTC5m_Maker_Inventory_SOP_v0.2.md` (2026-10-04). This document treats its strategy rules as requirements, not as repository instructions or proof of a working implementation.
 Related evidence: `docs/reports/MI_M1_IMPLEMENTATION_REPORT.md`, `docs/research/P0_MAKER_ONLY_20261004.md`, `docs/CURRENT_STATUS.md`
 
+## M2A NO-SEND supplement — 2026-10-04
+
+The user separately authorized **M2A Live Wiring / NO-SEND** after the reviewed
+M1 checkpoint `5befd9ee6eb27293bb6f6d885fbe458ea44cabe4`. This bounded
+slice is observation only. It does not accept the broader trial, Merge,
+settlement, or send-enabled architecture described below. The earlier draft
+remains historical design context; this supplement controls M2A integration.
+
+M2A data/control flow is: exact BTC5m slug and Up/Down identity from official
+Gamma; both token books from the existing official market WS and its current
+connection/snapshot readiness rule; target-token positions from official Data
+API, open orders and spendable collateral from authenticated official CLOB
+GETs; `MakerInventorySnapshot` with flat MI-session inventory; frozen M1
+`evaluate()`; a MI-specific NO-SEND sink that persists every evaluation. A
+non-flat target position, existing target order, unknown identity, unknown
+venue precision, invalid account read, or missing output persistence stops the
+session. The runtime owns no execution gateway, user-stream processor, or
+order writer. No M2B path is defined here.
+
+Expected files for this slice: `src/polymaker/mi_live.py`,
+`src/polymaker/mi_readonly_account.py`, `tests/test_mi_live.py`, additive CLI
+entry, generic market-book readiness extraction, an optional no-cache/strict
+metadata mode in BTC5m discovery, minimal configuration
+address-validation dependency replacement, and M2A implementation/status
+documents. The M1 policy module and FavoriteFirst policy remain frozen.
+
 ## 1. Objective and authority
 
 Build a BTC 5-minute Up/Down, BUY-only, GTC post-only strategy that tracks a probability-derived **net** YES/NO inventory, merges confirmed pairs, and carries residual inventory to official settlement. Produce a causal, reproducible 30-market maker replay before any live proposal. Keep strategy decisions pure; state, authenticated reads, orders, chain actions, and accounting belong to explicit adapters and ledgers.

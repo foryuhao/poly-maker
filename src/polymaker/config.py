@@ -33,14 +33,14 @@ def _key_identity(value: str) -> str:
 
 
 def _address_identity(value: str, name: str) -> str:
-    from web3 import Web3
+    from eth_utils import is_address, to_checksum_address
 
     address = value.strip()
     if not address:
         return ""
-    if not Web3.is_address(address):
+    if not is_address(address):
         raise ConfigAliasError(f"CONFIG_INVALID_ADDRESS: {name}")
-    return Web3.to_checksum_address(address)
+    return to_checksum_address(address)
 
 
 def _resolve_alias_pair(source: dict[str, Any], legacy: str, canonical: str,

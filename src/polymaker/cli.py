@@ -317,6 +317,28 @@ def favorite_first_live(
                                       LiveResult.UNPAIRABLE_RESIDUAL) else 1)
 
 
+@app.command(name="inventory-live")
+def inventory_live(
+    config_dir: str = typer.Option("livecfg", help="config directory"),
+    once: bool = typer.Option(False, "--once", help="observe one BTC5m market"),
+    research: bool = typer.Option(False, "--research", help="persist MI decision chain"),
+    no_send: bool = typer.Option(False, "--no-send", help="required: suppress all execution"),
+) -> None:
+    """Observe MI decisions from official live reads; this command cannot trade."""
+    from polymaker.mi_live import MIReadinessError, run_inventory_no_send
+
+    if not (once and research and no_send):
+        raise typer.BadParameter("M2A requires --once --research --no-send")
+    try:
+        directory = asyncio.run(run_inventory_no_send(
+            config_dir, once=once, research=research, no_send=no_send
+        ))
+    except MIReadinessError as exc:
+        console.print(f"[red]MI observation stopped:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"MI NO-SEND artifacts: {directory}")
+
+
 @app.command(name="favorite-first-report")
 def favorite_first_report(
     last: int = typer.Option(10, "--last", min=1, help="recent completed runs"),

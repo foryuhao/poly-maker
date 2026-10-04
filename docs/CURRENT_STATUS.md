@@ -3,15 +3,16 @@
 ## Active MakerInventory work
 
 Current program: MakerInventory (MI) Baseline 1.0
-Current milestone / slice: M1 — Pure Strategy Core (M1.1 repair complete)
-Status: M1 CLOSED / PASS; M1.1 independent Re-review PASS. The reviewed MI checkpoint is the `feat(mi): complete MakerInventory M1 baseline` commit containing this status entry.
-Canonical predecessor baseline: pre-MI archival commit `19c322a` on `m4-dynamic-ev` (not an MI Review PASS)
-Latest architecture: `docs/architecture/MI_ARCHITECTURE.md` (reconstructed from BTC5m Maker Inventory SOP v0.2 and repository; not yet accepted)
-Latest implementation report: `docs/reports/MI_M1_IMPLEMENTATION_REPORT.md`
-Latest review: `docs/reviews/MI_M1_REVIEW.md` (original NEEDS FIX preserved; M1.1 final Re-review PASS)
-Current blocker: None for M1. The reconstructed MI architecture remains a draft requiring acceptance/revision before M2 implementation.
-Next authorized action: Verify the complete MI M1 Git checkpoint, then decide M2 architecture and authorization from that baseline.
-Explicitly unauthorized next actions: M2 implementation before architecture acceptance/authorization, live wiring, authenticated MI orders, Merge and Settlement.
+Current milestone / slice: M2A — Live Wiring / NO-SEND, final validation complete
+Status: M2A CLOSED / PASS after M2A.1 Re-review and final third NO-SEND market; this document is part of the reviewed M2A checkpoint. M1 remains CLOSED / PASS. No MI send-enabled authority exists.
+Canonical predecessor baseline: MI M1 checkpoint `5befd9ee6eb27293bb6f6d885fbe458ea44cabe4` on `m4-dynamic-ev`.
+Canonical M2A baseline: `mi-m2a-reviewed-baseline` tag on the checkpoint commit containing this status entry; verify the tag and branch on remote before using it.
+Latest architecture: `docs/architecture/MI_ARCHITECTURE.md` (M2A NO-SEND supplement records the new user authorization; broader reconstructed design remains a draft).
+Latest implementation report: `docs/reports/MI_M2A_IMPLEMENTATION_REPORT.md` (M2A.1 repair and final third-market observation appended).
+Latest review: `docs/reviews/MI_M2A_REVIEW.md` (initial NEEDS FIX, M2A.1 Re-review PASS, final NO-SEND market PASS); M1 review: `docs/reviews/MI_M1_REVIEW.md`.
+Current blocker: M2B design and real execution require separate architecture and authorization; this checkpoint grants no MI trading authority.
+Next authorized action: Verify the pushed M2A checkpoint, then separately plan M2B design from `mi-m2a-reviewed-baseline`.
+Explicitly unauthorized next actions: MI real order submission or cancellation, M2B implementation without separate authorization, additional M2A market observations, Merge, Settlement, Trial/W_trial, and any M1 strategy-semantic change.
 Pre-existing dirty files retained: `livecfg/config.toml` and local `research_outputs/`
 
 ## Prior M4 program state

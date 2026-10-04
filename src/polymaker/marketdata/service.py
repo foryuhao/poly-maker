@@ -19,6 +19,7 @@ from typing import Any
 
 import websockets
 
+from polymaker.domain import MarketMeta
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
 from polymaker.marketdata.orderbook import BookView, OrderBook
@@ -92,6 +93,21 @@ class MarketDataService:
 
     def book(self, token_id: str) -> OrderBook | None:
         return self.books.get(token_id)
+
+    def books_fresh(self, meta: MarketMeta) -> bool:
+        """Both token books have valid snapshots from the current WS connection."""
+        if not self.connected:
+            return False
+        for token in (meta.yes.token_id, meta.no.token_id):
+            book = self.book(token)
+            if (book is None or book.is_empty
+                    or book.snapshot_local_ts < self.connected_since
+                    or book.snapshot_generation != self.connection_generation):
+                return False
+            bid, ask = book.best_bid(), book.best_ask()
+            if bid is None or ask is None or bid.price >= ask.price:
+                return False
+        return True
 
     def last_update_ts(self, token_id: str) -> float:
         b = self.books.get(token_id)
