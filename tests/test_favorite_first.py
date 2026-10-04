@@ -20,6 +20,8 @@ from polymaker.strategy.favorite_first import (
 from tests.test_engine import _engine_with_market
 
 CFG = FavoriteFirstConfig(0.20, 2, 3, 1.0, 0.2)
+LATE_CFG = replace(CFG, entry_start_s=210, last_new_entry_s=220,
+                   favorite_min=0.90, favorite_max=0.95)
 
 
 def book(bid, ask):
@@ -56,10 +58,55 @@ def pair(t=70, *, no_qty=0, no_vwap=0, no=(0.32, 0.33), working=0, working_price
     )
 
 
-@pytest.mark.parametrize("t,expected", [(29.9, False), (30, True), (179, True), (180, False)])
+@pytest.mark.parametrize("t,expected", [(29.9, False), (30, True), (179, True), (180, True), (180.1, False)])
 def test_entry_time(t, expected):
     m = StrategyMemory(confirming_side="YES", confirming_since=28)
     assert (evaluate(snap(t), m, CFG).quote is not None) is expected
+
+
+@pytest.mark.parametrize("t,mid,eligible", [
+    (200, 0.92, False), (210, 0.92, True), (215, 0.94, True),
+    (220, 0.92, True), (221, 0.92, False),
+    (215, 0.89, False), (215, 0.90, True),
+    (215, 0.92, True), (215, 0.95, True), (215, 0.96, False),
+])
+def test_late_favorite_entry_window_and_price(t, mid, eligible):
+    yes = (round(mid - 0.005, 3), round(mid + 0.005, 3))
+    no = (round(1 - mid - 0.005, 3), round(1 - mid + 0.005, 3))
+    memory = StrategyMemory(confirming_side="YES", confirming_since=t - 2)
+    decision = evaluate(snap(t, yes=yes, no=no), memory, LATE_CFG)
+    assert (decision.quote is not None) is eligible
+    if eligible:
+        assert decision.quote.size == 5 and decision.quote.side is Side.BUY
+
+
+def test_late_favorite_still_requires_two_seconds_confirmation():
+    s = snap(215, yes=(0.915, 0.925), no=(0.075, 0.085))
+    memory = StrategyMemory(confirming_side="YES", confirming_since=213.01)
+    assert evaluate(s, memory, LATE_CFG).quote is None
+    assert evaluate(replace(s, now=215.01), memory, LATE_CFG).quote is not None
+
+
+async def test_late_unfilled_first_is_cancelled_after_entry_cutoff(tmp_path, meta):
+    eng = _paper_engine(tmp_path, meta, elapsed=215)
+    cid = meta.condition_id
+    start, _, memory = eng._favorite[cid]
+    eng._favorite[cid] = (start, LATE_CFG, memory)
+    now = time.time()
+    eng.md.book(meta.yes.token_id).apply_snapshot([(0.91, 100)], [(0.93, 100)], now)
+    eng.md.book(meta.no.token_id).apply_snapshot([(0.07, 100)], [(0.09, 100)], now)
+    try:
+        await eng._recompute(cid)
+        assert len(eng.state.orders_for(meta.yes.token_id)) == 1
+        eng._favorite[cid] = (time.time() - 221, LATE_CFG, eng._favorite[cid][2])
+        await eng._recompute(cid)
+        assert eng._favorite[cid][2].state is StrategyState.NO_TRADE
+        assert not eng.state.orders_for(meta.yes.token_id)
+        assert not eng.state.orders_for(meta.no.token_id)
+    finally:
+        eng.gateway.close()
+        eng.state.close()
+        eng.catalog.close()
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from unittest.mock import AsyncMock
 
 from polymaker.domain import Fill, Position, Regime, Side
 from polymaker.state.store import StateStore
@@ -117,19 +118,18 @@ async def test_recompute_holds_market_lock(tmp_path, meta):
     eng.catalog.close()
 
 
-# ── T1: on-chain divergence correction ───────────────────────────────────
-async def test_divergence_corrects_to_onchain(tmp_path, meta):
+# ── T1: on-chain position override is disabled ────────────────────────────
+async def test_onchain_position_override_is_disabled(tmp_path, meta):
     eng = _engine_with_market(tmp_path, meta)
     tok = meta.yes.token_id
-    eng.state.apply_fill(Fill(tok, Side.BUY, 0.5, 100, "phantom"))  # internal says 100
+    eng.state.apply_fill(Fill(tok, Side.BUY, 0.5, 100, "fill"))
     assert eng.state.position(tok).size == 100
-
-    async def fake_balances(tokens):
-        return {t: (5.0 if t == tok else 0.0) for t in tokens}  # chain says 5
-
-    eng.gateway.token_balances = fake_balances  # type: ignore[method-assign]
-    await eng._check_position_divergence()
-    assert eng.state.position(tok).size == 5.0  # corrected to on-chain truth
+    eng.gateway.token_balances = AsyncMock(
+        side_effect=AssertionError("RPC MUST NOT BE CALLED"),
+    )
+    assert not hasattr(eng, "_check_position_divergence")
+    assert eng.state.position(tok).size == 100
+    eng.gateway.token_balances.assert_not_awaited()
     eng.state.close()
     eng.catalog.close()
 

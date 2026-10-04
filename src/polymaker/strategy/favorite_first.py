@@ -323,7 +323,7 @@ def evaluate(
                     if price is not None:
                         quote = Quote(tokens[opposite], Side.BUY, price, unpaired)
     elif state not in (StrategyState.NO_TRADE, StrategyState.HALTED, StrategyState.COMPLETE):
-        if elapsed >= c.last_new_entry_s:
+        if elapsed > c.last_new_entry_s:
             state = StrategyState.NO_TRADE
             m = replace(m, confirming_side=None, confirming_since=None)
         elif elapsed < c.entry_start_s:

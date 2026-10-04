@@ -43,6 +43,10 @@ merge_min_size      = 20.0
 # M1 PAPER baseline for one 300-second BTC Up/Down market. These values are
 # conservative starting settings and have not been tuned for profitability.
 [profiles.btc5m-survival]
+# FavoriteFirst entry is allowed only when the favorite probability is inside
+# this inclusive interval.
+favorite_min         = 0.60
+favorite_max         = 0.70
 micro_levels         = 3
 flow_ewma_halflife_s = 8
 gamma                = 0.6

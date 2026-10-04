@@ -9,19 +9,23 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from rich.console import Console
 
 from polymaker.btc5m import slug_for_epoch
+from polymaker.config import Config, MarketEntry, PathsConfig
 from polymaker.domain import OpenOrder, OrderState, Quote, Side
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.favorite_live import (
     CONTROLLED_CONFIG,
+    PROFILE,
     LiveResult,
     PreflightError,
     PreflightSnapshot,
     _classify_final,
+    _preflight,
     _wallet_identity,
     attribution_report,
     collateral_readiness,
@@ -40,6 +44,119 @@ from tests.test_engine import _engine_with_market
 from tests.test_favorite_first import _paper_engine, book
 
 READY = PreflightSnapshot(True, True, 20, 20, 0, 0, 0, True, True, True)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _account_preflight_engine(meta, positions):
+    gateway = SimpleNamespace(
+        creds=object(),
+        positions=AsyncMock(return_value=positions),
+        token_balances=AsyncMock(side_effect=AssertionError("RPC MUST NOT BE CALLED")),
+        required_collateral_spenders=AsyncMock(return_value=("spender",)),
+        balance_allowance=AsyncMock(return_value={
+            "balance": "12000000", "allowances": {"spender": "12000000"},
+        }),
+        open_orders=AsyncMock(return_value=[]),
+    )
+    engine = SimpleNamespace(
+        gateway=gateway,
+        _market_books_fresh=lambda _cid: True,
+        _market_recovery_pending=False,
+        user=SimpleNamespace(connected=True),
+        md=SimpleNamespace(metrics={"queue_full": 0}),
+        _favorite_economics=lambda _cid: {
+            "first_qty": 0, "pair_qty": 0, "mismatch": False,
+        },
+        _halted=set(),
+        _fill_recovery_pending=set(),
+        _order_state_uncertain=set(),
+        user_proc=SimpleNamespace(has_quarantine_for_condition=lambda _cid: False),
+    )
+    return engine
+
+
+async def test_favorite_preflight_uses_data_api_positions_without_rpc(meta, monkeypatch):
+    engine = _account_preflight_engine(meta, {})
+    monkeypatch.setattr("polymaker.favorite_live._wallet_identity", lambda *_args: True)
+    monkeypatch.setattr("polymaker.favorite_live._user_ws_auth", AsyncMock(return_value=(True, "ok")))
+
+    snapshot = await _preflight(
+        engine, SimpleNamespace(proxy=None), meta,
+        now=lambda: 1.0, sleep=AsyncMock(), deadline=0.0,
+    )
+
+    assert (snapshot.yes_position, snapshot.no_position) == (0.0, 0.0)
+    engine.gateway.positions.assert_awaited_once_with()
+    engine.gateway.token_balances.assert_not_awaited()
+
+
+async def test_favorite_preflight_fails_closed_on_data_api_position(meta, monkeypatch):
+    engine = _account_preflight_engine(meta, {meta.yes.token_id: (1.0, 0.5)})
+    monkeypatch.setattr("polymaker.favorite_live._wallet_identity", lambda *_args: True)
+    monkeypatch.setattr("polymaker.favorite_live._user_ws_auth", AsyncMock(return_value=(True, "ok")))
+
+    with pytest.raises(PreflightError, match="selected-market account baseline is nonzero"):
+        await _preflight(
+            engine, SimpleNamespace(proxy=None), meta,
+            now=lambda: 1.0, sleep=AsyncMock(), deadline=0.0,
+        )
+
+    engine.gateway.token_balances.assert_not_awaited()
+
+
+async def test_livecfg_favorite_profile_survives_engine_market_resolution(
+    tmp_path, meta, monkeypatch,
+):
+    from polymaker.engine import Engine
+
+    cfg = Config.load(REPO_ROOT / "livecfg", load_env=False)
+    reference = Config.load(REPO_ROOT / "config", load_env=False)
+    entry = MarketEntry(slug=slug_for_epoch(900), profile=PROFILE, enabled=True)
+    assert PROFILE in cfg.profiles
+    experiment_fields = {"favorite_min", "favorite_max", "entry_start_s", "last_new_entry_s"}
+    actual_profile = cfg.profile_for(entry).model_dump(exclude=experiment_fields)
+    reference_profile = reference.profile_for(entry).model_dump(exclude=experiment_fields)
+    assert actual_profile == reference_profile
+    assert cfg.profiles["live-tiny"] != cfg.profile_for(entry)
+
+    cfg.markets = [entry]
+    cfg.paths = PathsConfig(db=str(tmp_path / "state.db"),
+                            journal_dir=str(tmp_path / "journal"),
+                            log_dir=str(tmp_path / "logs"))
+    cfg.engine.journal = False
+    selected = replace(meta, slug=entry.slug)
+
+    class FakeGamma:
+        def __init__(self, _host):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+    class PastResolution(Exception):
+        pass
+
+    monkeypatch.setattr("polymaker.engine.GammaClient", FakeGamma)
+    engine = Engine(cfg, paper=True, favorite_first=CONTROLLED_CONFIG,
+                    market_start_ts=900)
+    engine.gateway.connect = AsyncMock()
+    engine.catalog.get_by_slug = lambda _slug: selected
+    engine.refresh_market_metadata = AsyncMock(side_effect=PastResolution)
+    try:
+        with pytest.raises(PastResolution):
+            await engine.start(arm_favorite=False)
+        assert engine.gateway.connect.await_count == 1
+        assert selected.condition_id in engine.metas
+        assert engine.profiles[selected.condition_id] == cfg.profile_for(entry)
+        assert engine.refresh_market_metadata.await_count == 1
+    finally:
+        engine.gateway.close()
+        engine.journal.close()
+        engine.state.close()
+        engine.catalog.close()
 
 
 @pytest.mark.parametrize(
@@ -291,6 +408,10 @@ def setup_session(meta, monkeypatch, tmp_path):
         engine=SimpleNamespace(heartbeat=True, journal=True),
         paths=SimpleNamespace(journal_dir=str(tmp_path)),
         markets=[],
+        profiles={PROFILE: SimpleNamespace(
+            favorite_min=0.60, favorite_max=0.70,
+            entry_start_s=30.0, last_new_entry_s=180.0,
+        )},
     )
     created = []
 
@@ -417,6 +538,7 @@ async def test_live_wrapper_never_arms_when_preflight_fails(
 
 async def test_one_market_arms_once_and_never_discovers_next(meta, monkeypatch, tmp_path):
     selected, cfg, factory, created = setup_session(meta, monkeypatch, tmp_path)
+    cfg.profiles = Config.load(REPO_ROOT / "livecfg", load_env=False).profiles
     clock = Clock()
     seen = []
 
@@ -437,6 +559,14 @@ async def test_one_market_arms_once_and_never_discovers_next(meta, monkeypatch, 
     )
     assert result is LiveResult.COMPLETED
     assert len(created) == 1 and not created[0].armed and created[0].stopped
+    actual = created[0]._favorite[selected.condition_id][1]
+    assert (actual.entry_start_s, actual.last_new_entry_s) == (210, 220)
+    assert (actual.favorite_min, actual.favorite_max) == (0.90, 0.95)
+    assert (actual.favorite_confirm_s, actual.probation_max_s) == (2, 20)
+    assert (actual.forced_pair_start_s, actual.hard_order_cutoff_s) == (240, 270)
+    assert (actual.first_leg_qty, actual.max_pair_loss_usd) == (5, 0.50)
+    assert (actual.runner_passive_offset_ticks, actual.normal_reprice_min_s,
+            actual.urgent_reprice_min_s) == (2, 0.75, 0.30)
     assert seen == [selected.slug, selected.slug]
     assert clock.value == 1200
 

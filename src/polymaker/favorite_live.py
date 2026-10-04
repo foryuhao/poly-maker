@@ -8,7 +8,7 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -223,22 +223,10 @@ def _selected_orders(orders: list[Any], meta: MarketMeta) -> list[Any]:
 
 
 async def _account_baseline(engine: Any, meta: MarketMeta) -> tuple[float, float]:
-    """Data API and exact funder on-chain balances must both show flat."""
+    """Read the selected-market account baseline from the Polymarket Data API."""
     positions = await engine.gateway.positions()
     yes = positions.get(meta.yes.token_id, (0.0, 0.0))[0]
     no = positions.get(meta.no.token_id, (0.0, 0.0))[0]
-    chain = await engine.gateway.token_balances([meta.yes.token_id, meta.no.token_id])
-    if chain is None:
-        raise PreflightError("funder token balances could not be verified")
-    if (
-        meta.yes.token_id not in chain
-        or meta.no.token_id not in chain
-        or not all(
-            math.isfinite(chain[t]) and abs(chain[t]) <= 1e-8
-            for t in (meta.yes.token_id, meta.no.token_id)
-        )
-    ):
-        raise PreflightError("funder on-chain selected-market baseline is nonzero")
     return yes, no
 
 
@@ -528,6 +516,7 @@ async def run_favorite_first_live(
     raw_handler: logging.FileHandler | None = None
     final_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
     research_writer: ResearchWriter | None = None
+    favorite_config = CONTROLLED_CONFIG
 
     def persist(report: dict[str, Any], result: LiveResult) -> None:
         if artifact_dir is None or committed_meta is None or "start" not in report:
@@ -547,7 +536,7 @@ async def run_favorite_first_live(
     def unarmed_report() -> dict[str, Any]:
         assert committed_meta is not None
         return {"market": committed_meta.slug, "condition_id": committed_meta.condition_id,
-                "start": epoch, "effective_config": effective_config(CONTROLLED_CONFIG),
+                "start": epoch, "effective_config": effective_config(favorite_config),
                 "first_orders": [], "pair_orders": [], "first_fills": [], "pair_fills": [],
                 "first_leg_final_qty": 0, "strategy_state": "NOT_ARMED",
                 "yes_qty": None, "no_qty": None, "owned_open_orders": None,
@@ -565,7 +554,7 @@ async def run_favorite_first_live(
             async def cleanup() -> tuple[dict[str, Any], dict[str, Any]]:
                 final = await engine.finalize_favorite_market(committed_meta.condition_id)
                 report = attribution_report(
-                    committed_meta, epoch, CONTROLLED_CONFIG, engine, final, selected_at
+                    committed_meta, epoch, favorite_config, engine, final, selected_at
                 )
                 return final, report
 
@@ -585,6 +574,16 @@ async def run_favorite_first_live(
                 # running through any repeated task cancellation.
     try:
         cfg = config_loader(config_dir)
+        favorite_profile = cfg.profiles.get(PROFILE)
+        if favorite_profile is None:
+            raise PreflightError(f"FavoriteFirst profile is missing: {PROFILE}")
+        favorite_config = replace(
+            CONTROLLED_CONFIG,
+            favorite_min=favorite_profile.favorite_min,
+            favorite_max=favorite_profile.favorite_max,
+            entry_start_s=favorite_profile.entry_start_s,
+            last_new_entry_s=favorite_profile.last_new_entry_s,
+        )
         if not cfg.secrets.pk:
             raise PreflightError("private key is missing")
         if not cfg.secrets.browser_address:
@@ -614,7 +613,7 @@ async def run_favorite_first_live(
                 if now() >= deadline:
                     raise PreflightError("committed BTC5m market unavailable") from exc
                 await sleep(min(RESOLUTION_RETRY_S, max(0.0, deadline - now())))
-        validate_meta(meta, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
+        validate_meta(meta, slug, epoch, favorite_config.first_leg_qty)
         committed_meta = meta
         console.print(
             f"Committed market: {slug} | {meta.condition_id} | YES {meta.yes.token_id} "
@@ -628,7 +627,7 @@ async def run_favorite_first_live(
             try:
                 observer = ResearchObserver(research_config)
                 assert observer.queue is not None
-                identity = research_config_identity(CONTROLLED_CONFIG, dataset_id="m4a",
+                identity = research_config_identity(favorite_config, dataset_id="m4a",
                                                      session_id=artifact_dir.name)
                 manifest = research_manifest(identity, meta,
                                              started_at_us=time.time_ns() // 1000)
@@ -644,7 +643,7 @@ async def run_favorite_first_live(
                 research_writer = None
                 console.print(f"Research capture unavailable: {type(exc).__name__}")
         engine = (engine_factory or Engine)(
-            cfg, paper=False, favorite_first=CONTROLLED_CONFIG, market_start_ts=epoch,
+            cfg, paper=False, favorite_first=favorite_config, market_start_ts=epoch,
             **research_kwargs,
         )
         if research_writer is not None:
@@ -656,7 +655,7 @@ async def run_favorite_first_live(
         if len(engine.metas) != 1 or meta.condition_id not in engine.metas:
             raise PreflightError("Engine resolved a different market")
         live_meta = engine.metas[meta.condition_id]
-        validate_meta(live_meta, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
+        validate_meta(live_meta, slug, epoch, favorite_config.first_leg_qty)
         if live_meta.yes.token_id != meta.yes.token_id or live_meta.no.token_id != meta.no.token_id:
             raise PreflightError("committed market tokens changed")
         phase = "feed, wallet, and collateral preflight"
@@ -684,7 +683,7 @@ async def run_favorite_first_live(
             f"{engine.gateway.funder[:10]}… | signature type "
             f"{cfg.wallet.signature_type}"
         )
-        console.print(f"FavoriteFirst v0.3 effective config: {effective_config(CONTROLLED_CONFIG)}")
+        console.print(f"FavoriteFirst v0.3 effective config: {effective_config(favorite_config)}")
         console.print(
             f"Collateral ${snapshot.balance_usd:.2f} | verified allowance "
             f"${snapshot.allowance_usd:.2f}"
@@ -697,7 +696,7 @@ async def run_favorite_first_live(
             raise PreflightError("preflight missed selected market start")
         # Revalidate the committed slug immediately before arming. Never switch.
         latest = await resolver(cfg, slug)
-        validate_meta(latest, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
+        validate_meta(latest, slug, epoch, favorite_config.first_leg_qty)
         if latest.condition_id != meta.condition_id or latest.tokens != meta.tokens:
             raise PreflightError("committed market identity changed")
         await _preflight(

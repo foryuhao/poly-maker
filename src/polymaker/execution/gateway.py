@@ -20,6 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, TypeVar
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -524,7 +525,7 @@ class ExecutionGateway:
             funder = None
             for rpc in dict.fromkeys(rpcs):
                 try:
-                    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
+                    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 5}))
                     w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
                     ctf = w3.eth.contract(
                         address=Web3.to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"),
@@ -536,7 +537,13 @@ class ExecutionGateway:
                         raw = ctf.functions.balanceOf(funder, int(tid)).call()
                         out[tid] = float(raw) / 1e6
                     return out
-                except Exception:  # noqa: BLE001, PERF203
+                except Exception as exc:  # noqa: BLE001, PERF203
+                    try:
+                        host = urlsplit(rpc).hostname or "unknown"
+                    except ValueError:
+                        host = "unknown"
+                    log.warning("token_balance_rpc_failed", host=host,
+                                error_type=type(exc).__name__)
                     continue
             return None
 

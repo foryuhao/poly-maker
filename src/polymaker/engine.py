@@ -1274,7 +1274,7 @@ class Engine:
         first_qty = economics["first_qty"]
         pair_qty = economics["pair_qty"]
         if first_qty <= 1e-8:
-            return (elapsed >= config.entry_start_s and elapsed < config.last_new_entry_s
+            return (elapsed >= config.entry_start_s and elapsed <= config.last_new_entry_s
                     and q.size <= config.first_leg_qty + 1e-8)
         first_token = self._favorite_first_token.get(cid)
         if q.token_id == first_token:
@@ -1314,11 +1314,8 @@ class Engine:
 
     def _maybe_merge(self, cid: str, meta: MarketMeta, p: StrategyProfile,
                      yes_size: float, no_size: float) -> None:
-        amount = min(yes_size, no_size)
-        if amount < p.merge_min_size or cid in self._merging or self.paper:
-            return
-        self._merging.add(cid)
-        self._aux_tasks.append(asyncio.create_task(self._merge_task(cid, meta, amount)))
+        """Live automatic merge is disabled pending an approved RPC-free design."""
+        return
 
     async def _merge_task(self, cid: str, meta: MarketMeta, amount: float) -> None:
         try:
@@ -1450,41 +1447,12 @@ class Engine:
             except Exception as exc:  # noqa: BLE001
                 log.warning("reconcile_error", err=str(exc))
 
-            # slower loops: on-chain position divergence + pnl snapshot + WAL
-            if rounds % 4 == 0:
-                with contextlib.suppress(Exception):
-                    await self._check_position_divergence()
+            # Slower local bookkeeping; position truth remains on the existing
+            # Polymarket Data API and Fill Truth reconciliation paths.
             self.state.record_pnl(self.risk.equity, self.risk.net_cash,
                                   self.risk.inventory_value, self.risk.daily_pnl)
             if rounds % 20 == 0:
                 self.state.checkpoint_wal()
-
-    async def _check_position_divergence(self) -> None:
-        """Compare internal positions to on-chain truth; alert + correct on drift.
-
-        Catches subtle fill-attribution bugs before they compound. On-chain is
-        authoritative (it's what the exchange settles), so we correct to it —
-        but only for tokens with no in-flight trades (optimistic state is newer).
-        """
-        tokens = [t for t in self._token_cid if self.state.inflight(t) == 0]
-        onchain = await self.gateway.token_balances(tokens)
-        if not onchain:
-            return
-        for tok, chain_size in onchain.items():
-            internal = self.state.position(tok).size
-            if abs(internal - chain_size) > max(1.0, 0.02 * chain_size):
-                log.error("position_divergence", token=tok[:12],
-                          internal=round(internal, 2), onchain=round(chain_size, 2))
-                self.alerter.alert(
-                    f"divergence:{tok[:8]}",
-                    f"position drift: internal {internal:.1f} vs on-chain {chain_size:.1f}",
-                    critical=True,
-                )
-                self.state.force_set_position(tok, chain_size, self.state.position(tok).avg_price,
-                                              source="onchain")
-                cid = self._token_cid.get(tok)
-                if cid:
-                    self._wake_cid(cid)
 
     async def refresh_market_metadata(self) -> None:
         """Pull fresh metadata from Gamma for all traded markets: halt on

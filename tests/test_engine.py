@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -79,6 +81,71 @@ async def test_recompute_skips_when_book_empty(tmp_path, meta):
     assert len(eng.state.orders) == 0
     eng.state.close()
     eng.catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_live_position_reconcile_uses_data_api_without_chain_balance(tmp_path, meta):
+    eng = _engine_with_market(tmp_path, meta)
+    called = asyncio.Event()
+    gateway = SimpleNamespace(
+        positions=AsyncMock(return_value={meta.yes.token_id: (7.0, 0.4)}),
+        open_orders=AsyncMock(return_value=[]),
+        token_balances=AsyncMock(side_effect=AssertionError("RPC MUST NOT BE CALLED")),
+    )
+    eng.gateway = gateway
+    eng._reconcile_now.set()
+    original_positions = gateway.positions
+
+    async def positions_and_signal():
+        result = await original_positions()
+        called.set()
+        return result
+
+    gateway.positions = AsyncMock(side_effect=positions_and_signal)
+    task = asyncio.create_task(eng._reconcile_loop())
+    try:
+        await asyncio.wait_for(called.wait(), timeout=2.0)
+        assert eng.state.position(meta.yes.token_id).size == 7.0
+        gateway.token_balances.assert_not_awaited()
+        assert not hasattr(eng, "_check_position_divergence")
+    finally:
+        eng._running = False
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        eng.state.close()
+        eng.catalog.close()
+
+
+@pytest.mark.asyncio
+async def test_live_auto_merge_is_disabled_for_paired_inventory(tmp_path, meta):
+    eng = _engine_with_market(tmp_path, meta)
+    eng.paper = False
+    eng.state.reconcile_positions({
+        meta.yes.token_id: (3.0, 0.5),
+        meta.no.token_id: (4.0, 0.5),
+    })
+    profile = StrategyProfile(merge_min_size=2.0)
+    eng.gateway.token_balances = AsyncMock(
+        side_effect=AssertionError("RPC MUST NOT BE CALLED FOR AUTO-MERGE"),
+    )
+    eng._merge_task = AsyncMock()
+    eng.merger.merge = Mock(side_effect=AssertionError("MERGER MUST NOT BE CALLED"))
+    try:
+        eng._maybe_merge(
+            meta.condition_id, meta, profile,
+            eng.state.position(meta.yes.token_id).size,
+            eng.state.position(meta.no.token_id).size,
+        )
+        await asyncio.sleep(0)
+        eng._merge_task.assert_not_awaited()
+        eng.gateway.token_balances.assert_not_awaited()
+        eng.merger.merge.assert_not_called()
+        assert eng._aux_tasks == []
+        assert eng._merging == set()
+    finally:
+        eng.state.close()
+        eng.catalog.close()
 
 
 class _StartupGateway:
