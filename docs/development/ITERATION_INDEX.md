@@ -50,11 +50,11 @@ Baseline details:
 
 ## Project State
 
-Development Status: `IN_PROGRESS`
+Development Status: `HUMAN_DECISION_REQUIRED`
 
 Current Iteration: `ITER-0006`
 
-Current Stage: `ARCHITECT`
+Current Stage: `AWAITING_HUMAN_ARCHITECTURE_DECISION`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0006 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0006 | Inactive depth-change temporal formula | BLOCKED | NOT_STARTED | NOT_STARTED | NOT_READY | PUSH_PENDING | NOT_RUN | PENDING |
 | ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -82,9 +82,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0006 Architect inspection pending. ITER-0005 capital gate PASS archived at 63246bf; successful result 09_RESULT_REVISION_01.md and receipt 10_ARCHIVE_RECEIPT.md. Human $5 future repair reserve remains approved authority.
+ITER-0006 ARCHITECT_BLOCKED: Inactive aggregate-depth-change temporal formula requires human authority; see 01_ARCHITECT.md and RESULT.md. Approved $5 NORMAL repair reserve is implemented and remains settled.
 
-Next authorized action: Architect chooses one minimal remaining prerequisite; continue serial autonomous implementation. No real-money authority.
+Next action: choose endpoint difference, window range, or cumulative absolute variation for two-second depth change, record durably, then Architect revision and serial development resume. No Worker under blocked contract; no real-money authority.
 
 ---
 
