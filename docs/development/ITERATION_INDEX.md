@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0001`
 
-Current Stage: `WORKER`
+Current Stage: `ARCHIVING`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,14 +70,14 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0001 | Confirmed-fill inventory/accounting projection | APPROVED | IN_PROGRESS | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0001 | Confirmed-fill inventory/accounting projection | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | PENDING |
 | ITER-0000 | Pre-RDP codebase isolation, FL reconstruction, IM preservation, and RDP baseline readiness | N/A | N/A | N/A | READY | ARCHIVED | NOT_RUN | KEEP |
 
 ---
 
 ## Current Iteration
 
-ITER-0001 initialized from framework checkpoint fd51429; Architect approved 01_ARCHITECT.md; Worker implementation pending. Known untracked research_outputs assets are preserved and excluded from iteration staging.
+ITER-0001 initialized from framework checkpoint fd51429; Architect approved 01_ARCHITECT.md; Worker implemented 02_WORKER.md; final Reviewer PASS in 07_REVIEWER_REREVIEW_02.md; archival pending. Known untracked research_outputs assets are preserved and excluded from iteration staging.
 
 Next authorized action:
 
