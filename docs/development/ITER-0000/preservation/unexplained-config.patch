@@ -1,0 +1,13 @@
+diff --git a/livecfg/config.toml b/livecfg/config.toml
+index ab04cb1..301b0ee 100644
+--- a/livecfg/config.toml
++++ b/livecfg/config.toml
+@@ -1,7 +1,7 @@
+ # CONSERVATIVE live-test config (Fable autonomous run, ~$50 mandate).
+ [wallet]
+ chain_id = 137
+-signature_type = 3
++signature_type = 2
+ clob_host = "https://clob.polymarket.com"
+ gamma_host = "https://gamma-api.polymarket.com"
+ data_api_host = "https://data-api.polymarket.com"

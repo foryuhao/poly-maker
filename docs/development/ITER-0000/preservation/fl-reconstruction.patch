@@ -1,0 +1,301 @@
+diff --git a/livecfg/strategy.toml b/livecfg/strategy.toml
+index 0c9542c..3ff2748 100644
+--- a/livecfg/strategy.toml
++++ b/livecfg/strategy.toml
+@@ -25,3 +25,42 @@ reduce_only_hours   = 48
+ halt_before_hours   = 6
+ exit_urgency_s      = 600
+ merge_min_size      = 20.0
++
++# BTC5m profile used by the FavoriteFirst live wrapper. Entry timing and
++# favorite range below are the Late Favorite FL experiment overrides.
++[profiles.btc5m-survival]
++# FavoriteFirst entry is allowed only when the favorite probability is inside
++# this inclusive interval.
++favorite_min         = 0.90
++favorite_max         = 0.95
++entry_start_s        = 210
++last_new_entry_s     = 220
++micro_levels         = 3
++flow_ewma_halflife_s = 8
++gamma                = 0.6
++delta_min_ticks      = 2
++c_vol                = 1.2
++c_tox                = 2.0
++vol_short_halflife_s = 3
++vol_long_halflife_s  = 30
++base_size_usdc       = 5
++q_max_usdc           = 20
++q_soft_frac          = 0.5
++layers               = 1
++layer_step_ticks     = 2
++reward_size_mult     = 1.0
++reprice_ticks        = 2
++resize_frac          = 0.5
++min_edge_ticks       = 1
++event_cooloff_s      = 5
++event_jump_ticks     = 8
++event_sweep_levels   = 3
++event_sweep_mult     = 4
++event_sweep_frac     = 0.8
++trend_flow_z         = 2.0
++trend_vol_ratio      = 3.0
++end_date_taper_days  = 0.00347
++reduce_only_hours    = 0.01667
++halt_before_hours    = 0.00333
++exit_urgency_s       = 20
++merge_min_size       = 20
+diff --git a/src/polymaker/config.py b/src/polymaker/config.py
+index 72f08e2..4bc6dce 100644
+--- a/src/polymaker/config.py
++++ b/src/polymaker/config.py
+@@ -157,6 +157,19 @@ class StrategyProfile(BaseModel):
+     # exits
+     exit_urgency_s: float = 900.0
+     merge_min_size: float = 20.0
++    # FavoriteFirst entry probability interval (used by the BTC5m live wrapper).
++    favorite_min: float = 0.60
++    favorite_max: float = 0.70
++    entry_start_s: float = 30.0
++    last_new_entry_s: float = 180.0
++
++    @model_validator(mode="after")
++    def _valid_favorite_interval(self) -> StrategyProfile:
++        if not (0.0 <= self.favorite_min <= self.favorite_max <= 1.0):
++            raise ValueError("favorite_min/max must satisfy 0 <= min <= max <= 1")
++        if not (0 <= self.entry_start_s <= self.last_new_entry_s < 300):
++            raise ValueError("entry timing must satisfy 0 <= start <= last new entry < 300")
++        return self
+ 
+     def with_overrides(self, overrides: dict[str, Any]) -> StrategyProfile:
+         """Return a copy with per-market override values applied."""
+diff --git a/src/polymaker/favorite_live.py b/src/polymaker/favorite_live.py
+index 92a5131..ae5e207 100644
+--- a/src/polymaker/favorite_live.py
++++ b/src/polymaker/favorite_live.py
+@@ -8,7 +8,7 @@ import logging
+ import math
+ import time
+ from collections.abc import Awaitable, Callable
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ from datetime import UTC, datetime
+ from enum import Enum
+ from pathlib import Path
+@@ -528,6 +528,7 @@ async def run_favorite_first_live(
+     raw_handler: logging.FileHandler | None = None
+     final_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
+     research_writer: ResearchWriter | None = None
++    favorite_config = CONTROLLED_CONFIG
+ 
+     def persist(report: dict[str, Any], result: LiveResult) -> None:
+         if artifact_dir is None or committed_meta is None or "start" not in report:
+@@ -547,7 +548,7 @@ async def run_favorite_first_live(
+     def unarmed_report() -> dict[str, Any]:
+         assert committed_meta is not None
+         return {"market": committed_meta.slug, "condition_id": committed_meta.condition_id,
+-                "start": epoch, "effective_config": effective_config(CONTROLLED_CONFIG),
++                "start": epoch, "effective_config": effective_config(favorite_config),
+                 "first_orders": [], "pair_orders": [], "first_fills": [], "pair_fills": [],
+                 "first_leg_final_qty": 0, "strategy_state": "NOT_ARMED",
+                 "yes_qty": None, "no_qty": None, "owned_open_orders": None,
+@@ -565,7 +566,7 @@ async def run_favorite_first_live(
+             async def cleanup() -> tuple[dict[str, Any], dict[str, Any]]:
+                 final = await engine.finalize_favorite_market(committed_meta.condition_id)
+                 report = attribution_report(
+-                    committed_meta, epoch, CONTROLLED_CONFIG, engine, final, selected_at
++                    committed_meta, epoch, favorite_config, engine, final, selected_at
+                 )
+                 return final, report
+ 
+@@ -585,6 +586,16 @@ async def run_favorite_first_live(
+                 # running through any repeated task cancellation.
+     try:
+         cfg = config_loader(config_dir)
++        favorite_profile = cfg.profiles.get(PROFILE)
++        if favorite_profile is None:
++            raise PreflightError(f"FavoriteFirst profile is missing: {PROFILE}")
++        favorite_config = replace(
++            CONTROLLED_CONFIG,
++            favorite_min=favorite_profile.favorite_min,
++            favorite_max=favorite_profile.favorite_max,
++            entry_start_s=favorite_profile.entry_start_s,
++            last_new_entry_s=favorite_profile.last_new_entry_s,
++        )
+         if not cfg.secrets.pk:
+             raise PreflightError("private key is missing")
+         if not cfg.secrets.browser_address:
+@@ -614,7 +625,7 @@ async def run_favorite_first_live(
+                 if now() >= deadline:
+                     raise PreflightError("committed BTC5m market unavailable") from exc
+                 await sleep(min(RESOLUTION_RETRY_S, max(0.0, deadline - now())))
+-        validate_meta(meta, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
++        validate_meta(meta, slug, epoch, favorite_config.first_leg_qty)
+         committed_meta = meta
+         console.print(
+             f"Committed market: {slug} | {meta.condition_id} | YES {meta.yes.token_id} "
+@@ -628,7 +639,7 @@ async def run_favorite_first_live(
+             try:
+                 observer = ResearchObserver(research_config)
+                 assert observer.queue is not None
+-                identity = research_config_identity(CONTROLLED_CONFIG, dataset_id="m4a",
++                identity = research_config_identity(favorite_config, dataset_id="m4a",
+                                                      session_id=artifact_dir.name)
+                 manifest = research_manifest(identity, meta,
+                                              started_at_us=time.time_ns() // 1000)
+@@ -644,7 +655,7 @@ async def run_favorite_first_live(
+                 research_writer = None
+                 console.print(f"Research capture unavailable: {type(exc).__name__}")
+         engine = (engine_factory or Engine)(
+-            cfg, paper=False, favorite_first=CONTROLLED_CONFIG, market_start_ts=epoch,
++            cfg, paper=False, favorite_first=favorite_config, market_start_ts=epoch,
+             **research_kwargs,
+         )
+         if research_writer is not None:
+@@ -656,7 +667,7 @@ async def run_favorite_first_live(
+         if len(engine.metas) != 1 or meta.condition_id not in engine.metas:
+             raise PreflightError("Engine resolved a different market")
+         live_meta = engine.metas[meta.condition_id]
+-        validate_meta(live_meta, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
++        validate_meta(live_meta, slug, epoch, favorite_config.first_leg_qty)
+         if live_meta.yes.token_id != meta.yes.token_id or live_meta.no.token_id != meta.no.token_id:
+             raise PreflightError("committed market tokens changed")
+         phase = "feed, wallet, and collateral preflight"
+@@ -684,7 +695,7 @@ async def run_favorite_first_live(
+             f"{engine.gateway.funder[:10]}… | signature type "
+             f"{cfg.wallet.signature_type}"
+         )
+-        console.print(f"FavoriteFirst v0.3 effective config: {effective_config(CONTROLLED_CONFIG)}")
++        console.print(f"FavoriteFirst v0.3 effective config: {effective_config(favorite_config)}")
+         console.print(
+             f"Collateral ${snapshot.balance_usd:.2f} | verified allowance "
+             f"${snapshot.allowance_usd:.2f}"
+@@ -697,7 +708,7 @@ async def run_favorite_first_live(
+             raise PreflightError("preflight missed selected market start")
+         # Revalidate the committed slug immediately before arming. Never switch.
+         latest = await resolver(cfg, slug)
+-        validate_meta(latest, slug, epoch, CONTROLLED_CONFIG.first_leg_qty)
++        validate_meta(latest, slug, epoch, favorite_config.first_leg_qty)
+         if latest.condition_id != meta.condition_id or latest.tokens != meta.tokens:
+             raise PreflightError("committed market identity changed")
+         await _preflight(
+diff --git a/tests/test_favorite_live.py b/tests/test_favorite_live.py
+index 71e313b..169cf59 100644
+--- a/tests/test_favorite_live.py
++++ b/tests/test_favorite_live.py
+@@ -9,15 +9,18 @@ from dataclasses import replace
+ from datetime import UTC, datetime
+ from pathlib import Path
+ from types import SimpleNamespace
++from unittest.mock import AsyncMock
+ 
+ import pytest
+ from rich.console import Console
+ 
+ from polymaker.btc5m import slug_for_epoch
++from polymaker.config import Config, MarketEntry, PathsConfig
+ from polymaker.domain import OpenOrder, OrderState, Quote, Side
+ from polymaker.execution.gateway import ExecutionGateway
+ from polymaker.favorite_live import (
+     CONTROLLED_CONFIG,
++    PROFILE,
+     LiveResult,
+     PreflightError,
+     PreflightSnapshot,
+@@ -40,6 +43,62 @@ from tests.test_engine import _engine_with_market
+ from tests.test_favorite_first import _paper_engine, book
+ 
+ READY = PreflightSnapshot(True, True, 20, 20, 0, 0, 0, True, True, True)
++REPO_ROOT = Path(__file__).resolve().parents[1]
++
++
++async def test_livecfg_favorite_profile_survives_engine_market_resolution(
++    tmp_path, meta, monkeypatch,
++):
++    from polymaker.engine import Engine
++
++    cfg = Config.load(REPO_ROOT / "livecfg", load_env=False)
++    reference = Config.load(REPO_ROOT / "config", load_env=False)
++    entry = MarketEntry(slug=slug_for_epoch(900), profile=PROFILE, enabled=True)
++    assert PROFILE in cfg.profiles
++    experiment_fields = {"favorite_min", "favorite_max", "entry_start_s", "last_new_entry_s"}
++    actual_profile = cfg.profile_for(entry).model_dump(exclude=experiment_fields)
++    reference_profile = reference.profile_for(entry).model_dump(exclude=experiment_fields)
++    assert actual_profile == reference_profile
++    assert cfg.profiles["live-tiny"] != cfg.profile_for(entry)
++
++    cfg.markets = [entry]
++    cfg.paths = PathsConfig(db=str(tmp_path / "state.db"),
++                            journal_dir=str(tmp_path / "journal"),
++                            log_dir=str(tmp_path / "logs"))
++    cfg.engine.journal = False
++    selected = replace(meta, slug=entry.slug)
++
++    class FakeGamma:
++        def __init__(self, _host):
++            pass
++
++        async def __aenter__(self):
++            return self
++
++        async def __aexit__(self, *_args):
++            pass
++
++    class PastResolution(Exception):
++        pass
++
++    monkeypatch.setattr("polymaker.engine.GammaClient", FakeGamma)
++    engine = Engine(cfg, paper=True, favorite_first=CONTROLLED_CONFIG,
++                    market_start_ts=900)
++    engine.gateway.connect = AsyncMock()
++    engine.catalog.get_by_slug = lambda _slug: selected
++    engine.refresh_market_metadata = AsyncMock(side_effect=PastResolution)
++    try:
++        with pytest.raises(PastResolution):
++            await engine.start(arm_favorite=False)
++        assert engine.gateway.connect.await_count == 1
++        assert selected.condition_id in engine.metas
++        assert engine.profiles[selected.condition_id] == cfg.profile_for(entry)
++        assert engine.refresh_market_metadata.await_count == 1
++    finally:
++        engine.gateway.close()
++        engine.journal.close()
++        engine.state.close()
++        engine.catalog.close()
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -291,6 +350,10 @@ def setup_session(meta, monkeypatch, tmp_path):
+         engine=SimpleNamespace(heartbeat=True, journal=True),
+         paths=SimpleNamespace(journal_dir=str(tmp_path)),
+         markets=[],
++        profiles={PROFILE: SimpleNamespace(
++            favorite_min=0.60, favorite_max=0.70,
++            entry_start_s=30.0, last_new_entry_s=180.0,
++        )},
+     )
+     created = []
+ 
+@@ -417,6 +480,7 @@ async def test_live_wrapper_never_arms_when_preflight_fails(
+ 
+ async def test_one_market_arms_once_and_never_discovers_next(meta, monkeypatch, tmp_path):
+     selected, cfg, factory, created = setup_session(meta, monkeypatch, tmp_path)
++    cfg.profiles = Config.load(REPO_ROOT / "livecfg", load_env=False).profiles
+     clock = Clock()
+     seen = []
+ 
+@@ -437,6 +501,14 @@ async def test_one_market_arms_once_and_never_discovers_next(meta, monkeypatch,
+     )
+     assert result is LiveResult.COMPLETED
+     assert len(created) == 1 and not created[0].armed and created[0].stopped
++    actual = created[0]._favorite[selected.condition_id][1]
++    assert (actual.entry_start_s, actual.last_new_entry_s) == (210, 220)
++    assert (actual.favorite_min, actual.favorite_max) == (0.90, 0.95)
++    assert (actual.favorite_confirm_s, actual.probation_max_s) == (2, 20)
++    assert (actual.forced_pair_start_s, actual.hard_order_cutoff_s) == (240, 270)
++    assert (actual.first_leg_qty, actual.max_pair_loss_usd) == (5, 0.50)
++    assert (actual.runner_passive_offset_ticks, actual.normal_reprice_min_s,
++            actual.urgent_reprice_min_s) == (2, 0.75, 0.30)
+     assert seen == [selected.slug, selected.slug]
+     assert clock.value == 1200
+ 

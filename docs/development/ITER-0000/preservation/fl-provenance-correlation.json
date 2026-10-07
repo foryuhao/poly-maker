@@ -1,0 +1,632 @@
+[
+  {
+    "session": "20261002T081353355446Z_btc-updown-5m-1790929200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "88cdedea755f22a25f1bc5a06830b885e65f31fba19e22967c37a92266be87e9",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T081414301919Z_btc-updown-5m-1790929200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "5b6c1d591759cac4b66c712b8a7b4513ce06671308132353115e45e975f9e688",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T081423534025Z_btc-updown-5m-1790929200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "ac1c84ac9c565292d8a4f44026f0a94649676a38683be4b696e8385d46080ef8",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T081509012141Z_btc-updown-5m-1790929200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "d276a9679e99cdff9612d86ee35294e441aae642840a0fed7f13fb0edafbe085",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T081517649662Z_btc-updown-5m-1790929200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "4930cd2877844fdad8998c72470d3129e8404cd8960bddf15a1d56c2fcd10ebc",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T083006919230Z_btc-updown-5m-1790930100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "1e6462adf84ed4ee8057e62daec179ecd1f80e6218b00a826d63bfb2dd46bd8f",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T084022784416Z_btc-updown-5m-1790930700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "cb64004af7442dadbc8ed520490606a31b9a65cf6e1448e1d523a365eb414752",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T085838464625Z_btc-updown-5m-1790931900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "ee6aef69491fafbd33739cc5977a13c87d4e5c60392bd037832cc579cc2e2e72",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T100537682331Z_btc-updown-5m-1790935800",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "4cec6abb93bc6141484ac9066f0b17a1849340afa4572c1dfb85e350908b68f8",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "ABORTED_BEFORE_TRADING",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T101949247784Z_btc-updown-5m-1790936700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "e866172c898486a61c3a1cbdf2dfe8f45e66a6d1c93bc9aab97fb87bb2411f6b",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T104157799073Z_btc-updown-5m-1790937900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "425a7e28be4095554453f41c6c1d6ac5276cf57aaffa071ba8507ca63140c01b",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "INCOMPLETE_RECONCILIATION",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T105121713249Z_btc-updown-5m-1790938500",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "1b090632bb2e93f6efdf8ab082ab94110dd605ac887cb78c0b3fe625582e290a",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "INCOMPLETE_RECONCILIATION",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T110239789257Z_btc-updown-5m-1790939100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "ce833a93097d430a00aa94aa128593a451e4205d6fe3c39a56a8f9b40eeba4d8",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T111318620980Z_btc-updown-5m-1790939700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "ae737fe9b0e855df737cd3327fc69f0a1883eaf309da80177795e0a98e7e9cb6",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": false,
+    "run_engineering_result": null,
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T111358149662Z_btc-updown-5m-1790940000",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "3b690d5de27b19ef7842b79a03d168fcff4a96824f344bdb4a9a1f015a7c4206",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T112523658075Z_btc-updown-5m-1790940600",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "5c770796adcc13c49f152f228bfa79e9dca3944961794ae00ecb5d6bd4bc1a70",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T113513720913Z_btc-updown-5m-1790941200",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "aa729319aa03be71b5370387bcfe84b8b2034deb16e648d7d0049e12dd74e149",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T114526753421Z_btc-updown-5m-1790941800",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "54f752d566173583b1aaa99268cd4eb019105d63b9e3a422c93f74e0c2e31032",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T115515122731Z_btc-updown-5m-1790942400",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "4048e8efa44e2d311c814d4b51dbe54b0a6a5fa840017ae62bc49acc52f10a0b",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T120526131626Z_btc-updown-5m-1790943000",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "a539b3e90b6844a3354c4f5957d75cc09cd075d47a4c57a2669cb73f2d7cfbcc",
+    "config": {
+      "favorite_min": 0.6,
+      "favorite_max": 0.7,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "5709c9932ff81a3286828d7daae1b7314118a5b0289c10390b47d5956bef2ff7",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T170843390775Z_btc-updown-5m-1790961300",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "7f16aa23899a5dca6bda02fb40a9a259d67227e060c270279331e04b7aad550c",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T172028494745Z_btc-updown-5m-1790961900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "da5e3e1647590a39b6284ca7de58f4f68ab2556065a53da7557184d1b9fb9ed7",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "INCOMPLETE_RECONCILIATION",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T173029076981Z_btc-updown-5m-1790962500",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "ed1370ceb4ad5ce6ba2600f6abf96c1a75bd3bd28db63beea7ff84216cafed85",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "INCOMPLETE_RECONCILIATION",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T174021303918Z_btc-updown-5m-1790963100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "6ce45ca7fa44d705f05435ac38f80539ac1dc0a99f7d3516cc060a7ee438a545",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T175029786350Z_btc-updown-5m-1790963700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "9f905cb7fab5265dba192a592d77b052a447e3622ec33998e4ebb5e578d31ea1",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T180029149941Z_btc-updown-5m-1790964300",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "01e2154415d281f56ab86f063641707c41a761c951024028691852d30f0c4f5e",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T181030673227Z_btc-updown-5m-1790964900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "55e9362fb6715cf61fda9a9b850ff6893ded1132b8837330507ebabbd56eb1f8",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T182030065790Z_btc-updown-5m-1790965500",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "7246a4eaa9c7d333492c9a346eb7adc37a27b0bb0c00901f325f75a09460f53b",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T183037477468Z_btc-updown-5m-1790966100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "657249bd5dc6b83e67ba2d319e9a917b02875e7e0a7bfb8e30fcc30344f32acd",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261002T184034587512Z_btc-updown-5m-1790966700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "7b79e3af0ae1cea76d3e6e6aea44cb647b7b58df6ec6d9fe00e07a16e2d67531",
+    "config": {
+      "favorite_min": 0.85,
+      "favorite_max": 0.9,
+      "entry_start_s": 30.0,
+      "last_new_entry_s": 180.0
+    },
+    "config_sha256": "4e0ec0d93a98e488cc45ec6417139c39b6d3685b39f757989918a3ef74575543",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T074905231217Z_btc-updown-5m-1791014100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "4c70b72fe8ba58080895d511c7d319d159ca80c41b1bc59dcd85870b974d10d4",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T080036181638Z_btc-updown-5m-1791014700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "0fa55c65d6ee410115df536cb2d36a9d44f0f5df3a8e03cecfb51b2cec7dfd1c",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T081035054394Z_btc-updown-5m-1791015300",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "e8d242617557c900a527e10f5e168429f719d777255dbdcdc989a125209a0c23",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T082036760406Z_btc-updown-5m-1791015900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "c9d9de3fe782ab31f91ad693ee4fc137ea7806a08c50a56ae1d441c6be6e3ae8",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T083036328683Z_btc-updown-5m-1791016500",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "6c3d01a6f784146fa6883791b2b1781cd7d89b55fd41245da7472aa5a09d43ca",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T084126708506Z_btc-updown-5m-1791017100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "7d17e7983da174b13d3c8555c23ad22956bd9da073bc39dfa015cfeaad0d10be",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T085038167452Z_btc-updown-5m-1791017700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "eebdd04a51589cabba38ce6d2bde922b76ec61c2d9648b092afefc472f148f0f",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T090038367962Z_btc-updown-5m-1791018300",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "9742909845bb5a404be1ecae53f00badef35dc982433bccb721580a25fb17985",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T091039677569Z_btc-updown-5m-1791018900",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "1bf05195038f27faa308ba50643b8cc2f1723c048604f04be5d4709fb7326b05",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T092038927876Z_btc-updown-5m-1791019500",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "dfaf824f52ee12a2bf0216bea7a513510fbf08e608595ef5be2f445131197701",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T093044988028Z_btc-updown-5m-1791020100",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "6e25acb555f65c5f018c9ba54d0da68142046c03be5d752b566e8bd5278e10ff",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "INCOMPLETE_RECONCILIATION",
+    "configuration_identity_matches": true
+  },
+  {
+    "session": "20261003T094041873363Z_btc-updown-5m-1791020700",
+    "code_commit": "97ab0f98168f989b1878e4058022044c8372dcd3",
+    "manifest_sha256": "cbe4ec7dc8c9875bfc98ae8735e04bb8b57efab8daca9aeb4f7f72f336bdd353",
+    "config": {
+      "favorite_min": 0.9,
+      "favorite_max": 0.95,
+      "entry_start_s": 210.0,
+      "last_new_entry_s": 220.0
+    },
+    "config_sha256": "dfa37898d8b63c0c4326abc7c35140735bd1e62a880bf72db0e45ca8f25bc535",
+    "run_present": true,
+    "run_engineering_result": "COMPLETED",
+    "configuration_identity_matches": true
+  }
+]
