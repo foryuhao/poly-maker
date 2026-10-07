@@ -292,6 +292,40 @@ def btc5m_paper(
         console.print("\n[yellow]Stopped.[/yellow]")
 
 
+@app.command(name="rdp-live")
+def rdp_live(
+    market: str = typer.Option(..., "--market", help="exact btc-updown-5m-<epoch> market slug"),
+    preflight_only: bool = typer.Option(
+        False, "--preflight-only", help="required read-only public metadata check; never trades"),
+    config_dir: str = typer.Option("config", help="config directory"),
+) -> None:
+    """Read public metadata for one exact BTC5m market; this command cannot trade."""
+    from polymaker.logging import configure, get_logger
+    from polymaker.rdp_live import RDPBootstrapError, bootstrap_rdp_market
+
+    cfg = Config.load(config_dir)
+    configure(json_file=Path(cfg.paths.log_dir) / "rdp-live-preflight.jsonl")
+    log = get_logger("rdp.live.cli")
+    if not preflight_only:
+        log.error("rdp_bootstrap_result", result="FAILURE", category="PREFLIGHT_REQUIRED",
+                  slug=market, real_money_trading_performed=False)
+        console.print("[red]RDP preflight requires --preflight-only; no network request was made.[/red]")
+        raise typer.Exit(2)
+    try:
+        result = asyncio.run(bootstrap_rdp_market(cfg, market))
+    except RDPBootstrapError as exc:
+        console.print(f"[red]RDP preflight failed: {exc.category}: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[green]RDP public preflight passed[/green] | {result.market.slug} | "
+                  f"condition {result.market.condition_id} | "
+                  f"interval {result.epoch}–{result.end_epoch}")
+    for token in result.token_metadata:
+        console.print(f"{token.outcome}: token={token.token_id} tick={token.tick_size:g} "
+                      f"min_order_size={token.min_order_size:g}")
+    console.print("Read-only public metadata result; real_money_trading_performed=false")
+
+
 @app.command(name="favorite-first-live")
 def favorite_first_live(
     config_dir: str = typer.Option("config", help="config directory"),
