@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`f462339e0677aace0e62037e1188c1b1c3fa7312`
+`63246bf3a4765b6bd0e13944cd283ab32c946381`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0005`
+Current Iteration: `ITER-0006`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | PENDING |
+| ITER-0006 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0002 | Pure NORMAL quote candidates | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -81,9 +82,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0005 resumed under approved human decision 03_HUMAN_DECISION.md: NORMAL protects $5 future repair capacity; reserve available in REBALANCE; pricing unchanged.
+ITER-0006 Architect inspection pending. ITER-0005 capital gate PASS archived at 63246bf; successful result 09_RESULT_REVISION_01.md and receipt 10_ARCHIVE_RECEIPT.md. Human $5 future repair reserve remains approved authority.
 
-Next authorized action: Architect revision 04_ARCHITECT_REVISION_01.md, then serial Worker/Reviewer and automatic subsequent iterations. No real-money authority.
+Next authorized action: Architect chooses one minimal remaining prerequisite; continue serial autonomous implementation. No real-money authority.
 
 ---
 
