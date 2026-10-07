@@ -9,7 +9,14 @@ import pytest
 
 from polymaker.config import Config
 from polymaker.domain import Quote, Side
-from polymaker.execution.gateway import ExecutionGateway, GatewayReadError, PlacementUnknown, _tick_str
+from polymaker.execution.gateway import (
+    ExecutionGateway,
+    GatewayReadError,
+    OrderNotFound,
+    OrderReadMismatch,
+    PlacementUnknown,
+    _tick_str,
+)
 from polymaker.execution.ratelimit import TokenBucket
 
 
@@ -321,6 +328,82 @@ async def test_authoritative_get_order_rejects_missing_cumulative_quantity():
     gw._client, gw._io = Client(), inline
     with pytest.raises(GatewayReadError):
         await gw.get_order("ours")
+
+
+def _order_row(oid="ours"):
+    return {"id": oid, "asset_id": "token", "side": "BUY", "price": ".2",
+            "original_size": "5", "size_matched": "0", "status": "LIVE"}
+
+
+def _order_read_gateway(raw_factory):
+    gw = ExecutionGateway(Config(), paper=False)
+    class Client:
+        def get_order(self, oid):
+            return raw_factory(oid)
+    async def inline(fn): return fn()
+    gw._client, gw._io = Client(), inline
+    return gw
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_factory", [
+    lambda oid: _order_row(oid),          # plain dict
+    lambda oid: [_order_row(oid)],        # singleton list envelope
+])
+async def test_get_order_normalizes_supported_shapes(raw_factory):
+    row = await _order_read_gateway(raw_factory).get_order("ours")
+    assert row["id"] == "ours"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_factory", [
+    lambda oid: [],                                  # empty list
+    lambda oid: [_order_row(oid), _order_row(oid)],  # multi-row list
+    lambda oid: ["bad"],                             # non-dict element
+    lambda oid: "bad",                               # scalar string
+    lambda oid: 7,                                   # scalar int
+])
+async def test_get_order_rejects_malformed_shapes(raw_factory):
+    with pytest.raises(GatewayReadError) as exc:
+        await _order_read_gateway(raw_factory).get_order("ours")
+    # A malformed shape is NOT the "order absent" signal.
+    assert not isinstance(exc.value, OrderNotFound)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_factory", [
+    lambda oid: None,   # documented single-order "no order" null body
+    lambda oid: {},     # explicit empty object
+])
+async def test_get_order_absent_shapes_are_not_found(raw_factory):
+    with pytest.raises(OrderNotFound):
+        await _order_read_gateway(raw_factory).get_order("ours")
+
+
+@pytest.mark.asyncio
+async def test_get_order_sdk_not_found_error_is_order_not_found():
+    class PolyApiLikeError(Exception):
+        status_code = 404
+    gw = ExecutionGateway(Config(), paper=False)
+    class Client:
+        def get_order(self, _oid):
+            raise PolyApiLikeError("not found")
+    async def inline(fn): return fn()
+    gw._client, gw._io = Client(), inline
+    with pytest.raises(OrderNotFound):
+        await gw.get_order("ours")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw_factory", [
+    lambda oid: _order_row("someone-else"),   # different order
+    lambda oid: {"asset_id": "token", "side": "BUY", "price": ".2",
+                 "original_size": "5", "size_matched": "0"},  # no verifiable id
+])
+async def test_get_order_different_or_unverifiable_id_fails_closed(raw_factory):
+    with pytest.raises(OrderReadMismatch):
+        await _order_read_gateway(raw_factory).get_order("ours")
+    assert issubclass(OrderReadMismatch, GatewayReadError)
 
 
 @pytest.mark.asyncio

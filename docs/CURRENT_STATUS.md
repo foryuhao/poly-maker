@@ -3,17 +3,22 @@
 ## Active MakerInventory work
 
 Current program: MakerInventory (MI) Baseline 1.0
-Current milestone / slice: M2B-0B — MI Cash / Reservation Contract
-Status: M2B-0B final independent Re-review PASS / CLOSED for the exact reviewed working tree; Git checkpoint pending. The initial two-book double-allocation blocker is closed. M2B-0A final Re-review PASS / CLOSED for its reviewed working tree; its Git checkpoint also remains pending. M2A and M1 remain CLOSED / PASS. M2B execution remains blocked, and no MI send-enabled authority exists.
-Canonical predecessor baseline: MI M1 checkpoint `5befd9ee6eb27293bb6f6d885fbe458ea44cabe4` on `m4-dynamic-ev`.
-Canonical M2A baseline: `mi-m2a-reviewed-baseline` tag on the checkpoint commit containing this status entry; verify the tag and branch on remote before using it.
-Latest architecture: `docs/architecture/MI_ARCHITECTURE.md` (bounded M2B-0B supplement; no MI execution).
-Latest implementation report: `docs/reports/MI_M2B_0B_IMPLEMENTATION_REPORT.md`; prior blocker inspection: `docs/reports/MI_M2B_IMPLEMENTATION_REPORT.md`.
-Latest review: `docs/reviews/MI_M2B_0B_REVIEW.md` (initial NEEDS FIX; final independent Re-review PASS). M2B-0A final independent Re-review PASS is in `docs/reviews/MI_M2B_0A_REVIEW.md`.
-Current blocker: Complete reviewed Git checkpoints for M2B-0A and M2B-0B in order. The cash gate denies any account with existing open orders and does not grant MI execution.
-Next authorized action: Verify and checkpoint the exact reviewed M2B-0A predecessor and M2B-0B tree, including untracked source/tests/reports/reviews. Do not wire MI execution from either primitive alone.
-Explicitly unauthorized next actions: MI real order submission or cancellation, MI `--micro-live`, unreviewed cash assumptions, M2B micro-live market run, Merge, Settlement, Trial/W_trial, and any M1 strategy-semantic change.
-Pre-existing dirty files retained: `livecfg/config.toml` and local `research_outputs/`
+Current milestone / slice: M3 — MI Single-Market Micro-Live
+Status: M3 readiness hotfix INDEPENDENT REVIEW PASS (2026-10-06); prior M3 implementation Re-review
+PASS plus P1 price-boundary repair remain valid. No real trading performed.
+Canonical predecessor baseline: `57a9e9ce2f260e4015fedfd632771fcc37fd6b8d` (M1, M2A, M2B-0A, M2B-0B CLOSED).
+Latest architecture: `docs/architecture/MI_M3_ARCHITECTURE.md`.
+Latest implementation report: `docs/reports/MI_M3_IMPLEMENTATION_REPORT.md` (Readiness Hotfix section appended).
+Latest review: `docs/reviews/MI_M3_REVIEW.md` (initial NEEDS FIX; re-review PASS; Readiness Hotfix
+independent Review PASS, 2026-10-06).
+Current blocker: Readiness hotfix is reviewed PASS for this working tree; the reviewed files are not yet
+checkpointed. Full-suite run is blocked by pre-existing unrelated hangs in `test_favorite_live.py`
+and a research-writer test (NOT an M3 blocker).
+Next authorized action: Human may explicitly initiate the next bounded micro-live (or checkpoint the
+reviewed working tree first). Readiness hotfix Review PASS does not authorize automated/continuous live trading.
+Explicitly unauthorized next actions: real MI order/cancel during implementation or review, declaring
+M3 CLOSED without independent review, continuous MI live loop, loosening the stale threshold.
+Pre-existing dirty files retained: `livecfg/config.toml` and local `research_outputs/`.
 
 ## Prior M4 program state
 

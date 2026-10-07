@@ -154,3 +154,7 @@ log directory). Upload `chat_report.md` for routine strategy review. Inspect
 `raw.log` for engineering anomalies. Run `uv run polymaker favorite-first-report
 --last 10` for a structured multi-market summary. Settlement and rebates stay
 `unknown` until an authoritative source supplies them.
+
+## MakerInventory M3 micro-live (awaiting independent review)
+
+`uv run polymaker mi-micro-live --arm --config-dir livecfg` is an explicit, single-market BTC5m `MICRO_LIVE` entry. It requires configured live credentials and an exact `ARM MI MICRO LIVE` phrase after a valid candidate appears. It skips a startup market with less than 180 seconds remaining. Limits are BUY-only, post-only, five shares, target cap ±5, one working order, one filled clip and a bound $25 ACTIVE reservation. It observes one order, reconciles its final state, then stops; unknown order or cancel state retains the reservation for manual attention. Implementation and automated testing performed **no real trading**. Independent M3 review is required before human use.

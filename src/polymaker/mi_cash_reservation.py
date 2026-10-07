@@ -122,6 +122,17 @@ class MICashReservationBook:
 
     __slots__ = ()
 
+    def is_active(self, reservation: MICashReservation) -> bool:
+        """Check the process authority, not a caller's immutable stale copy."""
+        authority = _PROCESS_AUTHORITY
+        with authority.lock:
+            return (
+                authority.records.get(reservation.reservation_id) == reservation
+                and authority.active.get((reservation.identity, reservation.condition_id))
+                == reservation.reservation_id
+                and reservation.state is ReservationState.ACTIVE
+            )
+
     def effective_available_micro(self, evidence: ConfirmedSpendableCollateral) -> int:
         if not isinstance(evidence, ConfirmedSpendableCollateral) or (
             not isinstance(evidence.identity, LiveExecutionIdentity)

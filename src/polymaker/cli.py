@@ -339,6 +339,29 @@ def inventory_live(
     console.print(f"MI NO-SEND artifacts: {directory}")
 
 
+@app.command(name="mi-micro-live")
+def mi_micro_live(
+    config_dir: str = typer.Option("livecfg", help="config directory"),
+    arm: bool = typer.Option(False, "--arm", help="explicit MI MICRO_LIVE arm intent"),
+) -> None:
+    """Run at most one BTC5m MI maker order lifecycle."""
+    from polymaker.mi_micro_live import MicroLiveError, run_micro_live
+
+    if not arm:
+        raise typer.BadParameter("--arm is required for explicit MICRO_LIVE intent")
+
+    def confirm_arm() -> bool:
+        return True
+
+    try:
+        result = asyncio.run(run_micro_live(config_dir, arm=confirm_arm,
+                                            emit=lambda message: console.print(message)))
+    except (MicroLiveError, RuntimeError) as exc:
+        console.print(f"[red]MI MICRO-LIVE STOPPED:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"MI MICRO-LIVE COMPLETE: {result}")
+
+
 @app.command(name="favorite-first-report")
 def favorite_first_report(
     last: int = typer.Option(10, "--last", min=1, help="recent completed runs"),

@@ -19,6 +19,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+from decimal import Decimal
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
@@ -40,6 +41,24 @@ class GatewayReadError(RuntimeError):
     """An authoritative Gateway snapshot could not be fetched or parsed."""
 
 
+class OrderNotFound(GatewayReadError):
+    """The authenticated order read reported the order is not present.
+
+    A subclass of ``GatewayReadError`` so every existing caller still fails
+    closed, but callers that own a reservation may attempt account-truth
+    terminal reconciliation instead of treating this as a permanent UNKNOWN.
+    """
+
+
+class OrderReadMismatch(GatewayReadError):
+    """The order read returned a different or unverifiable order identity.
+
+    This is a hard fail-closed condition: the response was an order, but it
+    could not be proven to be the requested order, so it must never be used to
+    reconcile or release anything.
+    """
+
+
 class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
 
@@ -53,8 +72,53 @@ def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
     return None
 
 
+def _unwrap_order_read(raw: Any) -> tuple[dict[str, Any] | None, str]:
+    """Return ``(row, shape)`` for the supported authenticated order shapes.
+
+    Supported real shapes are a single order object (``dict``) and the
+    singleton-list envelope (``[dict]``) seen from this SDK family. Anything
+    else — an empty/``null`` body, empty list, multi-row list, non-dict element,
+    scalar — is unsupported and must never be guessed or partially consumed.
+    A ``null`` body is reported distinctly because the single-order endpoint
+    documents ``null`` as the "no order" response, not a malformed row.
+    """
+    if isinstance(raw, dict):
+        return raw, "dict"
+    if isinstance(raw, list):
+        if len(raw) == 1 and isinstance(raw[0], dict):
+            return raw[0], "singleton_list"
+        return None, "list"
+    if raw is None:
+        return None, "null"
+    return None, type(raw).__name__
+
+
+def _is_order_not_found_error(exc: BaseException) -> bool:
+    """True when the SDK signalled an absent order (HTTP 404) rather than a fault."""
+    return getattr(exc, "status_code", None) == 404
+
+
 def _tick_str(tick: float) -> str:
     return f"{tick:g}"
+
+
+def normalize_signing_price(price: float, tick_size: float) -> float:
+    """Use the same tick and rounding primitives as the official SDK signer."""
+    from py_clob_client_v2.order_builder.builder import ROUNDING_CONFIG
+    from py_clob_client_v2.order_builder.helpers import round_normal
+    from py_clob_client_v2.utilities import price_valid
+
+    if not math.isfinite(price) or not math.isfinite(tick_size) or tick_size <= 0:
+        raise ValueError("signing price or tick is unavailable")
+    tick = _tick_str(tick_size)  # Also used by create_order's PartialCreateOrderOptions.
+    rounding = ROUNDING_CONFIG.get(tick)
+    if rounding is None or not price_valid(price, tick):
+        raise ValueError("signing price or tick is invalid")
+    signed_price = round_normal(price, rounding.price)
+    if (not math.isfinite(signed_price) or not price_valid(signed_price, tick)
+            or Decimal(str(signed_price)) % Decimal(tick) != 0):
+        raise ValueError("SDK-normalized price is not on the signing tick")
+    return float(signed_price)
 
 
 class ExecutionGateway:
@@ -716,25 +780,65 @@ class ExecutionGateway:
             raise
 
     async def get_order(self, order_id: str) -> dict[str, Any]:
-        """Strict authenticated CLOB order read; malformed/failed is UNKNOWN."""
+        """Strict authenticated CLOB order read; malformed/failed is UNKNOWN.
+
+        Accepts only the supported real shapes (``dict`` or ``[dict]``). An
+        absent order — venue not-found, a ``null`` body, or an explicit empty
+        object — raises :class:`OrderNotFound` so a reservation-owning caller
+        can reconcile terminal truth from official account state instead of
+        blocking forever. A response for a different/unverifiable order raises
+        :class:`OrderReadMismatch` (hard fail closed). Any other shape raises
+        :class:`GatewayReadError` (malformed, fail closed). No guess is ever
+        returned.
+        """
         if self._paper or self._client is None:
             raise GatewayReadError("order read unavailable")
         def _get() -> dict[str, Any]:
-            row = self._client.get_order(order_id)
-            if not isinstance(row, dict) or not row:
+            try:
+                raw = self._client.get_order(order_id)
+            except Exception as exc:
+                if _is_order_not_found_error(exc):
+                    log.info("order_read_not_found", order_id_prefix=order_id[:12], via="sdk_error")
+                    raise OrderNotFound("order read reported the order is not present") from exc
+                raise
+            row, shape = _unwrap_order_read(raw)
+            log.info(
+                "order_read_normalized",
+                response_type=type(raw).__name__,
+                shape=shape,
+                list_length=len(raw) if isinstance(raw, list) else None,
+                dict_keys=sorted(str(k) for k in raw) if isinstance(raw, dict) else None,
+                order_id_prefix=order_id[:12],
+            )
+            if shape == "null":
+                log.info("order_read_not_found", order_id_prefix=order_id[:12], via="null_body")
+                raise OrderNotFound("order read returned no order")
+            if row is None:
                 raise GatewayReadError("order read returned malformed data")
+            if not row:
+                # An explicit empty object is the venue's "order not returned"
+                # shape for a no-longer-open order; it is not proof of no risk
+                # by itself, only a trigger for account-truth reconciliation.
+                log.info("order_read_not_found", order_id_prefix=order_id[:12], via="empty_object")
+                raise OrderNotFound("order read returned an empty order object")
             oid = row.get("id", row.get("orderID", row.get("order_id")))
-            if not isinstance(oid, str) or oid.strip() != order_id:
-                raise GatewayReadError("order read returned a different order")
+            if not isinstance(oid, str) or not oid.strip():
+                raise OrderReadMismatch("order read response omitted a verifiable order id")
+            if oid.strip() != order_id:
+                raise OrderReadMismatch("order read returned a different order")
             from polymaker.userstream.parse import normalize_order
-            if normalize_order(row) is None:
+            event = normalize_order(row)
+            if event is None:
                 raise GatewayReadError("order read omitted valid cumulative order fields")
+            log.info("order_read_state", status=str(row.get("status", "")).upper(),
+                     original_size=event.original_size, size_matched=event.size_matched,
+                     is_cancel=event.is_cancel)
             return row
         try:
             return await self._io(_get)
+        except GatewayReadError:
+            raise
         except Exception as exc:
-            if isinstance(exc, GatewayReadError):
-                raise
             raise GatewayReadError("order read failed") from exc
 
     async def get_trades(self, *, market: str | None = None, asset_id: str | None = None) -> list[dict[str, Any]]:
