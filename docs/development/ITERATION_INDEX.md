@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`10e94b5f6e519eca3c2618efeaaa524d3a333711`
+`6c87a39b3b6acb67f82b7be13aed7c1d94e1356d`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0006`
+Current Iteration: `ITER-0007`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0006 | NORMAL Book Filter with approved total variation | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | KEEP |
+| ITER-0007 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0006 | NORMAL Book Filter with approved total variation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -82,7 +83,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0006 independently passed. Current result: `ITER-0006/09_RESULT_REVISION_01.md`; final review: `08_REVIEWER_REREVIEW_01.md`. Archive reviewed state, then automatically begin ITER-0007. Approved depth definition and $5 repair reserve remain settled. No real-money authority.
+ITER-0007 Architect selects one minimal prerequisite from the actual reviewed repository. ITER-0006 PASS is archived; see `ITER-0006/09_RESULT_REVISION_01.md` and `10_ARCHIVE_RECEIPT.md`. Approved depth definition and $5 reserve remain settled. Continue serial development automatically; no real-money authority.
 
 ---
 
