@@ -1,7 +1,7 @@
 # RDP Phase 0 — Repository Baseline
 
 ## Status
-FL RECONSTRUCTION VALIDATED; RDP CHECKPOINT PENDING.
+READY_FOR_RDP_DEVELOPMENT — subject to final branch/tag push verification, recorded in Git and RESULT.
 
 ## Repository
 Original /home/ubuntu/poly-maker remains unchanged on dirty historical m4-dynamic-ev. Reconstruction worktree /tmp/poly-maker-fl-reconstruct-20261007, branch reconstruct/fl-canonical-20261007, rooted at 97ab0f9. Historical controls/archive are evidence only, not merged code ancestors.
@@ -11,7 +11,9 @@ origin: https://github.com/foryuhao/poly-maker.git. No upstream/main write.
 
 ## Reconstructed FL Canonical Baseline
 Parent commit: 97ab0f98168f989b1878e4058022044c8372dcd3.
-Reconstruction commit: resolve fl-reconstructed-baseline^{commit} after tag creation; exact numeric identity recorded in RDP follow-up.
+Reconstruction commit: 76fe93ffeb8cc1f8ca440587ab901ea402221228.
+Canonical tag: fl-reconstructed-baseline.
+Reconstruction branch: reconstruct/fl-canonical-20261007.
 Files changed: livecfg/strategy.toml; src/polymaker/config.py; src/polymaker/favorite_live.py; tests/test_favorite_live.py, plus readiness/evidence documentation.
 Provenance source: selected 19c322a profile/config wiring hunks, M4A startup and entry-range reports, 42 manifest effective-config/hash matches and 41 corresponding run-record matches. Exact patch and per-hunk evidence in ITER-0000/FL_PROVENANCE_RECONSTRUCTION.md and preservation/fl-reconstruction.patch.
 Excluded: neighboring Data API-only startup cleanup, engine auto-merge/on-chain reconciliation removal, inclusive cutoff policy, RPC timeout/logging, unrelated offline research, all IM development. No local signature_type=2 imported; committed parent value=3 preserved.
@@ -31,7 +33,7 @@ Paths: original research_data/m4a/, livecfg/logs/runs/, logs/runs/, research_aud
 PAUSED / incomplete. Branch im-paused; commit a03b59fd0b3c42955029193b30893a395e03dfa4; tag im-paused-20261007. docs/history/IM_PAUSED.md preserved. Historical snapshot grants no PASS and is NOT an RDP predecessor.
 
 ## FL → IM Change Classification
-Previous provisional table retained in ITER-0000 audit; source runtime reconstructions separately classified in FL_PROVENANCE_RECONSTRUCTION.md. Final canonical-FL-to-IM comparison recorded after tagging.
+Final canonical comparison: ITER-0000/FL_TO_IM_CLASSIFICATION.md. Prior provisional classification remains historical in audit; provenance reconstruction separately classified in FL_PROVENANCE_RECONSTRUCTION.md.
 
 ### IM Strategy-Specific
 MI strategy/live/read-only/cash/reservation/CLI/tests/program documents: exclude.
@@ -49,8 +51,12 @@ NONE.
 All above. Not required to begin implementation; future explicit minimal iteration if needed.
 
 ## RDP Baseline
-Branch: rdp-phase0-dev — PENDING.
-Commit/tag: PENDING clean FL acceptance and documentation-only RDP checkpoint.
+Branch: rdp-phase0-dev.
+Predecessor: fl-reconstructed-baseline / 76fe93ffeb8cc1f8ca440587ab901ea402221228.
+Commit: resolve rdp-phase0-baseline^{commit} (exact tagged starting tree).
+Tag: rdp-phase0-baseline.
+Delta from FL: readiness/evidence documentation only; shared-core included NONE, no source/test/config/dependency changes.
+Isolated RDP full suite: 656 passed, 2 skipped in 10.23s, no exclusions; log preserved.
 
 ## Test Baseline
 Python 3.12.14, existing .venv. Exact gate commands/logs in reconstruction audit.
@@ -63,7 +69,8 @@ Official Gamma metadata/BTC5m selection, market WebSocket/orderbook, CLOB gatewa
 No RDP strategy/state/inventory/accounting/metrics implemented. Official-interface isolation and any shared-core need belong to future explicit Architect contract. No live execution authority granted.
 
 ## Readiness Decision
-FL validated; RDP checkpoint pending.
+READY_FOR_RDP_DEVELOPMENT upon successful final clean checkpoint/push verification. No RDP implementation or live authority implied.
 
 ## Blockers / Human Decisions
-No provenance/test blocker after human reconstruction authority and full passing gate. Finish additive checkpoints and remote verification. Prior blocked documents preserved under ITER-0000/preservation/PRE_RECONSTRUCTION_*.
+No remaining provenance/test blocker. Final archival procedure commits/tag/pushes this documentation-only RDP checkpoint and verifies exact remote refs before declaring readiness. Prior blocked documents preserved under ITER-0000/preservation/PRE_RECONSTRUCTION_*.
+Next authorized task after verified readiness: archive historical AGENTS.md, install RDP Phase 0 AGENTS/custom Architect/Worker/Reviewer configuration, then begin ITER-0001. Those actions were NOT performed during ITER-0000.

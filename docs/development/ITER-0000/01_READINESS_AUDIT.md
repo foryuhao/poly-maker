@@ -1,3 +1,38 @@
+# ITER-0000 — Final Readiness Audit
+
+Current status: READY_FOR_RDP_DEVELOPMENT after final clean checkpoint and remote verification.
+Human architecture decision: reconstruct a minimum FL predecessor from 97ab0f9, excluding unsupported mixed 19c322a changes.
+
+## Current FL Provenance Reconstruction
+Canonical FL: fl-reconstructed-baseline / 76fe93ffeb8cc1f8ca440587ab901ea402221228; branch reconstruct/fl-canonical-20261007.
+Root: 97ab0f9. Whole 19c322a and im-paused are proven NOT ancestors (merge-base --is-ancestor exits 1); root ancestry exits 0. Four source/test/config files reconstructed; exact diff, included evidence, excluded neighbors and full 93-file historical change classification in FL_PROVENANCE_RECONSTRUCTION.md. Capture identity matches 42/42; 41 corresponding run records match, one absent. No exact historical committed-workspace claim.
+
+## Current Test Gate
+Known historical predecessor spender hang independently reproduced in earlier 19c322a run (timeout 15 exit 124); currently exact test passes alone, so no waived test in final acceptance. Authorized broad exclusion gate: 655 passed, 2 skipped, 1 deselected. Stronger FL full suite: 656 passed, 2 skipped. Separate isolated RDP full suite: 656 passed, 2 skipped in 10.23s. All other applicable tests passed; no test fix, extra exclusion or failure relabeling. Commands/logs preserved in reconstruction document and preservation/.
+
+## IM Preservation
+im-paused / a03b59fd0b3c42955029193b30893a395e03dfa4 / im-paused-20261007 remain unchanged and remotely archived. Incomplete/PAUSED, preservation only, not new PASS and not RDP predecessor. Original dirty IM workspace remains untouched, including unexplained signature_type=2 diff and control files. Canonical recovered config remains signature_type=3.
+
+## Data Preservation
+Original research_data/m4a/ 42 sessions, 5,180,619,849 bytes, 8,284,525 records, 38 slugs; 32 historically replay-usable markets. Sampled JSON/JSONL readable, manifests match prior inventory hashes. No bulk data Git inclusion/move. Original research_outputs/, research_audits/, logs/runs/, livecfg/logs/ remain at original locations. These historical FL assets do not establish RDP edge or full telemetry acceptance.
+
+## RDP Baseline
+rdp-phase0-dev derives from canonical reconstructed FL. rdp-phase0-baseline identifies its exact documentation-only starting checkpoint. Commit is resolvable from tag; no IM ancestry wholesale, no shared-core included, no RDP strategy feature. Canonical-FL-to-IM classification in FL_TO_IM_CLASSIFICATION.md. Signing/identity/readiness/order-read candidates deferred to later explicit minimal iterations.
+
+## Readiness safety and limits
+No AGENTS.md/custom agent framework installed. Legacy historical FL RPC/merge paths are preserved rather than silently changed; they confer NO RDP runtime authority. RDP implementation must obey official Polymarket HTTP/WebSocket-only interface rule through an explicit Architect contract. No real order/cancel/authenticated trading action or new dependency. No main merge/PR/history rewrite. New FL and RDP checkpoints are additive; historical tags preserved.
+
+## Checkpoint and remote procedure
+Clean FL worktree accepted and tagged; FL branch/tag push succeeded. RDP full gate passes; source/test/config tree matches FL exactly. Documentation-only final RDP commit/tag/push and exact remote branch/peeled-tag verification are performed before final success. Original 18 file fingerprints and original HEAD/dirty state are checked unchanged. Final Git evidence and remote completion are recorded as archival receipt on pre-rdp-controls-20261007 without altering either baseline tag.
+
+## Next authorized action
+After successful verified readiness: archive historical AGENTS.md, install RDP Phase 0-specific AGENTS.md and custom Architect/Worker/Reviewer configuration, then begin ITER-0001. STOP ITER-0000 before doing those actions.
+
+## Historical investigations — retained verbatim below
+Earlier BLOCKED statuses and pending-checkpoint language below describe earlier attempts; current status above supersedes them without erasing evidence.
+
+---
+
 # ITER-0000 — Pre-RDP Codebase Isolation
 
 Status: BLOCKED — HUMAN_DECISION_REQUIRED
