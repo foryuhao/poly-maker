@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`622210233ee54e1615d9a917565fa90524d6960d`
+`1e4105f6c0e7cf557962876c8f21459fe0522750`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0003`
+Current Iteration: `ITER-0004`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | PENDING |
+| ITER-0004 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0002 | Pure NORMAL quote candidates | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0001 | Confirmed-fill inventory/accounting projection | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0000 | Pre-RDP codebase isolation, FL reconstruction, IM preservation, and RDP baseline readiness | N/A | N/A | N/A | READY | ARCHIVED | NOT_RUN | KEEP |
@@ -79,9 +80,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0003 approved contract 01_ARCHITECT.md; Worker implementation pending. ITER-0002 final PASS archived at 6222102; receipt: ITER-0002/06_ARCHIVE_RECEIPT.md.
+ITER-0004 Architect inspection pending. ITER-0003 final PASS archived at 1e4105f; receipt: ITER-0003/04_ARCHIVE_RECEIPT.md.
 
-Next authorized action: Architect chooses one smallest remaining prerequisite. Continue serial Worker and Reviewer automatically.
+Next authorized action: Architect chooses one smallest remaining prerequisite; continue serial development automatically.
 
 ---
 
