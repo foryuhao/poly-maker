@@ -1,12 +1,24 @@
-# Durable Project Handoff Protocol
+# poly-maker — RDP Phase 0 Development Contract
 
-This repository is developed by multiple AI roles and may be continued across independent Codex sessions.
+## 1. Current Authority
 
-Chat/session context is NOT an authoritative project record.
+This file is the active repository-level development contract for RDP Phase 0.
 
-Important design decisions, implementation results, review findings, milestone status, Git checkpoint state, and handoff information MUST be persisted in the repository as Markdown files and/or Git history.
+It supersedes historical `AGENTS.md` instructions for active RDP Phase 0 development.
 
-The repository must be understandable and resumable from:
+Historical development protocols may be preserved under:
+
+```text
+docs/history/
+```
+
+Historical documents are audit/reference material only.
+
+They are NOT active agent instructions unless this file explicitly references them.
+
+Chat/session context is never an authoritative project record.
+
+The repository must remain understandable and resumable from:
 
 ```text
 Git
@@ -20,698 +32,1100 @@ without relying on previous chat history.
 
 ---
 
-# 1. Source of Truth Hierarchy
+# 2. Current Project Objective
 
-Use the following authority order:
+The current program is:
 
-1. Current repository code and tests
-2. Current milestone architecture/design document
-3. Research specification
-4. Accepted implementation reports
-5. Accepted review reports
-6. Git history / milestone tags / reviewed baseline tags
-7. Chat/session context
+```text
+RDP Phase 0
+```
 
-Chat context may help interpretation, but MUST NOT override durable repository evidence.
+The immediate objective is NOT to build a complete trading platform.
 
-If durable documents conflict with current code, explicitly identify the conflict instead of silently guessing.
+The objective is:
 
-If Git metadata conflicts with the reviewed tree or durable documentation, do not silently assume the tag is correct. Investigate the checkpoint.
+```text
+Use the existing poly-maker codebase
+→ implement the Frozen RDP Phase 0 strategy
+→ independently review it
+→ reach MICRO_LIVE_READY
+→ stop development
+→ obtain human authorization
+→ validate with 1–3 real BTC5m markets
+→ use real market output as input to the next iteration
+```
+
+The project follows:
+
+```text
+Minimum Problem
+→ Minimum Change
+→ Fast Real-Market Validation
+```
+
+Do not build beyond the next piece of evidence required from the market.
+
+Architectural completeness is not the objective.
 
 ---
 
-# 2. Role Separation
+# 3. Source of Truth
 
-The project uses four primary roles.
+There are separate authorities for strategy semantics and implementation reality.
 
-## Researcher
+## 3.1 Strategy Semantics
 
-Responsibility:
-
-- define the research question;
-- formalize economics/statistics;
-- identify evidence requirements;
-- specify datasets/features/labels;
-- define experimental methodology;
-- define GO / NO-GO / INCONCLUSIVE methodology.
-
-Researcher must NOT silently redesign live architecture.
-
-Required durable output:
+The authoritative strategy specification is:
 
 ```text
-docs/research/<TOPIC>_RESEARCH_DESIGN.md
+docs/strategy/RDP_PHASE0_FROZEN.md
 ```
 
-Example:
+For strategy behavior, authority order is:
 
 ```text
-docs/research/DYNAMIC_EV_EXIT_RESEARCH_DESIGN.md
+RDP_PHASE0_FROZEN.md
+→ approved human architecture decisions
+→ current Architect Contract
+→ implementation
 ```
+
+The Architect Contract may define HOW to implement the Frozen SOP.
+
+It may NOT change WHAT the Frozen SOP means.
+
+If implementation behavior conflicts with the Frozen SOP:
+
+```text
+the implementation is defective
+```
+
+unless an explicit human-approved strategy revision exists.
+
+No agent may silently:
+
+- reinterpret the Frozen SOP;
+- extend it;
+- weaken it;
+- optimize it;
+- replace it;
+- introduce new strategy semantics.
+
+A strategy-semantic change requires explicit human architecture approval.
 
 ---
 
-## Architect
+## 3.2 Implementation Reality
 
-Responsibility:
-
-- translate an accepted research/product requirement into technical architecture;
-- inspect the actual repository;
-- identify exact integration points;
-- define module boundaries;
-- define failure isolation;
-- define implementation slices;
-- define acceptance tests;
-- define checkpoint and handoff expectations when relevant.
-
-Architect normally DOES NOT implement production code unless explicitly requested.
-
-Required durable output:
+For determining what the repository actually does now, authority order is:
 
 ```text
-docs/architecture/<MILESTONE>_ARCHITECTURE.md
+current code and tests
+→ actual Git state / diff
+→ current durable implementation artifacts
+→ historical reports
+→ chat/session context
 ```
 
-Example:
+Reports describe evidence.
+
+Reports do not override actual code.
+
+A report saying:
 
 ```text
-docs/architecture/M4A_ARCHITECTURE.md
+tests passed
 ```
 
-Architecture documents must include:
+does not prove the current tree still passes.
 
-- objective;
-- scope and explicit non-goals;
-- repository assessment;
-- module boundaries;
-- data/control flow;
-- exact files expected to change;
-- integration points;
-- safety/failure model;
-- milestone slices;
-- acceptance criteria;
-- unresolved issues.
+A Reviewer PASS applies only to the exact reviewed code, scope, and repository state.
 
 ---
 
-## Worker
+# 4. Existing Codebase Rule
 
-Responsibility:
+The current `poly-maker` repository is the implementation baseline.
 
-- implement only the currently authorized implementation slice;
-- follow the accepted architecture;
-- avoid redesigning unrelated systems;
-- run relevant tests;
-- document actual implementation results;
-- preserve the reviewed predecessor baseline;
-- avoid beginning the next slice before the current slice is accepted and checkpointed.
+This is an incremental development project.
 
-For every completed slice, Worker MUST create or update:
+It is NOT a greenfield rewrite.
 
-```text
-docs/reports/<SLICE>_IMPLEMENTATION_REPORT.md
-```
+Before proposing or implementing any change, inspect the existing repository and reuse working components whenever practical.
 
-Example:
+Existing working components are presumed valuable unless evidence demonstrates otherwise.
 
-```text
-docs/reports/M4A_1_IMPLEMENTATION_REPORT.md
-```
+This includes, where actually present:
 
-The implementation report must include:
+- market-data infrastructure;
+- official Polymarket HTTP integration;
+- official Polymarket WebSocket integration;
+- authenticated account/order reads;
+- order gateway;
+- order placement;
+- cancellation;
+- reconciliation;
+- stale-data handling;
+- live-send gates;
+- risk controls;
+- logging;
+- observability;
+- tests.
 
-```text
-# <Slice> Implementation Report
+Do not:
 
-Status:
-Commit / working tree base:
-Reviewed predecessor baseline:
-Architecture reference:
+- rebuild an existing subsystem merely for cleanliness;
+- replace a working gateway when a local extension is sufficient;
+- duplicate functionality already present;
+- create a parallel execution path without Architect justification;
+- remove existing safety behavior without explicit authority;
+- rewrite stable modules merely because a new design looks cleaner.
 
-## Scope implemented
-
-## Files added
-
-## Files modified
-
-## Important implementation decisions
-
-## Deviations from architecture
-- NONE
-or
-- exact deviation + reason
-
-## Tests added
-
-## Tests executed
-
-## Test results
-
-## Known limitations / unresolved issues
-
-## Safety / behavior impact
-State explicitly whether live trading semantics changed.
-
-## Git diff summary
-
-## Handoff to Reviewer
-```
-
-Do not report PASS for your own implementation.
-
-Worker status is:
+Every Architect Contract must explicitly identify:
 
 ```text
-IMPLEMENTED — AWAITING REVIEW
+Existing Components Reused
+Existing Components Modified
+New Components Required
 ```
 
-Worker must not silently create or move milestone PASS tags unless the task explicitly authorizes checkpoint creation after independent Review PASS.
+If an existing component can satisfy the requirement with a small modification, prefer that solution.
 
 ---
 
-## Reviewer
+# 5. Development Principle
 
-Responsibility:
+Every iteration solves exactly ONE clear and verifiable problem.
 
-- independently inspect implementation against architecture;
-- inspect relevant code rather than trusting Worker summary;
-- inspect tracked AND untracked reviewed files;
-- run or inspect relevant tests;
-- identify P0 / P1 / P2 issues;
-- determine PASS or NEEDS FIX;
-- record the exact reviewed baseline / commit / working tree when possible.
-
-Every Review MUST be persisted as:
+The default sequence is:
 
 ```text
-docs/reviews/<SLICE>_REVIEW.md
+Observe current behavior
+→ define one problem
+→ define one expected behavior
+→ make smallest defensible change
+→ independently review
+→ preserve evidence
+→ obtain next evidence
 ```
 
-Example:
+Do not:
+
+- combine unrelated problems;
+- refactor unrelated code;
+- implement future functionality preemptively;
+- optimize before evidence demonstrates a bottleneck;
+- add abstraction merely because it may later be useful;
+- expand scope during implementation;
+- turn a coding iteration into strategy research.
+
+If an unrelated issue is discovered:
 
 ```text
-docs/reviews/M4A_1_REVIEW.md
+record it as Deferred Finding
 ```
 
-Review document must include:
+Do not fix it in the current iteration.
+
+Real market evidence outranks model intuition.
+
+---
+
+# 6. External Interface Rule
+
+poly-maker trading, market data, account state, risk, and execution may depend ONLY on:
 
 ```text
-# <Slice> Review
+Polymarket official HTTP APIs
+Polymarket official WebSocket APIs
+```
 
-Verdict:
+Forbidden without explicit human architecture approval:
+
+- blockchain RPC;
+- third-party runtime market-data APIs;
+- third-party runtime trading APIs;
+- unofficial Polymarket runtime services;
+- direct blockchain state dependencies;
+- any new external runtime interface.
+
+Development tooling is separate from runtime architecture.
+
+A coding model, development MCP, GitHub integration, or research tool does NOT automatically become an approved runtime dependency.
+
+Never convert a development dependency into a production trading dependency without explicit human approval.
+
+---
+
+# 7. Roles
+
+The development system contains:
+
+```text
+Orchestrator
+Architect
+Worker
+Reviewer
+```
+
+The normal workflow is serial.
+
+There is no default Researcher role in the RDP Phase 0 implementation loop.
+
+Research may be explicitly started later if real-market evidence creates a new research question.
+
+---
+
+# 8. Orchestrator
+
+The primary Codex thread acts as Orchestrator.
+
+The Orchestrator owns workflow coordination and durable archival.
+
+It may:
+
+- inspect repository state;
+- determine the next iteration ID;
+- create iteration directories;
+- spawn Architect;
+- spawn Worker;
+- spawn Reviewer;
+- route Reviewer findings;
+- persist specialist Markdown outputs verbatim;
+- create `RESULT.md`;
+- update `ITERATION_INDEX.md`;
+- perform normal Git commits;
+- push reviewed iteration history;
+- stop and request human architecture input.
+
+The Orchestrator must NOT independently implement trading source-code changes.
+
+The Orchestrator must NOT independently modify tests to make them pass.
+
+Production implementation belongs to Worker.
+
+The Orchestrator must not silently rewrite, improve, summarize, or correct a specialist report before persisting it.
+
+If a specialist report is incomplete:
+
+```text
+return it to that specialist
+```
+
+Do not repair it yourself.
+
+---
+
+# 9. Architect
+
+Architect is read-only.
+
+Architect's job is:
+
+```text
+inspect actual repository
+→ inspect Frozen SOP
+→ inspect relevant prior evidence
+→ define exactly one minimal implementation problem
+```
+
+Architect must define:
+
+- Problem
+- Evidence / Current Behavior
+- Existing Components Reused
+- Existing Components Modified
+- New Components Required
+- Desired Behavior
+- Minimal Scope
+- Invariants
+- Acceptance Criteria
+- Required Tests
+- Observability Requirements
+- Live Validation, when relevant
+- Explicit Non-Goals
+- Risks
+- Deferred Findings
+- Human Approval Required
+
+Architect does NOT implement production code.
+
+Architect must not redesign unrelated architecture.
+
+Architect must not invent missing strategy semantics.
+
+If implementation requires:
+
+- changing the Frozen SOP;
+- changing an external runtime interface;
+- materially expanding iteration scope;
+- making a strategy decision not already frozen;
+- resolving a behaviorally meaningful ambiguity;
+
+Architect returns:
+
+```text
+ARCHITECT_BLOCKED
+```
+
+and identifies the exact human decision required.
+
+---
+
+# 10. Worker
+
+Worker is the only specialist role allowed to modify source code and tests.
+
+Worker implements ONLY the approved Architect Contract.
+
+Worker must first inspect:
+
+- the Frozen SOP;
+- current Architect Contract;
+- relevant existing implementation;
+- relevant existing tests;
+- previous Reviewer findings if this is a repair round.
+
+Worker must prefer:
+
+```text
+existing component + minimal modification
+```
+
+over:
+
+```text
+new subsystem
+```
+
+Worker must not:
+
+- modify the Frozen SOP;
+- change strategy semantics;
+- expand iteration scope;
+- fix unrelated bugs;
+- refactor unrelated modules;
+- introduce speculative features;
+- create duplicate implementations;
+- independently redesign architecture.
+
+If the contract cannot be implemented without changing approved scope:
+
+```text
+WORKER_BLOCKED
+```
+
+Do not improvise.
+
+Worker may edit:
+
+```text
+src/
+tests/
+other implementation files explicitly required by the contract
+```
+
+Worker must NOT perform Git history operations such as:
+
+- commit;
+- push;
+- tag;
+- merge;
+- rebase;
+- amend;
+- reset published history.
+
+Git archival belongs to the Orchestrator.
+
+---
+
+# 11. Reviewer
+
+Reviewer is independent and read-only.
+
+Reviewer reviews the actual implementation.
+
+Do not trust the Worker report alone.
+
+Reviewer must inspect:
+
+```text
+Frozen SOP
+Architect Contract
+Worker Report
+actual code
+actual tests
+actual Git diff
+relevant existing implementation
+```
+
+Review priority:
+
+1. Frozen SOP compliance
+2. Trading safety
+3. Architect Contract compliance
+4. Existing-codebase compatibility
+5. Correctness
+6. Order lifecycle
+7. Partial-fill handling
+8. Cancel/fill race handling
+9. Reconciliation
+10. Inventory accounting
+11. Capital accounting
+12. NORMAL / REBALANCE transitions
+13. dynamic TickSize / metadata
+14. fail-closed behavior
+15. test adequacy
+16. scope creep
+
+Reviewer must explicitly check whether Worker:
+
+- duplicated existing functionality;
+- unnecessarily replaced a working subsystem;
+- bypassed existing safety controls.
+
+Findings are classified as:
+
+```text
+BLOCKER
+MUST_FIX
+NOTE
+```
+
+Reviewer returns one of:
+
+```text
 PASS
-or
-NEEDS FIX
-
-Reviewed predecessor baseline:
-Reviewed commit / working tree:
-Architecture reference:
-Implementation report reference:
-
-## Scope reviewed
-
-## Findings
-
-### P0
-- ...
-
-### P1
-- ...
-
-### P2
-- ...
-
-## Architecture compliance
-
-## Safety / regression assessment
-
-## Tests reviewed / executed
-
-## Untracked artifact audit
-
-## Required fixes
-
-## Deferred issues
-
-## Final verdict
+RETURN_TO_WORKER
+RETURN_TO_ARCHITECT
 ```
 
-P0/P1 issues block PASS.
+Use `RETURN_TO_WORKER` for normal implementation defects.
 
-P2 issues may be explicitly deferred.
+Use `RETURN_TO_ARCHITECT` if fixing the problem requires:
 
-Reviewer must not silently modify the implementation while acting as Reviewer unless specifically authorized to switch roles.
+- architecture change;
+- Frozen SOP change;
+- scope change;
+- new external runtime interface;
+- human strategy decision.
 
-A Reviewer PASS applies only to the exact reviewed code / working tree / scope.
+Reviewer never fixes its own findings.
 
 ---
 
-# 3. Directory Structure
+# 12. Mandatory Serial Workflow
 
-Use:
-
-```text
-docs/
-  research/
-    DYNAMIC_EV_EXIT_RESEARCH_DESIGN.md
-
-  architecture/
-    M4_ARCHITECTURE.md
-    M4A_ARCHITECTURE.md
-    M4B_ARCHITECTURE.md
-    ...
-
-  reports/
-    M4A_1_IMPLEMENTATION_REPORT.md
-    M4A_2_IMPLEMENTATION_REPORT.md
-    ...
-
-  reviews/
-    M4A_1_REVIEW.md
-    M4A_2_REVIEW.md
-    ...
-
-  milestones/
-    M4A_FINAL_REPORT.md
-    M4_FINAL_REPORT.md
-```
-
-Generated runtime/research datasets do NOT belong here.
-
-Runtime/research datasets should live under the architecture-defined runtime location such as:
+Normal iteration:
 
 ```text
-research_data/
+Architect
+→ Worker
+→ Reviewer
 ```
 
-and normally remain outside Git.
+If Reviewer returns:
+
+```text
+RETURN_TO_WORKER
+```
+
+run:
+
+```text
+Reviewer findings
+→ Worker Fix
+→ Reviewer Re-review
+```
+
+Repeat until PASS.
+
+If Reviewer returns:
+
+```text
+RETURN_TO_ARCHITECT
+```
+
+run:
+
+```text
+Reviewer finding
+→ new Architect revision artifact
+→ Worker
+→ Reviewer
+```
+
+Do not routinely return to Architect for ordinary coding bugs.
+
+Do not run multiple Workers concurrently.
+
+Do not allow two agents to edit source code simultaneously.
 
 ---
 
-# 4. Milestone Final Report
+# 13. Baseline Gate
 
-After all slices of a milestone PASS, create:
-
-```text
-docs/milestones/<MILESTONE>_FINAL_REPORT.md
-```
-
-Example:
+Before RDP implementation begins, the repository must have:
 
 ```text
-docs/milestones/M4A_FINAL_REPORT.md
+docs/development/BASELINE.md
 ```
 
-It must summarize:
+The baseline must record:
+
+- repository;
+- GitHub remote;
+- baseline branch;
+- baseline commit;
+- baseline tag;
+- development branch;
+- working-tree status;
+- runtime/Python version;
+- existing test baseline;
+- known pre-existing failures;
+- high-level repository structure;
+- confirmed existing capabilities;
+- confirmed existing safety mechanisms;
+- known gaps against RDP Phase 0.
+
+Required baseline tag:
 
 ```text
-# M4A Final Report
-
-Status: PASS / PARTIAL / NO-GO
-
-## Objective
-
-## Architecture reference
-
-## Completed slices
-
-## Review results
-
-## Final delivered capability
-
-## Live behavior changes
-
-## Data / artifact locations
-
-## Tests and validation
-
-## Known limitations
-
-## Deferred work
-
-## Operational instructions
-
-## Rollback point
-
-## Canonical reviewed baseline
-
-## Recommended Git tag
-
-## Handoff to next milestone
+rdp-phase0-baseline
 ```
 
-The Final Report should summarize earlier reports rather than duplicate their full content.
+Required development branch:
+
+```text
+rdp-phase0-dev
+```
+
+RDP development must not begin from an unknown repository state.
+
+If unrelated working-tree changes exist:
+
+```text
+STOP
+```
+
+Do not automatically:
+
+- stash them;
+- discard them;
+- reset them;
+- overwrite them.
+
+Request human resolution.
 
 ---
 
-# 5. Session Startup Protocol
+# 14. Session Startup Protocol
 
-At the beginning of a new Codex session, do NOT rely on assumed prior context.
+At the beginning of a new meaningful development session:
 
-Before making changes:
+1. Read this file.
+2. Read:
 
-1. Read `AGENTS.md`.
-2. Inspect:
+```text
+docs/strategy/RDP_PHASE0_FROZEN.md
+docs/development/BASELINE.md
+docs/development/ITERATION_INDEX.md
+```
+
+3. Inspect:
 
 ```bash
 git status --short --branch
-```
-
-3. Inspect recent Git history:
-
-```bash
+git rev-parse HEAD
 git log --graph --oneline --decorate -15
 ```
 
-4. Identify the currently authorized milestone / slice.
-5. Identify the canonical reviewed predecessor baseline.
-6. Read the relevant Research document.
-7. Read the relevant Architecture document.
-8. Read the latest Implementation Report.
-9. Read the latest Review Report.
-10. Inspect the actual code affected by the requested task.
-11. Confirm durable documents, Git history, and code are consistent.
+4. Confirm current branch.
+5. Identify current iteration.
+6. Identify latest PASS state.
+7. Read only the artifacts relevant to the current iteration.
+8. Inspect the actual code affected by the task.
+9. Verify documents, Git state, and implementation are consistent.
 
-Read only the documents relevant to the current task.
+Do not load all historical artifacts unless necessary.
 
-Do not load every historical document unnecessarily.
-
-Never assume a PASS-like tag is canonical merely from its name.
+Do not infer repository state from chat history.
 
 ---
 
-# 6. Session Handoff Protocol
+# 15. Iteration IDs
 
-Before ending a meaningful development / research / review / Git-maintenance session:
-
-Persist all information required for another session to continue safely.
-
-Do NOT leave important information only in terminal output or chat.
-
-At minimum persist:
-
-- what was attempted;
-- what was completed;
-- what was not completed;
-- exact current status;
-- important technical decisions;
-- test results;
-- blockers;
-- reviewed predecessor baseline;
-- checkpoint status;
-- next authorized task.
-
-If implementation occurred, update the Implementation Report.
-
-If review occurred, update/create the Review Report.
-
-If architecture changed, update the Architecture document and clearly record the revision.
-
-If Git checkpoint or lineage repair occurred, persist enough metadata for a future session to understand which tag is historical and which reviewed baseline is canonical.
-
----
-
-# 7. Architecture Change Control
-
-Workers must treat accepted architecture documents as constraints.
-
-If implementation discovers that architecture is impossible or materially wrong:
-
-DO NOT silently redesign.
-
-Instead:
-
-1. stop the affected part;
-2. document the conflict;
-3. explain the minimum required architectural change;
-4. return the issue for Architect review.
-
-Small implementation details that do not change architecture may be decided locally and recorded in the Implementation Report.
-
-Material changes require an Architecture revision.
-
-A Git-maintenance task must not be used as an excuse to change architecture or production behavior.
-
----
-
-# 8. Document Versioning
-
-Durable documents are tracked in Git.
-
-Do not create files such as:
+Iteration directories use:
 
 ```text
-M4A_ARCHITECTURE_final.md
-M4A_ARCHITECTURE_final2.md
-M4A_ARCHITECTURE_really_final.md
+ITER-0001
+ITER-0002
+ITER-0003
+...
 ```
 
-Update the canonical file and rely on Git history.
+One iteration equals one minimal problem.
 
-Use one canonical document per artifact.
-
-Record important architecture revisions inside the document when useful:
+The current sequence is recorded in:
 
 ```text
-Revision:
-Date:
-Git base:
-Reason:
+docs/development/ITERATION_INDEX.md
 ```
 
-The same rule applies to Review and Implementation documents.
+Iteration directory:
 
-When a repair or re-review occurs, update the SAME canonical document and preserve history within it.
+```text
+docs/development/ITER-XXXX/
+```
 
 ---
 
-# 9. Commit Discipline
+# 16. Mandatory Audit Artifacts
 
-Each accepted implementation slice must have a clear Git checkpoint.
+Every Architect, Worker, and Reviewer delivery must be persisted as Markdown.
 
-The lifecycle is:
+A specialist stage is NOT complete until its artifact exists on disk.
+
+Initial iteration:
 
 ```text
-Architecture frozen
-        ↓
-Worker implementation
-        ↓
-Implementation Report
-        ↓
-Reviewer
-        ↓
-NEEDS FIX
-   ↓
-Worker repair
-   ↓
-Reviewer re-review
-        ↓
+01_ARCHITECT.md
+02_WORKER.md
+03_REVIEWER.md
+RESULT.md
+```
+
+If Reviewer returns a defect:
+
+```text
+01_ARCHITECT.md
+02_WORKER.md
+03_REVIEWER.md
+04_WORKER_FIX_01.md
+05_REVIEWER_REREVIEW_01.md
+RESULT.md
+```
+
+Further repair:
+
+```text
+06_WORKER_FIX_02.md
+07_REVIEWER_REREVIEW_02.md
+```
+
+If architecture revision is required:
+
+```text
+04_ARCHITECT_REVISION_01.md
+```
+
+with subsequent numbering continuing in sequence.
+
+---
+
+# 17. Audit Artifact Immutability
+
+Audit artifacts are immutable historical evidence.
+
+Once persisted:
+
+Do NOT:
+
+- overwrite;
+- delete;
+- silently amend;
+- rewrite FAIL as PASS;
+- rewrite an old Worker report after repair;
+- rewrite an old Reviewer report after re-review.
+
+Corrections require a NEW artifact.
+
+Example:
+
+```text
+03_REVIEWER.md
+Verdict: RETURN_TO_WORKER
+
+04_WORKER_FIX_01.md
+
+05_REVIEWER_REREVIEW_01.md
+Verdict: PASS
+```
+
+This history must remain visible.
+
+Git preserves file history.
+
+The audit directory preserves decision sequence.
+
+Both are required.
+
+---
+
+# 18. Required Architect Artifact
+
+Architect output begins:
+
+```text
+# ITER-XXXX — Architect Contract
+```
+
+Required sections:
+
+```text
+## Status
+## Base Repository State
+## Problem
+## Evidence / Current Behavior
+## Existing Components Reused
+## Existing Components Modified
+## New Components Required
+## Desired Behavior
+## Minimal Scope
+## Invariants
+## Acceptance Criteria
+## Required Tests
+## Observability Requirements
+## Live Validation
+## Explicit Non-Goals
+## Risks
+## Deferred Findings
+## Human Approval Required
+```
+
+Status is exactly one:
+
+```text
+APPROVED_FOR_IMPLEMENTATION
+ARCHITECT_BLOCKED
+```
+
+---
+
+# 19. Required Worker Artifact
+
+Worker output begins:
+
+```text
+# ITER-XXXX — Worker Implementation
+```
+
+Required sections:
+
+```text
+## Status
+## Architect Contract
+## Base Repository State
+## Existing Components Reused
+## Files Changed
+## Implementation Summary
+## Behavior Before
+## Behavior After
+## Tests Added / Changed
+## Tests Executed
+## Test Results
+## Regression Results
+## Git Diff Summary
+## Safety Checks
+## Known Limitations
+## Deferred Findings
+## Reviewer Attention
+## Human Live Trading Performed
+```
+
+Status is exactly one:
+
+```text
+IMPLEMENTED
+WORKER_BLOCKED
+```
+
+Worker must never mark its own implementation PASS.
+
+---
+
+# 20. Required Reviewer Artifact
+
+Reviewer output begins:
+
+```text
+# ITER-XXXX — Reviewer Report
+```
+
+Required sections:
+
+```text
+## Verdict
+## Reviewed Inputs
+## Repository / Diff Reviewed
+## Acceptance Criteria Review
+## Existing Codebase Compatibility
+## Findings
+### BLOCKER
+### MUST_FIX
+### NOTE
+## Frozen SOP Compliance
+## External Interface Review
+## Trading Safety Review
+## Inventory / Capital Accounting Review
+## State Machine Review
+## Test Review
+## Scope Review
+## Residual Risks
+## Final Decision
+```
+
+Verdict is exactly one:
+
+```text
 PASS
-        ↓
-Checkpoint verification
-        ↓
-Commit complete reviewed tree
-        ↓
-Tag reviewed checkpoint
-        ↓
-Push
-        ↓
-Verify checkpoint
-        ↓
-Start next slice
+RETURN_TO_WORKER
+RETURN_TO_ARCHITECT
 ```
 
-PASS does NOT mean checkpoint creation is automatically complete.
+PASS requires:
 
-Before checkpoint creation, explicitly verify all reviewed artifacts are present.
+```text
+BLOCKER = 0
+MUST_FIX = 0
+```
+
+and all required acceptance criteria satisfied.
 
 ---
 
-# 10. Reviewed Checkpoint Completeness
+# 21. RESULT.md
 
-A milestone/slice PASS tag is part of the engineering evidence trail.
+After final Reviewer PASS, Orchestrator creates:
 
-Do NOT create a reviewed checkpoint until all files actually reviewed for that slice are included.
+```text
+RESULT.md
+```
 
-Before creating a PASS checkpoint always inspect:
+Required content:
+
+```text
+Status
+Problem
+Architect artifact
+Worker artifacts
+Final Reviewer artifact
+Final Git state
+Files changed
+Test results
+Frozen SOP changed?
+External runtime interface changed?
+Real-money trading performed?
+GitHub archive state
+Project readiness
+Required next validation
+Real-market validation state
+Decision
+```
+
+Iteration status:
+
+```text
+CODE_READY
+```
+
+is allowed only after Reviewer PASS.
+
+Decision is one of:
+
+```text
+KEEP
+MODIFY
+DROP
+PENDING
+```
+
+---
+
+# 22. ITERATION_INDEX.md
+
+The durable current-state entry point for RDP Phase 0 is:
+
+```text
+docs/development/ITERATION_INDEX.md
+```
+
+It should remain concise.
+
+It records:
+
+- baseline;
+- development branch;
+- current project state;
+- MICRO_LIVE_READY status;
+- real-money authorization status;
+- current iteration;
+- prior iteration outcomes.
+
+Recommended table:
+
+```text
+Iteration
+Problem
+Architect
+Worker
+Reviewer
+Code Status
+Remote Status
+Live Status
+Decision
+```
+
+Do not turn `ITERATION_INDEX.md` into a full project history.
+
+Detailed evidence belongs inside iteration directories and Git.
+
+If `docs/CURRENT_STATUS.md` still exists for historical compatibility, it should point to `ITERATION_INDEX.md` rather than maintain a competing RDP state record.
+
+---
+
+# 23. Testing Discipline
+
+Worker runs tests in increasing scope:
+
+```text
+narrow relevant tests
+→ affected integration tests
+→ broader regression tests
+→ full suite when practical
+```
+
+Preserve exact:
+
+- command;
+- result;
+- failure names;
+- important errors.
+
+Do not hide failures.
+
+Before Worker completion inspect:
 
 ```bash
 git status --short
 git ls-files --others --exclude-standard
+git diff --stat
 git diff --check
 ```
 
-Explicitly account for:
+Untracked files must be explicitly considered.
 
-- tracked modifications;
-- staged files;
-- untracked source files;
-- untracked tests;
-- implementation reports;
-- Review reports;
-- `docs/CURRENT_STATUS.md`;
-- architecture/research changes if part of the reviewed scope.
+A clean-looking ordinary `git diff` is not enough because untracked files do not appear there.
 
-Important:
-
-```text
-Untracked files do not appear in ordinary git diff.
-```
-
-Therefore a clean-looking `git diff` is NOT sufficient evidence that the checkpoint is complete.
+Reviewer must inspect the actual reviewed tree, including relevant untracked files.
 
 ---
 
-# 11. PASS Checkpoint Procedure
+# 24. Git Ownership
 
-After independent Reviewer PASS:
+Git history is part of the engineering evidence trail.
 
-1. inspect the complete working tree;
-2. inspect untracked files;
-3. verify every reviewed source/test/document artifact is included;
-4. stage the complete reviewed milestone state;
-5. inspect staged diff;
-6. run `git diff --cached --check`;
-7. commit;
-8. create milestone tag;
-9. push branch;
-10. push tag;
-11. verify tag resolves to the intended commit;
-12. verify working tree is clean;
-13. verify the checkpoint can reconstruct the reviewed state.
+The Orchestrator owns normal iteration archival.
 
-Typical verification commands:
+Worker must not commit or push.
 
-```bash
-git status --short --branch
-git ls-files --others --exclude-standard
-git diff --cached --check
-git diff --cached --name-status
-git log --oneline --decorate -10
-git show --stat --oneline <tag>
+Architect and Reviewer are read-only.
+
+Development branch:
+
+```text
+rdp-phase0-dev
 ```
 
-Do not begin the next slice until the checkpoint is complete.
+Main branch:
+
+```text
+main
+```
+
+Agents must not develop directly on `main`.
 
 ---
 
-# 12. Reviewed Baseline Rule
+# 25. Git Commit Discipline
 
-Every implementation slice must identify its reviewed predecessor baseline.
+Material stages should use iteration-linked commits.
 
-When a canonical reviewed baseline exists, use it rather than an older historical/incomplete tag.
-
-Example:
+Examples:
 
 ```text
-m4a2-pass
-= historical checkpoint
-
-m4a2-reviewed-baseline
-= canonical reviewed baseline
+iter-0004: freeze architect contract
+iter-0004: implement inventory accounting
+iter-0004: record reviewer findings
+iter-0004: fix reviewer findings
+iter-0004: reviewer pass
 ```
 
-Future implementation and Review must use:
+Every iteration-related commit message must contain the iteration ID.
 
-```text
-m4a2-reviewed-baseline
-```
+Before any commit, inspect the complete intended change.
 
-as the predecessor.
-
-Implementation and Review reports must record the exact baseline used.
+Do not include unrelated human work.
 
 ---
 
-# 13. Canonical Predecessor Rule
+# 26. Git Archive Gate
 
-Once a corrected reviewed baseline exists, all later work must build from and compare against that canonical baseline.
+Final Reviewer PASS is required before an iteration is considered fully archived.
 
-Do not continue using a known incomplete checkpoint because its tag name looks more convenient.
-
-Example:
+After PASS:
 
 ```text
-m4a2-pass
-    historical only
-
-m4a2-reviewed-baseline
-    canonical predecessor for M4A.3
-
-m4a3-reviewed-baseline
-    canonical predecessor for M4A.4
+1. persist final Reviewer artifact
+2. create RESULT.md
+3. update ITERATION_INDEX.md
+4. inspect complete reviewed working tree
+5. commit final iteration state
+6. push rdp-phase0-dev
+7. verify remote state
 ```
 
-Architecture, implementation prompts, Reviews, and Git diffs should all use the canonical predecessor.
+An iteration is fully archived only when the final PASS state exists on the configured GitHub remote.
+
+Do not require a Git tag for every iteration.
+
+The primary baseline tag for this program is:
+
+```text
+rdp-phase0-baseline
+```
 
 ---
 
-# 14. Historical Tags Must Not Be Rewritten
+# 27. Published History Safety
 
-Existing published/stable tags are historical evidence.
-
-Do NOT silently:
-
-```text
-move
-delete
-replace
-force-update
-```
-
-an existing milestone tag merely because it later proves incomplete.
-
-Instead:
-
-1. preserve the historical tag;
-2. reconstruct the reviewed state if necessary;
-3. create a new corrective tag such as:
-
-```text
-<milestone>-reviewed-baseline
-```
-
-4. document why the corrective baseline exists;
-5. use the corrective baseline for all future work.
-
-Git history should preserve mistakes and corrections rather than hide them.
-
----
-
-# 15. Published History Safety
-
-Do NOT use the following on pushed/shared milestone history unless explicitly authorized:
+Do NOT perform without explicit human authorization:
 
 ```text
 git push --force
 git push --force-with-lease
-
-rebase of published milestone commits
-
-git reset --hard
-when it could discard reviewed work
-
-published tag deletion
-
-published tag rewriting
+published-history rebase
+published-tag deletion
+published-tag rewriting
+destructive reset over reviewed/human work
 ```
 
 Prefer additive repair:
 
 ```text
 new commit
-new corrective tag
-explicit merge
-durable documentation note
+new documentation
+explicit corrective commit
+explicit merge when justified
 ```
 
-Never destroy reviewed evidence merely to make Git history look cleaner.
+Never destroy engineering evidence merely to make Git history cleaner.
 
 ---
 
-# 16. Complex Git Operations Require Inspection First
+# 28. Complex Git Operations
 
-Before any non-trivial Git operation, inspect:
+Before non-trivial Git operations inspect:
 
 ```bash
 git status --short --branch
@@ -730,550 +1144,552 @@ git diff --stat <baseline>
 git merge-base --is-ancestor <baseline> <target>
 ```
 
-Do not infer repository state from chat history.
-
-Do not assume branch/tag ancestry.
+Do not guess branch/tag ancestry.
 
 Prove it with Git.
 
----
-
-# 17. Do Not Improvise Through Git Conflicts
-
-If merge / rebase / cherry-pick produces conflicts in production or Research code:
-
-DO NOT resolve them by guessing.
-
-Especially do not improvise conflict resolution in:
+If merge, rebase, or cherry-pick produces meaningful conflicts in production/test code:
 
 ```text
-engine
-execution
-FavoriteFirst
-marketdata
-Fill Truth
-Research lifecycle
-state tracker
-userstream
-strategy logic
+STOP
 ```
 
-unless the task explicitly authorizes code reconciliation.
+Do not resolve by guessing.
 
-If the Git operation exists only to repair checkpoint metadata or lineage, production/test code must remain unchanged.
-
-Abort the conflicting Git operation when appropriate and report the conflict.
-
-A Git-maintenance session must not silently become a production implementation session.
+A Git-maintenance task must not silently become a production implementation task.
 
 ---
 
-# 18. Git Lineage Repair Rule
+# 29. Main Branch / GitHub Rule
 
-If reviewed code is correct but Git ancestry/checkpoint metadata is wrong, the repair objective is:
-
-> Fix the Git evidence chain without changing the reviewed production/test tree.
-
-Prefer additive lineage repair over history rewriting.
-
-Examples of acceptable mechanisms when justified:
+Agents must not merge into:
 
 ```text
-new corrective checkpoint commit
-new reviewed-baseline tag
-explicit merge preserving reviewed tree
-documentation-only checkpoint metadata repair
+main
 ```
 
-After lineage repair verify:
+Do not create one PR per iteration.
 
-```bash
-git merge-base --is-ancestor \
-  <corrected-predecessor> \
-  <new-reviewed-baseline>
+Use:
 
-git diff --stat \
-  <reviewed-tree-tag> \
-  <new-reviewed-baseline>
-
-git diff --name-status \
-  <reviewed-tree-tag> \
-  <new-reviewed-baseline>
+```text
+rdp-phase0-dev
 ```
 
-Production/test differences caused only by Git maintenance are NOT acceptable.
+as the persistent Phase 0 development branch.
 
-Documentation-only checkpoint metadata differences may be acceptable when intentional and inspected.
+When project state reaches:
+
+```text
+MICRO_LIVE_READY
+```
+
+create one final GitHub comparison / PR:
+
+```text
+rdp-phase0-dev
+→ main
+```
+
+Human approval is required before merge.
+
+The final PR should reference:
+
+```text
+rdp-phase0-baseline
+docs/strategy/RDP_PHASE0_FROZEN.md
+docs/development/BASELINE.md
+docs/development/ITERATION_INDEX.md
+final Reviewer PASS artifact
+final readiness RESULT.md
+```
+
+MICRO_LIVE_READY does not authorize merge.
 
 ---
 
-# 19. Git Maintenance Is Not Coding
+# 30. Architecture Change Control
 
-A Git/checkpoint repair session has a narrow mandate.
+Worker treats the Architect Contract and Frozen SOP as constraints.
 
-It must not silently:
+If implementation discovers that the approved design is impossible or materially wrong:
 
-- implement the next milestone;
-- refactor source code;
-- fix unrelated tests;
-- change strategy behavior;
-- change Research semantics;
-- change architecture;
-- optimize code.
+Do NOT silently redesign.
 
-Finish the Git repair first.
-
-For complex Git work involving:
+Instead:
 
 ```text
-merge conflict
-incorrect checkpoint ancestry
-missing reviewed files
-reviewed-baseline reconstruction
-published-history repair
-branch reconciliation
+1. stop the affected implementation
+2. document the conflict
+3. identify the minimum required decision
+4. return WORKER_BLOCKED or Reviewer RETURN_TO_ARCHITECT
 ```
 
-prefer a dedicated Git-maintenance Codex session.
+Small implementation details that do not change externally observable behavior or architecture may be decided locally and documented.
 
-Simple operations such as:
+Material changes require Architect review.
 
-```text
-status
-add
-commit
-tag
-normal push
-```
-
-may remain part of the normal milestone workflow.
+Strategy-semantic changes require human approval.
 
 ---
 
-# 20. Durable Git Checkpoint Notes
+# 31. Trading Safety
 
-When a checkpoint/tag problem is discovered, record the correction durably.
+No development agent may autonomously send a real-money order.
 
-The note should identify:
+Never send real-money orders merely to prove code works.
 
-- incorrect/historical checkpoint;
-- corrected reviewed baseline;
-- why correction was needed;
-- whether reviewed production/test content changed;
-- which baseline future work must use.
+Never bypass or weaken:
 
-Do not erase the original history.
+- live-send gates;
+- CapitalGate;
+- reconciliation;
+- stale-data protection;
+- market-state validation;
+- order-state validation;
+- fail-closed behavior.
 
-Example:
+Real-money execution requires explicit human authorization.
 
-```text
-m4a2-pass
-= historical checkpoint that omitted reviewed integration files
-
-m4a2-reviewed-baseline
-= reconstructed complete reviewed M4A.2 baseline
-
-Future work MUST use m4a2-reviewed-baseline.
-```
+A mock result, paper result, synthetic fill, or unit test is not proof of live execution.
 
 ---
 
-# 21. Reports Are Evidence, Not Authority Over Code
+# 32. Research / Live Isolation
 
-A report saying:
+Research and observability code must not gain trading authority merely because it observes live state.
 
-```text
-576 tests passed
-```
+Unless explicitly authorized:
 
-does not make that true forever.
-
-A future session should treat reports as historical evidence and inspect current code/tests when the result matters.
-
-Likewise:
-
-```text
-Reviewer: PASS
-```
-
-means that specific reviewed commit / working tree / scope passed.
-
-It does not automatically certify future modifications.
-
-Therefore every Review must identify:
-
-- reviewed predecessor baseline;
-- reviewed commit or working tree;
-- relevant test state;
-- any untracked artifacts included in Review scope.
-
----
-
-# 22. No Session-Only Decisions
-
-The following MUST NOT exist only in chat:
-
-- milestone architecture;
-- schema contracts;
-- mathematical definitions used by implementation;
-- important safety assumptions;
-- accepted deviations;
-- P0/P1 deferred decisions;
-- test/validation outcome;
-- GO / NO-GO / INCONCLUSIVE decision;
-- rollback point;
-- canonical reviewed baseline;
-- checkpoint anomaly;
-- Git lineage correction;
-- next milestone handoff.
-
-Persist them.
-
-A useful rule:
-
-> If losing the current chat would materially slow or confuse the next engineer, write it to the repository.
-
----
-
-# 23. Context Efficiency
-
-Durable documentation exists partly to avoid very long AI contexts.
-
-New sessions should prefer:
-
-```text
-AGENTS.md
-+
-CURRENT_STATUS
-+
-Research Design
-+
-Current Architecture
-+
-Latest Implementation Report
-+
-Latest Review
-+
-canonical predecessor baseline
-+
-relevant code
-```
-
-instead of replaying full historical chat transcripts.
-
-Do not duplicate entire research documents into architecture documents.
-
-Use references such as:
-
-```text
-Research authority:
-docs/research/DYNAMIC_EV_EXIT_RESEARCH_DESIGN.md
-```
-
-and record only the technical implications relevant to that milestone.
-
----
-
-# 24. CURRENT_STATUS Protocol
-
-`docs/CURRENT_STATUS.md` is the short durable entry point for the next session.
-
-It should remain concise.
-
-It should identify at minimum:
-
-```text
-Current program:
-Current milestone:
-Current slice:
-Status:
-
-Canonical predecessor baseline:
-
-Latest architecture:
-Latest implementation report:
-Latest review:
-
-Current blocker:
-Next authorized action:
-Explicitly unauthorized next actions:
-```
-
-Do not turn `CURRENT_STATUS.md` into a full historical transcript.
-
-Detailed history belongs in Research / Architecture / Implementation / Review / Milestone documents and Git.
-
----
-
-# 25. Failure / Repair Review History
-
-When a Review returns NEEDS FIX and later repairs occur:
-
-Do NOT overwrite history as though the failure never happened.
-
-Update the SAME Review document with sections such as:
-
-```text
-Initial Review
-→ NEEDS FIX
-
-Repair Review
-→ NEEDS FIX
-
-Final Re-Review
-→ PASS
-```
-
-This preserves the evolution of evidence.
-
-Likewise, the Implementation Report should append repair sections rather than creating:
-
-```text
-_IMPLEMENTATION_REPORT_FINAL.md
-_IMPLEMENTATION_REPORT_FINAL2.md
-```
-
----
-
-# 26. Research / Live Isolation Rule
-
-Research and observability infrastructure must not gain live trading authority merely because they observe trading state.
-
-Unless explicitly authorized by architecture:
-
-Research code must not:
+Research/observability code must not:
 
 - submit orders;
 - cancel orders;
-- alter FavoriteFirst decisions;
-- alter execution policy;
 - mutate authoritative trading state;
-- delay critical live callbacks;
-- convert Research failure into live trading failure.
+- alter execution policy;
+- delay critical execution callbacks;
+- convert research failure into live trading failure.
 
-Research may observe and project authoritative state.
+Research may observe authoritative state.
 
-Research should not invent an independent conflicting state machine when authoritative production state already exists.
-
----
-
-# 27. M4 Dynamic EV Program Rule
-
-For M4 Dynamic EV research:
-
-```text
-Researcher
-→ docs/research/DYNAMIC_EV_EXIT_RESEARCH_DESIGN.md
-
-Program architecture
-→ docs/architecture/M4_ARCHITECTURE.md
-
-M4A architecture
-→ docs/architecture/M4A_ARCHITECTURE.md
-
-Worker
-→ docs/reports/M4A_<N>_IMPLEMENTATION_REPORT.md
-
-Reviewer
-→ docs/reviews/M4A_<N>_REVIEW.md
-
-M4A milestone completion
-→ docs/milestones/M4A_FINAL_REPORT.md
-
-M4 program completion
-→ docs/milestones/M4_FINAL_REPORT.md
-```
-
-Current M4 research scope:
-
-- fixed minimum-scale trading;
-- FavoriteFirst Entry remains frozen unless separately authorized;
-- no position-sizing optimization;
-- no inventory optimization;
-- no entry-alpha optimization;
-- no BTC directional prediction research;
-- research post-first-fill path-dependent Exit EV;
-- compare HOLD vs PAIR;
-- inventory quantities remain generic in schemas;
-- settlement/auth are outside the Dynamic EV research problem unless separately authorized.
-
-Do not broaden this scope without a new Research / Architecture decision.
+Do not create an independent conflicting state machine when authoritative production state already exists.
 
 ---
 
-# 28. M4 Program Stage Boundaries
+# 33. Frozen RDP Phase 0 State Invariants
 
-The intended M4 sequence is:
-
-```text
-M4A
-Research Telemetry
-
-M4B
-Episode / Feature / Label Builder
-
-M4C
-Execution Model & Policy Replay
-
-M4D
-Dynamic EV Model
-
-M4E
-Shadow Live
-
-M4F
-Evidence Review
-```
-
-M4A exists to create trustworthy causal evidence.
-
-M4B converts that evidence into no-lookahead research datasets.
-
-M4C tests policies under realistic maker execution.
-
-M4D builds the HOLD vs PAIR decision model.
-
-M4E observes Dynamic EV in the real market while FavoriteFirst still retains live trading control.
-
-M4F determines:
+Core inventory state:
 
 ```text
-GO
-NO EDGE
-INCONCLUSIVE
+Delta = QY - QN
+InventoryExposure = abs(Delta)
 ```
 
-Dynamic EV must not receive real live exit authority merely because M4D or M4E looks promising.
+Trading states:
 
-First real Dynamic EV-controlled trading belongs to a later explicitly authorized live milestone.
+```text
+NORMAL
+REBALANCE
+```
+
+Terminal action:
+
+```text
+STOP
+```
+
+NORMAL condition:
+
+```text
+abs(Delta) < 5
+```
+
+NORMAL behavior:
+
+```text
+BestBid - 1 Tick
++ Dual Maker
++ Inventory Size Skew
+```
+
+REBALANCE condition:
+
+```text
+abs(Delta) >= 5
+```
+
+REBALANCE behavior:
+
+```text
+Highest Non-Crossing Maker
++ deficient side only
++ fast risk closure
+```
+
+REBALANCE objective:
+
+```text
+minimize TimeToNormal
+```
+
+A lack of fill alone is NOT a stop condition.
+
+There is no hard:
+
+```text
+MaxRebalanceSec
+```
+
+stop.
+
+REBALANCE continues while:
+
+```text
+CanSafelyContinue = true
+```
+
+STOP occurs only according to Frozen SOP safety conditions.
+
+Exact strategy semantics are defined in:
+
+```text
+docs/strategy/RDP_PHASE0_FROZEN.md
+```
+
+This section is only a high-level invariant summary.
+
+The Frozen SOP controls if any wording differs.
 
 ---
 
-# 29. Current M4A Slice Structure
+# 34. Frozen Accounting Invariants
 
-M4A is organized as:
-
-```text
-M4A.1
-Schema + Isolation Skeleton
-
-M4A.2
-Causal Event Capture
-
-M4A.3
-Episode + StateSnapshot Lifecycle
-
-M4A.4
-Durable Writer + Failure Isolation
-
-M4A.5
-Audit + Acceptance Harness
-```
-
-Each slice requires:
+Strictly distinguish:
 
 ```text
-Worker implementation
-→ Implementation Report
-→ independent Review
-→ repair if required
-→ PASS
-→ complete reviewed checkpoint
-→ next slice
+InventoryCost
+LockedPnL
+WorstSettlementPnL
+MarketPnL
 ```
 
-Do not skip the checkpoint step.
+InventoryCost:
+
+```text
+actual confirmed-fill acquisition cost
+```
+
+LockedPnL:
+
+```text
+deterministic economic value locked by Balanced Inventory
+```
+
+WorstSettlementPnL:
+
+```text
+final PnL if Residual Inventory settles to zero
+```
+
+MarketPnL:
+
+```text
+actual final market PnL after resolution
+```
+
+Do not mix these concepts.
+
+Accounting formulas and precise semantics are defined by the Frozen SOP.
 
 ---
 
-# 30. Current Known Checkpoint History
+# 35. CODE_READY
 
-This section may be updated as the project progresses.
+An iteration is `CODE_READY` only when:
 
-Known M4 checkpoint semantics:
+- Architect Contract exists;
+- Architect approved implementation;
+- Worker implementation exists;
+- required targeted tests pass;
+- required regression tests pass;
+- Reviewer returns PASS;
+- all required audit artifacts exist;
+- `RESULT.md` exists.
 
-```text
-m4a1-pass
-= reviewed M4A.1 checkpoint
+Reviewer PASS without durable artifacts is insufficient.
 
-m4a2-pass
-= historical M4A.2 checkpoint later discovered to be incomplete
-
-m4a2-reviewed-baseline
-= reconstructed complete reviewed M4A.2 baseline
-
-m4a3-pass
-= complete reviewed M4A.3 tree before ancestry repair
-
-m4a3-reviewed-baseline
-= canonical reviewed M4A.3 baseline after lineage repair
-= canonical predecessor for M4A.4
-= commit eb061fa
-```
-
-The following historical tags must remain preserved:
-
-```text
-m4a2-pass
-m4a2-reviewed-baseline
-m4a3-pass
-```
-
-Future M4A.4 implementation and Review MUST use:
-
-```text
-m4a3-reviewed-baseline
-```
-
-as the reviewed predecessor baseline.
-
-Do NOT infer current canonical status solely from this section.
-
-Always verify actual Git state and `docs/CURRENT_STATUS.md`.
+Worker completion without Reviewer PASS is insufficient.
 
 ---
 
-# 31. Safety Rule for Unknown Repository State
+# 36. MICRO_LIVE_READY
 
-If repository state is ambiguous, conflicted, partially merged, partially staged, or inconsistent with durable documentation:
+The project is `MICRO_LIVE_READY` only when all required Phase 0 implementation work is CODE_READY and final readiness review verifies at minimum:
 
-DO NOT guess.
+- official Polymarket market-data path works;
+- official market discovery works;
+- market metadata is valid;
+- dynamic TickSize works;
+- minimum-order-size handling works;
+- authenticated account/order reads work;
+- order-create path remains correctly gated;
+- cancellation path is validated;
+- reconciliation is validated;
+- partial fills are handled;
+- cancel/fill races are handled fail-closed;
+- stale market data fails closed;
+- unreliable order state fails closed;
+- CapitalGate is active;
+- NORMAL transitions are observable;
+- REBALANCE transitions are observable;
+- STOP reasons are observable;
+- Frozen accounting metrics are recorded;
+- required Phase 0 metrics are recorded;
+- relevant full test suite passes;
+- final independent Reviewer returns PASS;
+- final readiness state is pushed to GitHub.
+
+`MICRO_LIVE_READY` means:
+
+```text
+technically ready for supervised small-capital validation
+```
+
+It does NOT mean:
+
+```text
+authorized to send a real-money order
+```
+
+---
+
+# 37. Live Validation Gate
+
+When `MICRO_LIVE_READY` is reached:
+
+```text
+STOP DEVELOPMENT
+```
+
+Do not continue adding features.
+
+Wait for explicit human authorization.
+
+Initial real-market validation should normally be limited to:
+
+```text
+1–3 real BTC5m markets
+```
+
+unless explicitly authorized otherwise.
+
+The purpose of first live validation is to obtain evidence, not maximize trading volume.
+
+---
+
+# 38. Real-Market Evidence
+
+Real-market output must be durably recorded.
+
+At minimum preserve relevant:
+
+- market identifier;
+- timestamp;
+- code commit;
+- strategy/config version;
+- ActiveCycles;
+- order/fill behavior;
+- QY / QN / Delta;
+- NORMAL / REBALANCE transitions;
+- StopReason if any;
+- LockedPnL;
+- WorstSettlementPnL;
+- MarketPnL when resolved;
+- errors;
+- relevant log/artifact locations.
+
+Real-market evidence becomes mandatory input to the next Architect iteration.
+
+Do not begin the next strategy iteration without reading it.
+
+Real market results decide:
+
+```text
+KEEP
+MODIFY
+DROP
+```
+
+---
+
+# 39. Unknown Repository State
+
+If repository state is:
+
+- ambiguous;
+- conflicted;
+- partially merged;
+- unexpectedly dirty;
+- partially staged;
+- inconsistent with durable documentation;
+- inconsistent with expected branch/HEAD;
+
+do not guess.
 
 Inspect first.
 
 If safe continuation cannot be established:
 
-- stop the risky operation;
-- preserve reviewed work;
-- report the exact repository state;
-- request/return to a dedicated Architect or Git-maintenance decision.
+```text
+STOP
+```
 
-The default is preservation of reviewed evidence, not aggressive cleanup.
+Then:
+
+- preserve existing work;
+- report exact repository state;
+- identify uncertainty;
+- request human or Architect decision.
+
+Default behavior is preservation, not aggressive cleanup.
 
 ---
 
-# 32. Final Working Principle
+# 40. No Session-Only Decisions
 
-The project should always be resumable by another competent engineer or Codex session from the repository itself.
+The following must never exist only in chat or terminal output:
 
-The desired state is:
+- current Architect Contract;
+- material architecture decision;
+- mathematical/accounting definition used by implementation;
+- safety assumption;
+- accepted deviation;
+- Reviewer blocking finding;
+- test/validation outcome;
+- canonical repository baseline;
+- Git anomaly;
+- real-market result;
+- MICRO_LIVE_READY decision;
+- next authorized action.
+
+Useful rule:
+
+> If losing the current chat would materially slow or confuse the next competent engineer, persist the information in the repository.
+
+---
+
+# 41. Session Handoff
+
+Before ending a meaningful development session, ensure durable records contain:
+
+- what was attempted;
+- what was completed;
+- what was not completed;
+- exact current iteration;
+- exact current status;
+- important decisions;
+- test results;
+- blockers;
+- current Git HEAD;
+- current branch;
+- Reviewer status;
+- next authorized action.
+
+Do not leave essential handoff information only in chat.
+
+---
+
+# 42. Context Efficiency
+
+Durable documentation exists partly to avoid replaying entire historical conversations.
+
+New sessions should normally load only:
 
 ```text
-clear Research question
+AGENTS.md
 +
-frozen Architecture
+RDP_PHASE0_FROZEN.md
 +
-bounded Worker slice
+BASELINE.md
 +
-durable Implementation evidence
+ITERATION_INDEX.md
 +
-independent Review
+current iteration artifacts
 +
-complete reviewed Git checkpoint
-+
-canonical predecessor baseline
-+
-explicit next authorized action
+relevant code/tests
 ```
 
-The project must not depend on hidden chat context for safe continuation.
+Load older history only when required by the current problem.
+
+Do not load all historical research, architecture, review, or M4 documents by default.
+
+Do not duplicate large documents into new documents.
+
+Reference them.
+
+---
+
+# 43. Historical Programs
+
+Historical programs such as M4 may have their own:
+
+- architecture;
+- research documents;
+- implementation reports;
+- review reports;
+- Git tags;
+- checkpoint corrections.
+
+Those records must remain preserved.
+
+They are not active RDP Phase 0 development rules unless explicitly referenced.
+
+Do not delete or rewrite historical M4 evidence merely because the active workflow has changed.
+
+---
+
+# 44. Final Working Principle
+
+The desired RDP Phase 0 development chain is:
+
+```text
+Frozen SOP
++
+Known Existing Repository Baseline
++
+One Minimal Architect Contract
++
+One Minimal Worker Change
++
+Independent Reviewer
++
+Immutable Markdown Audit
++
+Git Commit
++
+GitHub Archived PASS
++
+Real Market Evidence
++
+Next Decision
+```
+
+The project must remain resumable from the repository itself.
+
+The project must not depend on hidden chat context.
+
+Do not build beyond the next piece of evidence required from the market.
+
+
+## Single Repository / Shared Data Rule
+
+`poly-maker` is a single application and project root. FL, IM and RDP are
+strategy implementations inside the same application. Git branches/tags
+preserve development lineage; they do not define separate runtime projects.
+
+RDP must integrate into the existing poly-maker CLI/runtime architecture and
+reuse the existing data foundation. Historical/runtime/research data under
+the project data directories is shared project infrastructure and must not
+be duplicated merely for branch isolation.
+
+Do not redesign unrelated FL or IM strategy behavior when adding RDP.
