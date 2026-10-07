@@ -479,6 +479,288 @@ async def test_opt_in_pair_invalid_shape_or_flags_fail_before_signing(meta, quot
 
 
 @pytest.mark.asyncio
+async def test_per_token_ticks_sign_distinct_pair_ticks_in_request_order(meta):
+    assert meta.tick_size not in (.001, .005)
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "no"), placement_row(True, "yes")])
+    gw._client, gw._io = client, _inline_io
+    quotes = [Quote(meta.no.token_id, Side.BUY, .481, 5),
+              Quote(meta.yes.token_id, Side.BUY, .485, 5)]
+    placed = await gw.place(quotes, meta, token_ticks={meta.no.token_id: .001,
+        meta.yes.token_id: .005}, submit_guard=lambda: True,
+        force_post_only=True, strict_placement=True,
+        allow_two_order_rdp_pair=True)
+    assert [order.order_id for order in placed] == ["no", "yes"]
+    assert [kwargs["options"].tick_size for _args, kwargs in client.created] == [
+        "0.001", "0.005"]
+    assert [args.price for args, _kwargs in client.created] == [.481, .485]
+    assert client.posts[0][1] is True
+    assert all(item.orderType == "GTC" for item in client.posts[0][0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("token", "tick", "price", "expected"), [
+    ("yes", .005, .485, "0.005"),
+    ("no", .001, .481, "0.001"),
+])
+async def test_per_token_ticks_sign_single_outcome_at_its_tick(meta, token, tick, price, expected):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "single")])
+    gw._client, gw._io = client, _inline_io
+    token_id = meta.yes.token_id if token == "yes" else meta.no.token_id
+    placed = await gw.place([Quote(token_id, Side.BUY, price, 5)], meta,
+        token_ticks={token_id: tick}, submit_guard=lambda: True,
+        force_post_only=True, strict_placement=True)
+    assert [order.order_id for order in placed] == ["single"]
+    assert len(client.created) == 1
+    assert client.created[0][1]["options"].tick_size == expected
+    assert len(client.posts) == 1 and client.posts[0][1] is True
+
+
+@pytest.mark.asyncio
+async def test_per_token_ticks_successive_calls_use_new_tick_snapshot(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "same")])
+    gw._client, gw._io = client, _inline_io
+    for tick, price in ((.001, .481), (.005, .485)):
+        assert await gw.place([Quote(meta.yes.token_id, Side.BUY, price, 5)], meta,
+            token_ticks={meta.yes.token_id: tick}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True)
+    assert [kwargs["options"].tick_size for _args, kwargs in client.created] == [
+        "0.001", "0.005"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ticks", [
+    {},
+    {"foreign-token": .01},
+    {"yes-token": .01, "no-token": .01},
+])
+async def test_per_token_ticks_reject_missing_extra_or_foreign_keys(meta, ticks):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    with pytest.raises(ValueError):
+        await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 5)], meta,
+            token_ticks=ticks, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True)
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tick", [0, -0.01, float("nan"), float("inf"),
+    float("-inf"), True, "0.01", .0005])
+async def test_per_token_ticks_reject_invalid_or_unsupported_values(meta, tick):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    with pytest.raises(ValueError):
+        await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 5)], meta,
+            token_ticks={meta.yes.token_id: tick}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True)
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("price", [0, 1, -0.01, 1.01, float("nan"),
+    float("inf"), .481, True, "0.49"])
+async def test_per_token_ticks_reject_invalid_or_off_grid_prices(meta, price):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    with pytest.raises(ValueError):
+        await gw.place([Quote(meta.yes.token_id, Side.BUY, price, 5)], meta,
+            token_ticks={meta.yes.token_id: .005}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True)
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("quotes", "force", "strict", "guard", "pair"), [
+    ([Quote("yes-token", Side.BUY, .49, 5)], False, True, lambda: True, False),
+    ([Quote("yes-token", Side.BUY, .49, 5)], True, False, lambda: True, False),
+    ([Quote("yes-token", Side.BUY, .49, 5)], True, True, None, False),
+    ([], True, True, lambda: True, False),
+    ([Quote("foreign-token", Side.BUY, .49, 5)], True, True, lambda: True, False),
+    ([Quote("yes-token", Side.SELL, .49, 5)], True, True, lambda: True, False),
+    ([Quote("yes-token", Side.BUY, .49, 5), Quote("yes-token", Side.BUY, .48, 5)],
+     True, True, lambda: True, True),
+    ([Quote("yes-token", Side.BUY, .49, 5), Quote("no-token", Side.BUY, .48, 5),
+      Quote("yes-token", Side.BUY, .48, 5)], True, True, lambda: True, True),
+])
+async def test_per_token_ticks_reject_flags_guard_and_quote_shapes(
+    meta, quotes, force, strict, guard, pair,
+):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused"), placement_row(True, "unused2")])
+    gw._client, gw._io = client, _inline_io
+    tick_map = {quote.token_id: .01 for quote in quotes}
+    with pytest.raises(ValueError):
+        await gw.place(quotes, meta, token_ticks=tick_map, submit_guard=guard,
+            force_post_only=force, strict_placement=strict,
+            allow_two_order_rdp_pair=pair)
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_request_is_snapshotted_before_rate_limit_await(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "captured")])
+    gw._client, gw._io = client, _inline_io
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked_acquire(_amount):
+        entered.set()
+        await release.wait()
+
+    gw._order_bucket.acquire = blocked_acquire
+    quotes = [Quote(meta.yes.token_id, Side.BUY, .49, 5)]
+    ticks = {meta.yes.token_id: .01}
+    task = asyncio.create_task(gw.place(quotes, meta, token_ticks=ticks,
+        submit_guard=lambda: True, force_post_only=True, strict_placement=True))
+    await entered.wait()
+    quotes[0] = Quote(meta.no.token_id, Side.BUY, .48, 5)
+    ticks[meta.yes.token_id] = .005
+    release.set()
+    placed = await task
+    assert [order.token_id for order in placed] == [meta.yes.token_id]
+    assert client.created[0][0].token_id == meta.yes.token_id
+    assert client.created[0][1]["options"].tick_size == "0.01"
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_change_during_signing_is_rejected_by_final_guard(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    state = {"current_tick": .01, "checks": 0, "posts": 0}
+
+    class TickChangingClient:
+        def create_order(self, *_args, **_kwargs):
+            state["current_tick"] = .005
+            return {"signed": True}
+        def post_orders(self, *_args, **_kwargs):
+            state["posts"] += 1
+            return [{"success": True, "orderID": "unsafe"}]
+
+    gw._client, gw._io = TickChangingClient(), _inline_io
+    def guard():
+        state["checks"] += 1
+        return state["current_tick"] == .01
+    assert await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 5)], meta,
+        token_ticks={meta.yes.token_id: .01}, submit_guard=guard,
+        force_post_only=True, strict_placement=True) == []
+    assert state == {"current_tick": .005, "checks": 2, "posts": 0}
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_pre_submit_guard_denial_skips_signing_and_post(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    assert await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 5)], meta,
+        token_ticks={meta.yes.token_id: .01}, submit_guard=lambda: False,
+        force_post_only=True, strict_placement=True) == []
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_sdk_signing_rejection_never_posts_or_retries(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+
+    class RejectingClient:
+        def __init__(self):
+            self.creates = 0
+            self.posts = 0
+        def create_order(self, *_args, **_kwargs):
+            self.creates += 1
+            raise ValueError("SDK cached minimum tick disagrees")
+        def post_orders(self, *_args, **_kwargs): self.posts += 1
+
+    client = RejectingClient()
+    gw._client, gw._io = client, _inline_io
+    assert await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 5)], meta,
+        token_ticks={meta.yes.token_id: .01}, submit_guard=lambda: True,
+        force_post_only=True, strict_placement=True) == []
+    assert client.creates == 1 and client.posts == 0
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_minimum_size_and_paper_mode_validate_without_client(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    assert await gw.place([Quote(meta.yes.token_id, Side.BUY, .49, 4.9)], meta,
+        token_ticks={meta.yes.token_id: .01}, submit_guard=lambda: True,
+        force_post_only=True, strict_placement=True) == []
+    assert client.created == [] and client.posts == []
+
+    paper = ExecutionGateway(Config(), paper=True)
+    orders = await paper.place([Quote(meta.no.token_id, Side.BUY, .48, 5)], meta,
+        token_ticks={meta.no.token_id: .01}, submit_guard=lambda: True,
+        force_post_only=True, strict_placement=True)
+    assert len(orders) == 1 and orders[0].token_id == meta.no.token_id
+    with pytest.raises(ValueError):
+        await paper.place([Quote(meta.no.token_id, Side.BUY, .48, 5)], meta,
+            token_ticks={meta.no.token_id: .0005}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True)
+
+
+@pytest.mark.asyncio
+async def test_per_token_tick_pair_partial_ack_uses_strict_existing_parser(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "yes-order"), placement_row(False)])
+    gw._client, gw._io = client, _inline_io
+    quotes = [Quote(meta.yes.token_id, Side.BUY, .49, 5),
+              Quote(meta.no.token_id, Side.BUY, .48, 5)]
+    with pytest.raises(BatchPlacementIncomplete):
+        await gw.place(quotes, meta, token_ticks={meta.yes.token_id: .01,
+            meta.no.token_id: .01}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True,
+            allow_two_order_rdp_pair=True)
+    assert len(client.posts) == 1 and client.cancels == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("accepted_index", "unknown_index"), [(0, 1), (1, 0)])
+async def test_per_token_tick_pair_accepted_plus_unknown_preserves_ack_attribution(
+    meta, accepted_index, unknown_index,
+):
+    quotes = [Quote(meta.yes.token_id, Side.BUY, .485, 5),
+              Quote(meta.no.token_id, Side.BUY, .481, 5)]
+    rows = [None, None]
+    rows[accepted_index] = placement_row(True, "accepted-order")
+    rows[unknown_index] = placement_row(None, "observed-order")
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient(rows)
+    gw._client, gw._io = client, _inline_io
+    guard_checks = []
+
+    def guard():
+        guard_checks.append(True)
+        return True
+
+    with pytest.raises(PlacementUnknown) as caught:
+        await gw.place(quotes, meta, token_ticks={meta.yes.token_id: .005,
+            meta.no.token_id: .001}, submit_guard=guard,
+            force_post_only=True, strict_placement=True,
+            allow_two_order_rdp_pair=True)
+
+    error = caught.value
+    assert type(error) is PlacementUnknown
+    assert error.reason == "UNRESOLVED_BATCH_RESULT"
+    assert error.observed_order_ids == tuple(row["orderID"] for row in rows)
+    assert len(error.acknowledged_orders) == 1
+    order = error.acknowledged_orders[0]
+    quote = quotes[accepted_index]
+    assert (order.order_id, order.token_id, order.price, order.size) == (
+        "accepted-order", quote.token_id, quote.price, quote.size)
+    assert guard_checks == [True, True]
+    assert len(client.posts) == 1 and client.posts[0][1] is True
+    assert [kwargs["options"].tick_size for _args, kwargs in client.created] == [
+        "0.005", "0.001"]
+    assert client.cancels == []
+
+
+@pytest.mark.asyncio
 async def test_opt_in_pair_minimum_size_denial_skips_signing_and_post(meta):
     gw = ExecutionGateway(Config(), paper=False)
     client = FakeBatchClient([placement_row(True, "a"), placement_row(True, "b")])

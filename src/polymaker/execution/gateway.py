@@ -19,7 +19,8 @@ import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from typing import Any, TypeVar
+from decimal import Decimal, InvalidOperation
+from typing import Any, TypeVar, get_args
 
 import httpx
 
@@ -213,7 +214,17 @@ class ExecutionGateway:
         force_post_only: bool = False,
         strict_placement: bool = False,
         allow_two_order_rdp_pair: bool = False,
+        token_ticks: Mapping[str, int | float | Decimal] | None = None,
     ) -> list[OpenOrder]:
+        signing_ticks: dict[str, str] | None = None
+        if token_ticks is not None:
+            quotes, signing_ticks = self._snapshot_token_tick_request(
+                quotes, meta, token_ticks,
+                force_post_only=force_post_only,
+                strict_placement=strict_placement,
+                allow_two_order_rdp_pair=allow_two_order_rdp_pair,
+                submit_guard=submit_guard,
+            )
         if allow_two_order_rdp_pair:
             self._validate_two_order_rdp_pair(
                 quotes, meta, force_post_only=force_post_only,
@@ -256,9 +267,13 @@ class ExecutionGateway:
                 PostOrdersV2Args,
             )
 
-            opts = PartialCreateOrderOptions(tick_size=_tick_str(meta.tick_size), neg_risk=meta.neg_risk)
+            legacy_opts = (PartialCreateOrderOptions(
+                tick_size=_tick_str(meta.tick_size), neg_risk=meta.neg_risk)
+                if signing_ticks is None else None)
             args = []
             for q in quotes:
+                opts = (legacy_opts if signing_ticks is None else PartialCreateOrderOptions(
+                    tick_size=signing_ticks[q.token_id], neg_risk=meta.neg_risk))
                 signed = self._client.create_order(
                     OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
                     options=opts,
@@ -312,6 +327,80 @@ class ExecutionGateway:
     def _paper_order(self, q: Quote) -> OpenOrder:
         oid = f"paper-{next(self._paper_ids)}"
         return OpenOrder(oid, q.token_id, q.side, q.price, q.size, OrderState.LIVE)
+
+    @staticmethod
+    def _snapshot_token_tick_request(
+        quotes: list[Quote], meta: MarketMeta,
+        token_ticks: Mapping[str, int | float | Decimal], *,
+        force_post_only: bool, strict_placement: bool,
+        allow_two_order_rdp_pair: bool,
+        submit_guard: Callable[[], bool] | None,
+    ) -> tuple[list[Quote], dict[str, str]]:
+        """Copy and validate opt-in per-token signing inputs before any await."""
+        if (force_post_only is not True or strict_placement is not True
+                or not callable(submit_guard)):
+            raise ValueError("per-token tick placement requires forced post-only, strict mode, and a submit guard")
+        if not isinstance(meta, MarketMeta) or not isinstance(quotes, list):
+            raise ValueError("per-token tick placement requires market metadata and a quote list")
+        quote_snapshot = list(quotes)
+        if len(quote_snapshot) == 1:
+            quote = quote_snapshot[0]
+            if (not isinstance(quote, Quote) or quote.side is not Side.BUY
+                    or quote.token_id not in (meta.yes.token_id, meta.no.token_id)):
+                raise ValueError("per-token tick single placement requires one market BUY quote")
+        elif len(quote_snapshot) == 2 and allow_two_order_rdp_pair is True:
+            ExecutionGateway._validate_two_order_rdp_pair(
+                quote_snapshot, meta, force_post_only=force_post_only,
+                strict_placement=strict_placement,
+            )
+        else:
+            raise ValueError("per-token tick placement requires one BUY or an opted-in market pair")
+
+        if not isinstance(token_ticks, Mapping):
+            raise ValueError("per-token ticks must be a token-to-tick mapping")
+        try:
+            tick_snapshot = dict(token_ticks)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            raise ValueError("per-token ticks could not be copied") from exc
+        quote_tokens = [quote.token_id for quote in quote_snapshot]
+        if (any(not isinstance(token, str) for token in quote_tokens)
+                or len(set(quote_tokens)) != len(quote_tokens)):
+            raise ValueError("per-token tick quotes must have unique string token ids")
+        if set(tick_snapshot) != set(quote_tokens):
+            raise ValueError("per-token tick keys must exactly match submitted quote tokens")
+
+        from py_clob_client_v2.clob_types import TickSize
+
+        supported_ticks = get_args(TickSize)
+        validated_ticks: dict[str, str] = {}
+        for token, value in tick_snapshot.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+                raise ValueError(f"invalid tick value for token {token!r}")
+            try:
+                tick = Decimal(str(value))
+            except (InvalidOperation, ValueError) as exc:
+                raise ValueError(f"invalid tick value for token {token!r}") from exc
+            if not tick.is_finite() or tick <= 0:
+                raise ValueError(f"unsupported tick value for token {token!r}")
+            sdk_tick = next((candidate for candidate in supported_ticks
+                             if tick == Decimal(candidate)), None)
+            if sdk_tick is None:
+                raise ValueError(f"unsupported tick value for token {token!r}")
+            validated_ticks[token] = sdk_tick
+
+        for quote in quote_snapshot:
+            if (isinstance(quote.price, bool)
+                    or not isinstance(quote.price, (int, float, Decimal))):
+                raise ValueError(f"invalid quote price for token {quote.token_id!r}")
+            try:
+                price = Decimal(str(quote.price))
+            except (InvalidOperation, ValueError) as exc:
+                raise ValueError(f"invalid quote price for token {quote.token_id!r}") from exc
+            tick = Decimal(validated_ticks[quote.token_id])
+            if (not price.is_finite() or price <= 0 or price >= 1
+                    or price % tick != 0):
+                raise ValueError(f"quote price is invalid or off-grid for token {quote.token_id!r}")
+        return quote_snapshot, validated_ticks
 
     def _parse_place_response(self, resp: Any, quotes: list[Quote]) -> list[OpenOrder]:
         """Map a post_orders response to OpenOrders without guessing on shape."""
