@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`6c87a39b3b6acb67f82b7be13aed7c1d94e1356d`
+`864a39c42af64072d60bdedc2d51dfeaf0d6288b`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0007`
+Current Iteration: `ITER-0008`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0007 | Strict opt-in dual-order acknowledgments | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | PENDING |
+| ITER-0008 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0007 | Strict opt-in dual-order acknowledgments | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0006 | NORMAL Book Filter with approved total variation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -83,7 +84,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0007 Architect selects one minimal prerequisite from the actual reviewed repository. ITER-0006 PASS is archived; see `ITER-0006/09_RESULT_REVISION_01.md` and `10_ARCHIVE_RECEIPT.md`. Approved depth definition and $5 reserve remain settled. Continue serial development automatically; no real-money authority.
+ITER-0008 Architect selects one minimal prerequisite from actual reviewed code. ITER-0007 PASS is archived; see `ITER-0007/RESULT.md`, `05_REVIEWER_REREVIEW_01.md`, and `06_ARCHIVE_RECEIPT.md`. Approved reserve/depth decisions remain settled. Continue automatically; no real-money authority.
 
 ---
 
