@@ -1,3 +1,17 @@
+# ITER-0000 Closure — 2026-10-07
+
+Current status: READY_FOR_RDP_DEVELOPMENT.
+FL: fl-reconstructed-baseline / 76fe93ffeb8cc1f8ca440587ab901ea402221228.
+RDP: rdp-phase0-baseline / 6a5ed93c84d66960eaa73b27a0fe34acfa0bf6c9, branch rdp-phase0-dev.
+Exact completed remote/topology/test/preservation verification: docs/development/ITER-0000/CHECKPOINT_RECEIPT.md.
+Canonical current baseline/audit documents are on rdp-phase0-dev. This archival branch is NOT an RDP source ancestor.
+No shared-core/RDP implementation/agent installation/trading occurred. Next authorized action after ITER-0000: archive historical AGENTS.md, install RDP framework, then ITER-0001.
+
+## Historical record below
+The following previous BLOCKED/pending statements are retained as historical evidence and superseded by this closure.
+
+---
+
 # ITER-0000 Readiness Handoff — 2026-10-07
 
 Current program: Pre-RDP Codebase Isolation.
