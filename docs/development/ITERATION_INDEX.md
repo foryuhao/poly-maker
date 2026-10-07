@@ -50,11 +50,11 @@ Baseline details:
 
 ## Project State
 
-Development Status: `IN_PROGRESS`
+Development Status: `HUMAN_DECISION_REQUIRED`
 
 Current Iteration: `ITER-0005`
 
-Current Stage: `ARCHITECT`
+Current Stage: `AWAITING_HUMAN_ARCHITECTURE_DECISION`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0005 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0005 | NORMAL CapitalGate repair-headroom semantics | BLOCKED | NOT_STARTED | NOT_STARTED | NOT_READY | PUSH_PENDING | NOT_RUN | PENDING |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0002 | Pure NORMAL quote candidates | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -81,9 +81,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0005 Architect inspection pending. ITER-0004 final PASS archived at c92a2a0; receipt: ITER-0004/08_ARCHIVE_RECEIPT.md.
+ITER-0005 ARCHITECT_BLOCKED: NORMAL repair-headroom future-price assumption requires explicit human approval. See ITER-0005/01_ARCHITECT.md and RESULT.md.
 
-Next authorized action: Architect chooses one smallest remaining prerequisite; continue serial development automatically.
+Next authorized action: human decides $5 price-independent future repair bound versus current BestAsk-minus-TickSize protection. Record decision durably; Architect revision then resumes serial implementation. No Worker under blocked contract. No real-money authority.
 
 ---
 
