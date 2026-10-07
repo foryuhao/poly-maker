@@ -21,7 +21,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future as ConcurrentFuture
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar, get_args
 
@@ -55,6 +55,49 @@ if not any(isinstance(item, _AccountSDKDiagnosticFilter) for item in _sdk_http_l
 
 class GatewayReadError(RuntimeError):
     """An authoritative Gateway snapshot could not be fetched or parsed."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExactOpenOrder:
+    """Opt-in exact-decimal account order evidence; legacy OpenOrder stays float."""
+
+    order_id: str
+    token_id: str
+    side: Side
+    price: Decimal
+    remaining_size: Decimal
+
+
+def _exact_order_decimal(value: object) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+        raise ValueError("exact order numeric field has unsupported type")
+    if isinstance(value, str) and not value.strip():
+        raise ValueError("exact order numeric field is blank")
+    try:
+        result = value if isinstance(value, Decimal) else Decimal(value)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("exact order numeric field is malformed") from exc
+    if not result.is_finite():
+        raise ValueError("exact order numeric field is nonfinite")
+    return result
+
+
+def _exact_decimal_difference(left: Decimal, right: Decimal) -> Decimal:
+    def coefficient(value: Decimal) -> tuple[int, int]:
+        sign, digits, exponent = value.as_tuple()
+        integer = int("".join(str(digit) for digit in digits) or "0")
+        return (-integer if sign else integer), exponent
+
+    left_value, left_exponent = coefficient(left)
+    right_value, right_exponent = coefficient(right)
+    exponent = min(left_exponent, right_exponent)
+    if max(left_exponent, right_exponent) - exponent > 4096:
+        raise ValueError("exact order numeric exponent range is excessive")
+    integer = (left_value * 10 ** (left_exponent - exponent)
+               - right_value * 10 ** (right_exponent - exponent))
+    sign = 1 if integer < 0 else 0
+    digits = tuple(int(digit) for digit in str(abs(integer)))
+    return Decimal((sign, digits, exponent))
 
 
 class PlacementUnknown(RuntimeError):
@@ -886,13 +929,19 @@ class ExecutionGateway:
         return self._hb_failures
 
     # ── reads ───────────────────────────────────────────────────────────
-    async def open_orders(self, *, strict_account: bool = False) -> list[OpenOrder]:
+    async def open_orders(
+        self, *, strict_account: bool = False, exact_decimal: bool = False,
+    ) -> list[OpenOrder] | list[ExactOpenOrder]:
+        if not isinstance(exact_decimal, bool):
+            raise GatewayReadError("exact_decimal must be a boolean")
+        if exact_decimal and strict_account is not True:
+            raise GatewayReadError("exact account order reads require strict cumulative fields")
         if self._paper:
             return []
         if self._client is None:
             raise GatewayReadError("open orders unavailable: CLOB client is not connected")
 
-        def _get() -> list[OpenOrder]:
+        def _get() -> list[OpenOrder] | list[ExactOpenOrder]:
             from polymaker.userstream.parse import strict_number
 
             raw = self._client.get_open_orders()
@@ -921,22 +970,33 @@ class ExecutionGateway:
                     original_raw = (r["original_size"] if strict_account else
                                     r.get("original_size", r.get("size", 0)))
                     matched_raw = r["size_matched"] if strict_account else r.get("size_matched", 0)
-                    original_size = strict_number(original_raw)
-                    size_matched = strict_number(matched_raw)
-                    if original_size < 0 or size_matched < 0 or size_matched > original_size:
-                        raise ValueError("order row has invalid cumulative size")
-                    remaining = original_size - size_matched
-                    price = strict_number(r["price"])
-                    out.append(
-                        OpenOrder(
-                            order_id.strip(),
-                            asset_id.strip(),
-                            side,
-                            price,
-                            remaining,
-                            OrderState.LIVE,
+                    if exact_decimal:
+                        original_size = _exact_order_decimal(original_raw)
+                        size_matched = _exact_order_decimal(matched_raw)
+                        price_decimal = _exact_order_decimal(r["price"])
+                        if (original_size < 0 or size_matched < 0
+                                or size_matched > original_size):
+                            raise ValueError("order row has invalid cumulative size")
+                        remaining_decimal = _exact_decimal_difference(original_size, size_matched)
+                        out.append(ExactOpenOrder(order_id.strip(), asset_id.strip(), side,
+                                                  price_decimal, remaining_decimal))
+                    else:
+                        original_size = strict_number(original_raw)
+                        size_matched = strict_number(matched_raw)
+                        if original_size < 0 or size_matched < 0 or size_matched > original_size:
+                            raise ValueError("order row has invalid cumulative size")
+                        remaining = original_size - size_matched
+                        price = strict_number(r["price"])
+                        out.append(
+                            OpenOrder(
+                                order_id.strip(),
+                                asset_id.strip(),
+                                side,
+                                price,
+                                remaining,
+                                OrderState.LIVE,
+                            )
                         )
-                    )
                 except (KeyError, ValueError, TypeError) as exc:
                     raise GatewayReadError("open orders contained an invalid order row") from exc
             return out

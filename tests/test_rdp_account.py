@@ -13,8 +13,12 @@ import pytest
 import respx
 
 from polymaker.config import Config, Secrets, WalletConfig
-from polymaker.domain import MarketMeta, OpenOrder, OrderState, Side, TokenMeta
-from polymaker.execution.gateway import ExecutionGateway, GatewayReadError
+from polymaker.domain import MarketMeta, OpenOrder, Side, TokenMeta
+from polymaker.execution.gateway import (
+    ExactOpenOrder,
+    ExecutionGateway,
+    GatewayReadError,
+)
 from polymaker.rdp_account import RDPAccountError, RDPAccountSnapshot, _collateral, account_snapshot
 from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
 
@@ -59,8 +63,8 @@ class FakeGateway:
         self.calls = []
         self.connect_wait = None
         self.orders_value = [
-            OpenOrder("selected-order", "up", Side.BUY, .42, 3, OrderState.LIVE),
-            OpenOrder("other-order", "foreign", Side.SELL, .77, 2, OrderState.LIVE),
+            ExactOpenOrder("selected-order", "up", Side.BUY, Decimal(".42"), Decimal("3")),
+            ExactOpenOrder("other-order", "foreign", Side.SELL, Decimal(".77"), Decimal("2")),
         ]
         self.positions_value = {"up": (2.5, .4)}
         self.collateral_value = {
@@ -74,9 +78,10 @@ class FakeGateway:
         if self.connect_wait is not None:
             await self.connect_wait.wait()
 
-    async def open_orders(self, *, strict_account=False):
-        self.calls.append(("open_orders", strict_account))
+    async def open_orders(self, *, strict_account=False, exact_decimal=False):
+        self.calls.append(("open_orders", strict_account, exact_decimal))
         assert strict_account is True
+        assert exact_decimal is True
         if isinstance(self.orders_value, Exception):
             raise self.orders_value
         return self.orders_value
@@ -123,8 +128,10 @@ async def test_valid_account_snapshot_reuses_reads_and_preserves_selected_state(
         ("up", Decimal("2.5"), Decimal("0.4")), ("down", Decimal("0"), Decimal("0"))]
     assert [row.order_id for row in snapshot.selected_open_orders] == ["selected-order"]
     assert snapshot.total_open_order_count == 2
+    assert snapshot.condition_id == "condition-account"
+    assert [row.order_id for row in snapshot.all_open_orders] == ["selected-order", "other-order"]
     assert snapshot.orders_receipt_ts <= snapshot.positions_receipt_ts <= snapshot.collateral_receipt_ts
-    assert made[0].calls == [("connect", True), ("open_orders", True), ("positions", True),
+    assert made[0].calls == [("connect", True), ("open_orders", True, True), ("positions", True),
                              ("spenders",), ("balance_allowance",)]
     assert made[0].closed
     with pytest.raises(FrozenInstanceError):
@@ -334,6 +341,8 @@ async def test_missing_derived_credentials_and_identity_mismatch_fail_closed():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure,category", [
     ("spenders", "REQUIRED_SPENDERS_UNRESOLVED"),
+    ("invalid_spender", "REQUIRED_SPENDERS_UNRESOLVED"),
+    ("duplicate_spenders", "REQUIRED_SPENDERS_UNRESOLVED"),
     ("allowance", "ALLOWANCE_UNAVAILABLE"),
 ])
 async def test_missing_required_spender_or_allowance_fails_and_closes(failure, category):
@@ -344,6 +353,10 @@ async def test_missing_required_spender_or_allowance_fails_and_closes(failure, c
         gateway = FakeGateway(config, paper=paper)
         if failure == "spenders":
             gateway.spenders_value = ()
+        elif failure == "invalid_spender":
+            gateway.spenders_value = ("not-an-address",)
+        elif failure == "duplicate_spenders":
+            gateway.spenders_value = ("0x" + "a" * 40, "0x" + "A" * 40)
         else:
             gateway.collateral_value = {"balance": "12000000", "allowances": {}}
         made.append(gateway)
@@ -546,6 +559,85 @@ async def test_actual_gateway_order_parser_requires_quantities_only_in_strict_mo
 
 
 @pytest.mark.asyncio
+async def test_gateway_exact_order_mode_preserves_decimal_remaining_and_legacy_float_results():
+    cfg, _signer = account_config()
+    row = {"id": "partial", "asset_id": "foreign", "side": "BUY", "price": "0.5",
+           "original_size": "1.1", "size_matched": "0.2"}
+    gateway = ExecutionGateway(cfg)
+    gateway._client = SimpleNamespace(get_open_orders=lambda: [row])
+
+    async def inline(fn, *args):
+        return fn(*args)
+
+    gateway._io = inline
+    try:
+        legacy = await gateway.open_orders(strict_account=True)
+        exact = await gateway.open_orders(strict_account=True, exact_decimal=True)
+        assert isinstance(legacy[0], OpenOrder)
+        assert legacy[0].size == .9000000000000001
+        assert isinstance(exact[0], ExactOpenOrder)
+        assert exact[0].price == Decimal("0.5")
+        assert exact[0].remaining_size == Decimal("0.9")
+        with pytest.raises(GatewayReadError, match="require strict"):
+            await gateway.open_orders(exact_decimal=True)
+    finally:
+        gateway.close()
+
+
+@pytest.mark.asyncio
+async def test_gateway_exact_order_mode_accepts_decimal_and_integer_source_numerics():
+    cfg, _signer = account_config()
+    row = {"id": "decimal-int", "asset_id": "foreign", "side": "BUY",
+           "price": Decimal("0.4"), "original_size": 2, "size_matched": Decimal("0.25")}
+    gateway = ExecutionGateway(cfg)
+    gateway._client = SimpleNamespace(get_open_orders=lambda: [row])
+
+    async def inline(fn, *args):
+        return fn(*args)
+
+    gateway._io = inline
+    try:
+        exact = await gateway.open_orders(strict_account=True, exact_decimal=True)
+        assert exact[0].price == Decimal("0.4")
+        assert exact[0].remaining_size == Decimal("1.75")
+    finally:
+        gateway.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", [
+    {"id": "missing-original", "asset_id": "up", "side": "BUY", "price": "0.5",
+     "size_matched": "0"},
+    {"id": "missing-matched", "asset_id": "up", "side": "BUY", "price": "0.5",
+     "original_size": "1"},
+    {"id": "float-source", "asset_id": "up", "side": "BUY", "price": .5,
+     "original_size": "1", "size_matched": "0"},
+    {"id": "bool-source", "asset_id": "up", "side": "BUY", "price": True,
+     "original_size": "1", "size_matched": "0"},
+    {"id": "nan-source", "asset_id": "up", "side": "BUY", "price": "NaN",
+     "original_size": "1", "size_matched": "0"},
+    {"id": "negative", "asset_id": "up", "side": "BUY", "price": "0.5",
+     "original_size": "1", "size_matched": "-0.1"},
+    {"id": "overmatched", "asset_id": "up", "side": "BUY", "price": "0.5",
+     "original_size": "1", "size_matched": "1.1"},
+])
+async def test_gateway_exact_order_mode_rejects_untrustworthy_source_fields(row):
+    cfg, _signer = account_config()
+    gateway = ExecutionGateway(cfg)
+    gateway._client = SimpleNamespace(get_open_orders=lambda: [row])
+
+    async def inline(fn, *args):
+        return fn(*args)
+
+    gateway._io = inline
+    try:
+        with pytest.raises(GatewayReadError):
+            await gateway.open_orders(strict_account=True, exact_decimal=True)
+    finally:
+        gateway.close()
+
+
+@pytest.mark.asyncio
 async def test_actual_gateway_position_parser_checks_zero_size_price_before_filter():
     cfg, signer = account_config()
     gateway = ActualParserGateway(cfg, signer, [])
@@ -576,6 +668,50 @@ async def test_actual_gateway_position_parser_checks_zero_size_price_before_filt
                                           gateway_factory=lambda *_a, **_k: valid_zero)
     assert snapshot.selected_positions[0].quantity == Decimal("0")
     assert snapshot.selected_positions[0].average_price == Decimal("0.4")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("original", "matched", "balance", "allowance", "eligible", "reason"), [
+    ("1.1", "0.2", "30450000", "30450000", True, None),
+    ("1.1", "0.2", "30449999", "30450000", False, "INSUFFICIENT_CASH_BACKING"),
+    ("1.1", "0.2", "30450000", "30449999", False, "INSUFFICIENT_ALLOWANCE_BACKING"),
+    ("1.123456789123456789", "0.223456789123456789",
+     "30450000", "30450000", True, None),
+])
+async def test_actual_parser_account_capture_and_backing_preserve_partial_fill_decimals(
+    original, matched, balance, allowance, eligible, reason,
+):
+    from polymaker.risk.rdp_capital import evaluate_initial_rdp_backing
+
+    cfg, signer = account_config()
+    row = {"id": "foreign-partial", "asset_id": "foreign", "side": "BUY", "price": "0.5",
+           "original_size": original, "size_matched": matched}
+    gateway = ActualParserGateway(cfg, signer, [row])
+
+    async def collateral():
+        spender = "0x" + "a" * 40
+        return {"balance": balance, "allowances": {spender: allowance}}
+
+    gateway.balance_allowance = collateral
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://data-api.polymarket.com/v2/positions").mock(
+            return_value=httpx.Response(200, json=positions_response([])))
+        snapshot = await account_snapshot(
+            cfg, account_bootstrap(),
+            gateway_factory=lambda *_args, _gateway=gateway, **_kwargs: _gateway,
+        )
+    captured = snapshot.all_open_orders[0]
+    assert captured.price == Decimal("0.5")
+    assert captured.remaining_size == Decimal("0.9")
+    assert snapshot.total_open_order_count == 1
+    now = time.time()
+    backing = evaluate_initial_rdp_backing(
+        account_bootstrap(end_epoch=int(now) + 120), snapshot, now=now, max_age_s=15,
+    )
+    assert backing.eligible is eligible
+    assert backing.reason == reason
+    assert backing.account_buy_commitment == Decimal("0.45")
+    assert backing.observed_cash_backing == Decimal(balance) / Decimal("1000000") - Decimal("0.45")
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import FrozenInstanceError, asdict
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from polymaker.risk.rdp_capital import (
     CAPITAL,
     NORMAL_REPAIR_RESERVE,
     RDPMode,
+    evaluate_initial_rdp_backing,
     evaluate_rdp_capital_gate,
     project_rdp_capital,
 )
@@ -109,6 +111,43 @@ def normal_candidate(yes_price=.29, no_price=.59, yes_qty=5, no_qty=5):
 
 def rebalance_candidate(token="no", price=.98, qty=5):
     return RDPQuoteDecision((Quote(token, Side.BUY, price, qty),), None)
+
+
+def account_capture(*, now=1000.0, balance=Decimal("30"), allowance=Decimal("30"),
+                    orders=(), selected_orders=None, positions=None, timestamps=None,
+                    condition_id="cid", order_count=None, bootstrap_end=1200.0,
+                    spenders=("0x" + "a" * 40,)):
+    market_value = market()
+    bootstrap = SimpleNamespace(market=market_value, end_epoch=bootstrap_end)
+    if positions is None:
+        from polymaker.rdp_account import RDPPositionEvidence
+
+        positions = (
+            RDPPositionEvidence("Yes", "yes", Decimal("0"), Decimal("0")),
+            RDPPositionEvidence("No", "no", Decimal("0"), Decimal("0")),
+        )
+    if selected_orders is None and orders is not None:
+        selected_orders = tuple(row for row in orders if row.token_id in {"yes", "no"})
+    if selected_orders is None:
+        selected_orders = ()
+    if timestamps is None:
+        timestamps = (now - .1, now - .05, now)
+    account = SimpleNamespace(
+        condition_id=condition_id, all_open_orders=(tuple(orders) if orders is not None else None),
+        selected_open_orders=tuple(selected_orders), total_open_order_count=(
+            (len(orders) if orders is not None else 0) if order_count is None else order_count),
+        selected_positions=tuple(positions), required_spenders=tuple(spenders),
+        balance_usd=balance, allowance_usd=allowance,
+        orders_receipt_ts=timestamps[0], positions_receipt_ts=timestamps[1],
+        collateral_receipt_ts=timestamps[2],
+    )
+    return bootstrap, account
+
+
+def order_evidence(order_id, token_id="foreign", side="BUY", price="0.5", remaining="10"):
+    from polymaker.rdp_account import RDPOrderEvidence
+
+    return RDPOrderEvidence(order_id, token_id, side, Decimal(price), Decimal(remaining))
 
 
 async def close_evidence(m, proc, rows, trades=(), *, cancel_result=True, cancel_mutates=True):
@@ -627,3 +666,184 @@ def test_accepted_and_rejected_projections_preserve_independent_input_captures(c
     bad = projection(m, proc, {"o"}, [OpenOrder("manual", "yes", Side.BUY, .4, 1)])
     assert good.certified and not bad.certified
     assert _capture(store, proc, orders, None) == before
+
+
+def test_initial_backing_exact_capital_and_each_independent_shortfall():
+    bootstrap, account = account_capture()
+    exact = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert exact.eligible and exact.reason is None
+    assert exact.capital == CAPITAL
+    assert exact.account_buy_commitment == Decimal("0")
+    assert exact.observed_cash_backing == Decimal("30")
+    assert exact.observed_allowance_backing == Decimal("30")
+
+    bootstrap, account = account_capture(balance=Decimal("29.999999"))
+    cash_short = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not cash_short.eligible and cash_short.reason == "INSUFFICIENT_CASH_BACKING"
+    assert cash_short.observed_cash_backing == Decimal("29.999999")
+
+    bootstrap, account = account_capture(allowance=Decimal("29.999999"))
+    allowance_short = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not allowance_short.eligible and allowance_short.reason == "INSUFFICIENT_ALLOWANCE_BACKING"
+    assert allowance_short.observed_allowance_backing == Decimal("29.999999")
+
+
+def test_initial_backing_keeps_fixed_capital_and_subtracts_all_foreign_buy_commitments_once():
+    order = order_evidence("foreign-buy", price="0.5", remaining="10")
+    bootstrap, account = account_capture(balance=Decimal("35"), allowance=Decimal("35"),
+                                         orders=(order,))
+    eligible = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert eligible.eligible
+    assert eligible.capital == CAPITAL == Decimal("30.00")
+    assert eligible.account_buy_commitment == Decimal("5.0")
+    assert eligible.observed_cash_backing == eligible.observed_allowance_backing == Decimal("30.0")
+
+    too_large = order_evidence("foreign-buy", price="0.5000001", remaining="10")
+    bootstrap, account = account_capture(balance=Decimal("35"), allowance=Decimal("35"),
+                                         orders=(too_large,))
+    rejected = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not rejected.eligible
+    assert rejected.reason == "INSUFFICIENT_CASH_BACKING"
+    assert rejected.account_buy_commitment == Decimal("5.0000010")
+
+
+def test_initial_backing_uses_remaining_quantity_and_ignores_sell_collateral_commitment():
+    buy_a = order_evidence("foreign-a", price="0.5", remaining="4")
+    buy_partial = order_evidence("foreign-partial", price="0.25", remaining="2")
+    sell = order_evidence("foreign-sell", side="SELL", price="0.99", remaining="100")
+    bootstrap, account = account_capture(balance=Decimal("33.5"), allowance=Decimal("33.5"),
+                                         orders=(buy_a, buy_partial, sell))
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert result.eligible
+    assert result.account_buy_commitment == Decimal("2.5")
+    assert result.observed_cash_backing == Decimal("31.0")
+    assert result.observed_allowance_backing == Decimal("31.0")
+
+
+def test_initial_backing_decimal_products_and_boundary_comparisons_do_not_round():
+    quantity = Decimal("2." + "0" * 69 + "2")
+    order = order_evidence("precision", price="0.5", remaining=str(quantity))
+    bootstrap, account = account_capture(balance=Decimal("31"), allowance=Decimal("31"),
+                                         orders=(order,))
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    expected_commitment = Decimal("1." + "0" * 69 + "1")
+    assert result.account_buy_commitment == expected_commitment
+    assert result.observed_cash_backing == Decimal("29." + "9" * 70)
+    assert not result.eligible and result.reason == "INSUFFICIENT_CASH_BACKING"
+
+
+@pytest.mark.parametrize("positions", [
+    (SimpleNamespace(outcome="Yes", token_id="yes", quantity=Decimal("1"), average_price=Decimal(".4")),
+     SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("0"), average_price=Decimal("0"))),
+    (SimpleNamespace(outcome="Yes", token_id="yes", quantity=Decimal("1"), average_price=Decimal(".4")),
+     SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("1"), average_price=Decimal(".5"))),
+])
+def test_initial_backing_rejects_one_sided_and_balanced_selected_inventory(positions):
+    bootstrap, account = account_capture(positions=positions)
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not result.eligible and result.reason == "SELECTED_STATE_NOT_EMPTY"
+    assert not result.selected_state_empty
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_initial_backing_rejects_any_selected_open_order_without_adopting_it(side):
+    order = order_evidence("selected", token_id="yes", side=side)
+    bootstrap, account = account_capture(balance=Decimal("100"), allowance=Decimal("100"),
+                                         orders=(order,))
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not result.eligible and result.reason == "SELECTED_STATE_NOT_EMPTY"
+    assert result.account_buy_commitment == (Decimal("5.0") if side == "BUY" else Decimal("0"))
+    assert account.all_open_orders == (order,)
+
+
+@pytest.mark.parametrize(("changes", "reason"), [
+    ({"orders": None}, "INCOMPLETE_ACCOUNT_EVIDENCE"),
+    ({"order_count": 1}, "INCOMPLETE_ACCOUNT_EVIDENCE"),
+    ({"orders": (order_evidence("dup"), order_evidence("dup"))}, "INVALID_ACCOUNT_ORDER"),
+    ({"selected_orders": (order_evidence("not-in-full-set", token_id="yes"),)},
+     "INCONSISTENT_SELECTED_ORDERS"),
+    ({"condition_id": "other"}, "ACCOUNT_SCOPE_MISMATCH"),
+])
+def test_initial_backing_rejects_incomplete_duplicate_or_inconsistent_order_scope(changes, reason):
+    bootstrap, account = account_capture(**changes)
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not result.eligible and result.reason == reason
+
+
+@pytest.mark.parametrize(("order", "reason"), [
+    (order_evidence("bad-side", side="HOLD"), "INVALID_ACCOUNT_ORDER"),
+    (order_evidence("bad-price", price="1"), "INVALID_ACCOUNT_ORDER"),
+    (order_evidence("bad-qty", remaining="-1"), "INVALID_ACCOUNT_ORDER"),
+    (order_evidence("bad-token", token_id=""), "INVALID_ACCOUNT_ORDER"),
+])
+def test_initial_backing_rejects_malformed_foreign_order_economics(order, reason):
+    bootstrap, account = account_capture(orders=(order,))
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not result.eligible and result.reason == reason
+
+
+def test_initial_backing_requires_exact_selected_position_outcome_mapping_and_decimal_values():
+    wrong = (SimpleNamespace(outcome="No", token_id="yes", quantity=Decimal("0"), average_price=Decimal("0")),
+             SimpleNamespace(outcome="Yes", token_id="no", quantity=Decimal("0"), average_price=Decimal("0")))
+    bootstrap, account = account_capture(positions=wrong)
+    assert evaluate_initial_rdp_backing(bootstrap, account, now=1000,
+                                        max_age_s=15).reason == "INVALID_SELECTED_POSITION"
+
+    float_position = (SimpleNamespace(outcome="Yes", token_id="yes", quantity=0.0, average_price=0.0),
+                      SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("0"),
+                                      average_price=Decimal("0")))
+    bootstrap, account = account_capture(positions=float_position)
+    assert evaluate_initial_rdp_backing(bootstrap, account, now=1000,
+                                        max_age_s=15).reason == "INVALID_SELECTED_POSITION"
+
+
+@pytest.mark.parametrize(("timestamps", "now", "limit", "end", "reason"), [
+    ((999.0, 999.5, 1000.0), 1000.0, 1.0, 1200.0, None),
+    ((999.9, 999.95, 1000.0), 1000.0, 0.1, 1200.0, None),
+    ((999.8999999999999, 999.95, 1000.0), 1000.0, 0.1, 1200.0,
+     "STALE_ACCOUNT_EVIDENCE"),
+    ((998.999, 999.5, 1000.0), 1000.0, 1.0, 1200.0, "STALE_ACCOUNT_EVIDENCE"),
+    ((1000.1, 1000.2, 1000.3), 1000.0, 15.0, 1200.0, "INVALID_READ_TIMESTAMPS"),
+    ((999.8, 999.7, 1000.0), 1000.0, 15.0, 1200.0, "INVALID_READ_TIMESTAMPS"),
+    ((999.0, 999.5, 1000.0), 1000.0, 15.0, 1000.0, "MARKET_EXPIRED"),
+])
+def test_initial_backing_validates_timestamp_order_freshness_and_expiry(
+    timestamps, now, limit, end, reason,
+):
+    bootstrap, account = account_capture(now=now, timestamps=timestamps, bootstrap_end=end)
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=now, max_age_s=limit)
+    assert result.reason == reason
+    if reason is None:
+        assert result.eligible and result.read_age_s == pytest.approx(now - timestamps[0])
+
+
+@pytest.mark.parametrize(("now", "limit"), [(float("nan"), 15), (1000, 0), (1000, float("inf"))])
+def test_initial_backing_rejects_invalid_age_inputs(now, limit):
+    bootstrap, account = account_capture()
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=now, max_age_s=limit)
+    assert not result.eligible and result.reason == "INVALID_AGE_LIMIT"
+
+
+@pytest.mark.parametrize(("spenders", "reason"), [
+    ((), "INCOMPLETE_ACCOUNT_EVIDENCE"),
+    (("not-an-address",), "INVALID_SPENDER_EVIDENCE"),
+    (("0x" + "a" * 40, "0X" + "A" * 40), "INVALID_SPENDER_EVIDENCE"),
+])
+def test_initial_backing_rejects_missing_invalid_and_duplicate_normalized_spenders(spenders, reason):
+    bootstrap, account = account_capture(spenders=spenders)
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert not result.eligible and result.reason == reason
+
+
+def test_initial_backing_result_is_immutable_and_does_not_change_capital_projection(ctx):
+    bootstrap, account = account_capture(balance=Decimal("100"), allowance=Decimal("100"))
+    result = evaluate_initial_rdp_backing(bootstrap, account, now=1000, max_age_s=15)
+    assert result.eligible and result.capital == CAPITAL
+    with pytest.raises(FrozenInstanceError):
+        result.capital = Decimal("100")
+    _store, proc, m = ctx
+    empty_projection = projection(m, proc, set())
+    assert empty_projection.certified
+    assert empty_projection.snapshot.capital == CAPITAL
+    admission = evaluate_rdp_capital_gate(RDPMode.NORMAL, normal_candidate(), empty_projection)
+    assert admission.admitted and admission.protected_amount == NORMAL_REPAIR_RESERVE

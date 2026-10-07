@@ -407,6 +407,7 @@ def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_sco
     assert calls == [("bootstrap", SLUG), ("feed",), ("account",)]
     assert "Read-only account snapshot" in result.stdout
     assert "Existing selected order: existing" in result.stdout
+    assert "Initial RDP capital backing: ineligible (INVALID_MARKET_SCOPE)" in result.stdout
     events = [json.loads(line) for line in
               (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
     assert any(event["event"] == "rdp_feed_readiness" and event["result"] == "SUCCESS"
@@ -416,6 +417,117 @@ def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_sco
     assert account_event["real_money_trading_performed"] is False
     assert not any("secret" in key.lower() or "credential" in key.lower()
                    for key in account_event)
+    backing_event = next(event for event in events
+                         if event["event"] == "rdp_initial_capital_backing")
+    assert backing_event["eligible"] is False
+    assert backing_event["reason"] == "INVALID_MARKET_SCOPE"
+    assert backing_event["capital_usd"] == "30.00"
+    assert backing_event["real_money_trading_performed"] is False
+
+
+@pytest.mark.parametrize(("eligible", "reason", "expected"), [
+    (True, None, "Initial RDP capital backing: eligible"),
+    (False, "INSUFFICIENT_CASH_BACKING",
+     "Initial RDP capital backing: ineligible (INSUFFICIENT_CASH_BACKING)"),
+])
+def test_rdp_live_cli_reports_startup_backing_separately(eligible, reason, expected,
+                                                          tmp_path, monkeypatch):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _config_dir: cfg)
+    backing = SimpleNamespace(
+        eligible=eligible, reason=reason, capital=Decimal("30.00"),
+        account_buy_commitment=Decimal("1"), observed_cash_backing=Decimal("30"),
+        observed_allowance_backing=Decimal("30"), read_age_s=.5,
+    )
+    account = SimpleNamespace(
+        signer="signer", funder="funder", balance_usd=Decimal("31"),
+        allowance_usd=Decimal("31"), total_open_order_count=0,
+        selected_positions=(), selected_open_orders=(),
+    )
+    bootstrap = SimpleNamespace(
+        market=SimpleNamespace(slug=SLUG, condition_id="condition-btc5m"),
+        epoch=EPOCH, end_epoch=END_EPOCH, token_metadata=(),
+    )
+    feed = SimpleNamespace(connection_generation=1, tokens=())
+    async def fake_preflight(*_args, **_kwargs):
+        return SimpleNamespace(bootstrap=bootstrap, feed=feed, account=account,
+                               account_backing=backing)
+
+    monkeypatch.setattr("polymaker.rdp_live.preflight_rdp_market", fake_preflight)
+    result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
+                                      "--preflight-only", "--account-check"])
+    assert result.exit_code == 0, result.stdout
+    rendered = " ".join(result.stdout.split())
+    assert expected in rendered
+    assert "frozen capital=$30.00" in rendered
+    assert "Account BUY commitment=$1" in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("balance", "expected_eligible", "reason"), [
+    ("31", True, None),
+    ("30.999999", False, "INSUFFICIENT_CASH_BACKING"),
+])
+async def test_account_preflight_reports_startup_backing_without_rejecting_account_read(
+    balance, expected_eligible, reason, monkeypatch,
+):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from polymaker.rdp_live import preflight_rdp_market
+
+    timestamp = EPOCH + 10
+    bootstrap = SimpleNamespace(
+        market=SimpleNamespace(
+            slug=SLUG, condition_id="condition-btc5m",
+            tokens=(SimpleNamespace(token_id="token-up", outcome="Up"),
+                    SimpleNamespace(token_id="token-down", outcome="Down")),
+        ),
+        epoch=EPOCH, end_epoch=END_EPOCH, token_metadata=(),
+    )
+    account = SimpleNamespace(
+        condition_id="condition-btc5m", signer="signer", funder="funder",
+        balance_usd=Decimal(balance), allowance_usd=Decimal("31"),
+        required_spenders=("0x" + "a" * 40,),
+        selected_positions=(
+            SimpleNamespace(outcome="Up", token_id="token-up", quantity=Decimal("0"),
+                            average_price=Decimal("0")),
+            SimpleNamespace(outcome="Down", token_id="token-down", quantity=Decimal("0"),
+                            average_price=Decimal("0")),
+        ),
+        selected_open_orders=(),
+        all_open_orders=(SimpleNamespace(order_id="foreign-buy", token_id="foreign",
+                                         side="BUY", price=Decimal(".5"),
+                                         remaining_size=Decimal("2")),),
+        total_open_order_count=1,
+        orders_receipt_ts=timestamp - 1, positions_receipt_ts=timestamp - .5,
+        collateral_receipt_ts=timestamp - .1,
+    )
+
+    async def fake_bootstrap(_cfg, _slug, **_kwargs):
+        return bootstrap
+
+    async def fake_feed(_bootstrap, **_kwargs):
+        return SimpleNamespace(condition_id="condition-btc5m", connection_generation=1,
+                                receipt_ts=timestamp, tokens=())
+
+    async def fake_account(_cfg, _bootstrap, *, now):
+        assert now() == timestamp
+        return account
+
+    monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
+    monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
+    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fake_account)
+    result = await preflight_rdp_market(Config(), SLUG, account_check=True,
+                                        now=lambda: timestamp)
+    assert result.account is account
+    assert result.account_backing.eligible is expected_eligible
+    assert result.account_backing.reason == reason
+    assert result.account_backing.capital == Decimal("30.00")
+    assert result.account_backing.account_buy_commitment == Decimal("1.0")
 
 
 def test_rdp_live_cli_account_read_failure_is_separately_logged(tmp_path, monkeypatch):

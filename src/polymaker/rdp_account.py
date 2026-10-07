@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from polymaker.config import Config
 from polymaker.domain import MarketMeta, Side
-from polymaker.execution.gateway import ExecutionGateway
+from polymaker.execution.gateway import ExactOpenOrder, ExecutionGateway
 from polymaker.rdp_live import RDPBootstrap, RDPBootstrapError
 
 
@@ -51,6 +51,8 @@ class RDPAccountSnapshot:
     orders_receipt_ts: float
     positions_receipt_ts: float
     collateral_receipt_ts: float
+    condition_id: str | None = None
+    all_open_orders: tuple[RDPOrderEvidence, ...] | None = None
 
 
 _OFFICIAL = {
@@ -195,15 +197,17 @@ async def account_snapshot(
         if gateway.address.lower() != signer.lower() or gateway.funder.lower() != funder.lower():
             raise RDPAccountError("ACCOUNT_IDENTITY_MISMATCH", "connected gateway identity differs from configuration")
 
-        orders = await gateway.open_orders(strict_account=True)
+        orders = await gateway.open_orders(strict_account=True, exact_decimal=True)
         orders_ts = now()
         if orders_ts >= bootstrap.end_epoch:
             raise RDPAccountError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended during account reads")
         if not isinstance(orders, list):
             raise RDPAccountError("OPEN_ORDERS_UNAVAILABLE", "open order read was unavailable")
         token_ids = {token.token_id for token in bootstrap.market.tokens}
-        selected_orders = []
+        all_orders = []
         for order in orders:
+            if not isinstance(order, ExactOpenOrder):
+                raise RDPAccountError("INVALID_OPEN_ORDER_EVIDENCE", "account order precision is unavailable")
             if not all((isinstance(getattr(order, "order_id", None), str)
                         and order.order_id.strip(),
                         isinstance(getattr(order, "token_id", None), str)
@@ -211,12 +215,12 @@ async def account_snapshot(
                         isinstance(getattr(order, "side", None), Side))):
                 raise RDPAccountError("INVALID_OPEN_ORDER_EVIDENCE", "open order row is malformed")
             price = _decimal(order.price, field="open order price")
-            size = _decimal(order.size, field="open order remaining size")
+            size = _decimal(order.remaining_size, field="open order remaining size")
             if price > 1:
                 raise RDPAccountError("INVALID_OPEN_ORDER_EVIDENCE", "open order price is outside [0,1]")
-            if order.token_id in token_ids:
-                selected_orders.append(RDPOrderEvidence(order.order_id, order.token_id, order.side.value,
-                                                        price, size))
+            all_orders.append(RDPOrderEvidence(order.order_id, order.token_id, order.side.value,
+                                               price, size))
+        selected_orders = [order for order in all_orders if order.token_id in token_ids]
 
         positions_raw = await gateway.positions(strict_account=True)
         positions_ts = now()
@@ -227,7 +231,7 @@ async def account_snapshot(
         spenders_raw = await gateway.required_collateral_spenders(bootstrap.market)
         if (not isinstance(spenders_raw, tuple) or not spenders_raw
                 or any(not isinstance(item, str) or not item.strip() for item in spenders_raw)
-                or len({item.lower() for item in spenders_raw}) != len(spenders_raw)):
+                or len({item.strip().lower() for item in spenders_raw}) != len(spenders_raw)):
             raise RDPAccountError("REQUIRED_SPENDERS_UNRESOLVED", "required collateral spenders are unresolved")
         from web3 import Web3
         if any(not Web3.is_address(item) for item in spenders_raw):
@@ -239,9 +243,14 @@ async def account_snapshot(
             raise RDPAccountError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended during account reads")
         balance, allowance = _collateral(collateral_raw, spenders)
         ensure_market_open()
-        return RDPAccountSnapshot(signer, funder, balance, allowance, spenders, positions,
-                                  tuple(selected_orders), len(orders), orders_ts, positions_ts,
-                                  collateral_ts)
+        return RDPAccountSnapshot(
+            signer=signer, funder=funder, balance_usd=balance, allowance_usd=allowance,
+            required_spenders=spenders, selected_positions=positions,
+            selected_open_orders=tuple(selected_orders), total_open_order_count=len(orders),
+            orders_receipt_ts=orders_ts, positions_receipt_ts=positions_ts,
+            collateral_receipt_ts=collateral_ts, condition_id=bootstrap.market.condition_id,
+            all_open_orders=tuple(all_orders),
+        )
     except RDPAccountError:
         raise
     except asyncio.CancelledError:

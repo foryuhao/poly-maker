@@ -340,6 +340,15 @@ def rdp_live(
         for order in result.account.selected_open_orders:
             console.print(f"Existing selected order: {order.order_id} {order.side} "
                           f"{order.remaining_size} shares @ {order.price}")
+        if result.account_backing is not None:
+            backing = result.account_backing
+            status = "eligible" if backing.eligible else f"ineligible ({backing.reason})"
+            console.print(f"Initial RDP capital backing: {status} | frozen capital=${backing.capital}")
+            if backing.account_buy_commitment is not None:
+                console.print(f"Account BUY commitment=${backing.account_buy_commitment} | "
+                              f"cash backing=${backing.observed_cash_backing} | "
+                              f"allowance backing=${backing.observed_allowance_backing} | "
+                              f"read age={backing.read_age_s:.3f}s")
     console.print("Read-only public metadata result; real_money_trading_performed=false")
 
 

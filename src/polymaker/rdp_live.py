@@ -59,6 +59,7 @@ class RDPPreflight:
     bootstrap: RDPBootstrap
     feed: Any
     account: Any | None = None
+    account_backing: Any | None = None
 
 
 def _validate_official_origin(host: str, expected: str, category: str) -> None:
@@ -291,8 +292,10 @@ async def preflight_rdp_market(
             receipt_ts=feed.receipt_ts, real_money_trading_performed=False,
         )
         account = None
+        account_backing = None
         if account_check:
             from polymaker.rdp_account import account_snapshot
+            from polymaker.risk.rdp_capital import evaluate_initial_rdp_backing
 
             try:
                 account = await account_snapshot(runtime_cfg, bootstrap, now=now)
@@ -313,11 +316,32 @@ async def preflight_rdp_market(
                         "collateral": account.collateral_receipt_ts,
                     }, real_money_trading_performed=False,
                 )
+                account_backing = evaluate_initial_rdp_backing(
+                    bootstrap, account, now=now(),
+                    max_age_s=runtime_cfg.risk.user_ws_blind_halt_s,
+                )
+                log.info(
+                    "rdp_initial_capital_backing", result="SUCCESS",
+                    eligible=account_backing.eligible, reason=account_backing.reason,
+                    capital_usd=str(account_backing.capital),
+                    account_buy_commitment_usd=(str(account_backing.account_buy_commitment)
+                                                if account_backing.account_buy_commitment is not None
+                                                else None),
+                    observed_cash_backing_usd=(str(account_backing.observed_cash_backing)
+                                              if account_backing.observed_cash_backing is not None
+                                              else None),
+                    observed_allowance_backing_usd=(
+                        str(account_backing.observed_allowance_backing)
+                        if account_backing.observed_allowance_backing is not None else None),
+                    read_age_s=account_backing.read_age_s,
+                    selected_state_empty=account_backing.selected_state_empty,
+                    real_money_trading_performed=False,
+                )
             except RDPBootstrapError as exc:
                 log.error("rdp_account_readiness", result="FAILURE", category=exc.category,
                           slug=slug, error=str(exc), real_money_trading_performed=False)
                 raise
-        return RDPPreflight(bootstrap, feed, account)
+        return RDPPreflight(bootstrap, feed, account, account_backing)
     except RDPFeedError as exc:
         log.error("rdp_feed_readiness", result="FAILURE", category=exc.category,
                   slug=slug, condition_id=bootstrap.market.condition_id, error=str(exc),

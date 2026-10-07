@@ -73,6 +73,231 @@ class RDPCapitalAdmission:
     protected_amount: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class RDPInitialBackingResult:
+    """Read-only evidence for backing an initially empty $30 RDP run."""
+
+    eligible: bool
+    reason: str | None
+    capital: Decimal
+    account_buy_commitment: Decimal | None
+    observed_cash_backing: Decimal | None
+    observed_allowance_backing: Decimal | None
+    read_age_s: float | None
+    selected_state_empty: bool
+
+
+def evaluate_initial_rdp_backing(
+    bootstrap: object,
+    account: object,
+    *,
+    now: float,
+    max_age_s: float,
+) -> RDPInitialBackingResult:
+    """Check startup cash/allowance backing without adopting account state."""
+    now_value = _finite_timestamp_decimal(now)
+    age_limit = _finite_timestamp_decimal(max_age_s)
+    if now_value is None or age_limit is None or age_limit <= 0:
+        return _initial_backing_failure("INVALID_AGE_LIMIT")
+
+    market = getattr(bootstrap, "market", None)
+    condition_id = getattr(market, "condition_id", None)
+    end_epoch = _finite_timestamp_decimal(getattr(bootstrap, "end_epoch", None))
+    tokens = getattr(market, "tokens", None)
+    if (not isinstance(condition_id, str) or not condition_id.strip()
+            or end_epoch is None or not isinstance(tokens, tuple) or len(tokens) != 2):
+        return _initial_backing_failure("INVALID_MARKET_SCOPE")
+    token_outcomes: dict[str, str] = {}
+    for token in tokens:
+        token_id = getattr(token, "token_id", None)
+        outcome = getattr(token, "outcome", None)
+        if (not isinstance(token_id, str) or not token_id.strip()
+                or not isinstance(outcome, str) or not outcome.strip()
+                or token_id in token_outcomes):
+            return _initial_backing_failure("INVALID_MARKET_SCOPE")
+        token_outcomes[token_id] = outcome
+
+    if getattr(account, "condition_id", None) != condition_id:
+        return _initial_backing_failure("ACCOUNT_SCOPE_MISMATCH")
+    orders = getattr(account, "all_open_orders", None)
+    order_count = getattr(account, "total_open_order_count", None)
+    selected_orders = getattr(account, "selected_open_orders", None)
+    positions = getattr(account, "selected_positions", None)
+    spenders = getattr(account, "required_spenders", None)
+    if (not isinstance(orders, tuple) or isinstance(order_count, bool)
+            or not isinstance(order_count, int) or order_count != len(orders)
+            or not isinstance(selected_orders, tuple) or not isinstance(positions, tuple)
+            or not isinstance(spenders, tuple) or not spenders
+            or any(not isinstance(item, str) or not item.strip() for item in spenders)):
+        return _initial_backing_failure("INCOMPLETE_ACCOUNT_EVIDENCE")
+    from web3 import Web3
+
+    normalized_spenders = tuple(item.strip().lower() for item in spenders)
+    if (len(set(normalized_spenders)) != len(normalized_spenders)
+            or any(not Web3.is_address(item) for item in spenders)):
+        return _initial_backing_failure("INVALID_SPENDER_EVIDENCE")
+
+    position_map: dict[str, str] = {}
+    selected_state_empty = True
+    for position in positions:
+        token_id = getattr(position, "token_id", None)
+        outcome = getattr(position, "outcome", None)
+        quantity = _initial_decimal(getattr(position, "quantity", None))
+        average_price = _initial_decimal(getattr(position, "average_price", None))
+        if (not isinstance(token_id, str) or token_id not in token_outcomes
+                or token_id in position_map or outcome != token_outcomes.get(token_id)
+                or quantity is None or quantity < _ZERO
+                or average_price is None or not _ZERO <= average_price <= _ONE):
+            return _initial_backing_failure("INVALID_SELECTED_POSITION")
+        position_map[token_id] = outcome
+        if quantity != _ZERO:
+            selected_state_empty = False
+    if position_map != token_outcomes:
+        return _initial_backing_failure("INVALID_SELECTED_POSITION_SCOPE")
+
+    receipt_times = tuple(_finite_timestamp_decimal(getattr(account, field, None)) for field in (
+        "orders_receipt_ts", "positions_receipt_ts", "collateral_receipt_ts"))
+    if (any(value is None or value < 0 for value in receipt_times)
+            or tuple(sorted(receipt_times)) != receipt_times
+            or any(value > now_value for value in receipt_times)):
+        return _initial_backing_failure("INVALID_READ_TIMESTAMPS")
+    try:
+        read_age = max(_exact_decimal_sum((now_value, value.copy_negate()))
+                       for value in receipt_times if value is not None)
+        read_age_s = float(read_age)
+    except (DecimalException, ValueError, OverflowError):
+        return _initial_backing_failure("INVALID_READ_TIMESTAMPS")
+    if not math.isfinite(read_age_s):
+        return _initial_backing_failure("INVALID_READ_TIMESTAMPS")
+    if read_age > age_limit:
+        return _initial_backing_failure("STALE_ACCOUNT_EVIDENCE", read_age_s=read_age_s)
+    if now_value >= end_epoch or any(value >= end_epoch for value in receipt_times if value is not None):
+        return _initial_backing_failure("MARKET_EXPIRED", read_age_s=read_age_s)
+
+    account_ids: set[str] = set()
+    commitment_terms: list[Decimal] = []
+    selected_from_all = []
+    balance = _initial_decimal(getattr(account, "balance_usd", None))
+    allowance = _initial_decimal(getattr(account, "allowance_usd", None))
+    if balance is None or balance < _ZERO or allowance is None or allowance < _ZERO:
+        return _initial_backing_failure("INVALID_COLLATERAL_EVIDENCE", read_age_s=read_age_s)
+    try:
+        for order in orders:
+            order_id = getattr(order, "order_id", None)
+            token_id = getattr(order, "token_id", None)
+            side = getattr(order, "side", None)
+            price = _initial_decimal(getattr(order, "price", None))
+            quantity = _initial_decimal(getattr(order, "remaining_size", None))
+            if (not isinstance(order_id, str) or not order_id.strip() or order_id in account_ids
+                    or not isinstance(token_id, str) or not token_id.strip()
+                    or side not in ("BUY", "SELL") or price is None
+                    or not _ZERO < price < _ONE or quantity is None or quantity < _ZERO):
+                return _initial_backing_failure("INVALID_ACCOUNT_ORDER", read_age_s=read_age_s)
+            account_ids.add(order_id)
+            if token_id in token_outcomes:
+                selected_from_all.append(order)
+            if side == "BUY":
+                commitment_terms.append(_exact_decimal_product(price, quantity))
+        if len(account_ids) != order_count:
+            return _initial_backing_failure("INCOMPLETE_ACCOUNT_EVIDENCE", read_age_s=read_age_s)
+        if tuple(selected_from_all) != selected_orders:
+            return _initial_backing_failure("INCONSISTENT_SELECTED_ORDERS", read_age_s=read_age_s)
+        commitment = _exact_decimal_sum(commitment_terms)
+        cash_backing = _exact_decimal_sum((balance, commitment.copy_negate()))
+        allowance_backing = _exact_decimal_sum((allowance, commitment.copy_negate()))
+    except (DecimalException, ValueError, OverflowError):
+        return _initial_backing_failure("INVALID_BACKING_ARITHMETIC", read_age_s=read_age_s)
+
+    if selected_orders:
+        selected_state_empty = False
+    if not selected_state_empty:
+        return _initial_backing_result(
+            False, "SELECTED_STATE_NOT_EMPTY", commitment, cash_backing,
+            allowance_backing, read_age_s, False)
+    if cash_backing < CAPITAL:
+        return _initial_backing_result(
+            False, "INSUFFICIENT_CASH_BACKING", commitment, cash_backing,
+            allowance_backing, read_age_s, True)
+    if allowance_backing < CAPITAL:
+        return _initial_backing_result(
+            False, "INSUFFICIENT_ALLOWANCE_BACKING", commitment, cash_backing,
+            allowance_backing, read_age_s, True)
+    return _initial_backing_result(
+        True, None, commitment, cash_backing, allowance_backing, read_age_s, True)
+
+
+def _finite_timestamp_decimal(value: object) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        return None
+    try:
+        parsed = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (DecimalException, TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _initial_decimal(value: object) -> Decimal | None:
+    if not isinstance(value, Decimal):
+        return None
+    try:
+        parsed = value
+    except (DecimalException, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _decimal_coefficient(value: Decimal) -> tuple[int, int]:
+    sign, digits, exponent = value.as_tuple()
+    if len(digits) > 256:
+        raise ValueError("backing evidence precision is excessive")
+    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    return (-coefficient if sign else coefficient), exponent
+
+
+def _decimal_from_coefficient(coefficient: int, exponent: int) -> Decimal:
+    sign = 1 if coefficient < 0 else 0
+    digits = tuple(int(digit) for digit in str(abs(coefficient)))
+    return Decimal((sign, digits, exponent))
+
+
+def _exact_decimal_product(left: Decimal, right: Decimal) -> Decimal:
+    left_coefficient, left_exponent = _decimal_coefficient(left)
+    right_coefficient, right_exponent = _decimal_coefficient(right)
+    return _decimal_from_coefficient(left_coefficient * right_coefficient,
+                                     left_exponent + right_exponent)
+
+
+def _exact_decimal_sum(values: Iterable[Decimal]) -> Decimal:
+    parts = tuple(_decimal_coefficient(value) for value in values)
+    if not parts:
+        return _ZERO
+    exponent = min(item[1] for item in parts)
+    if max(item[1] for item in parts) - exponent > 4096:
+        raise ValueError("backing evidence exponent range is excessive")
+    coefficient = sum(value * 10 ** (item_exponent - exponent)
+                      for value, item_exponent in parts)
+    return _decimal_from_coefficient(coefficient, exponent)
+
+
+def _initial_backing_result(
+    eligible: bool,
+    reason: str | None,
+    commitment: Decimal,
+    cash_backing: Decimal,
+    allowance_backing: Decimal,
+    read_age: float,
+    selected_state_empty: bool,
+) -> RDPInitialBackingResult:
+    return RDPInitialBackingResult(eligible, reason, CAPITAL, commitment, cash_backing,
+                                  allowance_backing, read_age, selected_state_empty)
+
+
+def _initial_backing_failure(
+    reason: str, *, read_age_s: float | None = None,
+) -> RDPInitialBackingResult:
+    return RDPInitialBackingResult(False, reason, CAPITAL, None, None, None, read_age_s, False)
+
+
 def project_rdp_capital(
     market: MarketMeta,
     processor: UserEventProcessor,
