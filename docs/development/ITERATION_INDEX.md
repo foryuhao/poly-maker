@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`047c901332360b4cb6e4e474ecba6ec04a030736`
+`3acbf1c0c5024bb4de287d25a2d7509af3f90f5c`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0010`
+Current Iteration: `ITER-0011`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0010 | Read-only single-market WS readiness | APPROVED | IMPLEMENTED | PASS | CODE_READY | PUSH_PENDING | NOT_RUN | PENDING |
+| ITER-0011 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0010 | Read-only single-market WS readiness | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0009 | Read-only single-market CLI metadata bootstrap | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0008 | Opt-in per-token signing ticks | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0007 | Strict opt-in dual-order acknowledgments | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -86,7 +87,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0010 Architect selects one next minimal prerequisite. ITER-0009 PASS archived; see its RESULT.md, final Reviewer05 and archive receipt06. Read-only rdp-live public preflight exists; integrated runtime readiness remains NO. Approved reserve/depth decisions settled. Continue automatically, no real-money authority.
+ITER-0011 Architect selects one next minimal prerequisite. ITER-0010 PASS archived; see its RESULT.md, final Reviewer05 and archive receipt06. Public HTTP/WS preflight exists; integrated readiness remains NO. Approved reserve/depth decisions settled. Continue automatically, no real-money authority.
 
 ---
 
