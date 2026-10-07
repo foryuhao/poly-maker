@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`c92a2a049092b5c55b8e725a9c5248df881f4a62`
+`8253774b4471ace6b37e770b70a38d450ed431b0`
 
 IM preservation state:
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0005 | NORMAL CapitalGate repair-headroom semantics | BLOCKED | NOT_STARTED | NOT_STARTED | NOT_READY | PUSH_PENDING | NOT_RUN | PENDING |
+| ITER-0005 | NORMAL CapitalGate repair-headroom semantics | BLOCKED | NOT_STARTED | NOT_STARTED | NOT_READY | BLOCKER_ARCHIVED | NOT_RUN | PENDING |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0002 | Pure NORMAL quote candidates | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
