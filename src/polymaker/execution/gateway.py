@@ -16,7 +16,7 @@ import itertools
 import math
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any, TypeVar
@@ -42,6 +42,17 @@ class GatewayReadError(RuntimeError):
 class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
 
+    def __init__(self, message: str, *, acknowledged_orders: tuple[OpenOrder, ...] = (),
+                 observed_order_ids: tuple[str, ...] = (), reason: str | None = None) -> None:
+        super().__init__(message)
+        self.acknowledged_orders = tuple(acknowledged_orders)
+        self.observed_order_ids = tuple(observed_order_ids)
+        self.reason = reason
+
+
+class BatchPlacementIncomplete(PlacementUnknown):
+    """A two-order placement had a known one-leg acceptance."""
+
 
 def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
     """Unwrap only the two supported placement envelope shapes."""
@@ -50,6 +61,33 @@ def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict):
         return raw[0]
     return None
+
+
+_ORDER_ID_FIELDS = ("orderID", "order_id", "orderId", "id")
+
+
+def _usable_order_ids(row: Mapping[str, Any]) -> tuple[str, ...]:
+    found: list[str] = []
+    for key in _ORDER_ID_FIELDS:
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            normalized = value.strip()
+            if normalized not in found:
+                found.append(normalized)
+    return tuple(found)
+
+
+def _observed_order_ids(raw: Any) -> tuple[str, ...]:
+    """Preserve IDs visible in a response without claiming request attribution."""
+    rows = raw if isinstance(raw, list) else [raw]
+    found: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        for order_id in _usable_order_ids(row):
+            if order_id not in found:
+                found.append(order_id)
+    return tuple(found)
 
 
 def _tick_str(tick: float) -> str:
@@ -174,7 +212,12 @@ class ExecutionGateway:
         submit_guard: Callable[[], bool] | None = None,
         force_post_only: bool = False,
         strict_placement: bool = False,
+        allow_two_order_rdp_pair: bool = False,
     ) -> list[OpenOrder]:
+        if allow_two_order_rdp_pair:
+            self._validate_two_order_rdp_pair(
+                quotes, meta, force_post_only=force_post_only,
+                strict_placement=strict_placement)
         if not quotes:
             return []
         if any(q.size + 1e-9 < meta.min_order_size for q in quotes):
@@ -230,8 +273,11 @@ class ExecutionGateway:
                     args, post_only=(True if force_post_only else self._cfg.execution.post_only)
                 )
             except Exception as exc:
-                raise PlacementUnknown("order POST outcome is unknown") from exc
+                reason = "BATCH_POST_EXCEPTION" if allow_two_order_rdp_pair else None
+                raise PlacementUnknown("order POST outcome is unknown", reason=reason) from exc
             try:
+                if allow_two_order_rdp_pair:
+                    return self._parse_two_order_rdp_pair_response(resp, quotes)
                 return self._parse_place_response(resp, quotes)
             except PlacementUnknown:
                 raise
@@ -245,8 +291,15 @@ class ExecutionGateway:
                     {"request_id": request_id, "order_ids": [o.order_id for o in placed],
                      "outcome": "ACK" if placed else "REJECTED" if attempted else "ABORTED"})
             return placed
-        except PlacementUnknown:
-            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "UNKNOWN"})
+        except PlacementUnknown as exc:
+            payload = {"request_id": request_id, "outcome": "UNKNOWN"}
+            if exc.reason is not None or exc.acknowledged_orders or exc.observed_order_ids:
+                payload.update({
+                    "reason": exc.reason,
+                    "acknowledged_order_ids": tuple(o.order_id for o in exc.acknowledged_orders),
+                    "observed_order_ids": exc.observed_order_ids,
+                })
+            self._order_observe("ORDER_ACK", meta.condition_id, payload)
             if strict_placement:
                 raise
             log.error("place_outcome_unknown", n=len(quotes))
@@ -299,6 +352,87 @@ class ExecutionGateway:
             raise PlacementUnknown("order POST response had no usable order id")
         out.append(OpenOrder(oid.strip(), q.token_id, q.side, q.price, q.size, OrderState.LIVE))
         return out
+
+    @staticmethod
+    def _validate_two_order_rdp_pair(
+        quotes: list[Quote], meta: MarketMeta, *, force_post_only: bool,
+        strict_placement: bool,
+    ) -> None:
+        if (not isinstance(quotes, list) or len(quotes) != 2
+                or not isinstance(meta, MarketMeta)
+                or force_post_only is not True or strict_placement is not True):
+            raise ValueError("RDP pair placement requires two quotes, strict mode, and forced post-only")
+        if any(not isinstance(quote, Quote) or quote.side is not Side.BUY for quote in quotes):
+            raise ValueError("RDP pair placement requires BUY quotes")
+        if (not isinstance(meta.yes.token_id, str) or not isinstance(meta.no.token_id, str)
+                or any(not isinstance(quote.token_id, str) for quote in quotes)):
+            raise ValueError("RDP pair placement requires string outcome token ids")
+        tokens = {quote.token_id for quote in quotes}
+        expected = {meta.yes.token_id, meta.no.token_id}
+        if (len(expected) != 2 or tokens != expected):
+            raise ValueError("RDP pair placement requires one quote per market outcome token")
+
+    @staticmethod
+    def _parse_two_order_rdp_pair_response(
+        resp: Any, quotes: list[Quote],
+    ) -> list[OpenOrder]:
+        """Parse only the official positional two-result batch envelope."""
+        observed = _observed_order_ids(resp)
+        if not isinstance(resp, list) or len(resp) != 2:
+            raise PlacementUnknown(
+                "two-order POST response did not contain two positional results",
+                observed_order_ids=observed, reason="BATCH_CARDINALITY_UNKNOWN")
+
+        classifications: list[tuple[str, str | None, tuple[str, ...]]] = []
+        for row in resp:
+            if not isinstance(row, Mapping):
+                classifications.append(("unknown", None, ()))
+                continue
+            ids = _usable_order_ids(row)
+            canonical = row.get("orderID")
+            canonical_id = canonical.strip() if isinstance(canonical, str) and canonical.strip() else None
+            if row.get("success") is True and canonical_id is not None and len(ids) <= 1:
+                classifications.append(("accepted", canonical_id, ids))
+            elif row.get("success") is False and not ids:
+                classifications.append(("rejected", None, ()))
+            else:
+                classifications.append(("unknown", None, ids))
+
+        accepted_ids = [order_id for state, order_id, _ids in classifications
+                        if state == "accepted" and order_id is not None]
+        duplicate_ids = {order_id for order_id in accepted_ids if accepted_ids.count(order_id) > 1}
+        unsafe_ids = set(duplicate_ids)
+        for state, _order_id, ids in classifications:
+            if state == "unknown":
+                unsafe_ids.update(ids)
+
+        acknowledged: list[OpenOrder] = []
+        for index, (state, order_id, _ids) in enumerate(classifications):
+            if state == "accepted" and order_id is not None and order_id not in unsafe_ids:
+                quote = quotes[index]
+                acknowledged.append(OpenOrder(order_id, quote.token_id, quote.side,
+                                              quote.price, quote.size, OrderState.LIVE))
+
+        if duplicate_ids:
+            raise PlacementUnknown(
+                "two-order POST response reused an accepted order id",
+                acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
+                reason="DUPLICATE_ACCEPTED_ID")
+        if any(state == "unknown" for state, _order_id, _ids in classifications):
+            raise PlacementUnknown(
+                "two-order POST response contains an unresolved result",
+                acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
+                reason="UNRESOLVED_BATCH_RESULT")
+        accepted_count = sum(state == "accepted" for state, _order_id, _ids in classifications)
+        rejected_count = sum(state == "rejected" for state, _order_id, _ids in classifications)
+        if accepted_count == 2:
+            return acknowledged
+        if rejected_count == 2:
+            return []
+        raise BatchPlacementIncomplete(
+            "two-order POST was partially accepted",
+            acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
+            reason="PARTIAL_ACCEPTANCE")
 
 
     # ── cancellation ────────────────────────────────────────────────────
