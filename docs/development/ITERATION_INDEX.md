@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0002`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0002 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
+| ITER-0002 | Pure NORMAL quote candidates | APPROVED | IN_PROGRESS | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
 | ITER-0001 | Confirmed-fill inventory/accounting projection | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0000 | Pre-RDP codebase isolation, FL reconstruction, IM preservation, and RDP baseline readiness | N/A | N/A | N/A | READY | ARCHIVED | NOT_RUN | KEEP |
 
@@ -78,7 +78,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0002 Architect inspection pending. ITER-0001 final PASS implementation archived at d888a77; receipt: ITER-0001/08_ARCHIVE_RECEIPT.md.
+ITER-0002 approved contract 01_ARCHITECT.md; Worker implementation pending. ITER-0001 final PASS implementation archived at d888a77; receipt: ITER-0001/08_ARCHIVE_RECEIPT.md.
 
 Next authorized action: Architect chooses one smallest remaining prerequisite from actual code and Frozen SOP. No human intervention required for normal iterations.
 
