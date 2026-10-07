@@ -1,0 +1,301 @@
+"""RDP-local validation and bounded readiness over the shared market WS service."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import math
+import time
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+from polymaker.marketdata.orderbook import BookView
+from polymaker.marketdata.service import MarketDataService
+from polymaker.rdp_live import RDPBootstrap, RDPBootstrapError
+
+
+class RDPFeedError(RDPBootstrapError):
+    """A categorized fail-closed error while observing the selected public feed."""
+
+
+@dataclass(frozen=True, slots=True)
+class TokenBookEvidence:
+    outcome: str
+    token_id: str
+    view: BookView
+    tick_size: float
+    tick_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class RDPFeedReadiness:
+    condition_id: str
+    connection_generation: int
+    tokens: tuple[TokenBookEvidence, TokenBookEvidence]
+    receipt_ts: float
+
+
+def _number(value: Any, *, category: str, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        raise RDPFeedError(category, f"selected feed {field} must be numeric")
+    try:
+        exact = Decimal(str(value))
+        number = float(exact)
+    except (InvalidOperation, OverflowError, ValueError) as exc:
+        raise RDPFeedError(category, f"selected feed {field} is not representable") from exc
+    if not exact.is_finite() or not math.isfinite(number) or Decimal(str(number)) != exact:
+        raise RDPFeedError(category, f"selected feed {field} is not finite and representable")
+    return number
+
+
+def _price(value: Any, *, category: str, field: str) -> float:
+    result = _number(value, category=category, field=field)
+    if not 0.0 < result < 1.0:
+        raise RDPFeedError(category, f"selected feed {field} must be inside (0,1)")
+    return result
+
+
+def _tick(value: Any, *, category: str) -> float:
+    return _price(value, category=category, field="tick size")
+
+
+def _quantity(value: Any, *, category: str, field: str) -> float:
+    result = _number(value, category=category, field=field)
+    if result < 0:
+        raise RDPFeedError(category, f"selected feed {field} cannot be negative")
+    return result
+
+
+class RDPMarketDataService(MarketDataService):
+    """Reuse shared transport/mutation while validating selected frames first."""
+
+    def __init__(self, bootstrap: RDPBootstrap, *, url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market") -> None:
+        self.bootstrap = bootstrap
+        self.condition_id = bootstrap.market.condition_id
+        self.token_ids = tuple(item.token_id for item in bootstrap.token_metadata)
+        self._changed = asyncio.Event()
+        self._fatal: RDPFeedError | None = None
+        self._snapshot_seen: dict[str, int] = {}
+        self._tick_source: dict[str, str] = {
+            item.token_id: "REST_BOOTSTRAP" for item in bootstrap.token_metadata
+        }
+
+        def dirty(condition: str, token: str) -> None:
+            if condition == self.condition_id and token in self.token_ids:
+                self._changed.set()
+
+        def connection(_connected: bool) -> None:
+            self._changed.set()
+
+        super().__init__(url, on_dirty=dirty, on_connection=connection)
+        self.set_markets([(self.condition_id, list(self.token_ids))])
+        for metadata in bootstrap.token_metadata:
+            book = self.book(metadata.token_id)
+            assert book is not None
+            book.set_tick_size(metadata.tick_size)
+
+    def _selected_identity(self, msg: dict[str, Any], token: str) -> None:
+        if msg.get("market") != self.condition_id:
+            raise RDPFeedError("SELECTED_FRAME_IDENTITY_MISMATCH", "selected token frame has wrong market identity")
+        if token not in self.token_ids:
+            raise RDPFeedError("SELECTED_FRAME_IDENTITY_MISMATCH", "selected token is outside bootstrap pair")
+
+    def _validate_book(self, msg: dict[str, Any]) -> str | None:
+        token = msg.get("asset_id")
+        if token not in self.token_ids:
+            if isinstance(token, str):
+                return None
+            raise RDPFeedError("MALFORMED_SELECTED_BOOK", "book snapshot has no string asset_id")
+        self._selected_identity(msg, token)
+        for side in ("bids", "asks"):
+            levels = msg.get(side)
+            if not isinstance(levels, list):
+                raise RDPFeedError("MALFORMED_SELECTED_BOOK", f"selected book {side} must be a list")
+            for level in levels:
+                if not isinstance(level, dict) or "price" not in level or "size" not in level:
+                    raise RDPFeedError("MALFORMED_SELECTED_BOOK", "selected book level is malformed")
+                _price(level["price"], category="MALFORMED_SELECTED_BOOK", field="level price")
+                _quantity(level["size"], category="MALFORMED_SELECTED_BOOK", field="level quantity")
+        if "tick_size" in msg:
+            _tick(msg["tick_size"], category="MALFORMED_SELECTED_BOOK")
+        return token
+
+    def _validate_price_change(self, msg: dict[str, Any]) -> tuple[str, ...]:
+        changes = msg.get("price_changes")
+        if not isinstance(changes, list):
+            raise RDPFeedError("MALFORMED_SELECTED_DELTA", "price_changes must be a list")
+        selected: list[str] = []
+        for entry in changes:
+            token = entry.get("asset_id") if isinstance(entry, dict) else None
+            if token not in self.token_ids:
+                if token is None and msg.get("market") == self.condition_id:
+                    raise RDPFeedError("MALFORMED_SELECTED_DELTA", "selected-market delta entry has no token")
+                continue
+            self._selected_identity(msg, token)
+            if not isinstance(entry, dict) or entry.get("side") not in ("BUY", "SELL", "buy", "sell"):
+                raise RDPFeedError("MALFORMED_SELECTED_DELTA", "selected delta side is malformed")
+            _price(entry.get("price"), category="MALFORMED_SELECTED_DELTA", field="delta price")
+            _quantity(entry.get("size"), category="MALFORMED_SELECTED_DELTA", field="delta quantity")
+            selected.append(token)
+        if selected and msg.get("market") != self.condition_id:
+            raise RDPFeedError("SELECTED_FRAME_IDENTITY_MISMATCH", "selected delta has wrong market identity")
+        return tuple(selected)
+
+    def _validate_tick(self, msg: dict[str, Any]) -> str | None:
+        token = msg.get("asset_id")
+        if token not in self.token_ids:
+            return None
+        self._selected_identity(msg, token)
+        raw_tick = msg.get("new_tick_size", msg.get("tick_size"))
+        _tick(raw_tick, category="MALFORMED_SELECTED_TICK")
+        return token
+
+    async def _process_raw(self, raw: str | bytes) -> None:
+        try:
+            # Keep JSON number lexemes exact through validation. The shared parser
+            # is invoked on the original payload only after all selected values
+            # are proven representable by its float-based book model.
+            data = json.loads(raw, parse_float=Decimal, parse_int=Decimal)
+        except (json.JSONDecodeError, TypeError) as exc:
+            self._fail("MALFORMED_SELECTED_FRAME", "market WS frame is not valid JSON", exc)
+        messages = data if isinstance(data, list) else [data]
+        if not all(isinstance(item, dict) for item in messages):
+            # Non-object frames cannot be attributed safely to the selected market.
+            self._fail("MALFORMED_SELECTED_FRAME", "market WS frame entries must be objects")
+
+        validated: list[tuple[dict[str, Any], str | tuple[str, ...] | None]] = []
+        try:
+            for msg in messages:
+                event = msg.get("event_type")
+                detail: str | tuple[str, ...] | None = None
+                if event == "book":
+                    detail = self._validate_book(msg)
+                elif event == "price_change":
+                    detail = self._validate_price_change(msg)
+                elif event == "tick_size_change":
+                    detail = self._validate_tick(msg)
+                validated.append((msg, detail))
+        except RDPFeedError as exc:
+            self._fatal = exc
+            self.stop()
+            self._changed.set()
+            raise
+
+        # Validation is complete for the whole frame before shared handlers mutate.
+        await super()._process_raw(raw)
+        for msg, detail in validated:
+            event = msg.get("event_type")
+            if event == "book" and isinstance(detail, str):
+                if "tick_size" in msg and msg["tick_size"] is not None:
+                    self._tick_source[detail] = "WS_BOOK_SNAPSHOT"
+                self._snapshot_seen[detail] = self.connection_generation
+                self._changed.set()
+            elif event == "price_change" and detail:
+                self._changed.set()
+            elif event == "tick_size_change" and isinstance(detail, str):
+                self._tick_source[detail] = "WS_TICK_SIZE_CHANGE"
+                self._changed.set()
+
+    def _fail(self, category: str, message: str, cause: Exception | None = None) -> None:
+        error = RDPFeedError(category, message)
+        self._fatal = error
+        self.stop()
+        self._changed.set()
+        if cause is not None:
+            raise error from cause
+        raise error
+
+    def _ready(self) -> bool:
+        generation = self.connection_generation
+        if not self.connected or generation <= 0:
+            return False
+        for token in self.token_ids:
+            book = self.book(token)
+            if (book is None or self._snapshot_seen.get(token) != generation
+                    or book.snapshot_generation != generation or book.is_empty):
+                return False
+            bid, ask = book.best_bid(), book.best_ask()
+            if bid is None or ask is None or bid.price >= ask.price:
+                return False
+        return True
+
+    def _capture(self) -> RDPFeedReadiness:
+        # No await from the final predicate through copying both views and ticks.
+        if not self._ready():
+            raise RDPFeedError("FEED_NOT_READY", "selected books are not current and ready")
+        generation = self.connection_generation
+        rows = []
+        for metadata in self.bootstrap.token_metadata:
+            book = self.book(metadata.token_id)
+            assert book is not None
+            rows.append(TokenBookEvidence(metadata.outcome, metadata.token_id, book.view(),
+                                          book.tick_size, self._tick_source[metadata.token_id]))
+        if not self.connected or generation != self.connection_generation:
+            raise RDPFeedError("FEED_NOT_READY", "connection changed during readiness capture")
+        return RDPFeedReadiness(self.condition_id, generation, (rows[0], rows[1]), time.time())
+
+
+async def await_rdp_feed(
+    bootstrap: RDPBootstrap,
+    *,
+    timeout_s: float = 15.0,
+    now=time.time,
+) -> RDPFeedReadiness:
+    """Wait for same-generation books and always stop/await the owned WS task."""
+    remaining = bootstrap.end_epoch - now()
+    if remaining <= 0:
+        raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended before WS readiness")
+    if not math.isfinite(timeout_s) or timeout_s < 0:
+        raise RDPFeedError("INVALID_FEED_TIMEOUT", "market WS readiness timeout must be finite and nonnegative")
+    deadline_s = min(timeout_s, remaining)
+    if deadline_s <= 0:
+        raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS readiness deadline is zero")
+    service = RDPMarketDataService(bootstrap)
+    task = asyncio.create_task(service.run(), name="rdp-market-ws")
+    deadline = asyncio.get_running_loop().time() + deadline_s
+    task.add_done_callback(lambda _task: service._changed.set())
+    try:
+        while True:
+            loop = asyncio.get_running_loop()
+            if loop.time() >= deadline:
+                if now() >= bootstrap.end_epoch:
+                    raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval elapsed during WS readiness")
+                raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS did not produce two current books")
+            if now() >= bootstrap.end_epoch:
+                raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval elapsed during WS readiness")
+            if task.done():
+                if service._fatal is not None:
+                    raise service._fatal
+                if task.cancelled():
+                    raise RDPFeedError("FEED_SERVICE_STOPPED", "market WS service was cancelled before readiness")
+                failure = task.exception()
+                if failure is not None:
+                    raise RDPFeedError("FEED_SERVICE_FAILED", "market WS service failed before readiness") from failure
+                raise RDPFeedError("FEED_SERVICE_STOPPED", "market WS service stopped before readiness")
+            if service._fatal is not None:
+                raise service._fatal
+            if service._ready():
+                if loop.time() >= deadline:
+                    raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS readiness deadline elapsed before capture")
+                if now() >= bootstrap.end_epoch:
+                    raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "market expired before readiness capture")
+                return service._capture()
+            remaining = min(deadline - loop.time(),
+                            bootstrap.end_epoch - now())
+            if remaining <= 0:
+                if now() >= bootstrap.end_epoch:
+                    raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval elapsed during WS readiness")
+                raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS did not produce two current books")
+            service._changed.clear()
+            try:
+                await asyncio.wait_for(service._changed.wait(), timeout=remaining)
+            except TimeoutError as exc:
+                raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS did not produce two current books") from exc
+    except asyncio.CancelledError:
+        raise
+    finally:
+        service.stop()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

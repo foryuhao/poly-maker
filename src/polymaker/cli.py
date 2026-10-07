@@ -299,9 +299,9 @@ def rdp_live(
         False, "--preflight-only", help="required read-only public metadata check; never trades"),
     config_dir: str = typer.Option("config", help="config directory"),
 ) -> None:
-    """Read public metadata for one exact BTC5m market; this command cannot trade."""
+    """Read public metadata and observe both books for one BTC5m market; cannot trade."""
     from polymaker.logging import configure, get_logger
-    from polymaker.rdp_live import RDPBootstrapError, bootstrap_rdp_market
+    from polymaker.rdp_live import RDPBootstrapError, preflight_rdp_market
 
     cfg = Config.load(config_dir)
     configure(json_file=Path(cfg.paths.log_dir) / "rdp-live-preflight.jsonl")
@@ -312,17 +312,22 @@ def rdp_live(
         console.print("[red]RDP preflight requires --preflight-only; no network request was made.[/red]")
         raise typer.Exit(2)
     try:
-        result = asyncio.run(bootstrap_rdp_market(cfg, market))
+        result = asyncio.run(preflight_rdp_market(cfg, market))
     except RDPBootstrapError as exc:
         console.print(f"[red]RDP preflight failed: {exc.category}: {exc}[/red]")
         raise typer.Exit(1) from exc
 
-    console.print(f"[green]RDP public preflight passed[/green] | {result.market.slug} | "
-                  f"condition {result.market.condition_id} | "
-                  f"interval {result.epoch}–{result.end_epoch}")
-    for token in result.token_metadata:
+    bootstrap = result.bootstrap
+    console.print(f"[green]RDP public feed preflight passed[/green] | {bootstrap.market.slug} | "
+                  f"condition {bootstrap.market.condition_id} | "
+                  f"interval {bootstrap.epoch}–{bootstrap.end_epoch} | "
+                  f"WS generation {result.feed.connection_generation}")
+    for token in bootstrap.token_metadata:
         console.print(f"{token.outcome}: token={token.token_id} tick={token.tick_size:g} "
                       f"min_order_size={token.min_order_size:g}")
+    for token in result.feed.tokens:
+        console.print(f"{token.outcome} book: bid={token.view.best_bid} ask={token.view.best_ask} "
+                      f"tick_source={token.tick_source}")
     console.print("Read-only public metadata result; real_money_trading_performed=false")
 
 

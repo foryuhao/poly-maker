@@ -54,6 +54,12 @@ class RDPBootstrap:
     receipt_ts: float
 
 
+@dataclass(frozen=True, slots=True)
+class RDPPreflight:
+    bootstrap: RDPBootstrap
+    feed: Any
+
+
 def _validate_official_origin(host: str, expected: str, category: str) -> None:
     try:
         parsed = urlsplit(host)
@@ -252,3 +258,34 @@ async def bootstrap_rdp_market(
         log.error("rdp_bootstrap_result", result="FAILURE", category=error.category,
                   slug=slug, error=str(error), real_money_trading_performed=False)
         raise error from exc
+
+
+async def preflight_rdp_market(
+    cfg: Config,
+    slug: str,
+    *,
+    now: Callable[[], float] = time.time,
+    feed_timeout_s: float = 15.0,
+) -> RDPPreflight:
+    """Compose exact HTTP metadata bootstrap with bounded public WS readiness."""
+    from polymaker.rdp_marketdata import RDPFeedError, await_rdp_feed
+
+    bootstrap = await bootstrap_rdp_market(cfg, slug, now=now)
+    try:
+        feed = await await_rdp_feed(bootstrap, timeout_s=feed_timeout_s, now=now)
+        log.info(
+            "rdp_feed_readiness", result="SUCCESS", category="TWO_BOOKS_CURRENT",
+            condition_id=feed.condition_id, connection_generation=feed.connection_generation,
+            tokens=[{
+                "outcome": item.outcome, "token_id": item.token_id,
+                "best_bid": item.view.best_bid, "best_ask": item.view.best_ask,
+                "tick_size": item.tick_size, "tick_source": item.tick_source,
+            } for item in feed.tokens],
+            receipt_ts=feed.receipt_ts, real_money_trading_performed=False,
+        )
+        return RDPPreflight(bootstrap, feed)
+    except RDPFeedError as exc:
+        log.error("rdp_feed_readiness", result="FAILURE", category=exc.category,
+                  slug=slug, condition_id=bootstrap.market.condition_id, error=str(exc),
+                  real_money_trading_performed=False)
+        raise

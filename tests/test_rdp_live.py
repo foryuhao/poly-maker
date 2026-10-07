@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -369,17 +370,55 @@ def test_rdp_live_cli_success_persists_structured_evidence_and_never_trades(
     monkeypatch.setattr(ExecutionGateway, "place", forbidden)
     monkeypatch.setattr(ExecutionGateway, "cancel", forbidden)
 
+    from polymaker.marketdata import service as marketdata_service
+
+    class FakeWS:
+        def __init__(self):
+            self.frames = [
+                {"event_type": "book", "market": "condition-btc5m", "asset_id": token,
+                 "bids": [{"price": "0.4", "size": "3"}],
+                 "asks": [{"price": "0.6", "size": "4"}]}
+                for token in ("token-up", "token-down")
+            ]
+            self.sent = []
+            self.hold = asyncio.Event()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def send(self, value):
+            self.sent.append(json.loads(value))
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.frames:
+                return json.dumps(self.frames.pop(0))
+            await self.hold.wait()
+            raise StopAsyncIteration
+
+    socket = FakeWS()
+    monkeypatch.setattr(marketdata_service.websockets, "connect", lambda *_a, **_k: socket)
+
     with respx.mock(assert_all_called=True) as router:
         install_mocks(router)
         result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
                                           "--preflight-only"])
     assert result.exit_code == 0, result.stdout
     assert "read-only" in result.stdout.lower()
-    lines = (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()
-    event = json.loads(lines[-1])
-    assert event["event"] == "rdp_bootstrap_result"
-    assert event["result"] == "SUCCESS"
-    assert event["real_money_trading_performed"] is False
+    events = [json.loads(line) for line in
+              (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
+    bootstrap_event = next(event for event in events if event["event"] == "rdp_bootstrap_result")
+    feed_event = next(event for event in events if event["event"] == "rdp_feed_readiness")
+    assert bootstrap_event["result"] == "SUCCESS"
+    assert feed_event["result"] == "SUCCESS"
+    assert feed_event["connection_generation"] == 1
+    assert feed_event["real_money_trading_performed"] is False
+    assert socket.sent == [{"assets_ids": ["token-up", "token-down"], "type": "market"}]
 
 
 def test_rdp_live_cli_requires_preflight_before_network_and_records_failure(tmp_path, monkeypatch):
@@ -408,3 +447,27 @@ def test_rdp_live_cli_bootstrap_failure_persists_category_and_exit_code(tmp_path
     assert event["result"] == "FAILURE"
     assert event["category"] == "INVALID_MARKET_SLUG"
     assert event["real_money_trading_performed"] is False
+
+
+def test_rdp_live_cli_feed_failure_persists_separate_readiness_failure(tmp_path, monkeypatch):
+    from polymaker.rdp_marketdata import RDPFeedError
+
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _config_dir: cfg)
+
+    async def fail_feed(*_args, **_kwargs):
+        raise RDPFeedError("FEED_STARTUP_TIMEOUT", "test timeout")
+
+    monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fail_feed)
+    with respx.mock(assert_all_called=True) as router:
+        install_mocks(router)
+        result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG, "--preflight-only"])
+    assert result.exit_code == 1
+    events = [json.loads(line) for line in
+              (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
+    assert any(event["event"] == "rdp_bootstrap_result" and event["result"] == "SUCCESS"
+               for event in events)
+    feed = next(event for event in events if event["event"] == "rdp_feed_readiness")
+    assert feed["result"] == "FAILURE"
+    assert feed["category"] == "FEED_STARTUP_TIMEOUT"
+    assert feed["real_money_trading_performed"] is False
