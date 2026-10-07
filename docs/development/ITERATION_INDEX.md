@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`887993af37785f355ef30406aef594192e47fefa`
+`481d8510050ce92f037dd7cbc269b1ac2d990734`
 
 IM preservation state:
 
@@ -50,11 +50,11 @@ Baseline details:
 
 ## Project State
 
-Development Status: `HUMAN_DECISION_REQUIRED`
+Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0006`
 
-Current Stage: `AWAITING_HUMAN_ARCHITECTURE_DECISION`
+Current Stage: `ARCHITECT_REVISION`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0006 | Inactive depth-change temporal formula | BLOCKED | NOT_STARTED | NOT_STARTED | NOT_READY | BLOCKER_ARCHIVED | NOT_RUN | PENDING |
+| ITER-0006 | NORMAL Book Filter with approved total variation | REVISION_IN_PROGRESS | NOT_STARTED | NOT_STARTED | NOT_READY | BLOCKER_ARCHIVED | NOT_RUN | PENDING |
 | ITER-0005 | NORMAL CapitalGate with approved $5 future repair reserve | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0004 | Scoped cancel/reconcile close barrier | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0003 | Pure deficient-side REBALANCE quote | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -82,9 +82,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0006 ARCHITECT_BLOCKED: Inactive aggregate-depth-change temporal formula requires human authority; see 01_ARCHITECT.md and RESULT.md. Approved $5 NORMAL repair reserve is implemented and remains settled.
+ITER-0006 resumed under approved total-variation definition in 03_HUMAN_DECISION.md. Exact five-share boundary is active; unchanged snapshots add zero; real trade makes that token active. Approved $5 capital reserve remains settled.
 
-Next action: choose endpoint difference, window range, or cumulative absolute variation for two-second depth change, record durably, then Architect revision and serial development resume. No Worker under blocked contract; no real-money authority.
+Next action: Architect revision 04_ARCHITECT_REVISION_01.md then Worker/Reviewer and automatic subsequent iterations. No real-money authority.
 
 ---
 
