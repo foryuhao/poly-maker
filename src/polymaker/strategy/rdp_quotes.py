@@ -1,6 +1,6 @@
-"""Pure candidate construction for the Frozen RDP NORMAL dual maker.
+"""Pure NORMAL and REBALANCE quote-candidate construction for RDP.
 
-This function only creates candidate BUY quotes. Book Filter, CapitalGate,
+These builders only create candidate BUY quotes. Their mode-specific gates,
 market/order reliability, cycle reconciliation, and live authorization remain
 mandatory before an execution caller may submit them. A candidate is not a
 ready-to-send decision.
@@ -27,11 +27,17 @@ _REQUIRED_GATES = (
     "current-cycle reconciliation",
     "live authorization",
 )
+_REBALANCE_GATES = (
+    "CanSafelyContinue: time, capital, market tradability and reliable state",
+    "CapitalGate",
+    "cancel and reconcile existing orders before replacement",
+    "live authorization",
+)
 
 
 @dataclass(frozen=True, slots=True)
 class RDPQuoteDecision:
-    """Candidate dual quote or an explicit fail-closed reason.
+    """Candidate quote(s) or an explicit fail-closed reason.
 
     `post_only_required` describes the required execution mode. `required_gates`
     lists independent controls that remain outstanding. Neither field grants
@@ -159,8 +165,102 @@ def _build_normal_quotes(
     return RDPQuoteDecision(quotes=quotes, reason=None)
 
 
-def _reject(reason: str) -> RDPQuoteDecision:
-    return RDPQuoteDecision(quotes=(), reason=reason)
+def build_rebalance_quote(
+    market: MarketMeta,
+    inventory: RDPInventorySnapshot,
+    yes_book: BookView,
+    no_book: BookView,
+    yes_tick: float,
+    no_tick: float,
+) -> RDPQuoteDecision:
+    """Build the single deficient-side Frozen REBALANCE candidate.
+
+    The surplus-side book and tick are accepted for a common caller interface
+    but are not inspected. A candidate still requires CanSafelyContinue,
+    CapitalGate, order cancellation/reconciliation, reliable state and live
+    authorization before any execution is considered.
+    """
+    try:
+        return _build_rebalance_quote(market, inventory, yes_book, no_book, yes_tick, no_tick)
+    except DecimalException:
+        return _reject("INVALID_PRECISION", _REBALANCE_GATES)
+
+
+def _build_rebalance_quote(
+    market: MarketMeta,
+    inventory: RDPInventorySnapshot,
+    yes_book: BookView,
+    no_book: BookView,
+    yes_tick: float,
+    no_tick: float,
+) -> RDPQuoteDecision:
+    if not isinstance(market, MarketMeta) or not isinstance(inventory, RDPInventorySnapshot):
+        return _reject("INVALID_INPUT", _REBALANCE_GATES)
+    if (inventory.condition_id != market.condition_id
+            or inventory.yes_token_id != market.yes.token_id
+            or inventory.no_token_id != market.no.token_id
+            or market.yes.token_id == market.no.token_id):
+        return _reject("MARKET_INVENTORY_MISMATCH", _REBALANCE_GATES)
+
+    inventory_values = _inventory_values(inventory)
+    if inventory_values is None:
+        return _reject("INVALID_INVENTORY", _REBALANCE_GATES)
+    qy, qn, delta = inventory_values
+    try:
+        qy_float = float(inventory.qy)
+        qn_float = float(inventory.qn)
+        delta_float = float(inventory.delta)
+    except (OverflowError, TypeError, ValueError):
+        return _reject("INVALID_INVENTORY", _REBALANCE_GATES)
+    if (not all(math.isfinite(value) for value in (qy_float, qn_float, delta_float))
+            or qy < 0 or qn < 0 or delta_float != qy_float - qn_float
+            or _decimal(inventory.inventory_exposure) != abs(delta)):
+        return _reject("INVALID_INVENTORY", _REBALANCE_GATES)
+    if abs(delta) < _NORMAL_LIMIT:
+        return _reject("NON_REBALANCE_INVENTORY", _REBALANCE_GATES)
+
+    if delta > 0:
+        token_id, selected_book, selected_tick = market.no.token_id, no_book, no_tick
+    else:
+        token_id, selected_book, selected_tick = market.yes.token_id, yes_book, yes_tick
+
+    tick = _decimal(selected_tick)
+    if tick is None or tick <= 0:
+        return _reject("INVALID_TICK", _REBALANCE_GATES)
+    minimum = _decimal(market.min_order_size)
+    if minimum is None or minimum <= 0:
+        return _reject("INVALID_MIN_ORDER_SIZE", _REBALANCE_GATES)
+    if _BASE_CLIP < minimum:
+        return _reject("MIN_ORDER_SIZE", _REBALANCE_GATES)
+
+    selected_prices = _book_prices(selected_book)
+    if selected_prices is None:
+        return _reject("INVALID_BOOK", _REBALANCE_GATES)
+    _best_bid, best_ask = selected_prices
+    if best_ask % tick != 0:
+        return _reject("OFF_TICK", _REBALANCE_GATES)
+    price = best_ask - tick
+    if price % tick != 0:
+        return _reject("OFF_TICK", _REBALANCE_GATES)
+    if not _inside_binary(price) or price >= best_ask:
+        return _reject("ILLEGAL_QUOTE_PRICE", _REBALANCE_GATES)
+
+    try:
+        price_float = float(price)
+    except (OverflowError, ValueError):
+        return _reject("INVALID_INPUT", _REBALANCE_GATES)
+    returned_price = _decimal(price_float)
+    if (returned_price != price or returned_price % tick != 0
+            or best_ask - returned_price != tick):
+        return _reject("UNREPRESENTABLE_PRICE", _REBALANCE_GATES)
+    if not math.isfinite(price_float):
+        return _reject("INVALID_INPUT", _REBALANCE_GATES)
+    quote = Quote(token_id, Side.BUY, price_float, float(_BASE_CLIP))
+    return RDPQuoteDecision((quote,), None, required_gates=_REBALANCE_GATES)
+
+
+def _reject(reason: str, required_gates: tuple[str, ...] = _REQUIRED_GATES) -> RDPQuoteDecision:
+    return RDPQuoteDecision(quotes=(), reason=reason, required_gates=required_gates)
 
 
 def _decimal(value: object) -> Decimal | None:

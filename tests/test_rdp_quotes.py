@@ -10,7 +10,7 @@ from polymaker.marketdata.service import MarketDataService
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import TradeEvent, UserEventProcessor
 from polymaker.strategy.rdp_accounting import RDPInventorySnapshot, snapshot_inventory
-from polymaker.strategy.rdp_quotes import build_normal_quotes
+from polymaker.strategy.rdp_quotes import build_normal_quotes, build_rebalance_quote
 
 _UNSET = object()
 
@@ -45,6 +45,15 @@ def candidate(delta=0, *, m=None, yes=_UNSET, no=_UNSET, yes_tick=.01, no_tick=.
     yes_view = book() if yes is _UNSET else yes
     no_view = book(.42, .48) if no is _UNSET else no
     return build_normal_quotes(m, inv, yes_view, no_view, yes_tick, no_tick)
+
+
+def rebalance_candidate(delta, *, m=None, yes=_UNSET, no=_UNSET,
+                        yes_tick=.01, no_tick=.01, inv=None):
+    m = m or make_market()
+    inv = inventory_for_delta(m, delta) if inv is None else inv
+    yes_view = book() if yes is _UNSET else yes
+    no_view = book(.42, .48) if no is _UNSET else no
+    return build_rebalance_quote(m, inv, yes_view, no_view, yes_tick, no_tick)
 
 
 @pytest.mark.parametrize(("delta", "yes_size", "no_size"), [
@@ -260,3 +269,184 @@ def test_fractional_confirmed_fill_snapshot_remains_normal_and_quotes(tmp_path):
             .01, .01).reason == "INVALID_INVENTORY"
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(("delta", "token", "price"), [
+    (5, "no", .44),
+    (-5, "yes", .59),
+    (12, "no", .44),
+    (-12, "yes", .59),
+])
+def test_rebalance_exact_threshold_and_larger_exposure_selects_one_side(delta, token, price):
+    m = make_market()
+    yes_view, no_view = book(.55, .60), book(.40, .45)
+    decision = rebalance_candidate(delta, m=m, yes=yes_view, no=no_view)
+    assert decision.has_candidate and decision.reason is None
+    assert len(decision.quotes) == 1
+    quote = decision.quotes[0]
+    assert (quote.token_id, quote.side, quote.price, quote.size) == (
+        m.no.token_id if token == "no" else m.yes.token_id, Side.BUY, price, 5)
+    assert decision.post_only_required is True
+    assert "CanSafelyContinue" in decision.required_gates[0]
+    assert "CapitalGate" in decision.required_gates
+    assert any("cancel and reconcile" in gate for gate in decision.required_gates)
+    assert "live authorization" in decision.required_gates
+    assert "Book Filter" not in decision.required_gates
+    assert "PriceGate" not in decision.required_gates
+
+
+@pytest.mark.parametrize("delta", [4.999, -4.999])
+def test_rebalance_rejects_values_strictly_inside_threshold(delta):
+    decision = rebalance_candidate(delta)
+    assert decision.quotes == () and decision.reason == "NON_REBALANCE_INVENTORY"
+
+
+def test_rebalance_fractional_confirmed_inventory_integration(tmp_path):
+    m = make_market()
+    store = StateStore(tmp_path / "fractional-rebalance.db")
+    try:
+        proc = UserEventProcessor(store)
+        fills = (("yes-order", m.yes.token_id, 5.3, .2, "yes-trade"),
+                 ("no-order", m.no.token_id, .1, .3, "no-trade"))
+        for oid, token, qty, price, trade_id in fills:
+            proc.register_order(oid, m.condition_id, token, Side.BUY, qty, .5)
+            proc.on_trade(TradeEvent(token, Side.BUY, price, qty, trade_id,
+                TradeState.MATCHED, 1, oid), m.condition_id)
+            proc.on_trade(TradeEvent(token, Side.BUY, price, qty, trade_id,
+                TradeState.CONFIRMED, 2, oid), m.condition_id)
+        inventory = snapshot_inventory(m, proc, {"yes-order", "no-order"})
+        assert inventory.delta == inventory.qy - inventory.qn
+        assert inventory.delta >= 5
+        decision = build_rebalance_quote(m, inventory, book(.55, .60), book(.40, .45), .01, .01)
+        assert [(q.token_id, q.price, q.size) for q in decision.quotes] == [
+            (m.no.token_id, .44, 5)]
+    finally:
+        store.close()
+
+
+def test_rebalance_uses_only_deficient_token_tick_and_book():
+    m = make_market()
+    # Positive Delta makes NO deficient. A bad surplus-side book/tick is not
+    # consumed by this pure selected-side calculation.
+    decision = rebalance_candidate(5, m=m, yes=None, no=book(.40, .45),
+        yes_tick=float("nan"), no_tick=.01)
+    assert [(q.token_id, q.price, q.size) for q in decision.quotes] == [
+        (m.no.token_id, .44, 5)]
+    inverse = rebalance_candidate(-5, m=m, yes=book(.55, .60), no=None,
+        yes_tick=.001, no_tick=float("nan"))
+    assert [(q.token_id, q.price, q.size) for q in inverse.quotes] == [
+        (m.yes.token_id, .599, 5)]
+
+
+def test_rebalance_selected_tick_change_updates_next_candidate():
+    m = make_market()
+    service = MarketDataService()
+    service.set_markets([(m.condition_id, [m.yes.token_id, m.no.token_id])])
+    service._dispatch({"event_type": "book", "market": m.condition_id, "asset_id": "no",
+        "bids": [{"price": ".40", "size": "10"}],
+        "asks": [{"price": ".45", "size": "10"}], "tick_size": ".01"})
+    original = build_rebalance_quote(m, inventory_for_delta(m, 5), None, service.view("no"),
+        float("nan"), service.book("no").tick_size)
+    assert original.quotes[0].price == pytest.approx(.44)
+    service._dispatch({"event_type": "tick_size_change", "asset_id": "no",
+        "old_tick_size": ".01", "new_tick_size": ".001"})
+    updated = build_rebalance_quote(m, inventory_for_delta(m, 5), None, service.view("no"),
+        float("nan"), service.book("no").tick_size)
+    assert updated.quotes[0].price == pytest.approx(.449)
+
+
+@pytest.mark.parametrize(("bid", "ask", "expected"), [
+    (.40, .45, .44),  # improves the current bid
+    (.44, .45, .44),  # equals the current bid
+])
+def test_rebalance_highest_non_crossing_price_may_improve_or_equal_bid(bid, ask, expected):
+    decision = rebalance_candidate(5, no=book(bid, ask))
+    assert len(decision.quotes) == 1
+    assert decision.quotes[0].token_id == "no"
+    assert decision.quotes[0].price == pytest.approx(expected)
+    assert decision.quotes[0].price < ask
+
+
+def test_rebalance_does_not_apply_normal_price_gate():
+    decision = rebalance_candidate(5, yes=book(.80, .90), no=book(.40, .45))
+    assert .80 + .40 > 1
+    assert decision.quotes[0].price == pytest.approx(.44)
+
+
+def test_rebalance_economics_do_not_block_candidate():
+    m = make_market()
+    inventory = inventory_for_delta(m, 5)
+    loss_inventory = replace(inventory, locked_pnl=-100, worst_settlement_pnl=-200)
+    normal_economics = rebalance_candidate(5, m=m, inv=inventory)
+    negative_economics = rebalance_candidate(5, m=m, inv=loss_inventory)
+    assert negative_economics == normal_economics
+
+
+@pytest.mark.parametrize("bad_selected", [
+    None,
+    book(.40, None),
+    book(float("nan"), .45),
+    book(.40, float("inf")),
+    book(.45, .45),
+    book(.46, .45),
+])
+def test_rebalance_invalid_selected_book_rejects(bad_selected):
+    decision = rebalance_candidate(5, no=bad_selected)
+    assert decision.quotes == () and decision.reason == "INVALID_BOOK"
+
+
+@pytest.mark.parametrize("tick", [0, -.01, float("nan"), float("inf")])
+def test_rebalance_invalid_selected_tick_rejects(tick):
+    decision = rebalance_candidate(5, no_tick=tick)
+    assert decision.quotes == () and decision.reason == "INVALID_TICK"
+
+
+def test_rebalance_off_grid_ask_and_zero_subtraction_reject_without_substitution():
+    off_grid = rebalance_candidate(5, no=book(.40, .455), no_tick=.01)
+    assert off_grid.quotes == () and off_grid.reason == "OFF_TICK"
+    zero = rebalance_candidate(5, no=book(.005, .01), no_tick=.01)
+    assert zero.quotes == () and zero.reason == "ILLEGAL_QUOTE_PRICE"
+
+
+@pytest.mark.parametrize(("tick", "reason"), [
+    (1e-30, "INVALID_PRECISION"),
+    (1e-20, "UNREPRESENTABLE_PRICE"),
+])
+def test_rebalance_tiny_tick_fails_closed(tick, reason):
+    decision = rebalance_candidate(5, no=book(.40, .45), no_tick=tick)
+    assert decision.quotes == () and decision.reason == reason
+
+
+def test_rebalance_minimum_size_is_five_and_never_adjusted():
+    assert rebalance_candidate(5, m=make_market(min_order_size=5)).quotes[0].size == 5
+    decision = rebalance_candidate(12, m=make_market(min_order_size=5.01))
+    assert decision.quotes == () and decision.reason == "MIN_ORDER_SIZE"
+
+
+@pytest.mark.parametrize("minimum", [0, -1, float("nan"), float("inf")])
+def test_rebalance_invalid_minimum_metadata_rejects(minimum):
+    decision = rebalance_candidate(5, m=make_market(min_order_size=minimum))
+    assert decision.quotes == () and decision.reason == "INVALID_MIN_ORDER_SIZE"
+
+
+def test_rebalance_identity_and_inventory_mismatch_reject():
+    m = make_market()
+    assert rebalance_candidate(5, m=m, inv=empty_inventory(make_market(condition="other"))).reason == \
+        "MARKET_INVENTORY_MISMATCH"
+    base = empty_inventory(m)
+    assert rebalance_candidate(5, m=m, inv=replace(base, qy=5)).reason == "INVALID_INVENTORY"
+
+
+def test_rebalance_inputs_unchanged_after_accepted_and_rejected_calls():
+    m = make_market()
+    inv = inventory_for_delta(m, 5)
+    selected = book(.40, .45)
+    before = (asdict(m), asdict(inv), asdict(selected))
+    result = build_rebalance_quote(m, inv, None, selected, float("nan"), .01)
+    assert result.has_candidate
+    assert (asdict(m), asdict(inv), asdict(selected)) == before
+    rejected_book = book(.40, .455)
+    rejected_before = (asdict(m), asdict(inv), asdict(rejected_book))
+    rejected = build_rebalance_quote(m, inv, None, rejected_book, float("nan"), .01)
+    assert rejected.quotes == ()
+    assert (asdict(m), asdict(inv), asdict(rejected_book)) == rejected_before
