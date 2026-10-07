@@ -1,0 +1,53 @@
+[
+  {
+    "path": "research_data",
+    "files": 210,
+    "bytes": 5180619849,
+    "extensions": [
+      ".json",
+      ".jsonl"
+    ]
+  },
+  {
+    "path": "research_outputs",
+    "files": 749,
+    "bytes": 917944014,
+    "extensions": [
+      ".csv",
+      ".json",
+      ".md",
+      ".py"
+    ]
+  },
+  {
+    "path": "research_audits",
+    "files": 2,
+    "bytes": 63671,
+    "extensions": [
+      ".json",
+      ".md"
+    ]
+  },
+  {
+    "path": "logs/runs",
+    "files": 16,
+    "bytes": 204284,
+    "extensions": [
+      ".json",
+      ".jsonl",
+      ".log",
+      ".md"
+    ]
+  },
+  {
+    "path": "livecfg/logs",
+    "files": 172,
+    "bytes": 5474046,
+    "extensions": [
+      ".json",
+      ".jsonl",
+      ".log",
+      ".md"
+    ]
+  }
+]
