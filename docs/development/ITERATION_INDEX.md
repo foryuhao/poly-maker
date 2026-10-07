@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`8391e92e92497dbca4d0288e309beb9d4c66d5a4`
+`fd514299b453d2cd56b7afa093dabbbf6340f99b`
 
 IM preservation state:
 
@@ -50,11 +50,11 @@ Baseline details:
 
 ## Project State
 
-Development Status: `READY_FOR_RDP_DEVELOPMENT`
+Development Status: `IN_PROGRESS`
 
-Current Iteration: `NONE`
+Current Iteration: `ITER-0001`
 
-Current Stage: `AWAITING_ITER_0001`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,13 +70,14 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
+| ITER-0001 | Confirmed-fill inventory/accounting projection | APPROVED | IN_PROGRESS | PENDING | NOT_READY | LOCAL | NOT_RUN | PENDING |
 | ITER-0000 | Pre-RDP codebase isolation, FL reconstruction, IM preservation, and RDP baseline readiness | N/A | N/A | N/A | READY | ARCHIVED | NOT_RUN | KEEP |
 
 ---
 
 ## Current Iteration
 
-None.
+ITER-0001 initialized from framework checkpoint fd51429; Architect approved 01_ARCHITECT.md; Worker implementation pending. Known untracked research_outputs assets are preserved and excluded from iteration staging.
 
 Next authorized action:
 
