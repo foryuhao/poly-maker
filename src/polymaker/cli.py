@@ -297,6 +297,8 @@ def rdp_live(
     market: str = typer.Option(..., "--market", help="exact btc-updown-5m-<epoch> market slug"),
     preflight_only: bool = typer.Option(
         False, "--preflight-only", help="required read-only public metadata check; never trades"),
+    account_check: bool = typer.Option(
+        False, "--account-check", help="also derive existing API credentials and read account state; never creates credentials"),
     config_dir: str = typer.Option("config", help="config directory"),
 ) -> None:
     """Read public metadata and observe both books for one BTC5m market; cannot trade."""
@@ -312,7 +314,7 @@ def rdp_live(
         console.print("[red]RDP preflight requires --preflight-only; no network request was made.[/red]")
         raise typer.Exit(2)
     try:
-        result = asyncio.run(preflight_rdp_market(cfg, market))
+        result = asyncio.run(preflight_rdp_market(cfg, market, account_check=account_check))
     except RDPBootstrapError as exc:
         console.print(f"[red]RDP preflight failed: {exc.category}: {exc}[/red]")
         raise typer.Exit(1) from exc
@@ -328,6 +330,16 @@ def rdp_live(
     for token in result.feed.tokens:
         console.print(f"{token.outcome} book: bid={token.view.best_bid} ask={token.view.best_ask} "
                       f"tick_source={token.tick_source}")
+    if result.account is not None:
+        console.print(f"Read-only account snapshot: signer={result.account.signer} "
+                      f"funder={result.account.funder} balance=${result.account.balance_usd} "
+                      f"required_allowance=${result.account.allowance_usd} "
+                      f"open_orders={result.account.total_open_order_count}")
+        for position in result.account.selected_positions:
+            console.print(f"{position.outcome} position: {position.quantity} shares")
+        for order in result.account.selected_open_orders:
+            console.print(f"Existing selected order: {order.order_id} {order.side} "
+                          f"{order.remaining_size} shares @ {order.price}")
     console.print("Read-only public metadata result; real_money_trading_performed=false")
 
 

@@ -351,7 +351,106 @@ def test_rdp_live_help_is_explicitly_read_only():
     result = CliRunner().invoke(app, ["rdp-live", "--help"])
     assert result.exit_code == 0
     assert "--preflight-only" in result.stdout
+    assert "--account-check" in result.stdout
     assert "read-only" in result.stdout.lower() or "never trades" in result.stdout.lower()
+
+
+def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_scope(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace
+
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _config_dir: cfg)
+    calls = []
+    account = SimpleNamespace(
+        signer="0xSigner", funder="0xFunder", balance_usd="12.000000",
+        allowance_usd="9.000000", total_open_order_count=1,
+        required_spenders=("0x" + "a" * 40,), orders_receipt_ts=1,
+        positions_receipt_ts=2, collateral_receipt_ts=3,
+        selected_positions=(SimpleNamespace(outcome="Up", token_id="up", quantity="2",
+                                             average_price="0.4"),
+                            SimpleNamespace(outcome="Down", token_id="down", quantity="0",
+                                            average_price="0")),
+        selected_open_orders=(SimpleNamespace(order_id="existing", side="BUY",
+                                              remaining_size="3", price="0.4"),),
+    )
+    bootstrap = SimpleNamespace(
+        market=SimpleNamespace(slug=SLUG, condition_id="condition-btc5m"),
+        epoch=EPOCH, end_epoch=END_EPOCH, token_metadata=(),
+    )
+    feed = SimpleNamespace(condition_id="condition-btc5m", connection_generation=1,
+                           receipt_ts=1, tokens=())
+
+    async def fake_bootstrap(_cfg, slug, **_kwargs):
+        assert _cfg is not cfg
+        assert _cfg.wallet.clob_host == "https://clob.polymarket.com"
+        calls.append(("bootstrap", slug))
+        cfg.wallet.clob_host = "https://unapproved.example"
+        return bootstrap
+
+    async def fake_feed(_bootstrap, **_kwargs):
+        calls.append(("feed",))
+        return feed
+
+    async def fake_account(_cfg, _bootstrap, *, now):
+        assert _cfg.wallet.clob_host == "https://clob.polymarket.com"
+        calls.append(("account",))
+        return account
+
+    monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
+    monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
+    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fake_account)
+    result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
+                                      "--preflight-only", "--account-check"])
+    assert result.exit_code == 0, result.stdout
+    assert calls == [("bootstrap", SLUG), ("feed",), ("account",)]
+    assert "Read-only account snapshot" in result.stdout
+    assert "Existing selected order: existing" in result.stdout
+    events = [json.loads(line) for line in
+              (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
+    assert any(event["event"] == "rdp_feed_readiness" and event["result"] == "SUCCESS"
+               for event in events)
+    account_event = next(event for event in events if event["event"] == "rdp_account_readiness")
+    assert account_event["result"] == "SUCCESS"
+    assert account_event["real_money_trading_performed"] is False
+    assert not any("secret" in key.lower() or "credential" in key.lower()
+                   for key in account_event)
+
+
+def test_rdp_live_cli_account_read_failure_is_separately_logged(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from polymaker.rdp_account import RDPAccountError
+
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _config_dir: cfg)
+    bootstrap = SimpleNamespace(
+        market=SimpleNamespace(slug=SLUG, condition_id="condition-btc5m"),
+        epoch=EPOCH, end_epoch=END_EPOCH, token_metadata=(),
+    )
+    feed = SimpleNamespace(condition_id="condition-btc5m", connection_generation=1,
+                           receipt_ts=1, tokens=())
+
+    async def fake_bootstrap(_cfg, _slug, **_kwargs): return bootstrap
+    async def fake_feed(_bootstrap, **_kwargs): return feed
+    async def fail_account(*_args, **_kwargs):
+        raise RDPAccountError("ACCOUNT_READ_FAILED", "read-only account check failed (TimeoutError)")
+
+    monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
+    monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
+    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fail_account)
+    result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
+                                      "--preflight-only", "--account-check"])
+    assert result.exit_code == 1
+    events = [json.loads(line) for line in
+              (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
+    assert any(event["event"] == "rdp_feed_readiness" and event["result"] == "SUCCESS"
+               for event in events)
+    failure = next(event for event in events if event["event"] == "rdp_account_readiness")
+    assert failure["result"] == "FAILURE"
+    assert failure["category"] == "ACCOUNT_READ_FAILED"
+    assert failure["real_money_trading_performed"] is False
 
 
 def test_rdp_live_cli_success_persists_structured_evidence_and_never_trades(

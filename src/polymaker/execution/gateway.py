@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 import math
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future as ConcurrentFuture
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
@@ -34,6 +37,20 @@ from polymaker.research.capture import CausalCapture
 log = get_logger("execution.gateway")
 
 _T = TypeVar("_T")
+
+_SDK_WORKER_CONTEXT = threading.local()
+
+
+class _AccountSDKDiagnosticFilter(logging.Filter):
+    """Drop raw SDK HTTP diagnostics only inside an opt-in account worker call."""
+
+    def filter(self, _record: logging.LogRecord) -> bool:
+        return not getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
+
+
+_sdk_http_logger = logging.getLogger("py_clob_client_v2.http_helpers.helpers")
+if not any(isinstance(item, _AccountSDKDiagnosticFilter) for item in _sdk_http_logger.filters):
+    _sdk_http_logger.addFilter(_AccountSDKDiagnosticFilter())
 
 
 class GatewayReadError(RuntimeError):
@@ -106,6 +123,9 @@ class ExecutionGateway:
     ) -> None:
         self._cfg = cfg
         self._paper = paper
+        self._derive_only = False
+        self._account_io: set[ConcurrentFuture[Any]] = set()
+        self._account_io_lock = threading.Lock()
         self._journal = journal
         self._research = research
         self._client: Any = None  # py_clob_client_v2.ClobClient
@@ -136,9 +156,53 @@ class ExecutionGateway:
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
 
+    async def aclose(self) -> None:
+        """Drain account-owned blocking reads without blocking the event loop."""
+        cancelled = False
+        while True:
+            with self._account_io_lock:
+                pending = tuple(self._account_io)
+            if not pending:
+                break
+            try:
+                await asyncio.gather(
+                    *(asyncio.wrap_future(future) for future in pending),
+                    return_exceptions=True,
+                )
+            except asyncio.CancelledError:
+                # Cancellation cannot stop a running concurrent future. Keep
+                # ownership until every account read completes, then propagate.
+                cancelled = True
+        self.close()
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _error_detail(self, exc: Exception) -> str:
+        """Keep authenticated-read diagnostics credential-safe in derive-only mode."""
+        return type(exc).__name__ if self._derive_only else str(exc)
+
     async def _io(self, fn: Callable[..., _T], *args: Any) -> _T:
         """Run a blocking client call on the dedicated pool."""
         loop = asyncio.get_running_loop()
+        if self._derive_only:
+            def _account_call() -> _T:
+                previous = getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
+                _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = True
+                try:
+                    return fn(*args)
+                finally:
+                    _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = previous
+
+            future = self._pool.submit(_account_call)
+            with self._account_io_lock:
+                self._account_io.add(future)
+
+            def _discard(done: ConcurrentFuture[Any]) -> None:
+                with self._account_io_lock:
+                    self._account_io.discard(done)
+
+            future.add_done_callback(_discard)
+            return await asyncio.wrap_future(future, loop=loop)
         return await loop.run_in_executor(self._pool, fn, *args)
 
     @property
@@ -156,8 +220,9 @@ class ExecutionGateway:
         return self._funder or self._address
 
     # ── lifecycle ───────────────────────────────────────────────────────
-    async def connect(self) -> None:
+    async def connect(self, *, derive_only: bool = False) -> None:
         """Build the client and derive L2 API creds (network). No-op fields in paper."""
+        self._derive_only = derive_only
         sec = self._cfg.secrets
         if self._paper and not sec.has_wallet:
             # paper mode runs the full pipeline without a wallet (no orders posted)
@@ -181,7 +246,13 @@ class ExecutionGateway:
                 signature_type=self._cfg.wallet.signature_type,
                 funder=sec.browser_address,
             )
-            creds = client.create_or_derive_api_key()
+            creds = client.derive_api_key() if derive_only else client.create_or_derive_api_key()
+            if derive_only:
+                values = (getattr(creds, "api_key", None),
+                          getattr(creds, "api_secret", None),
+                          getattr(creds, "api_passphrase", None))
+                if not all(isinstance(value, str) and value.strip() for value in values):
+                    raise RuntimeError("derived API credentials are incomplete")
             client.set_api_creds(creds)
             return client, creds, client.get_address()
 
@@ -205,7 +276,7 @@ class ExecutionGateway:
             else:
                 log.info("clock_ok", drift_s=round(drift, 1))
         except (httpx.HTTPError, ValueError) as exc:
-            log.warning("clock_check_failed", err=str(exc))
+            log.warning("clock_check_failed", err=self._error_detail(exc))
 
     # ── placement ───────────────────────────────────────────────────────
     async def place(
@@ -815,7 +886,7 @@ class ExecutionGateway:
         return self._hb_failures
 
     # ── reads ───────────────────────────────────────────────────────────
-    async def open_orders(self) -> list[OpenOrder]:
+    async def open_orders(self, *, strict_account: bool = False) -> list[OpenOrder]:
         if self._paper:
             return []
         if self._client is None:
@@ -845,8 +916,13 @@ class ExecutionGateway:
                     if not isinstance(asset_id, str) or not asset_id.strip():
                         raise ValueError("order row has no valid asset id")
                     side = Side(str(r["side"]).upper())
-                    original_size = strict_number(r.get("original_size", r.get("size", 0)))
-                    size_matched = strict_number(r.get("size_matched", 0))
+                    if strict_account and ("original_size" not in r or "size_matched" not in r):
+                        raise ValueError("order row omitted authoritative cumulative quantities")
+                    original_raw = (r["original_size"] if strict_account else
+                                    r.get("original_size", r.get("size", 0)))
+                    matched_raw = r["size_matched"] if strict_account else r.get("size_matched", 0)
+                    original_size = strict_number(original_raw)
+                    size_matched = strict_number(matched_raw)
                     if original_size < 0 or size_matched < 0 or size_matched > original_size:
                         raise ValueError("order row has invalid cumulative size")
                     remaining = original_size - size_matched
@@ -868,12 +944,12 @@ class ExecutionGateway:
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
-            log.warning("open_orders_failed", err=str(exc))
+            log.warning("open_orders_failed", err=self._error_detail(exc))
             if isinstance(exc, GatewayReadError):
                 raise
             raise GatewayReadError("open orders snapshot failed") from exc
 
-    async def positions(self) -> dict[str, tuple[float, float]]:
+    async def positions(self, *, strict_account: bool = False) -> dict[str, tuple[float, float]]:
         """{token_id: (size, avg_price)} from the data API (reconcile use).
 
         Queries the FUNDER (where positions live), not the signer EOA.
@@ -914,9 +990,10 @@ class ExecutionGateway:
                             avg_price = strict_number(row["avg_price"])
                         except (KeyError, TypeError, ValueError) as exc:
                             raise GatewayReadError("positions row omitted valid current_size/avg_price") from exc
-                        if not math.isfinite(size) or not math.isfinite(avg_price) or size < 0:
+                        if (not math.isfinite(size) or not math.isfinite(avg_price) or size < 0
+                                or (strict_account and not 0 <= avg_price <= 1)):
                             raise GatewayReadError("positions row contained invalid position values")
-                        if size > 0:
+                        if size > 0 or strict_account:
                             positions[token_id] = (size, avg_price)
                     next_cursor = pagination["next_cursor"]
                     if next_cursor is None:
@@ -926,7 +1003,7 @@ class ExecutionGateway:
                     seen_cursors.add(next_cursor)
                     cursor = next_cursor
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
-            log.warning("positions_failed", err=str(exc))
+            log.warning("positions_failed", err=self._error_detail(exc))
             raise GatewayReadError("positions snapshot failed") from exc
         except GatewayReadError:
             raise
@@ -987,7 +1064,7 @@ class ExecutionGateway:
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
-            log.warning("balance_allowance_failed", err=str(exc))
+            log.warning("balance_allowance_failed", err=self._error_detail(exc))
             return {}
 
     async def required_collateral_spenders(self, meta: MarketMeta) -> tuple[str, ...]:

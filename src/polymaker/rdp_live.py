@@ -58,6 +58,7 @@ class RDPBootstrap:
 class RDPPreflight:
     bootstrap: RDPBootstrap
     feed: Any
+    account: Any | None = None
 
 
 def _validate_official_origin(host: str, expected: str, category: str) -> None:
@@ -266,11 +267,17 @@ async def preflight_rdp_market(
     *,
     now: Callable[[], float] = time.time,
     feed_timeout_s: float = 15.0,
+    account_check: bool = False,
 ) -> RDPPreflight:
     """Compose exact HTTP metadata bootstrap with bounded public WS readiness."""
     from polymaker.rdp_marketdata import RDPFeedError, await_rdp_feed
 
-    bootstrap = await bootstrap_rdp_market(cfg, slug, now=now)
+    # For the optional authenticated path, freeze all configured authorities
+    # before public bootstrap/feed awaits so later caller mutation cannot steer
+    # the account-read client to a different endpoint or identity.
+    runtime_cfg = cfg.model_copy(deep=True) if account_check else cfg
+
+    bootstrap = await bootstrap_rdp_market(runtime_cfg, slug, now=now)
     try:
         feed = await await_rdp_feed(bootstrap, timeout_s=feed_timeout_s, now=now)
         log.info(
@@ -283,7 +290,34 @@ async def preflight_rdp_market(
             } for item in feed.tokens],
             receipt_ts=feed.receipt_ts, real_money_trading_performed=False,
         )
-        return RDPPreflight(bootstrap, feed)
+        account = None
+        if account_check:
+            from polymaker.rdp_account import account_snapshot
+
+            try:
+                account = await account_snapshot(runtime_cfg, bootstrap, now=now)
+                log.info(
+                    "rdp_account_readiness", result="SUCCESS", category="ACCOUNT_SNAPSHOT_COMPLETE",
+                    signer=account.signer, funder=account.funder,
+                    balance_usd=str(account.balance_usd), allowance_usd=str(account.allowance_usd),
+                    required_spenders=list(account.required_spenders),
+                    selected_positions=[{
+                        "outcome": item.outcome, "token_id": item.token_id,
+                        "quantity": str(item.quantity), "average_price": str(item.average_price),
+                    } for item in account.selected_positions],
+                    selected_open_order_ids=[item.order_id for item in account.selected_open_orders],
+                    total_open_order_count=account.total_open_order_count,
+                    receipt_times={
+                        "orders": account.orders_receipt_ts,
+                        "positions": account.positions_receipt_ts,
+                        "collateral": account.collateral_receipt_ts,
+                    }, real_money_trading_performed=False,
+                )
+            except RDPBootstrapError as exc:
+                log.error("rdp_account_readiness", result="FAILURE", category=exc.category,
+                          slug=slug, error=str(exc), real_money_trading_performed=False)
+                raise
+        return RDPPreflight(bootstrap, feed, account)
     except RDPFeedError as exc:
         log.error("rdp_feed_readiness", result="FAILURE", category=exc.category,
                   slug=slug, condition_id=bootstrap.market.condition_id, error=str(exc),
