@@ -1,3 +1,21 @@
+# ITER-0000 Readiness Handoff — 2026-10-07
+
+Current program: Pre-RDP Codebase Isolation.
+Current milestone / slice: ITER-0000.
+Status: BLOCKED — HUMAN_DECISION_REQUIRED.
+Canonical FL predecessor baseline: NOT SELECTED; candidates 97ab0f9 and 19c322a require evidence decision.
+IM preserved baseline: im-paused-20261007, a03b59fd0b3c42955029193b30893a395e03dfa4; incomplete/PAUSED, archive only.
+Latest readiness record: docs/development/BASELINE.md.
+Latest audit / result: docs/development/ITER-0000/01_READINESS_AUDIT.md and RESULT.md.
+Architecture / implementation / review: no RDP artifacts authorized or implemented.
+Current blockers: exact FL live-code provenance; incomplete full regression due documented spender hang.
+Next authorized action: human FL evidence/test-standard decision, then resume ITER-0000.
+Explicitly unauthorized next actions: install RDP AGENTS/custom agents, ITER-0001 implementation, live trading, full IM merge into RDP.
+Checkpoint status: IM snapshot/tag and documentation archive pushed; no RDP baseline. This branch pre-rdp-controls-20261007 contains IM ancestry and MUST NOT serve as RDP code baseline.
+Original workspace and historical datasets remain unchanged. Historical status text follows for preservation; its older next-action statements are superseded by this readiness handoff.
+
+---
+
 # Current Project Status
 
 ## Active MakerInventory work
