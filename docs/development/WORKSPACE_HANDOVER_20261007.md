@@ -56,3 +56,11 @@ movement, history rewrite or real-money trading. Documentation validation:
 
 Initialize docs/development/ITERATION_INDEX.md. ITER-0001 has not started.
 Handover commit to be pushed normally to origin/rdp-phase0-dev and verified.
+
+## Validation receipt
+
+Control handover committed as `6dfbb26`. Staged whitespace check reported
+`docs/strategy/RDP_PHASE0_FROZEN.md:579: new blank line at EOF`. This existing
+formatting is preserved to retain the exact supplied Frozen SOP bytes; no
+semantic change or test/source change. This handover record is updated in
+an additive follow-up commit.
