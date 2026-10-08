@@ -11,8 +11,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from polymaker.marketdata.orderbook import BookView
+from polymaker.marketdata.parse import TradePrint
 from polymaker.marketdata.service import MarketDataService
 from polymaker.rdp_live import RDPBootstrap, RDPBootstrapError
+from polymaker.strategy.rdp_book_filter import RDPBookFilter
 
 
 class RDPFeedError(RDPBootstrapError):
@@ -67,6 +69,27 @@ def _quantity(value: Any, *, category: str, field: str) -> float:
     return result
 
 
+def _validate_trade(msg: dict[str, Any], condition_id: str,
+                    token_ids: tuple[str, ...]) -> str | None:
+    """Validate only events attributable to this market before shared parsing."""
+    token = msg.get("asset_id")
+    market = msg.get("market")
+    if token not in token_ids:
+        if market == condition_id:
+            raise RDPFeedError("MALFORMED_SELECTED_TRADE", "selected-market trade has invalid token identity")
+        return None
+    if market != condition_id:
+        raise RDPFeedError("SELECTED_FRAME_IDENTITY_MISMATCH", "selected trade has wrong market identity")
+    side = msg.get("side")
+    if not isinstance(side, str) or side.upper() not in ("BUY", "SELL"):
+        raise RDPFeedError("MALFORMED_SELECTED_TRADE", "selected trade side is malformed")
+    _price(msg.get("price"), category="MALFORMED_SELECTED_TRADE", field="trade price")
+    size = _number(msg.get("size"), category="MALFORMED_SELECTED_TRADE", field="trade size")
+    if size <= 0:
+        raise RDPFeedError("MALFORMED_SELECTED_TRADE", "selected trade size must be positive")
+    return token
+
+
 class RDPMarketDataService(MarketDataService):
     """Reuse shared transport/mutation while validating selected frames first."""
 
@@ -83,15 +106,28 @@ class RDPMarketDataService(MarketDataService):
         self._tick_source: dict[str, str] = {
             item.token_id: "REST_BOOTSTRAP" for item in bootstrap.token_metadata
         }
+        self.book_filter = RDPBookFilter(bootstrap.market)
 
         def dirty(condition: str, token: str) -> None:
             if condition == self.condition_id and token in self.token_ids:
+                book = self.book(token)
+                if (book is not None and book.snapshot_generation == self.connection_generation):
+                    self.book_filter.observe_book(
+                        token, book, self._processing_receipt_monotonic,
+                        self.connection_generation, condition_id=condition,
+                    )
                 self._changed.set()
+
+        def trade(print_: TradePrint) -> None:
+            if print_.condition_id == self.condition_id and print_.asset_id in self.token_ids:
+                self.book_filter.observe_trade(
+                    print_, self._processing_receipt_monotonic, self.connection_generation,
+                )
 
         def connection(_connected: bool) -> None:
             self._changed.set()
 
-        super().__init__(url, on_dirty=dirty, on_connection=connection)
+        super().__init__(url, on_dirty=dirty, on_trade=trade, on_connection=connection)
         self.set_markets([(self.condition_id, list(self.token_ids))])
         for metadata in bootstrap.token_metadata:
             book = self.book(metadata.token_id)
@@ -192,6 +228,8 @@ class RDPMarketDataService(MarketDataService):
                     detail = self._validate_price_change(msg)
                 elif event == "tick_size_change":
                     detail = self._validate_tick(msg)
+                elif event == "last_trade_price":
+                    detail = _validate_trade(msg, self.condition_id, self.token_ids)
                 validated.append((msg, detail))
         except RDPFeedError as exc:
             self._fatal = exc
@@ -213,6 +251,18 @@ class RDPMarketDataService(MarketDataService):
             elif event == "tick_size_change" and isinstance(detail, str):
                 self._tick_source[detail] = "WS_TICK_SIZE_CHANGE"
                 self._changed.set()
+
+    def _on_tick_change(self, msg: dict[str, Any]) -> None:
+        # The shared service intentionally does not wake dirty callbacks for ticks.
+        super()._on_tick_change(msg)
+        token = msg.get("asset_id")
+        if token in self.token_ids:
+            book = self.book(token)
+            if book is not None and book.snapshot_generation == self.connection_generation:
+                self.book_filter.observe_book(
+                    token, book, self._processing_receipt_monotonic,
+                    self.connection_generation, condition_id=self.condition_id,
+                )
 
     def _fail(self, category: str, message: str, cause: Exception | None = None) -> None:
         error = RDPFeedError(category, message)

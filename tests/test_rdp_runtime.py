@@ -11,7 +11,7 @@ import pytest
 from polymaker.config import Config
 from polymaker.domain import MarketMeta, TokenMeta
 from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
-from polymaker.rdp_marketdata import RDPFeedReadiness, TokenBookEvidence
+from polymaker.rdp_marketdata import RDPFeedReadiness, RDPMarketDataSession, TokenBookEvidence
 from polymaker.rdp_runtime import RDPInputSession, RDPObservationError, observe_rdp_market
 from polymaker.rdp_userstream import RDPAuthenticatedObservation, RDPUserChannelEvidence
 from polymaker.risk.rdp_capital import RDPInitialBackingResult
@@ -161,6 +161,52 @@ async def test_observation_retains_one_scoped_pair_and_exact_user_processor():
     finally:
         await session.aclose()
     assert publics[0].closed and users[0].closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "FEED_DISCONNECTED", "USER_STREAM_TERMINATED", "EXPIRED", "CLOSED"])
+async def test_retained_session_book_filter_result_requires_current_live_owners(failure):
+    bootstrap = _bootstrap(int(time.time()) + 60)
+    public = RDPMarketDataSession(bootstrap)
+    public.service.connected = True
+    public.service.connection_generation = 1
+    public.task = asyncio.create_task(asyncio.Event().wait(), name="rdp-market-ws-fixture")
+    user = FakeUserSession(bootstrap)
+    feed = RDPFeedReadiness(bootstrap.market.condition_id, 1, (), time.time())
+    backing = RDPInitialBackingResult(True, None, 30, 0, 30, 30, 0, True)
+    wall = [time.time()]
+    session = RDPInputSession(
+        bootstrap, public_session=public, user_session=user, feed=feed,
+        backing=backing, now=lambda: wall[0], sleep=asyncio.sleep,
+        poll_interval_s=.1, started_at=wall[0],
+    )
+    service = public.service
+    received = time.monotonic() - 2.5
+    for token, tick in (("runtime-up", .01), ("runtime-down", .005)):
+        book = service.book(token)
+        assert book is not None
+        book.set_tick_size(tick)
+        book.apply_snapshot([(.5, 10)], [(.6, 10)], 1)
+        book.snapshot_generation = 1
+        service._snapshot_seen[token] = 1
+        service.book_filter.observe_book(token, book, received, 1,
+                                         condition_id=bootstrap.market.condition_id)
+    result = session.book_filter_result()
+    if failure is None:
+        assert result.ready
+    elif failure == "FEED_DISCONNECTED":
+        service.connected = False
+        assert not session.book_filter_result().ready
+    elif failure == "USER_STREAM_TERMINATED":
+        user.terminated = True
+        assert not session.book_filter_result().ready
+    elif failure == "EXPIRED":
+        wall[0] = bootstrap.end_epoch
+        assert not session.book_filter_result().ready
+    else:
+        await session.aclose()
+        assert not session.book_filter_result().ready
+    await session.aclose()
 
 
 @pytest.mark.asyncio

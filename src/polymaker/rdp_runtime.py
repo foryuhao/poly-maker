@@ -20,6 +20,7 @@ from polymaker.rdp_marketdata import (
 )
 from polymaker.rdp_userstream import start_rdp_user_channel_session
 from polymaker.risk.rdp_capital import RDPInitialBackingResult, evaluate_initial_rdp_backing
+from polymaker.strategy.rdp_book_filter import RDPBookFilterResult
 
 log = get_logger("rdp.runtime")
 
@@ -194,6 +195,28 @@ class RDPInputSession:
         if public_failure is not None:
             return public_failure
         return self.user_session.failure_category(self.user_generation)
+
+    def book_filter_result(self) -> RDPBookFilterResult:
+        """Return filter evidence only while the retained input owners remain authoritative."""
+        service = self.public_session.service
+        generation = service.connection_generation
+        ticks: dict[str, float] = {}
+        for token in self.public_session.service.token_ids:
+            book = service.book(token)
+            if book is None:
+                break
+            ticks[token] = book.tick_size
+        reliable = (
+            not self._closed
+            and self._now() < self.bootstrap.end_epoch
+            and self._health_failure() is None
+            and generation == self.public_generation
+            and set(ticks) == set(service.token_ids)
+        )
+        return service.book_filter.evaluate(
+            time.monotonic(), generation=generation, ticks=ticks,
+            state_reliable=reliable,
+        )
 
     async def wait_until_end(self) -> RDPObservationTermination:
         while True:

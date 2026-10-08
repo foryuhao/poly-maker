@@ -73,6 +73,9 @@ class MarketDataService:
         self._research = research
         self._receipt_us: int | None = None
         self._receipt_ns: int | None = None
+        # Monotonic socket receipt time for the frame currently being applied.
+        # RDP may consume this in synchronous callbacks; other strategies ignore it.
+        self._processing_receipt_monotonic: float | None = None
         self.metrics = {"received": 0, "processed": 0, "queue_full": 0, "processing_lag_ms": 0.0}
 
     # ── subscription management ─────────────────────────────────────────
@@ -176,11 +179,13 @@ class MarketDataService:
                 if queued_generation == generation == self.connection_generation and self.connected:
                     self._receipt_us = receipt_us
                     self._receipt_ns = int(received_at * 1e9) if receipt_us is not None else None
+                    self._processing_receipt_monotonic = received_at
                     try:
                         await self._process_raw(raw)
                     finally:
                         self._receipt_us = None
                         self._receipt_ns = None
+                        self._processing_receipt_monotonic = None
                     self.metrics["processed"] += 1
                     self.metrics["processing_lag_ms"] = (time.monotonic() - received_at) * 1000
             finally:

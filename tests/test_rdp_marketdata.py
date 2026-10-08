@@ -4,12 +4,21 @@ import asyncio
 import json
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
+import polymaker.rdp_runtime as runtime_module
 from polymaker.domain import MarketMeta, TokenMeta
 from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
-from polymaker.rdp_marketdata import RDPFeedError, RDPMarketDataService, await_rdp_feed
+from polymaker.rdp_marketdata import (
+    RDPFeedError,
+    RDPMarketDataService,
+    RDPMarketDataSession,
+    await_rdp_feed,
+)
+from polymaker.rdp_runtime import RDPInputSession
+from polymaker.risk.rdp_capital import RDPInitialBackingResult
 
 
 def bootstrap(*, end_in: float = 60) -> RDPBootstrap:
@@ -62,6 +71,77 @@ class FakeWS:
             return json.dumps(self.frames.pop(0))
         await self.hold.wait()
         raise StopAsyncIteration
+
+
+class QueuedFakeWS(FakeWS):
+    """A fake socket whose frames can be released at controlled receipt times."""
+
+    def __init__(self):
+        super().__init__([])
+        self.incoming = asyncio.Queue()
+
+    async def __anext__(self):
+        frame = await self.incoming.get()
+        if frame is None:
+            raise StopAsyncIteration
+        return json.dumps(frame)
+
+
+async def _queued_service(monkeypatch, service=None):
+    from polymaker.marketdata import service as marketdata_service
+
+    clock = [1.0]
+    socket = QueuedFakeWS()
+    receipts = asyncio.Queue()
+    monkeypatch.setattr(marketdata_service, "time",
+                        SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    monkeypatch.setattr(marketdata_service.websockets, "connect", lambda *_args, **_kwargs: socket)
+    svc = service or RDPMarketDataService(bootstrap(), single_attempt=True)
+    svc._test_receipts = receipts
+    svc._test_queue_ready = asyncio.Event()
+    original = svc._process_raw
+    svc._test_processed = 0
+    svc._test_processed_event = asyncio.Event()
+
+    async def capture(raw):
+        await original(raw)
+        svc._test_processed += 1
+        svc._test_processed_event.set()
+
+    svc._process_raw = capture
+    consume = svc._consume
+
+    async def capture_queue(queue, generation):
+        put_nowait = queue.put_nowait
+
+        def acknowledged_put(item):
+            put_nowait(item)
+            receipts.put_nowait(item)
+
+        queue.put_nowait = acknowledged_put
+        svc._test_queue_ready.set()
+        await consume(queue, generation)
+
+    svc._consume = capture_queue
+    task = asyncio.create_task(svc.run())
+    await svc._test_queue_ready.wait()
+    await svc._changed.wait()
+    assert svc.connected
+
+    async def wait_processed(target):
+        while svc._test_processed < target:
+            await svc._test_processed_event.wait()
+            svc._test_processed_event.clear()
+
+    async def send(frame, at):
+        target = svc._test_processed + 1
+        clock[0] = at
+        await socket.incoming.put(frame)
+        receipt = await receipts.get()
+        assert receipt[1] == at
+        await wait_processed(target)
+
+    return svc, socket, task, clock, send, wait_processed
 
 
 def install_ws(monkeypatch, frames, sessions=None):
@@ -345,6 +425,376 @@ async def test_selected_frame_failure_closes_owned_service_task(monkeypatch):
     assert sessions[0].sent == [{"assets_ids": ["up", "down"], "type": "market"}]
     assert not any(task.get_name() in {"rdp-market-ws", "market-ws-consumer"}
                    for task in asyncio.all_tasks() if task is not asyncio.current_task())
+
+
+@pytest.mark.asyncio
+async def test_socket_queue_receipt_drives_existing_filter_and_preserves_aggregate_variation(monkeypatch):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send({"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+                "price_changes": [{"asset_id": "up", "side": "BUY", "price": "0.4", "size": "9"}]}, 1.25)
+    await send({"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+                "price_changes": [{"asset_id": "up", "side": "BUY", "price": "0.4", "size": "3"}]}, 1.5)
+    await send([snapshot("up", bids=[{"price": "0.4", "size": "3"}]), snapshot("down")], 2.0)
+    warming = svc.book_filter.evaluate(2.9, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert not warming.ready and "NOT_READY:WARMUP" in warming.reasons
+    result = svc.book_filter.evaluate(3.0, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].depth_change_2s == 12
+    assert svc._processing_receipt_monotonic is None
+    await socket.incoming.put(None)
+    await task
+    assert svc._fatal is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("delta_size", "expected", "inactive"), [
+    ("3", 0, True), ("8", 5, False),
+])
+async def test_socket_queue_unchanged_or_exact_five_variation(monkeypatch, delta_size, expected, inactive):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send({"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+                "price_changes": [{"asset_id": "up", "side": "BUY", "price": "0.4",
+                                    "size": delta_size}]}, 1.5)
+    await send([snapshot("up", bids=[{"price": "0.4", "size": delta_size}]), snapshot("down")], 2.0)
+    result = svc.book_filter.evaluate(3.0, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].depth_change_2s == expected
+    assert result.sides[0].inactive is inactive
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_one_aggregated_price_change_message_exposes_only_final_callback_state(monkeypatch):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send({"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+                "price_changes": [
+                    {"asset_id": "up", "side": "BUY", "price": "0.4", "size": "9"},
+                    {"asset_id": "up", "side": "BUY", "price": "0.4", "size": "3"},
+                ]}, 1.5)
+    await send([snapshot("up"), snapshot("down")], 3.0)
+    result = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].depth_change_2s == 0
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_reversing_messages_in_one_frame_keep_each_callback_state(monkeypatch):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([
+        {"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+         "price_changes": [{"asset_id": "up", "side": "BUY", "price": "0.4", "size": "9"}]},
+        {"event_type": "price_change", "market": "condition-selected", "timestamp": "2",
+         "price_changes": [{"asset_id": "up", "side": "BUY", "price": "0.4", "size": "3"}]},
+    ], 1.5)
+    await send([snapshot("up"), snapshot("down")], 3.0)
+    result = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].depth_change_2s == 12
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("condition", ["depth", "fast_move"])
+async def test_depth_extreme_and_fast_move_reach_filter_through_socket_queue(monkeypatch, condition):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    up_size = "60" if condition == "depth" else "3"
+    await send([
+        snapshot("up", bids=[{"price": "0.4", "size": up_size}]),
+        snapshot("down", bids=[{"price": "0.4", "size": "3"}]),
+    ], 1.0)
+    if condition == "fast_move":
+        await send([snapshot("up"), snapshot("down")], 2.0)
+        await send([snapshot("up", bids=[{"price": "0.42", "size": "3"}]), snapshot("down")], 2.5)
+    else:
+        await send([snapshot("up", bids=[{"price": "0.4", "size": "60"}]), snapshot("down")], 2.0)
+    result = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    if condition == "depth":
+        assert result.depth_extreme is True
+    else:
+        assert result.sides[0].fast_move is True
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_queue_uses_socket_receipt_not_delayed_trade_processing_time(monkeypatch):
+    svc, socket, task, clock, send, wait_processed = await _queued_service(monkeypatch)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = svc._process_raw
+    blocked = True
+
+    async def block_first(raw):
+        nonlocal blocked
+        if blocked:
+            blocked = False
+            entered.set()
+            await release.wait()
+        await original(raw)
+
+    svc._process_raw = block_first
+    clock[0] = 0.5
+    await socket.incoming.put([snapshot("up"), snapshot("down")])
+    first_receipt = await svc._test_receipts.get()
+    assert first_receipt[1] == .5
+    await entered.wait()
+    clock[0] = 1.0
+    await socket.incoming.put({"event_type": "last_trade_price", "market": "condition-selected",
+                               "asset_id": "up", "price": "0.4", "size": "1",
+                               "side": "BUY", "timestamp": "2"})
+    trade_receipt = await svc._test_receipts.get()
+    assert trade_receipt[1] == 1.0
+    clock[0] = 7.1
+    await socket.incoming.put([snapshot("up"), snapshot("down")])
+    anchor_receipt = await svc._test_receipts.get()
+    assert anchor_receipt[1] == 7.1
+    clock[0] = 7.2
+    await socket.incoming.put([snapshot("up"), snapshot("down")])
+    latest_receipt = await svc._test_receipts.get()
+    assert latest_receipt[1] == 7.2
+    clock[0] = 9.0
+    release.set()
+    await wait_processed(4)
+    result = svc.book_filter.evaluate(9.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].real_trade_in_2s is False
+    assert svc._processing_receipt_monotonic is None
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_receipt", [None, True, float("nan")])
+async def test_invalid_receipt_context_invalidates_warmed_filter_without_fallback(monkeypatch, invalid_receipt):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([snapshot("up"), snapshot("down")], 1.1)
+    before = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert before.ready
+    svc._processing_receipt_monotonic = invalid_receipt
+    await svc._process_raw(json.dumps(snapshot("up")))
+    svc._processing_receipt_monotonic = None
+    after = svc.book_filter.evaluate(3.2, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert not after.ready and after.rejected
+    assert "NOT_READY:INVALID_BOOK_EVIDENCE" in after.reasons
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trade", [
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4", "size": "1", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4", "size": "1", "side": True, "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": True, "size": "1", "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "NaN", "size": "1", "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4", "size": "0", "side": "SELL", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4", "size": -1, "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4", "size": "Infinity", "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+     "price": "0.4000000000000000001", "size": "1", "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "wrong", "asset_id": "up",
+     "price": "0.4", "size": "1", "side": "BUY", "timestamp": "1"},
+    {"event_type": "last_trade_price", "market": "condition-selected", "price": "0.4",
+     "size": "1", "side": "BUY", "timestamp": "1"},
+])
+async def test_invalid_selected_trade_rejects_whole_frame_before_book_or_filter_mutation(trade):
+    svc = RDPMarketDataService(bootstrap())
+    svc.connected = True
+    svc.connection_generation = 1
+    before = svc.view("up")
+    raw = json.dumps([snapshot("up"), trade])
+    with pytest.raises(RDPFeedError):
+        await svc._process_raw(raw)
+    assert svc.view("up") == before
+    assert svc._fatal is not None
+    assert not svc.book_filter._history["up"].samples
+
+
+@pytest.mark.asyncio
+async def test_unrepresentable_json_trade_number_rejected_before_frame_mutation():
+    svc = RDPMarketDataService(bootstrap())
+    svc.connected = True
+    svc.connection_generation = 1
+    raw = ('[{"event_type":"book","market":"condition-selected","asset_id":"up",'
+           '"bids":[{"price":"0.4","size":"3"}],"asks":[{"price":"0.6","size":"4"}]},'
+           '{"event_type":"last_trade_price","market":"condition-selected","asset_id":"up",'
+           '"price":0.4000000000000000001,"size":1,"side":"BUY"}]')
+    with pytest.raises(RDPFeedError) as caught:
+        await svc._process_raw(raw)
+    assert caught.value.category == "MALFORMED_SELECTED_TRADE"
+    assert svc.book("up").bids == {}
+    assert not svc.book_filter._history["up"].samples
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected_token", ["up", "down"])
+async def test_selected_and_foreign_trades_observe_only_selected_outcome(monkeypatch, selected_token):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([
+        {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": selected_token,
+         "price": "0.4", "size": "1", "side": "SELL", "timestamp": "2"},
+        {"event_type": "last_trade_price", "market": "foreign", "asset_id": "foreign-token",
+         "price": "0.4", "size": "1", "side": "BUY", "timestamp": "2"},
+    ], 1.5)
+    await send([snapshot("up"), snapshot("down")], 2.5)
+    result = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert result.ready
+    assert result.sides[0].real_trade_in_2s is (selected_token == "up")
+    assert result.sides[1].real_trade_in_2s is (selected_token == "down")
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_tick_change_in_production_queue_resets_filter_history(monkeypatch):
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([{"event_type": "tick_size_change", "market": "condition-selected",
+                 "asset_id": "up", "new_tick_size": "0.005"},
+                snapshot("up", tick="0.005")], 3.1)
+    result = svc.book_filter.evaluate(3.2, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert not result.ready and result.rejected
+    assert svc.book("up").tick_size == .005
+    await socket.incoming.put(None)
+    await task
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_queue_item_cannot_observe_filter_evidence():
+    svc = RDPMarketDataService(bootstrap())
+    svc.connected = True
+    svc.connection_generation = 2
+    queue = asyncio.Queue()
+    queue.put_nowait((1, 5.0, json.dumps([snapshot("up"), snapshot("down")])))
+    consumer = asyncio.create_task(svc._consume(queue, 1))
+    await queue.join()
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    assert not svc.book_filter._history["up"].samples
+    assert svc._processing_receipt_monotonic is None
+
+
+@pytest.mark.asyncio
+async def test_warmed_generation_one_history_and_old_backlog_cannot_certify_generation_two(monkeypatch):
+    svc, socket, task, clock, send, _wait_processed = await _queued_service(monkeypatch)
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([snapshot("up"), snapshot("down")], 3.0)
+    before = svc.book_filter.evaluate(3.1, generation=1,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert before.ready
+    await socket.incoming.put(None)
+    await task
+
+    svc.connection_generation = 2
+    svc.connected = True
+    clock[0] = 3.2
+    queue = asyncio.Queue()
+    old_snapshot = snapshot("up", bids=[{"price": "0.5", "size": "10"}])
+    queue.put_nowait((1, 3.05, json.dumps(old_snapshot)))
+    queue.put_nowait((2, 3.2, json.dumps([snapshot("up"), snapshot("down")])))
+    consumer = asyncio.create_task(svc._consume(queue, 2))
+    await queue.join()
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    after = svc.book_filter.evaluate(3.3, generation=2,
+        ticks={"up": svc.book("up").tick_size, "down": svc.book("down").tick_size},
+        state_reliable=True)
+    assert not after.ready and after.rejected
+    assert "NOT_READY:WARMUP" in after.reasons
+    assert len(svc.book_filter._history["up"].samples) == 1
+    assert svc.book("up").best_bid().price == .4
+
+
+@pytest.mark.asyncio
+async def test_queue_processing_error_clears_receipt_context():
+    svc = RDPMarketDataService(bootstrap())
+    svc.connected = True
+    svc.connection_generation = 1
+    queue = asyncio.Queue()
+    bad = {"event_type": "last_trade_price", "market": "condition-selected", "asset_id": "up",
+           "price": "0.4", "size": "0", "side": "BUY"}
+    queue.put_nowait((1, 5.0, json.dumps(bad)))
+    consumer = asyncio.create_task(svc._consume(queue, 1))
+    await queue.join()
+    result = await asyncio.gather(consumer, return_exceptions=True)
+    assert isinstance(result[0], RDPFeedError)
+    assert svc._processing_receipt_monotonic is None
+
+
+@pytest.mark.asyncio
+async def test_queued_frames_reach_retained_input_session_filter_result(monkeypatch):
+    async def async_noop():
+        return None
+
+    selected = bootstrap()
+    public = RDPMarketDataSession(selected, single_attempt=True)
+    svc, socket, task, _clock, send, _wait_processed = await _queued_service(
+        monkeypatch, service=public.service)
+    public.task = task
+    await send([snapshot("up"), snapshot("down")], 1.0)
+    await send([snapshot("up"), snapshot("down")], 1.1)
+    await send([snapshot("up"), snapshot("down")], 3.0)
+    feed = svc._capture()
+    user = SimpleNamespace(
+        observation=SimpleNamespace(
+            account=object(), user_channel=SimpleNamespace(connection_generation=1)),
+        processor=object(),
+        failure_category=lambda _generation: None,
+        aclose=async_noop,
+    )
+    backing = RDPInitialBackingResult(True, None, 30, 0, 30, 30, 0, True)
+    wall = time.time()
+    session = RDPInputSession(
+        selected, public_session=public, user_session=user, feed=feed,
+        backing=backing, now=lambda: wall, sleep=asyncio.sleep,
+        poll_interval_s=.1, started_at=wall,
+    )
+    monkeypatch.setattr(runtime_module, "time",
+                        SimpleNamespace(monotonic=lambda: 3.1, time=time.time))
+    result = session.book_filter_result()
+    assert result.ready
+    assert result.generation == 1
+    await session.aclose()
 
 
 @pytest.mark.asyncio
