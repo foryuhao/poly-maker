@@ -297,17 +297,41 @@ def rdp_live(
     market: str = typer.Option(..., "--market", help="exact btc-updown-5m-<epoch> market slug"),
     preflight_only: bool = typer.Option(
         False, "--preflight-only", help="required read-only public metadata check; never trades"),
+    observe_only: bool = typer.Option(
+        False, "--observe-only", help="retain read-only public and authenticated inputs until this market ends; never trades"),
     account_check: bool = typer.Option(
         False, "--account-check", help="also observe the authenticated user stream and read account state with existing credentials; never creates credentials"),
     config_dir: str = typer.Option("config", help="config directory"),
 ) -> None:
-    """Read public metadata and observe both books for one BTC5m market; cannot trade."""
+    """Read or observe inputs for one BTC5m market; cannot trade."""
     from polymaker.logging import configure, get_logger
     from polymaker.rdp_live import RDPBootstrapError, preflight_rdp_market
 
     cfg = Config.load(config_dir)
     configure(json_file=Path(cfg.paths.log_dir) / "rdp-live-preflight.jsonl")
     log = get_logger("rdp.live.cli")
+    if preflight_only and observe_only:
+        log.error("rdp_observation_result", result="FAILURE", category="CONFLICTING_MODES",
+                  slug=market, mode="READ_ONLY_OBSERVATION", real_money_trading_performed=False)
+        console.print("[red]Choose only one of --preflight-only or --observe-only; no network request was made.[/red]")
+        raise typer.Exit(2)
+    if observe_only:
+        from polymaker.rdp_runtime import RDPObservationError, observe_rdp_market
+
+        try:
+            result = asyncio.run(observe_rdp_market(cfg, market))
+        except RDPBootstrapError as exc:
+            console.print(f"[red]RDP observation failed: {exc.category}; read-only inputs were closed.[/red]")
+            raise typer.Exit(1) from exc
+        except RDPObservationError as exc:
+            console.print(f"[red]RDP observation failed: {exc.category}; read-only inputs were closed.[/red]")
+            raise typer.Exit(1) from exc
+        console.print(
+            f"[green]RDP read-only observation ended[/green] | mode={result.mode} | {result.slug} | "
+            f"condition {result.condition_id} | {result.category} | "
+            "real_money_trading_performed=false"
+        )
+        return
     if not preflight_only:
         log.error("rdp_bootstrap_result", result="FAILURE", category="PREFLIGHT_REQUIRED",
                   slug=market, real_money_trading_performed=False)

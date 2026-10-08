@@ -95,6 +95,21 @@ async def test_readiness_subscribes_exact_tokens_and_captures_same_generation(mo
 
 
 @pytest.mark.asyncio
+async def test_rdp_single_attempt_transport_does_not_restart_after_disconnect(monkeypatch):
+    service = RDPMarketDataService(bootstrap(), single_attempt=True)
+    calls = []
+
+    async def disconnected():
+        calls.append("connection-ended")
+
+    monkeypatch.setattr(service, "_connect_and_listen", disconnected)
+    await service.run()
+    assert calls == ["connection-ended"]
+    assert service.single_attempt is True
+    assert RDPMarketDataService(bootstrap()).single_attempt is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("frames", [
     [], [snapshot("up")],
     [snapshot("up", bids=[], asks=[]), snapshot("down")],

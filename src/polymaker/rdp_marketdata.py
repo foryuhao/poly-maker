@@ -70,8 +70,11 @@ def _quantity(value: Any, *, category: str, field: str) -> float:
 class RDPMarketDataService(MarketDataService):
     """Reuse shared transport/mutation while validating selected frames first."""
 
-    def __init__(self, bootstrap: RDPBootstrap, *, url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market") -> None:
+    def __init__(self, bootstrap: RDPBootstrap, *,
+                 url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+                 single_attempt: bool = False) -> None:
         self.bootstrap = bootstrap
+        self.single_attempt = single_attempt
         self.condition_id = bootstrap.market.condition_id
         self.token_ids = tuple(item.token_id for item in bootstrap.token_metadata)
         self._changed = asyncio.Event()
@@ -94,6 +97,20 @@ class RDPMarketDataService(MarketDataService):
             book = self.book(metadata.token_id)
             assert book is not None
             book.set_tick_size(metadata.tick_size)
+
+    async def run(self) -> None:
+        """Optionally fail this RDP observation on its first transport end."""
+        if not self.single_attempt:
+            await super().run()
+            return
+        self.disconnected_since = time.time()
+        try:
+            await self._connect_and_listen()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - health is surfaced by owner category
+            self._fatal = RDPFeedError("FEED_SERVICE_FAILED", f"market WS service failed ({type(exc).__name__})")
+            self._changed.set()
 
     def _selected_identity(self, msg: dict[str, Any], token: str) -> None:
         if msg.get("market") != self.condition_id:
@@ -243,19 +260,41 @@ async def await_rdp_feed(
     now=time.time,
 ) -> RDPFeedReadiness:
     """Wait for same-generation books and always stop/await the owned WS task."""
-    remaining = bootstrap.end_epoch - now()
-    if remaining <= 0:
-        raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended before WS readiness")
-    if not math.isfinite(timeout_s) or timeout_s < 0:
-        raise RDPFeedError("INVALID_FEED_TIMEOUT", "market WS readiness timeout must be finite and nonnegative")
-    deadline_s = min(timeout_s, remaining)
-    if deadline_s <= 0:
-        raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS readiness deadline is zero")
-    service = RDPMarketDataService(bootstrap)
-    task = asyncio.create_task(service.run(), name="rdp-market-ws")
-    deadline = asyncio.get_running_loop().time() + deadline_s
-    task.add_done_callback(lambda _task: service._changed.set())
+    _readiness_deadline_s(bootstrap, timeout_s, now)
+    session = RDPMarketDataSession(bootstrap)
+    await session.start()
     try:
+        return await session.wait_ready(timeout_s=timeout_s, now=now)
+    finally:
+        await session.aclose()
+
+
+class RDPMarketDataSession:
+    """Retain one selected-market service after its bounded readiness capture."""
+
+    def __init__(self, bootstrap: RDPBootstrap, *, single_attempt: bool = False) -> None:
+        self.service = RDPMarketDataService(bootstrap, single_attempt=single_attempt)
+        self.task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self.task is not None:
+            raise RuntimeError("RDP market-data session already started")
+        self.task = asyncio.create_task(self.service.run(), name="rdp-market-ws")
+        self.task.add_done_callback(lambda _task: self.service._changed.set())
+
+    async def wait_ready(
+        self,
+        *,
+        timeout_s: float = 15.0,
+        now=time.time,
+    ) -> RDPFeedReadiness:
+        service = self.service
+        task = self.task
+        if task is None:
+            raise RuntimeError("RDP market-data session is not started")
+        bootstrap = service.bootstrap
+        deadline_s = _readiness_deadline_s(bootstrap, timeout_s, now)
+        deadline = asyncio.get_running_loop().time() + deadline_s
         while True:
             loop = asyncio.get_running_loop()
             if loop.time() >= deadline:
@@ -292,10 +331,38 @@ async def await_rdp_feed(
                 await asyncio.wait_for(service._changed.wait(), timeout=remaining)
             except TimeoutError as exc:
                 raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS did not produce two current books") from exc
-    except asyncio.CancelledError:
-        raise
-    finally:
-        service.stop()
-        if not task.done():
+
+    def failure_category(self, expected_generation: int | None = None) -> str | None:
+        if self.service._fatal is not None:
+            return self.service._fatal.category
+        if self.task is None:
+            return "FEED_SERVICE_NOT_STARTED"
+        if self.task.done():
+            return "FEED_SERVICE_STOPPED"
+        if not self.service.connected:
+            return "FEED_DISCONNECTED"
+        if (expected_generation is not None
+                and self.service.connection_generation != expected_generation):
+            return "FEED_GENERATION_CHANGED"
+        return None
+
+    async def aclose(self) -> None:
+        task = self.task
+        self.task = None
+        self.service.stop()
+        if task is not None and not task.done():
             task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+
+def _readiness_deadline_s(bootstrap: RDPBootstrap, timeout_s: float, now) -> float:
+    remaining = bootstrap.end_epoch - now()
+    if remaining <= 0:
+        raise RDPFeedError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended before WS readiness")
+    if not math.isfinite(timeout_s) or timeout_s < 0:
+        raise RDPFeedError("INVALID_FEED_TIMEOUT", "market WS readiness timeout must be finite and nonnegative")
+    deadline_s = min(timeout_s, remaining)
+    if deadline_s <= 0:
+        raise RDPFeedError("FEED_STARTUP_TIMEOUT", "market WS readiness deadline is zero")
+    return deadline_s

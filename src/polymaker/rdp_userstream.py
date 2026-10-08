@@ -64,6 +64,49 @@ class RDPAuthenticatedObservation:
     user_channel: RDPUserChannelEvidence
 
 
+class RDPUserChannelSession:
+    """Own one authenticated read-only stream, processor, store, and gateway."""
+
+    def __init__(self, gateway, store, processor, stream, stream_task,
+                 observation: RDPAuthenticatedObservation) -> None:
+        self.gateway = gateway
+        self.store = store
+        self.processor = processor
+        self.stream = stream
+        self.stream_task = stream_task
+        self.observation = observation
+        self._closed = False
+
+    def failure_category(self, expected_generation: int) -> str | None:
+        if self.stream.failure_category is not None:
+            return self.stream.failure_category
+        if self.stream_task.done():
+            return "USER_STREAM_TERMINATED"
+        if not self.stream.connected:
+            return "USER_STREAM_DISCONNECTED"
+        if self.stream.connection_generation != expected_generation:
+            return "USER_STREAM_GENERATION_CHANGED"
+        if not self.stream.heartbeat_current:
+            return "APPLICATION_HEARTBEAT_STALE"
+        return None
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        interrupted = await _drain_tasks((self.stream_task,))
+        try:
+            self.store.close()
+        finally:
+            close = getattr(self.gateway, "aclose", None)
+            if callable(close):
+                interrupted = await _finish_cleanup(close()) or interrupted
+            else:
+                self.gateway.close()
+        if interrupted:
+            raise asyncio.CancelledError
+
+
 async def _drain_tasks(tasks: tuple[asyncio.Task[Any] | None, ...]) -> bool:
     pending = [task for task in tasks if task is not None]
     for task in pending:
@@ -98,17 +141,20 @@ async def _finish_cleanup(awaitable: Any) -> bool:
     return interrupted
 
 
-async def observe_rdp_account_and_user_channel(
+async def start_rdp_user_channel_session(
     cfg: Config,
     bootstrap: RDPBootstrap,
     *,
     now: Callable[[], float] = time.time,
     monotonic: Callable[[], float] = time.monotonic,
-    gateway_factory: Callable[..., ExecutionGateway] = ExecutionGateway,
-    user_stream_factory: Callable[..., UserStream] = UserStream,
-    store_factory: Callable[..., StateStore] = StateStore,
-) -> RDPAuthenticatedObservation:
-    """Read account state while an official authenticated user stream is alive."""
+    gateway_factory: Callable[..., ExecutionGateway] | None = None,
+    user_stream_factory: Callable[..., UserStream] | None = None,
+    store_factory: Callable[..., StateStore] | None = None,
+) -> RDPUserChannelSession:
+    """Open retained read-only user/account ownership and capture startup state."""
+    gateway_factory = gateway_factory or ExecutionGateway
+    user_stream_factory = user_stream_factory or UserStream
+    store_factory = store_factory or StateStore
     try:
         config, signer, funder = _prepare_account_config(cfg, bootstrap, now)
     except RDPAccountError as exc:
@@ -121,6 +167,7 @@ async def observe_rdp_account_and_user_channel(
     stream_task: asyncio.Task[None] | None = None
     pong_task: asyncio.Task[None] | None = None
     account_task: asyncio.Task[RDPAccountSnapshot] | None = None
+    retained = False
     try:
         await gateway.connect(derive_only=True)
         _validate_connected_gateway(gateway, signer, funder)
@@ -213,7 +260,11 @@ async def observe_rdp_account_and_user_channel(
             heartbeat_receipt_ts=receipt_ts,
             capture_ts=capture_ts,
         )
-        return RDPAuthenticatedObservation(account=account, user_channel=evidence)
+        observation = RDPAuthenticatedObservation(account=account, user_channel=evidence)
+        assert store is not None and stream is not None
+        session = RDPUserChannelSession(gateway, store, processor, stream, stream_task, observation)
+        retained = True
+        return session
     except RDPAccountError as exc:
         error = RDPUserChannelError(exc.category, str(exc))
         _attach_stream_evidence(error, stream)
@@ -231,15 +282,38 @@ async def observe_rdp_account_and_user_channel(
         _attach_stream_evidence(error, stream)
         raise error from None
     finally:
-        cleanup_cancelled = await _drain_tasks((pong_task, account_task, stream_task))
-        try:
-            if store is not None:
-                store.close()
-        finally:
-            close = getattr(gateway, "aclose", None)
-            if callable(close):
-                cleanup_cancelled = await _finish_cleanup(close()) or cleanup_cancelled
-            else:
-                gateway.close()
-        if cleanup_cancelled:
-            raise asyncio.CancelledError
+        if not retained:
+            cleanup_cancelled = await _drain_tasks((pong_task, account_task, stream_task))
+            try:
+                if store is not None:
+                    store.close()
+            finally:
+                close = getattr(gateway, "aclose", None)
+                if callable(close):
+                    cleanup_cancelled = await _finish_cleanup(close()) or cleanup_cancelled
+                else:
+                    gateway.close()
+            if cleanup_cancelled:
+                raise asyncio.CancelledError
+
+
+async def observe_rdp_account_and_user_channel(
+    cfg: Config,
+    bootstrap: RDPBootstrap,
+    *,
+    now: Callable[[], float] = time.time,
+    monotonic: Callable[[], float] = time.monotonic,
+    gateway_factory: Callable[..., ExecutionGateway] | None = None,
+    user_stream_factory: Callable[..., UserStream] | None = None,
+    store_factory: Callable[..., StateStore] | None = None,
+) -> RDPAuthenticatedObservation:
+    """Preserve the bounded account/user check API and its complete cleanup."""
+    session = await start_rdp_user_channel_session(
+        cfg, bootstrap, now=now, monotonic=monotonic,
+        gateway_factory=gateway_factory, user_stream_factory=user_stream_factory,
+        store_factory=store_factory,
+    )
+    try:
+        return session.observation
+    finally:
+        await session.aclose()

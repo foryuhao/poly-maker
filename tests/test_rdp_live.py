@@ -356,6 +356,51 @@ def test_rdp_live_help_is_explicitly_read_only():
     assert "authenticated user stream" in result.stdout.lower()
 
 
+def test_rdp_live_help_includes_observe_only_mode():
+    result = CliRunner().invoke(app, ["rdp-live", "--help"])
+    assert result.exit_code == 0
+    assert "--observe-only" in result.stdout
+    assert "market ends" in result.stdout.lower()
+
+
+def test_observe_only_conflict_is_rejected_before_runtime_or_network(tmp_path, monkeypatch):
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _directory: cfg)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("conflicting CLI modes reached the observation runtime")
+
+    monkeypatch.setattr("polymaker.rdp_runtime.observe_rdp_market", forbidden)
+    result = CliRunner().invoke(
+        app, ["rdp-live", "--market", SLUG, "--preflight-only", "--observe-only"],
+    )
+    assert result.exit_code == 2
+    assert "no network request was made" in " ".join(result.stdout.split())
+
+
+def test_observe_only_cli_reports_safe_market_end_fixture(tmp_path, monkeypatch):
+    from polymaker.rdp_runtime import RDPObservationTermination
+
+    cfg = Config(paths=PathsConfig(log_dir=str(tmp_path / "logs")))
+    monkeypatch.setattr(Config, "load", lambda _directory: cfg)
+    calls = []
+
+    async def fake_observe(_cfg, slug):
+        calls.append(slug)
+        return RDPObservationTermination(
+            "READ_ONLY_OBSERVATION", slug, "condition-btc5m", 1, 2,
+            "MARKET_END", "selected market interval ended", 1, 1,
+        )
+
+    monkeypatch.setattr("polymaker.rdp_runtime.observe_rdp_market", fake_observe)
+    result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG, "--observe-only"])
+    assert result.exit_code == 0, result.stdout
+    assert calls == [SLUG]
+    assert "mode=READ_ONLY_OBSERVATION" in result.stdout
+    assert "MARKET_END" in result.stdout
+    assert "real_money_trading_performed=false" in result.stdout
+
+
 def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_scope(
     tmp_path, monkeypatch,
 ):
