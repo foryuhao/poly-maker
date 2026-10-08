@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0020`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0020 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0017 | Initial NORMAL placement ownership capture | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -96,7 +96,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0020 Architect selecting next prerequisite. ITER-0019 fully archived990d568; see RESULT,Reviewer05,receipt06. Scoped original-receipt FillWindow ready without execution authority. Submission/automaticcycles/subsequentNORMAL/REBALANCE/metrics remain outstanding; no real-money authority.
+ITER-0020 contract01 approved: explicitly activated started-window coordinator delegates once to existing close barrier; Worker pending. ITER-0019 fully archived990d568; see RESULT,Reviewer05,receipt06. Scoped original-receipt FillWindow ready without execution authority. Submission/automaticcycles/subsequentNORMAL/REBALANCE/metrics remain outstanding; no real-money authority.
 
 ---
 
