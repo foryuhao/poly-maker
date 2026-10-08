@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`7a787b1d83b4894e71bb2ec16cd57bfc92428561`
+`990d5689b165ac1a200c2cf6d50c55a4c6d3a23c`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0019`
+Current Iteration: `ITER-0020`
 
-Current Stage: `ARCHIVE`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0020 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0017 | Initial NORMAL placement ownership capture | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0016 | Initial empty-run NORMAL admission composition | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -95,7 +96,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0019 Reviewer05 PASS, all four findings closed; archive pending. Confirmed receipt FillWindow ready without execution authority. Submission/cycles/subsequentNORMAL/REBALANCE/metrics remain outstanding.
+ITER-0020 Architect selecting next prerequisite. ITER-0019 fully archived990d568; see RESULT,Reviewer05,receipt06. Scoped original-receipt FillWindow ready without execution authority. Submission/automaticcycles/subsequentNORMAL/REBALANCE/metrics remain outstanding; no real-money authority.
 
 ---
 
