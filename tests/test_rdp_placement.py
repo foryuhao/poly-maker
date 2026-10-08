@@ -112,7 +112,7 @@ def placement_scope(tmp_path):
     )
     store = StateStore(":memory:")
     processor = UserEventProcessor(store, retain_confirmed_receipts=True)
-    def make_session(fill_window_s=3.0):
+    def make_session(fill_window_s=3.0, *, monotonic_ns=None, sleep=None):
         public = SimpleNamespace(
             service=SimpleNamespace(connection_generation=3),
             failure_category=lambda _generation: None,
@@ -134,9 +134,10 @@ def placement_scope(tmp_path):
             bootstrap, public_session=public, user_session=user,
             feed=SimpleNamespace(connection_generation=3),
             backing=admission.backing,
-            now=time.time, sleep=asyncio.sleep, poll_interval_s=.1,
+            now=time.time, sleep=asyncio.sleep if sleep is None else sleep, poll_interval_s=.1,
             started_at=time.time(),
             fill_window_s=fill_window_s,
+            monotonic_ns=monotonic_ns,
         )
 
     session = make_session()
@@ -329,16 +330,41 @@ async def _compose_accepted_initial_pair(scope):
 
 def _send_window_trade(scope, order_id, *, status, trade_id="window-fill",
                        receipt_ns=None, generation=4, receipt_us=1_800_000_000_000_000,
-                       size=1.0):
+                       size=1.0, price=.39):
     record = scope.processor.owned_record(order_id)
     event = TradeEvent(
-        token_id=record["token_id"], our_side=Side.BUY, price=.39, size=size,
+        token_id=record["token_id"], our_side=Side.BUY, price=price, size=size,
         trade_id=trade_id, status=status, ts=1_800_000_000.0,
         maker_order_id=order_id, market_id=scope.market.condition_id,
     )
     scope.processor.on_trade(
         event, scope.market.condition_id, received_at_us=receipt_us,
         received_monotonic_ns=receipt_ns, connection_generation=generation,
+    )
+
+
+class _DeterministicMonotonicClock:
+    def __init__(self, now_ns):
+        self.now_ns = now_ns
+
+    def read(self):
+        return self.now_ns
+
+    async def sleep(self, delay_s):
+        self.now_ns += round(delay_s * 1_000_000_000)
+        await asyncio.sleep(0)
+
+
+def _send_matched_then_confirmed(
+    scope, order_id, *, receipt_ns, trade_id, size=1.0, price=.39,
+):
+    _send_window_trade(
+        scope, order_id, status=TradeState.MATCHED, receipt_ns=receipt_ns,
+        trade_id=trade_id, size=size, price=price,
+    )
+    _send_window_trade(
+        scope, order_id, status=TradeState.CONFIRMED, receipt_ns=receipt_ns,
+        trade_id=trade_id, size=size, price=price,
     )
 
 
@@ -2127,4 +2153,805 @@ async def test_unresolved_zero_id_blocks_rearm_and_session_close_marks_armed_unk
     assert result.acknowledged_order_ids == ()
     assert result.replacement_blocked and scope.owner.blocks_initial_admission
     assert scope.processor._pending
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_requires_started_window_and_valid_budget_without_gateway_calls(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+    try:
+        with pytest.raises(RDPPlacementError, match="FILL_WINDOW_NOT_STARTED"):
+            await scope.session.complete_initial_fill_window(attempt, close_budget_s=1)
+        for invalid in (0, -1, float("nan"), float("inf"), True):
+            with pytest.raises(RDPPlacementError, match="INVALID_CLOSE_BUDGET"):
+                await scope.session.complete_initial_fill_window(attempt, close_budget_s=invalid)
+        assert client.open_count == 0 and client.cancel_calls == []
+        assert scope.session.fill_window_completion_result is None
+    finally:
+        gateway.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rejects_attempt_and_registry_mismatch_before_gateway_reads(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(90_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="scope-check-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    try:
+        with pytest.raises(RDPPlacementError, match="FILL_WINDOW_ATTEMPT_SCOPE_INVALID"):
+            await scope.session.complete_initial_fill_window(
+                replace(attempt, slug="foreign-market"), close_budget_s=1,
+            )
+        scope.store.register_owned_order(
+            "yes-order", scope.market.condition_id, "yes-token", Side.BUY,
+            5, .40, "rdp_initial",
+        )
+        with pytest.raises(RDPPlacementError, match="FILL_WINDOW_REGISTRY_MISMATCH"):
+            await scope.session.complete_initial_fill_window(attempt, close_budget_s=1)
+        assert client.open_count == 0 and client.cancel_calls == []
+        assert scope.session.fill_window_completion_result is None
+    finally:
+        gateway.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_waits_exact_original_deadline_even_after_full_natural_fills(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(100_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(quote for quote in quotes if quote.token_id == "yes-token")
+    no_quote = next(quote for quote in quotes if quote.token_id == "no-token")
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), size=5, price=yes_quote.price,
+        trade_id="yes-full",
+    )
+    _send_matched_then_confirmed(
+        scope, "no-order", receipt_ns=clock.read(), size=5, price=no_quote.price,
+        trade_id="no-full",
+    )
+    started = scope.session.initial_fill_window()
+    assert started.started and started.deadline_monotonic_ns == 103_000_000_000
+    gateway, client = _close_gateway(
+        scope, quotes,
+        extra_rows=(
+            {"id": "yes-order", "asset_id": "yes-token", "side": "BUY",
+             "price": str(yes_quote.price), "original_size": "5", "size_matched": "5",
+             "status": "MATCHED", "market": scope.market.condition_id},
+            {"id": "no-order", "asset_id": "no-token", "side": "BUY",
+             "price": str(no_quote.price), "original_size": "5", "size_matched": "5",
+             "status": "MATCHED", "market": scope.market.condition_id},
+        ),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "5",
+                             trade_id="yes-full"),
+                _rest_trade("no-order", "no-token", str(no_quote.price), "5",
+                             trade_id="no-full")),
+    )
+    first_read_times = []
+    client.open_hook = lambda _count: first_read_times.append(clock.read())
+    try:
+        result = await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+    finally:
+        gateway.close()
+
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert result.window_deadline_monotonic_ns == 103_000_000_000
+    assert clock.read() == 103_000_000_000
+    assert first_read_times and first_read_times[0] == 103_000_000_000
+    assert client.cancel_calls == []
+    assert result.close_result.barrier_complete
+    assert result.close_result.capital is not None and result.close_result.capital.certified
+    assert result.close_result.capital.snapshot.inventory.qy == 5
+    assert result.close_result.capital.snapshot.inventory.qn == 5
+    assert result.close_result.next_mode.value == "NORMAL"
+    assert not result.close_result.replacement_blocked
+    assert result.execution_authorized is False
+    assert scope.session.fill_window_completion_result is result
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_configured_fill_window_closes_at_exact_coordinator_deadline(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(125_000_000_000)
+    scope.session._fill_window_s = 1.25
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(quote for quote in quotes if quote.token_id == "yes-token")
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), price=yes_quote.price,
+        trade_id="configured-window-fill",
+    )
+    decision = scope.session.initial_fill_window()
+    assert decision.deadline_monotonic_ns == 126_250_000_000
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("1")),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                             trade_id="configured-window-fill"),),
+    )
+    reads = []
+    client.open_hook = lambda _count: reads.append(clock.read())
+    try:
+        result = await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+    finally:
+        gateway.close()
+
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert result.window_deadline_monotonic_ns == 126_250_000_000
+    assert clock.read() == 126_250_000_000
+    assert reads and reads[0] == 126_250_000_000
+    assert result.close_result.barrier_complete
+    assert result.close_result.next_mode.value == "NORMAL"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["public", "user"])
+async def test_same_generation_health_loss_blocks_continuation_with_consistent_close_evidence(
+    placement_scope, blocked_network, source,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(350_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(quote for quote in quotes if quote.token_id == "yes-token")
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), price=yes_quote.price,
+        trade_id=f"health-{source}-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("1")),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                             trade_id=f"health-{source}-fill"),),
+    )
+    completion = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        original_generation = (
+            scope.session.public_session.service.connection_generation
+            if source == "public"
+            else scope.session.user_session.observation.user_channel.connection_generation
+        )
+        failure = f"{source.upper()}_HEALTH_LOST"
+        if source == "public":
+            scope.session.public_session.failure_category = lambda _generation: failure
+        else:
+            scope.session.user_session.failure_category = lambda _generation: failure
+        scope.session._fill_window_wakeup.set()
+        result = await completion
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    current_generation = (
+        scope.session.public_session.service.connection_generation
+        if source == "public"
+        else scope.session.user_session.observation.user_channel.connection_generation
+    )
+    assert current_generation == original_generation
+    assert result.trigger == f"WINDOW_UNRELIABLE:{failure}"
+    assert result.close_result.barrier_complete
+    assert result.close_result.barrier.inventory.qy == 1
+    assert result.close_result.capital is not None
+    assert not result.close_result.capital.certified
+    assert result.close_result.next_mode is None
+    assert result.close_result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_id", "order_id", "expected_delta", "expected_cancel"),
+    [
+        ("yes-token", "yes-order", 5, ("no-order",)),
+        ("no-token", "no-order", -5, ("yes-order",)),
+    ],
+    ids=["positive-five-rebalance", "negative-five-rebalance"],
+)
+async def test_coordinator_close_uses_confirmed_inventory_at_exact_rebalance_boundary(
+    placement_scope, blocked_network, token_id, order_id, expected_delta, expected_cancel,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(150_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, order_id, receipt_ns=clock.read(), size=5,
+        trade_id=f"boundary-{expected_delta}",
+    )
+    started = scope.session.initial_fill_window()
+    assert started.started and started.deadline_monotonic_ns == 153_000_000_000
+    clock.now_ns = started.deadline_monotonic_ns
+    gateway, client = _close_gateway(
+        scope, quotes, fill=(token_id, Decimal("5")),
+        trades=(_rest_trade(order_id, token_id, ".39", "5",
+                             trade_id=f"boundary-{expected_delta}"),),
+    )
+    try:
+        result = await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+    finally:
+        gateway.close()
+
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert result.close_result.barrier_complete
+    assert result.close_result.capital is not None and result.close_result.capital.certified
+    assert result.close_result.capital.snapshot.inventory.delta == expected_delta
+    assert result.close_result.next_mode.value == "REBALANCE"
+    assert client.cancel_calls == [expected_cancel]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reconciles_confirmed_fill_arriving_during_cancel(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(250_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), size=2, trade_id="initial-window-fill",
+    )
+    window = scope.session.initial_fill_window()
+    assert window.started
+    clock.now_ns = window.deadline_monotonic_ns
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("2")),
+        trades=(_rest_trade("yes-order", "yes-token", ".39", "2",
+                             trade_id="initial-window-fill"),),
+    )
+
+    def add_fill_during_cancel():
+        client.rows["yes-order"]["size_matched"] = "3"
+        client.trades.append(_rest_trade(
+            "yes-order", "yes-token", ".39", "1", trade_id="during-cancel-fill",
+        ))
+
+    client.cancel_hook = add_fill_during_cancel
+    try:
+        result = await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+    finally:
+        gateway.close()
+
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert result.close_result.barrier_complete
+    assert result.close_result.capital is not None and result.close_result.capital.certified
+    assert result.close_result.barrier.inventory.qy == 3
+    assert result.close_result.barrier.inventory.qn == 0
+    assert scope.processor.applied_fill_keys == {
+        ("initial-window-fill", "yes-order"),
+        ("during-cancel-fill", "yes-order"),
+    }
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_later_fill_and_book_movement_do_not_retime_active_coordinator(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(175_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="first-fill",
+    )
+    initial = scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    reads = []
+    client.open_hook = lambda _count: reads.append(clock.read())
+    task = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        _send_matched_then_confirmed(
+            scope, "no-order", receipt_ns=clock.read() + 1_000_000_000,
+            trade_id="later-fill", size=1,
+        )
+        clock.now_ns += 1_000_000_000
+        later = scope.session.initial_fill_window()
+        assert later.started and later.deadline_monotonic_ns == initial.deadline_monotonic_ns
+        service = scope.session.public_session.service
+        yes_book = service.book("yes-token")
+        assert yes_book is not None
+        yes_book.apply_snapshot([(.55, 10)], [(.57, 10)], 2)
+        yes_book.snapshot_generation = scope.session.public_generation
+        service.book_filter.evaluate = lambda *_args, **_kwargs: SimpleNamespace(
+            ready=True, rejected=True, reasons=("SYNTHETIC_BOOK_FILTER_REJECTION",),
+        )
+        assert scope.session.book_filter_result().rejected
+        after_book = scope.session.initial_fill_window()
+        assert after_book.deadline_monotonic_ns == initial.deadline_monotonic_ns
+        assert client.open_count == 0 and client.cancel_calls == []
+        clock.now_ns = initial.deadline_monotonic_ns
+        release_sleep.set()
+        result = await task
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert result.window_deadline_monotonic_ns == 178_000_000_000
+    assert reads and reads[0] == 178_000_000_000
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_coordinator_and_explicit_close_cannot_overlap(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(200_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="overlap-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    try:
+        owner_task = asyncio.create_task(
+            scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+        )
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        with pytest.raises(RDPPlacementError, match="FILL_WINDOW_COORDINATOR_IN_PROGRESS"):
+            await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+        with pytest.raises(RDPPlacementError, match="FILL_WINDOW_COORDINATOR_IN_PROGRESS"):
+            await scope.session.close_initial_normal_placement(
+                attempt, deadline=asyncio.get_running_loop().time() + 2,
+            )
+        clock.now_ns += 3_000_000_000
+        release_sleep.set()
+        result = await owner_task
+    finally:
+        gateway.close()
+    assert result.trigger == "WINDOW_EXPIRED"
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_while_waiting_triggers_one_scoped_close(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(300_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="cancel-wait-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    owner_task = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        owner_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await owner_task
+    finally:
+        release_sleep.set()
+        gateway.close()
+    result = scope.session.fill_window_completion_result
+    assert result is not None and result.trigger == "CALLER_CANCELLED"
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert result.close_result.replacement_blocked
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["public-generation", "user-generation", "market-end"])
+async def test_coordinator_closes_once_on_waiting_input_failure_or_market_end(
+    placement_scope, blocked_network, failure,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(350_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id=f"failure-{failure}",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    task = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        assert client.open_count == 0 and client.cancel_calls == []
+        if failure == "public-generation":
+            scope.session.public_session.service.connection_generation += 1
+        elif failure == "user-generation":
+            scope.session.user_session.observation.user_channel.connection_generation += 1
+        else:
+            scope.session._now = lambda: float(scope.bootstrap.end_epoch)
+        scope.session._fill_window_wakeup.set()
+        result = await task
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    expected_trigger = "MARKET_END" if failure == "market-end" else (
+        "WINDOW_UNRELIABLE:INPUT_GENERATION_CHANGED"
+    )
+    assert result.trigger == expected_trigger
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert result.close_result.replacement_blocked
+    assert scope.session.fill_window_completion_result is result
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_session_teardown_wakes_and_drains_waiting_coordinator(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(375_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="teardown-wait-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(scope, quotes)
+    completion = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        teardown = asyncio.create_task(scope.session.aclose())
+        result = await completion
+        await teardown
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    assert result.trigger == "SESSION_TEARDOWN"
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert scope.session._fill_window_task.done()
+    assert scope.session.fill_window_completion_result is result
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["timing-contradiction", "quarantine"])
+async def test_unreliable_window_trigger_does_not_release_close_or_fabricate_next_mode(
+    placement_scope, blocked_network, failure,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(600_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id=f"unreliable-{failure}",
+    )
+    established = scope.session.initial_fill_window()
+    assert established.started and established.reliable
+    gateway, client = _close_gateway(scope, quotes)
+    completion = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        if failure == "timing-contradiction":
+            _send_matched_then_confirmed(
+                scope, "yes-order", receipt_ns=clock.read() - 1_000_000_000,
+                trade_id="earlier-after-start",
+            )
+            expected_reason = "WINDOW_UNRELIABLE:CONFIRMED_RECEIPT_PRECEDES_ESTABLISHED_WINDOW"
+        else:
+            scope.processor.quarantined_orders.add("yes-order")
+            expected_reason = "WINDOW_UNRELIABLE:FILL_EVIDENCE_QUARANTINED"
+        scope.session._fill_window_wakeup.set()
+        result = await completion
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    assert result.trigger == expected_reason
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert result.close_result.replacement_blocked
+    assert result.close_result.next_mode is None
+    assert (result.close_result.capital is None
+            or not result.close_result.capital.certified)
+    assert scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_timing_contradiction_preserves_consistent_close_inventory_but_blocks_release(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(600_000_000_000)
+    sleeper_entered = asyncio.Event()
+    release_sleep = asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(quote for quote in quotes if quote.token_id == "yes-token")
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), price=yes_quote.price,
+        trade_id="initial-on-time-fill",
+    )
+    established = scope.session.initial_fill_window()
+    assert established.started and established.deadline_monotonic_ns == 603_000_000_000
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("2")),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                             trade_id="initial-on-time-fill"),
+                _rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                             trade_id="contradictory-earlier-fill")),
+    )
+    completion = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=clock.read() - 1_000_000_000,
+            price=yes_quote.price, trade_id="contradictory-earlier-fill",
+        )
+        scope.session._fill_window_wakeup.set()
+        result = await completion
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    assert result.trigger == (
+        "WINDOW_UNRELIABLE:CONFIRMED_RECEIPT_PRECEDES_ESTABLISHED_WINDOW"
+    )
+    assert result.close_result.barrier_complete
+    assert result.close_result.barrier.inventory.qy == 2
+    assert result.close_result.capital is not None
+    assert not result.close_result.capital.certified
+    assert result.close_result.next_mode is None
+    assert result.close_result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_failed_owned_window_sleeper_triggers_one_sanitized_scoped_close(
+    placement_scope, blocked_network, caplog,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(650_000_000_000)
+    sleep_attempts = 0
+    sentinel = "private-window-sleeper-sentinel"
+
+    async def failed_sleep(_delay):
+        nonlocal sleep_attempts
+        sleep_attempts += 1
+        raise RuntimeError(sentinel)
+
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = failed_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(quote for quote in quotes if quote.token_id == "yes-token")
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), price=yes_quote.price,
+        trade_id="sleep-failure-fill",
+    )
+    scope.session.initial_fill_window()
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("1")),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                             trade_id="sleep-failure-fill"),),
+    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        result = await scope.session.complete_initial_fill_window(attempt, close_budget_s=2)
+    finally:
+        loop.set_exception_handler(previous_handler)
+        gateway.close()
+
+    await asyncio.sleep(0)
+    assert sleep_attempts == 1
+    assert result.trigger == "WINDOW_WAIT_FAILED:RuntimeError"
+    assert result.close_result.barrier_complete
+    assert result.close_result.replacement_blocked
+    assert result.close_result.next_mode is None
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert not unhandled
+    assert sentinel not in caplog.text and sentinel not in repr(result)
+    assert scope.session._fill_window_task.done()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sdk_method", ["open_orders", "cancel", "get_order", "get_trades"])
+@pytest.mark.parametrize("mode", ["caller-cancel", "teardown", "deadline"])
+async def test_coordinator_drains_each_real_gateway_operation_once(
+    placement_scope, blocked_network, sdk_method, mode,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(400_000_000_000)
+    scope.session._monotonic_ns = clock.read
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id=f"drain-{sdk_method}",
+    )
+    scope.session.initial_fill_window()
+    clock.now_ns += 3_000_000_000
+    gateway, client = _close_gateway_real_executor(scope, quotes)
+    sdk_started = threading.Event()
+    sdk_release = threading.Event()
+
+    def block_sdk(*_args):
+        sdk_started.set()
+        if not sdk_release.wait(timeout=5):
+            raise RuntimeError("fake SDK release timeout")
+
+    if sdk_method == "open_orders":
+        client.open_hook = block_sdk
+    elif sdk_method == "cancel":
+        client.cancel_hook = block_sdk
+    elif sdk_method == "get_order":
+        client.get_order_hook = block_sdk
+    else:
+        client.get_trades_hook = block_sdk
+
+    close_budget = .05 if mode == "deadline" else 5
+    operation = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=close_budget),
+    )
+    shutdown = None
+    expected_calls = {
+        "open_orders": (1, 0, 0, 0),
+        "cancel": (1, 1, 0, 0),
+        "get_order": (2, 1, 1, 0),
+        "get_trades": (2, 1, 1, 1),
+    }[sdk_method]
+
+    def calls():
+        return (client.open_count, len(client.cancel_calls),
+                client.get_order_count, client.get_trades_count)
+
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(sdk_started.wait, 2), timeout=3)
+        assert calls() == expected_calls
+        if mode == "caller-cancel":
+            operation.cancel()
+            await asyncio.sleep(0)
+            operation.cancel()
+            await asyncio.sleep(0)
+            assert not operation.done()
+            assert scope.session._fill_window_task is not None
+            sdk_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+            result = scope.session.fill_window_completion_result
+            assert result is not None
+        elif mode == "teardown":
+            shutdown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not shutdown.done() and not operation.done()
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            assert not shutdown.done() and not operation.done()
+            sdk_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            result = await operation
+            assert result.trigger == "WINDOW_EXPIRED"
+        else:
+            await asyncio.sleep(.07)
+            assert not operation.done()
+            sdk_release.set()
+            result = await operation
+            assert result.close_result.reason == "OPERATIONAL_DEADLINE"
+    finally:
+        sdk_release.set()
+        if not operation.done():
+            operation.cancel()
+            with suppress(asyncio.CancelledError):
+                await operation
+        if shutdown is not None and not shutdown.done():
+            shutdown.cancel()
+            with suppress(asyncio.CancelledError):
+                await shutdown
+        gateway.close()
+
+    final_calls = expected_calls if mode == "deadline" else (3, 1, 4, 2)
+    assert calls() == final_calls
+    assert scope.session._fill_window_task.done()
+    assert scope.session._placement_close_task is None
+    assert scope.owner.blocks_initial_admission
     assert blocked_network == []

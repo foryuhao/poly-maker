@@ -110,6 +110,23 @@ class RDPInitialPlacementClose:
     execution_authorized: bool = field(default=False, init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class RDPFillWindowCompletion:
+    """Retained result of one explicitly activated initial FillWindow close."""
+
+    attempt_id: int
+    slug: str
+    condition_id: str
+    acknowledged_order_ids: tuple[str, ...]
+    trigger: str
+    window_deadline_monotonic_ns: int
+    operational_close_deadline: float
+    close_result: RDPInitialPlacementClose
+    started_monotonic_ns: int
+    completed_monotonic_ns: int
+    execution_authorized: bool = field(default=False, init=False)
+
+
 class RDPInputSession:
     """Retain one public service and one authenticated user/account owner."""
 
@@ -119,7 +136,8 @@ class RDPInputSession:
                  now: Callable[[], float], sleep: Callable[[float], Any],
                  poll_interval_s: float, started_at: float,
                  account_max_age_s: float | None = None,
-                 fill_window_s: float = 3.0) -> None:
+                 fill_window_s: float = 3.0,
+                 monotonic_ns: Callable[[], int] | None = None) -> None:
         self.bootstrap = bootstrap
         self.public_session = public_session
         self.user_session = user_session
@@ -133,6 +151,7 @@ class RDPInputSession:
         self.started_at = started_at
         self._now = now
         self._sleep = sleep
+        self._monotonic_ns = monotonic_ns or time.monotonic_ns
         self._poll_interval_s = poll_interval_s
         self._account_max_age_s = (Config().risk.user_ws_blind_halt_s
                                    if account_max_age_s is None else account_max_age_s)
@@ -143,6 +162,10 @@ class RDPInputSession:
         self._admission_task: asyncio.Task[Any] | None = None
         self._account_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
+        self._fill_window_task: asyncio.Task[RDPFillWindowCompletion] | None = None
+        self._fill_window_result: RDPFillWindowCompletion | None = None
+        self._fill_window_cancel_requested: str | None = None
+        self._fill_window_wakeup = asyncio.Event()
         self.placement_owner = RDPPlacementOwner(
             bootstrap, self.processor,
             getattr(self.user_session, "store", getattr(self.processor, "_store", None)),
@@ -159,6 +182,7 @@ class RDPInputSession:
         sleep: Callable[[float], Any] | None = None,
         poll_interval_s: float = 0.05,
         fill_window_s: float = 3.0,
+        monotonic_ns: Callable[[], int] | None = None,
         feed_timeout_s: float = 15.0,
         bootstrap_factory: Callable[..., Any] | None = None,
         public_session_factory: Callable[..., Any] | None = None,
@@ -227,6 +251,7 @@ class RDPInputSession:
                 started_at=started_at,
                 account_max_age_s=runtime_cfg.risk.user_ws_blind_halt_s,
                 fill_window_s=fill_window_s,
+                monotonic_ns=monotonic_ns,
             )
             failure = session._health_failure()
             if failure is not None:
@@ -541,7 +566,7 @@ class RDPInputSession:
         self, *, now_monotonic_ns: int | None = None,
     ) -> RDPFillWindowDecision:
         """Read the current attempt's receipt-time window without external calls."""
-        now_ns = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        now_ns = self._monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
         if isinstance(now_ns, bool) or not isinstance(now_ns, int) or now_ns < 0:
             raise ValueError("monotonic timestamp must be a non-negative integer")
         attempt = self.placement_owner.current
@@ -687,8 +712,209 @@ class RDPInputSession:
             closure_due=due, inventory=inventory,
         )
 
+    @property
+    def fill_window_completion_result(self) -> RDPFillWindowCompletion | None:
+        """Return the last completed explicitly activated FillWindow action."""
+        return self._fill_window_result
+
+    async def complete_initial_fill_window(
+        self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
+    ) -> RDPFillWindowCompletion:
+        """Wait for the retained window, then run its existing scoped close once."""
+        budget_s = _positive_finite_seconds(close_budget_s, "close budget")
+        active = self._fill_window_task
+        if active is not None and not active.done():
+            raise RDPPlacementError("FILL_WINDOW_COORDINATOR_IN_PROGRESS")
+        if self._fill_window_result is not None:
+            if (self._fill_window_result.attempt_id == attempt.attempt_id
+                    and self.placement_owner.current is attempt):
+                return self._fill_window_result
+            raise RDPPlacementError("FILL_WINDOW_COORDINATOR_ALREADY_USED")
+        current = self.placement_owner.current
+        if (self._closed or current is None or attempt is not current
+                or attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id
+                or not _is_complete_initial_pair(self.bootstrap, attempt)
+                or not attempt.replacement_blocked or attempt.execution_authorized):
+            raise RDPPlacementError("FILL_WINDOW_ATTEMPT_SCOPE_INVALID")
+        if self._placement_close_task is not None and not self._placement_close_task.done():
+            raise RDPPlacementError("PLACEMENT_CLOSE_IN_PROGRESS")
+        registry_snapshot = _placement_registry_snapshot(
+            self.processor, self.bootstrap, attempt,
+        )
+        if registry_snapshot is None:
+            raise RDPPlacementError("FILL_WINDOW_REGISTRY_MISMATCH")
+        decision = self.initial_fill_window()
+        if (decision.attempt_id != attempt.attempt_id or not decision.started
+                or decision.deadline_monotonic_ns is None):
+            raise RDPPlacementError("FILL_WINDOW_NOT_STARTED")
+
+        self._fill_window_cancel_requested = None
+        self._fill_window_wakeup.clear()
+        task = asyncio.create_task(
+            self._run_initial_fill_window_completion(
+                attempt, registry_snapshot, decision.deadline_monotonic_ns, budget_s,
+            ),
+            name="rdp-initial-fill-window-completion",
+        )
+        self._fill_window_task = task
+        log.info(
+            "rdp_fill_window_completion_started", condition_id=attempt.condition_id,
+            attempt_id=attempt.attempt_id,
+            acknowledged_order_ids=attempt.acknowledged_order_ids,
+            window_deadline_monotonic_ns=decision.deadline_monotonic_ns,
+            close_budget_s=budget_s, execution_authorized=False,
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._fill_window_cancel_requested = "CALLER_CANCELLED"
+            self._fill_window_wakeup.set()
+            await _drain_read_task(task)
+            raise
+
+    async def _run_initial_fill_window_completion(
+        self, attempt: RDPPlacementAttempt,
+        registry_snapshot: tuple[tuple[Any, ...], ...],
+        fixed_deadline_ns: int, close_budget_s: float,
+    ) -> RDPFillWindowCompletion:
+        started_ns = self._monotonic_ns()
+        trigger: str | None = None
+        while trigger is None:
+            if self._fill_window_cancel_requested is not None:
+                trigger = self._fill_window_cancel_requested
+                break
+            if self._closed:
+                trigger = "SESSION_TEARDOWN"
+                break
+            if self.placement_owner.current is not attempt:
+                trigger = "ATTEMPT_SCOPE_CHANGED"
+                break
+            if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) != registry_snapshot:
+                trigger = "REGISTRY_SCOPE_CHANGED"
+                break
+            try:
+                decision = self.initial_fill_window(now_monotonic_ns=self._monotonic_ns())
+            except Exception as exc:  # noqa: BLE001 - fail closed to scoped closure
+                trigger = f"WINDOW_EVALUATION_FAILED:{type(exc).__name__}"
+                break
+            if self._now() >= self.bootstrap.end_epoch or decision.reason == "MARKET_EXPIRED":
+                trigger = "MARKET_END"
+                break
+            if decision.reason == "SESSION_CLOSED":
+                trigger = "SESSION_TEARDOWN"
+                break
+            if not decision.reliable:
+                trigger = f"WINDOW_UNRELIABLE:{decision.reason or 'UNSPECIFIED'}"
+                break
+            if (not decision.started or decision.deadline_monotonic_ns != fixed_deadline_ns):
+                trigger = "WINDOW_DEADLINE_CHANGED"
+                break
+            if decision.closure_due:
+                trigger = "WINDOW_EXPIRED"
+                break
+            remaining_ns = fixed_deadline_ns - self._monotonic_ns()
+            market_remaining = self.bootstrap.end_epoch - self._now()
+            if remaining_ns <= 0:
+                continue
+            wait_s = min(
+                self._poll_interval_s,
+                remaining_ns / 1_000_000_000,
+                max(0.0, market_remaining),
+            )
+            if wait_s <= 0:
+                trigger = "MARKET_END" if market_remaining <= 0 else "WINDOW_EXPIRED"
+                break
+            try:
+                wait_failure = await self._wait_for_fill_window_wakeup(wait_s)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - avoid leaking waiter details
+                wait_failure = f"WINDOW_WAIT_FAILED:{type(exc).__name__}"
+            if self._fill_window_cancel_requested is not None:
+                continue
+            if wait_failure is not None:
+                trigger = wait_failure
+
+        operational_deadline = asyncio.get_running_loop().time() + close_budget_s
+        close_result: RDPInitialPlacementClose
+        try:
+            close_result = await self.close_initial_normal_placement(
+                attempt, deadline=operational_deadline,
+                _window_continuation_safe=(trigger == "WINDOW_EXPIRED"),
+            )
+        except asyncio.CancelledError:
+            # Coordinator ownership is retained by the session. This task is
+            # only cancelled by external teardown bugs; never retry closure.
+            raise
+        except Exception as exc:  # noqa: BLE001 - retain a sanitized immutable result
+            close_result = self._placement_close_result(
+                attempt, None, None,
+                reason=f"COORDINATED_CLOSE_FAILED:{type(exc).__name__}",
+                barrier_complete=False,
+            )
+        result = RDPFillWindowCompletion(
+            attempt_id=attempt.attempt_id, slug=attempt.slug,
+            condition_id=attempt.condition_id,
+            acknowledged_order_ids=attempt.acknowledged_order_ids,
+            trigger=trigger or "WINDOW_EXPIRED",
+            window_deadline_monotonic_ns=fixed_deadline_ns,
+            operational_close_deadline=operational_deadline,
+            close_result=close_result, started_monotonic_ns=started_ns,
+            completed_monotonic_ns=self._monotonic_ns(),
+        )
+        self._fill_window_result = result
+        log.info(
+            "rdp_fill_window_completion_finished", condition_id=attempt.condition_id,
+            attempt_id=attempt.attempt_id,
+            acknowledged_order_ids=attempt.acknowledged_order_ids,
+            window_deadline_monotonic_ns=fixed_deadline_ns,
+            operational_close_deadline=operational_deadline,
+            trigger=result.trigger,
+            barrier_complete=close_result.barrier_complete,
+            barrier_reason=(close_result.barrier.reason if close_result.barrier else None),
+            capital_certified=(close_result.capital.certified if close_result.capital else False),
+            replacement_blocked=close_result.replacement_blocked,
+            next_mode=(close_result.next_mode.value if close_result.next_mode else None),
+            execution_authorized=False,
+        )
+        return result
+
+    async def _wait_for_fill_window_wakeup(self, timeout_s: float) -> str | None:
+        self._fill_window_wakeup.clear()
+        sleeper: asyncio.Future[Any] | None = None
+        wake: asyncio.Task[bool] | None = None
+        failure: str | None = None
+        try:
+            try:
+                sleeper = asyncio.ensure_future(self._sleep(timeout_s))
+                wake = asyncio.create_task(self._fill_window_wakeup.wait())
+            except Exception as exc:  # noqa: BLE001 - only a sanitized category escapes
+                failure = f"WINDOW_WAIT_FAILED:{type(exc).__name__}"
+            if sleeper is not None and wake is not None:
+                await asyncio.wait({sleeper, wake}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            tasks = [task for task in (sleeper, wake) if task is not None]
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            # Retrieve every completed task outcome. In particular, a failed
+            # injected sleeper must not become an unhandled asyncio exception.
+            for task in tasks:
+                if not task.done() or task.cancelled():
+                    continue
+                try:
+                    task.result()
+                except Exception as exc:  # noqa: BLE001 - discard raw waiter error
+                    if task is sleeper and failure is None:
+                        failure = f"WINDOW_WAIT_FAILED:{type(exc).__name__}"
+        return failure
+
     async def close_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, *, deadline: float,
+        _window_continuation_safe: bool = True,
     ) -> RDPInitialPlacementClose:
         """Explicitly close this attempt's known owned IDs through the existing barrier."""
         current = self.placement_owner.current
@@ -697,6 +923,10 @@ class RDPInputSession:
                 or attempt.condition_id != self.bootstrap.market.condition_id
                 or attempt.outcome == "ARMED"):
             raise RDPPlacementError("PLACEMENT_ATTEMPT_NOT_ACTIVE")
+        coordinator = self._fill_window_task
+        if (coordinator is not None and not coordinator.done()
+                and asyncio.current_task() is not coordinator):
+            raise RDPPlacementError("FILL_WINDOW_COORDINATOR_IN_PROGRESS")
         active = self._placement_close_task
         if active is not None and not active.done():
             raise RDPPlacementError("PLACEMENT_CLOSE_IN_PROGRESS")
@@ -721,6 +951,7 @@ class RDPInputSession:
         task = asyncio.create_task(
             self._close_initial_normal_placement(
                 attempt, order_ids, registry_snapshot, deadline,
+                continuation_safe=_window_continuation_safe,
             ),
             name="rdp-initial-placement-close",
         )
@@ -738,6 +969,7 @@ class RDPInputSession:
     async def _close_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, order_ids: tuple[str, ...],
         registry_snapshot: tuple[tuple[Any, ...], ...], deadline: float,
+        *, continuation_safe: bool = True,
     ) -> RDPInitialPlacementClose:
         gateway = getattr(self.user_session, "gateway", None)
         if gateway is None:
@@ -775,6 +1007,12 @@ class RDPInputSession:
         reason = barrier.reason
         full_pair = _is_complete_initial_pair(self.bootstrap, attempt)
         state_reliable, health_reason = self._close_state_reliable()
+        if not continuation_safe:
+            # Risk closure/reconciliation still runs and records known inventory,
+            # but an interrupted or unreliable FillWindow cannot certify the next
+            # action or release the placement owner.
+            state_reliable = False
+            health_reason = health_reason or "FILL_WINDOW_CONTINUATION_UNRELIABLE"
         if barrier.complete and full_pair:
             capital = project_rdp_capital(
                 self.bootstrap.market, self.processor, set(order_ids), [],
@@ -929,10 +1167,16 @@ class RDPInputSession:
         if self._closed:
             return
         self._closed = True
+        interrupted = False
+        coordinator = self._fill_window_task
+        if (coordinator is not None and coordinator is not asyncio.current_task()
+                and not coordinator.done()):
+            self._fill_window_cancel_requested = "SESSION_TEARDOWN"
+            self._fill_window_wakeup.set()
+            interrupted = await _drain_read_task(coordinator)
         armed = self.placement_owner.current
         if armed is not None and armed.outcome == "ARMED":
             self.placement_owner.resolve(armed, asyncio.CancelledError())
-        interrupted = False
         close_task = self._placement_close_task
         if (close_task is not None and close_task is not asyncio.current_task()
                 and not close_task.done()):
@@ -1178,6 +1422,21 @@ def _same_decimal(actual: Any, expected: Any) -> bool:
         return False
     return (actual_value.is_finite() and expected_value.is_finite()
             and actual_value == expected_value)
+
+
+def _positive_finite_seconds(value: object, label: str) -> float:
+    if isinstance(value, bool):
+        raise RDPPlacementError(f"INVALID_{label.upper().replace(' ', '_')}")
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        raise RDPPlacementError(f"INVALID_{label.upper().replace(' ', '_')}") from None
+    if not number.is_finite() or number <= 0:
+        raise RDPPlacementError(f"INVALID_{label.upper().replace(' ', '_')}")
+    result = float(number)
+    if not math.isfinite(result) or result <= 0:
+        raise RDPPlacementError(f"INVALID_{label.upper().replace(' ', '_')}")
+    return result
 
 
 def _is_complete_initial_pair(
