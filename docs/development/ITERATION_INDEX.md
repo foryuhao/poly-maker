@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0018`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0018 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0018 | Retained initial-placement close barrier composition | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0017 | Initial NORMAL placement ownership capture | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0016 | Initial empty-run NORMAL admission composition | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0015 | Authoritative feed wiring for NORMAL Book Filter | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -94,7 +94,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0018 Architect selecting next missing prerequisite. ITER-0017 PASS fully archived a2ce5f16; see RESULT, Reviewer05 and receipt06. Initial placement ownership is integrated without execution authority. Submission, lifecycle/cycles, REBALANCE and complete metrics remain outstanding.
+ITER-0018 contract01 approved: compose existing close barrier and post-close capital proof in retained session; Worker pending. ITER-0017 PASS fully archived a2ce5f16; see RESULT, Reviewer05 and receipt06. Initial placement ownership is integrated without execution authority. Submission, lifecycle/cycles, REBALANCE and complete metrics remain outstanding.
 
 ---
 
