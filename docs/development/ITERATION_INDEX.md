@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`42a3ac58b1167115f8818b7930cd456fc57a345e`
+`1f4f53356c4a55e300c30567707d02fe1db9f0f1`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0014`
+Current Iteration: `ITER-0015`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0014 | Shared single-market read-only input-session lifetime | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVE_PENDING | NOT_RUN | PENDING |
+| ITER-0015 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0014 | Shared single-market read-only input-session lifetime | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0012 | Frozen $30 initial capital backing | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0011 | Read-only authenticated account snapshot | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -90,7 +91,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0014 contract01 approved; Reviewer09 PASS closes all six findings; final archive pending, next minimal prerequisite follows automatically. ITER-0013 PASS archived at42a3ac58; see RESULT, Reviewer07 and receipt08. Bounded public/account/user-channel evidence and startup backing exist. Continuous runtime ownership, confirmed-fill authority, cycle orchestration and metrics remain outstanding. Approved $5 reserve/total-variation decisions settled. No real-money authority.
+ITER-0015 Architect selects next minimum prerequisite. ITER-0014 PASS archived at1f4f5335; see RESULT, Reviewer09 and receipt10. Shared one-market read-only input lifetime now exists, with safe CLI fixture through market end. Trading cycle/lifecycle composition, continuous account reliability and complete metrics remain outstanding. Approved reserve/depth decisions settled. No real-money authority.
 
 ---
 
