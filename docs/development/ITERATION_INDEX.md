@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`1f4f53356c4a55e300c30567707d02fe1db9f0f1`
+`715521f7752cdca2e3a25075928778f417164c8e`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0015`
+Current Iteration: `ITER-0016`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0015 | Authoritative feed wiring for NORMAL Book Filter | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVE_PENDING | NOT_RUN | PENDING |
+| ITER-0016 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0015 | Authoritative feed wiring for NORMAL Book Filter | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0014 | Shared single-market read-only input-session lifetime | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0012 | Frozen $30 initial capital backing | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -91,7 +92,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0015 contract01 approved; Reviewer05 PASS; final archive then next smallest prerequisite automatically. ITER-0014 PASS archived at1f4f5335; see RESULT, Reviewer09 and receipt10. Shared one-market read-only input lifetime now exists, with safe CLI fixture through market end. Trading cycle/lifecycle composition, continuous account reliability and complete metrics remain outstanding. Approved reserve/depth decisions settled. No real-money authority.
+ITER-0016 Architect selects next minimum prerequisite. ITER-0015 PASS archived715521f7; see RESULT,Reviewer05,receipt06. Existing NORMAL Book Filter is now wired to authoritative queued public events/socket receipts and retained session evaluation. Shared input lifetime exists. NORMAL admission/cycle/execution, current account/order reliability and complete metrics remain outstanding. Approved reserve/depth decisions settled; no real-money authority.
 
 ---
 
