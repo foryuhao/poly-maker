@@ -64,6 +64,7 @@ class UserEventProcessor:
         on_maker_fill: Callable[[TradeEvent], None] | None = None,
         research: CausalCapture | None = None,
         fill_truth_ready: Callable[[str], bool] | None = None,
+        retain_confirmed_receipts: bool = False,
     ) -> None:
         self._store = store
         self._on_change = on_change or (lambda _cid: None)
@@ -72,6 +73,12 @@ class UserEventProcessor:
         self._on_maker_fill = on_maker_fill or (lambda _ev: None)
         self._research = research
         self._fill_truth_ready = fill_truth_ready
+        self._retain_confirmed_receipts = retain_confirmed_receipts
+        # Optional arrival provenance for RDP's FillWindow. This is metadata
+        # attached to the existing processor evidence, never fill truth.
+        self.confirmed_receipts: dict[
+            tuple[str, str], tuple[int | None, int | None, int | None, str]
+        ] = {}
         self.fill_records: dict[tuple[str, str], TradeEvent] = {}
         self.applied_fill_keys: set[tuple[str, str]] = set()
         self.quarantined_fill_keys: set[tuple[str, str]] = set()
@@ -246,6 +253,15 @@ class UserEventProcessor:
             return
         if ev.size == 0:
             return
+        if self._retain_confirmed_receipts and ev.status is TradeState.CONFIRMED:
+            # Keep the first validated confirmation receipt. In particular,
+            # an untimed REST confirmation must not be "repaired" by a later
+            # duplicate WebSocket delivery with a newer arrival timestamp.
+            self.confirmed_receipts.setdefault(
+                key,
+                (received_at_us, received_monotonic_ns,
+                 connection_generation, source),
+            )
         log.info("owned_maker_fill_seen", trade_id=ev.trade_id, order_id=oid,
                  token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
                  price=ev.price, source=source, status=ev.status.value)

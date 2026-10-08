@@ -106,6 +106,7 @@ class UserStream:
         heartbeat_interval_s: float = 10.0,
         heartbeat_timeout_s: float = 15.0,
         sanitize_errors: bool = False,
+        capture_receipts: bool = False,
     ) -> None:
         self._creds = creds
         self._address = our_address
@@ -128,6 +129,7 @@ class UserStream:
         self._research = research
         self._receipt_us: int | None = None
         self._receipt_ns: int | None = None
+        self._capture_receipts = capture_receipts
         self._application_heartbeat = application_heartbeat
         self._heartbeat_interval_s = heartbeat_interval_s
         self._heartbeat_timeout_s = heartbeat_timeout_s
@@ -259,11 +261,18 @@ class UserStream:
                         name=f"user-ws-app-heartbeat-{generation}",
                     )
                 async for raw in ws:
-                    if self._application_heartbeat and await self._handle_probe_control(raw, ws, generation):
-                        continue
-                    if self._research is not None:
-                        self._receipt_us, self._receipt_ns = clock()
                     try:
+                        # RDP opts into receipt capture independently of the
+                        # research observer. Sample before heartbeat/control
+                        # handling can await; legacy research-only timing keeps
+                        # its existing placement after control-frame handling.
+                        if self._capture_receipts:
+                            self._receipt_us, self._receipt_ns = clock()
+                        if (self._application_heartbeat
+                                and await self._handle_probe_control(raw, ws, generation)):
+                            continue
+                        if self._research is not None and not self._capture_receipts:
+                            self._receipt_us, self._receipt_ns = clock()
                         self._handle(raw)
                     finally:
                         self._receipt_us = None

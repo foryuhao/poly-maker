@@ -111,8 +111,8 @@ def placement_scope(tmp_path):
         outstanding_execution_gates=("FINAL_SUBMIT_REVALIDATION",),
     )
     store = StateStore(":memory:")
-    processor = UserEventProcessor(store)
-    def make_session():
+    processor = UserEventProcessor(store, retain_confirmed_receipts=True)
+    def make_session(fill_window_s=3.0):
         public = SimpleNamespace(
             service=SimpleNamespace(connection_generation=3),
             failure_category=lambda _generation: None,
@@ -136,6 +136,7 @@ def placement_scope(tmp_path):
             backing=admission.backing,
             now=time.time, sleep=asyncio.sleep, poll_interval_s=.1,
             started_at=time.time(),
+            fill_window_s=fill_window_s,
         )
 
     session = make_session()
@@ -160,6 +161,7 @@ async def _async_noop():
 
 class FakeAccountReadGateway:
     def __init__(self):
+        self.calls = []
         self.address = "fake-signer"
         self.funder = "fake-funder"
         self.creds = SimpleNamespace(
@@ -168,17 +170,21 @@ class FakeAccountReadGateway:
         self.spender = "0x" + "a" * 40
 
     async def open_orders(self, *, strict_account, exact_decimal):
+        self.calls.append("open_orders")
         assert strict_account is True and exact_decimal is True
         return []
 
     async def positions(self, *, strict_account):
+        self.calls.append("positions")
         assert strict_account is True
         return {"yes-token": ("0", "0"), "no-token": ("0", "0")}
 
     async def required_collateral_spenders(self, _market):
+        self.calls.append("required_collateral_spenders")
         return (self.spender,)
 
     async def balance_allowance(self):
+        self.calls.append("balance_allowance")
         return {"balance": "30000000", "allowances": {self.spender: "30000000"}}
 
 
@@ -319,6 +325,510 @@ async def _compose_accepted_initial_pair(scope):
     resolved = scope.session.resolve_initial_normal_placement(attempt, outcome)
     assert resolved.outcome == "COMPLETE"
     return resolved, admission.candidate.quotes
+
+
+def _send_window_trade(scope, order_id, *, status, trade_id="window-fill",
+                       receipt_ns=None, generation=4, receipt_us=1_800_000_000_000_000,
+                       size=1.0):
+    record = scope.processor.owned_record(order_id)
+    event = TradeEvent(
+        token_id=record["token_id"], our_side=Side.BUY, price=.39, size=size,
+        trade_id=trade_id, status=status, ts=1_800_000_000.0,
+        maker_order_id=order_id, market_id=scope.market.condition_id,
+    )
+    scope.processor.on_trade(
+        event, scope.market.condition_id, received_at_us=receipt_us,
+        received_monotonic_ns=receipt_ns, connection_generation=generation,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [TradeState.MATCHED, TradeState.MINED, TradeState.RETRYING])
+async def test_fill_window_ignores_nonconfirmed_lifecycle_states(
+    placement_scope, blocked_network, status,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=status, receipt_ns=100_000_000_000)
+
+    decision = scope.session.initial_fill_window(now_monotonic_ns=102_000_000_000)
+
+    assert decision.reliable, decision.reason
+    assert not decision.started
+    assert not decision.closure_due and decision.reason == "AWAITING_CONFIRMED_FILL"
+    assert decision.attempt_id == attempt.attempt_id
+    assert decision.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_fill_window_starts_on_confirmed_receipt_and_expires_at_exact_boundary(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="confirmed", receipt_ns=99_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="confirmed", receipt_ns=100_000_000_000)
+    read_count = list(scope.session.user_session.gateway.calls)
+
+    before = scope.session.initial_fill_window(now_monotonic_ns=102_999_999_999)
+    boundary = scope.session.initial_fill_window(now_monotonic_ns=103_000_000_000)
+
+    assert before.reliable and before.started and not before.closure_due
+    assert before.first_receipt_monotonic_ns == 100_000_000_000
+    assert before.deadline_monotonic_ns == 103_000_000_000
+    assert boundary.closure_due and boundary.inventory is not None
+    assert boundary.inventory.qy == 1 and boundary.inventory.qn == 0
+    assert boundary.attempt_id == attempt.attempt_id
+    assert scope.session.user_session.gateway.calls == read_count
+    assert blocked_network == []
+    assert boundary.execution_authorized is False
+    with pytest.raises(TypeError):
+        type(boundary)(
+            boundary.attempt_id, boundary.slug, boundary.condition_id,
+            boundary.acknowledged_order_ids, boundary.reliable, boundary.reason,
+            boundary.started, boundary.first_receipt_monotonic_ns,
+            boundary.duration_s, boundary.deadline_monotonic_ns,
+            boundary.closure_due, boundary.inventory, execution_authorized=True,
+        )
+    with pytest.raises(ValueError):
+        replace(boundary, execution_authorized=True)
+
+
+@pytest.mark.asyncio
+async def test_fill_window_uses_configured_duration_for_attempt(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    scope.session = scope.make_session(fill_window_s=1.25)
+    scope.owner = scope.session.placement_owner
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="configured", receipt_ns=150_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="configured", receipt_ns=150_000_000_000)
+
+    before = scope.session.initial_fill_window(now_monotonic_ns=151_249_999_999)
+    boundary = scope.session.initial_fill_window(now_monotonic_ns=151_250_000_000)
+
+    assert before.duration_s == 1.25 and before.deadline_monotonic_ns == 151_250_000_000
+    assert not before.closure_due and boundary.closure_due
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_confirmed_before_matched_uses_original_receipt_once_admitted(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="out-of-order", receipt_ns=200_000_000_000)
+
+    waiting = scope.session.initial_fill_window(now_monotonic_ns=201_000_000_000)
+    assert waiting.reliable and not waiting.started
+
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="out-of-order", receipt_ns=202_000_000_000)
+    started = scope.session.initial_fill_window(now_monotonic_ns=202_000_000_000)
+
+    assert started.reliable and started.started
+    assert started.first_receipt_monotonic_ns == 200_000_000_000
+    assert started.deadline_monotonic_ns == 203_000_000_000
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_late_admission_of_earlier_confirmation_preserves_deadline_and_fails_closed(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    # NO CONFIRMED arrived first but is not yet accepted economic evidence.
+    _send_window_trade(scope, "no-order", status=TradeState.CONFIRMED,
+                       trade_id="earlier-no", receipt_ns=100_000_000_000)
+    waiting = scope.session.initial_fill_window(now_monotonic_ns=101_000_000_000)
+    assert waiting.reliable and not waiting.started
+
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="yes", receipt_ns=101_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="yes", receipt_ns=102_000_000_000)
+    established = scope.session.initial_fill_window(now_monotonic_ns=104_000_000_000)
+    assert established.reliable and established.deadline_monotonic_ns == 105_000_000_000
+
+    # The original 100s confirmation becomes accepted only now, after the
+    # 102s receipt established a later deadline.
+    _send_window_trade(scope, "no-order", status=TradeState.MATCHED,
+                       trade_id="earlier-no", receipt_ns=104_000_000_000)
+    contradicted = scope.session.initial_fill_window(now_monotonic_ns=104_500_000_000)
+
+    assert contradicted.started
+    assert contradicted.first_receipt_monotonic_ns == 102_000_000_000
+    assert contradicted.deadline_monotonic_ns == 105_000_000_000
+    assert not contradicted.reliable and not contradicted.closure_due
+    assert contradicted.reason == "CONFIRMED_RECEIPT_PRECEDES_ESTABLISHED_WINDOW"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_fill_window_uses_earliest_confirmation_across_both_orders_and_never_extends(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    for order_id, timestamp in (("no-order", 302_000_000_000),
+                                ("yes-order", 300_000_000_000)):
+        _send_window_trade(scope, order_id, status=TradeState.MATCHED,
+                           trade_id=f"confirmed-{order_id}", receipt_ns=timestamp - 1_000_000)
+        _send_window_trade(scope, order_id, status=TradeState.CONFIRMED,
+                           trade_id=f"confirmed-{order_id}", receipt_ns=timestamp)
+    initial = scope.session.initial_fill_window(now_monotonic_ns=303_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="later-fill", receipt_ns=310_000_000_000)
+    _send_window_trade(scope, "no-order", status=TradeState.CONFIRMED,
+                       trade_id="confirmed-no-order", receipt_ns=320_000_000_000)
+    later = scope.session.initial_fill_window(now_monotonic_ns=302_999_999_999)
+
+    assert initial.first_receipt_monotonic_ns == 300_000_000_000
+    assert initial.deadline_monotonic_ns == 303_000_000_000
+    assert initial.closure_due is True
+    assert later.first_receipt_monotonic_ns == initial.first_receipt_monotonic_ns
+    assert later.deadline_monotonic_ns == initial.deadline_monotonic_ns
+    assert later.closure_due is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_fill_window_fails_closed_for_missing_original_receipt(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="missing", receipt_ns=100_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="missing", receipt_ns=None)
+    missing = scope.session.initial_fill_window(now_monotonic_ns=101_000_000_000)
+    assert not missing.reliable and not missing.started
+    assert missing.reason == "CONFIRMED_RECEIPT_INVALID"
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="missing", receipt_ns=102_000_000_000)
+    duplicate = scope.session.initial_fill_window(now_monotonic_ns=103_000_000_000)
+    assert not duplicate.reliable and not duplicate.started
+    assert duplicate.reason == "CONFIRMED_RECEIPT_INVALID"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_rest_confirmed_recovery_cannot_fabricate_fill_window_receipt(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    event = TradeEvent(
+        "yes-token", Side.BUY, .39, 1, "rest-confirmed", TradeState.CONFIRMED,
+        1_800_000_000.0, "yes-order", scope.market.condition_id,
+    )
+    scope.processor.on_trade(event, scope.market.condition_id, source="REST")
+
+    decision = scope.session.initial_fill_window(now_monotonic_ns=500_000_000_000)
+
+    assert not decision.reliable and not decision.started
+    assert decision.reason == "CONFIRMED_RECEIPT_INVALID"
+    assert scope.processor.confirmed_receipts[("rest-confirmed", "yes-order")] == (
+        None, None, None, "REST",
+    )
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("receipt_ns", "generation", "now_ns", "expected_reason"),
+    [
+        (201_000_000_000, 4, 200_000_000_000, "CONFIRMED_RECEIPT_IN_FUTURE"),
+        (199_000_000_000, 99, 202_000_000_000, "CONFIRMED_RECEIPT_INVALID"),
+        (199_000_000_000, 4.0, 202_000_000_000, "CONFIRMED_RECEIPT_INVALID"),
+    ],
+    ids=["future", "wrong-generation", "float-generation"],
+)
+async def test_fill_window_rejects_unreliable_confirmation_receipt(
+    placement_scope, blocked_network, receipt_ns, generation, now_ns, expected_reason,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "no-order", status=TradeState.MATCHED,
+                       trade_id="trade", receipt_ns=receipt_ns - 1_000_000,
+                       generation=generation)
+    _send_window_trade(scope, "no-order", status=TradeState.CONFIRMED,
+                       trade_id="trade", receipt_ns=receipt_ns,
+                       generation=generation)
+    decision = scope.session.initial_fill_window(now_monotonic_ns=now_ns)
+    assert not decision.reliable and not decision.started
+    assert decision.reason == expected_reason
+    if expected_reason == "CONFIRMED_RECEIPT_INVALID":
+        # A later duplicate with valid metadata cannot repair the first receipt.
+        _send_window_trade(scope, "no-order", status=TradeState.CONFIRMED,
+                           trade_id="trade", receipt_ns=receipt_ns,
+                           generation=4)
+        duplicate = scope.session.initial_fill_window(now_monotonic_ns=now_ns + 1)
+        assert not duplicate.reliable and not duplicate.started
+        assert duplicate.reason == "CONFIRMED_RECEIPT_INVALID"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_preack_confirmations_replay_original_receipts_for_both_pair_legs(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt = _arm(scope)
+    for order_id, token_id, timestamp in (
+        # Reversed response rows bind no-order to the yes quote and vice versa.
+        ("no-order", "yes-token", 102_000_000_000),
+        ("yes-order", "no-token", 100_000_000_000),
+    ):
+        matched = TradeEvent(
+            token_id, Side.BUY, .39, 1, f"preack-{order_id}",
+            TradeState.MATCHED, 1_800_000_000.0, order_id,
+            scope.market.condition_id,
+        )
+        confirmed = replace(matched, status=TradeState.CONFIRMED)
+        scope.processor.on_trade(
+            matched, scope.market.condition_id, received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=timestamp - 1, connection_generation=4,
+        )
+        scope.processor.on_trade(
+            confirmed, scope.market.condition_id, received_at_us=1_800_000_000_000_001,
+            received_monotonic_ns=timestamp, connection_generation=4,
+        )
+
+    outcome, _client = await _gateway_outcome(
+        scope, list(reversed(_accepted_rows())),
+    )
+    resolved = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    decision = scope.session.initial_fill_window(now_monotonic_ns=102_999_999_999)
+
+    assert resolved.outcome == "COMPLETE"
+    assert scope.processor.confirmed_receipts[("preack-no-order", "no-order")] == (
+        1_800_000_000_000_001, 102_000_000_000, 4, "WS",
+    )
+    assert scope.processor.confirmed_receipts[("preack-yes-order", "yes-order")] == (
+        1_800_000_000_000_001, 100_000_000_000, 4, "WS",
+    )
+    assert decision.reliable and decision.started
+    assert decision.first_receipt_monotonic_ns == 100_000_000_000
+    assert decision.deadline_monotonic_ns == 103_000_000_000
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_fully_filled_pair_does_not_close_fill_window_early(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    for order_id in ("yes-order", "no-order"):
+        _send_window_trade(scope, order_id, status=TradeState.MATCHED,
+                           trade_id=f"full-{order_id}", receipt_ns=400_000_000_000,
+                           size=5)
+        _send_window_trade(scope, order_id, status=TradeState.CONFIRMED,
+                           trade_id=f"full-{order_id}", receipt_ns=400_000_000_000,
+                           size=5)
+    decision = scope.session.initial_fill_window(now_monotonic_ns=401_000_000_000)
+
+    assert decision.reliable and decision.started and not decision.closure_due
+    assert decision.deadline_monotonic_ns == 403_000_000_000
+    assert decision.inventory.qy == 5 and decision.inventory.qn == 5
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("public-generation", "INPUT_GENERATION_CHANGED"),
+        ("user-generation", "INPUT_GENERATION_CHANGED"),
+        ("public-health", "FEED_UNHEALTHY"),
+        ("session-closed", "SESSION_CLOSED"),
+        ("market-ended", "MARKET_EXPIRED"),
+    ],
+)
+async def test_fill_window_fails_closed_when_retained_scope_is_unreliable(
+    placement_scope, blocked_network, failure, expected,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="health-fill", receipt_ns=600_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="health-fill", receipt_ns=601_000_000_000)
+    if failure == "public-generation":
+        scope.session.public_session.service.connection_generation += 1
+    elif failure == "user-generation":
+        scope.session.user_session.observation.user_channel.connection_generation += 1
+    elif failure == "public-health":
+        scope.session.public_session.failure_category = lambda _generation: "FEED_UNHEALTHY"
+    elif failure == "session-closed":
+        scope.session._closed = True
+    else:
+        scope.session.bootstrap = replace(scope.bootstrap, end_epoch=time.time() - 1)
+
+    decision = scope.session.initial_fill_window(now_monotonic_ns=602_000_000_000)
+
+    assert not decision.reliable and not decision.closure_due
+    assert decision.reason == expected
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duration", [0, -1, True, float("inf"), float("nan"), 1e-12])
+async def test_invalid_fill_window_duration_rejected_before_bootstrap(
+    blocked_network, duration,
+):
+    from polymaker.rdp_runtime import RDPObservationError
+
+    bootstrap_called = False
+
+    async def bootstrap_factory(*_args, **_kwargs):
+        nonlocal bootstrap_called
+        bootstrap_called = True
+        raise AssertionError("invalid FillWindow reached market bootstrap")
+
+    with pytest.raises(RDPObservationError) as caught:
+        await RDPInputSession.open(
+            Config(), "btc-updown-5m-test", fill_window_s=duration,
+            bootstrap_factory=bootstrap_factory,
+        )
+
+    assert caught.value.category == "INVALID_FILL_WINDOW"
+    assert bootstrap_called is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["foreign-observed-id", "wrong-market", "wrong-token", "wrong-economics",
+     "zero-size", "failed", "quarantined"],
+)
+async def test_fill_window_adverse_fill_evidence_fails_closed_or_is_ignored(
+    placement_scope, blocked_network, case,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    if case == "foreign-observed-id":
+        event = TradeEvent(
+            "yes-token", Side.BUY, .39, 1, "observed-only", TradeState.CONFIRMED,
+            1_800_000_000.0, "observed-only-id", scope.market.condition_id,
+        )
+        scope.processor.on_trade(
+            event, scope.market.condition_id, received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=700_000_000_000, connection_generation=4,
+        )
+        decision = scope.session.initial_fill_window(now_monotonic_ns=701_000_000_000)
+        assert decision.reliable and not decision.started
+        assert decision.reason == "AWAITING_CONFIRMED_FILL"
+        assert decision.inventory.qy == decision.inventory.qn == 0
+    elif case == "quarantined":
+        scope.processor.quarantine_order("yes-order", "synthetic", notify=False)
+        decision = scope.session.initial_fill_window(now_monotonic_ns=701_000_000_000)
+        assert not decision.reliable and not decision.started
+        assert decision.reason == "FILL_EVIDENCE_QUARANTINED"
+    else:
+        values = {
+            "wrong-market": ("yes-token", .39, 1, "other-condition", TradeState.CONFIRMED),
+            "wrong-token": ("foreign-token", .39, 1, scope.market.condition_id, TradeState.CONFIRMED),
+            "wrong-economics": ("yes-token", .99, 1, scope.market.condition_id, TradeState.CONFIRMED),
+            "zero-size": ("yes-token", .39, 0, scope.market.condition_id, TradeState.CONFIRMED),
+            "failed": ("yes-token", .39, 1, scope.market.condition_id, TradeState.FAILED),
+        }
+        token_id, price, size, condition_id, status = values[case]
+        event = TradeEvent(
+            token_id, Side.BUY, price, size, f"adverse-{case}", status,
+            1_800_000_000.0, "yes-order", condition_id,
+        )
+        scope.processor.on_trade(
+            event, condition_id,
+            received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=700_000_000_000, connection_generation=4,
+        )
+        decision = scope.session.initial_fill_window(now_monotonic_ns=701_000_000_000)
+        if case == "zero-size":
+            assert decision.reliable and not decision.started
+            assert decision.reason == "AWAITING_CONFIRMED_FILL"
+            assert decision.inventory.qy == decision.inventory.qn == 0
+        else:
+            assert not decision.reliable and not decision.started
+            assert decision.reason == "FILL_EVIDENCE_QUARANTINED"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome_kind", ["partial", "unknown", "pending-overflow"])
+async def test_fill_window_rejects_unresolved_placement_outcomes(
+    placement_scope, blocked_network, outcome_kind,
+):
+    scope = placement_scope
+    attempt = _arm(scope)
+    if outcome_kind == "partial":
+        outcome, _client = await _gateway_outcome(
+            scope, [{"success": True, "orderID": "yes-order"}],
+        )
+    elif outcome_kind == "unknown":
+        outcome = PlacementUnknown(
+            "synthetic unknown", observed_order_ids=("observed-only",),
+            reason="SYNTHETIC_UNKNOWN",
+        )
+    else:
+        scope.processor._pending_limit = 0
+        scope.processor.on_trade(
+            TradeEvent("yes-token", Side.BUY, .39, 1, "overflow", TradeState.MATCHED,
+                       1_800_000_000.0, "unknown-before-ack", scope.market.condition_id),
+            scope.market.condition_id,
+        )
+        outcome, _client = await _gateway_outcome(scope, _accepted_rows())
+    resolved = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    decision = scope.session.initial_fill_window(now_monotonic_ns=702_000_000_000)
+
+    assert resolved.outcome in {"PARTIAL", "UNKNOWN"}
+    assert not decision.reliable and not decision.started
+    assert decision.reason == "PLACEMENT_SCOPE_UNRESOLVED"
+    assert scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_healthy_book_change_and_filter_rejection_do_not_retime_fill_window(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _compose_accepted_initial_pair(scope)
+    _send_window_trade(scope, "yes-order", status=TradeState.MATCHED,
+                       trade_id="book-motion", receipt_ns=800_000_000_000)
+    _send_window_trade(scope, "yes-order", status=TradeState.CONFIRMED,
+                       trade_id="book-motion", receipt_ns=800_000_000_000)
+    before = scope.session.initial_fill_window(now_monotonic_ns=801_000_000_000)
+    calls_before = list(scope.session.user_session.gateway.calls)
+    service = scope.session.public_session.service
+    yes_book = service.book("yes-token")
+    assert yes_book is not None
+    yes_book.apply_snapshot([(.55, 10)], [(.57, 10)], 2)
+    yes_book.snapshot_generation = scope.session.public_generation
+    service.book_filter.evaluate = lambda *_args, **_kwargs: SimpleNamespace(
+        ready=True, rejected=True, reasons=("SYNTHETIC_BOOK_FILTER_REJECTION",),
+    )
+    rejected = scope.session.book_filter_result()
+    after = scope.session.initial_fill_window(now_monotonic_ns=802_000_000_000)
+
+    assert rejected.ready and rejected.rejected
+    assert after.reliable and after.started
+    assert after.first_receipt_monotonic_ns == before.first_receipt_monotonic_ns
+    assert after.deadline_monotonic_ns == before.deadline_monotonic_ns
+    assert scope.session.user_session.gateway.calls == calls_before
+    assert blocked_network == []
 
 
 @pytest.mark.asyncio

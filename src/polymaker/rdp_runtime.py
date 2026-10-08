@@ -13,8 +13,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from polymaker.config import Config
-from polymaker.domain import OpenOrder, OrderState, Side
+from polymaker.domain import OpenOrder, OrderState, Side, TradeState
 from polymaker.execution.gateway import ExactOpenOrder
+from polymaker.execution.rdp_fill_window import RDPFillWindow, RDPFillWindowDecision
 from polymaker.execution.rdp_lifecycle import RDPCloseResult, close_rdp_cycle
 from polymaker.execution.rdp_placement import (
     RDPPlacementAttempt,
@@ -39,6 +40,7 @@ from polymaker.risk.rdp_capital import (
     evaluate_rdp_capital_gate,
     project_rdp_capital,
 )
+from polymaker.strategy.rdp_accounting import snapshot_inventory
 from polymaker.strategy.rdp_book_filter import RDPBookFilterResult
 from polymaker.strategy.rdp_quotes import RDPQuoteDecision, build_normal_quotes
 
@@ -116,7 +118,8 @@ class RDPInputSession:
                  feed: RDPFeedReadiness, backing: RDPInitialBackingResult,
                  now: Callable[[], float], sleep: Callable[[float], Any],
                  poll_interval_s: float, started_at: float,
-                 account_max_age_s: float | None = None) -> None:
+                 account_max_age_s: float | None = None,
+                 fill_window_s: float = 3.0) -> None:
         self.bootstrap = bootstrap
         self.public_session = public_session
         self.user_session = user_session
@@ -133,6 +136,8 @@ class RDPInputSession:
         self._poll_interval_s = poll_interval_s
         self._account_max_age_s = (Config().risk.user_ws_blind_halt_s
                                    if account_max_age_s is None else account_max_age_s)
+        self._fill_window_s = RDPFillWindow(fill_window_s).duration_s
+        self._fill_windows: dict[int, RDPFillWindow] = {}
         self._closed = False
         self._admission_active = False
         self._admission_task: asyncio.Task[Any] | None = None
@@ -153,6 +158,7 @@ class RDPInputSession:
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], Any] | None = None,
         poll_interval_s: float = 0.05,
+        fill_window_s: float = 3.0,
         feed_timeout_s: float = 15.0,
         bootstrap_factory: Callable[..., Any] | None = None,
         public_session_factory: Callable[..., Any] | None = None,
@@ -169,6 +175,12 @@ class RDPInputSession:
         backing_evaluator = backing_evaluator or evaluate_initial_rdp_backing
         if not math.isfinite(poll_interval_s) or poll_interval_s <= 0:
             raise RDPObservationError("INVALID_OBSERVATION_INTERVAL", "observation polling interval must be positive")
+        try:
+            RDPFillWindow(fill_window_s)
+        except (TypeError, ValueError):
+            raise RDPObservationError(
+                "INVALID_FILL_WINDOW", "FillWindow duration must be finite and positive",
+            ) from None
         try:
             runtime_cfg = copy.deepcopy(cfg)
         except Exception as exc:  # noqa: BLE001
@@ -214,6 +226,7 @@ class RDPInputSession:
                 now=now, sleep=sleep, poll_interval_s=poll_interval_s,
                 started_at=started_at,
                 account_max_age_s=runtime_cfg.risk.user_ws_blind_halt_s,
+                fill_window_s=fill_window_s,
             )
             failure = session._health_failure()
             if failure is not None:
@@ -523,6 +536,156 @@ class RDPInputSession:
     ) -> RDPPlacementAttempt:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
         return self.placement_owner.resolve(attempt, outcome)
+
+    def initial_fill_window(
+        self, *, now_monotonic_ns: int | None = None,
+    ) -> RDPFillWindowDecision:
+        """Read the current attempt's receipt-time window without external calls."""
+        now_ns = time.monotonic_ns() if now_monotonic_ns is None else now_monotonic_ns
+        if isinstance(now_ns, bool) or not isinstance(now_ns, int) or now_ns < 0:
+            raise ValueError("monotonic timestamp must be a non-negative integer")
+        attempt = self.placement_owner.current
+        if attempt is None:
+            return RDPFillWindowDecision(
+                0, self.bootstrap.market.slug, self.bootstrap.market.condition_id,
+                (), False, "NO_CURRENT_PLACEMENT", False, None,
+                self._fill_window_s, None, False, None,
+            )
+        window = self._fill_windows.get(attempt.attempt_id)
+        if window is None:
+            window = RDPFillWindow(self._fill_window_s)
+            self._fill_windows[attempt.attempt_id] = window
+        window.bind(attempt.attempt_id)
+
+        reason: str | None = None
+        if self.placement_owner.current is not attempt:
+            reason = "PLACEMENT_ATTEMPT_CHANGED"
+        elif (attempt.slug != self.bootstrap.market.slug
+              or attempt.condition_id != self.bootstrap.market.condition_id
+              or not _is_complete_initial_pair(self.bootstrap, attempt)
+              or not attempt.replacement_blocked
+              or attempt.execution_authorized):
+            reason = "PLACEMENT_SCOPE_UNRESOLVED"
+        elif self._closed:
+            reason = "SESSION_CLOSED"
+        elif self._now() >= self.bootstrap.end_epoch:
+            reason = "MARKET_EXPIRED"
+        else:
+            try:
+                reason = self._health_failure()
+            except Exception as exc:  # noqa: BLE001 - fail closed, expose category only
+                reason = f"INPUT_HEALTH_FAILED:{type(exc).__name__}"
+            if reason is None and (
+                self.public_session.service.connection_generation != self.public_generation
+                or self.user_session.observation.user_channel.connection_generation != self.user_generation
+                or attempt.public_generation != self.public_generation
+                or attempt.user_generation != self.user_generation
+            ):
+                reason = "INPUT_GENERATION_CHANGED"
+
+        order_ids = tuple(attempt.acknowledged_order_ids)
+        processor = self.processor
+        if reason is None and (
+            getattr(processor, "_pending", None)
+            or getattr(processor, "_pending_events", None)
+            or getattr(processor, "_pending_overflow", False)
+        ):
+            reason = "PENDING_CAPTURE_UNRESOLVED"
+        if reason is None and (
+            set(order_ids) & set(getattr(processor, "quarantined_orders", ()))
+        ):
+            reason = "FILL_EVIDENCE_QUARANTINED"
+
+        accepted_confirmations: list[tuple[int, int, str]] = []
+        receipt_map = getattr(processor, "confirmed_receipts", None)
+        if reason is None:
+            if not isinstance(receipt_map, dict):
+                if any(oid in set(order_ids) for _tid, oid in processor.applied_fill_keys):
+                    reason = "CONFIRMED_RECEIPT_UNAVAILABLE"
+            else:
+                for key in processor.applied_fill_keys:
+                    trade_id, order_id = key
+                    if order_id not in order_ids:
+                        continue
+                    event = processor.fill_records.get(key)
+                    if event is None or event.status is not TradeState.CONFIRMED:
+                        continue
+                    if (key in processor.quarantined_fill_keys
+                            or processor.has_failed_fill(order_id)
+                            or processor.has_unresolved_fill_key(order_id)):
+                        reason = "FILL_EVIDENCE_UNRELIABLE"
+                        break
+                    receipt = receipt_map.get(key)
+                    if not isinstance(receipt, tuple) or len(receipt) != 4:
+                        reason = "CONFIRMED_RECEIPT_UNAVAILABLE"
+                        break
+                    receipt_us, receipt_ns, generation, source = receipt
+                    if (isinstance(receipt_us, bool) or not isinstance(receipt_us, int)
+                            or receipt_us <= 0 or isinstance(receipt_ns, bool)
+                            or not isinstance(receipt_ns, int) or receipt_ns <= 0
+                            or isinstance(generation, bool) or not isinstance(generation, int)
+                            or generation != self.user_generation
+                            or source != "WS"):
+                        reason = "CONFIRMED_RECEIPT_INVALID"
+                        break
+                    if receipt_ns > now_ns:
+                        reason = "CONFIRMED_RECEIPT_IN_FUTURE"
+                        break
+                    accepted_confirmations.append((receipt_ns, receipt_us, trade_id))
+
+        inventory = None
+        if reason is None:
+            try:
+                inventory = snapshot_inventory(
+                    self.bootstrap.market, processor, set(order_ids),
+                )
+            except Exception as exc:  # noqa: BLE001 - accounting evidence must fail closed
+                reason = f"INVENTORY_UNRELIABLE:{type(exc).__name__}"
+
+        if reason is None and accepted_confirmations:
+            earliest = min(receipt_ns for receipt_ns, _wall_us, _trade_id in accepted_confirmations)
+            try:
+                window.start(attempt.attempt_id, (earliest,))
+            except (TypeError, ValueError):
+                reason = "CONFIRMED_RECEIPT_INVALID"
+            if reason is None and window.timing_contradiction:
+                reason = "CONFIRMED_RECEIPT_PRECEDES_ESTABLISHED_WINDOW"
+
+        deadline = window.deadline_monotonic_ns
+        started = window.first_receipt_monotonic_ns is not None
+        due = reason is None and deadline is not None and now_ns >= deadline
+        if reason is None and started and not window._logged_start:
+            window._logged_start = True
+            log.info(
+                "rdp_fill_window_started", condition_id=attempt.condition_id,
+                attempt_id=attempt.attempt_id, acknowledged_order_ids=order_ids,
+                public_generation=attempt.public_generation,
+                user_generation=attempt.user_generation,
+                first_receipt_monotonic_ns=window.first_receipt_monotonic_ns,
+                duration_s=window.duration_s, deadline_monotonic_ns=deadline,
+                reliable=True,
+            )
+        if due and not window._logged_expiry:
+            window._logged_expiry = True
+            log.info(
+                "rdp_fill_window_expired", condition_id=attempt.condition_id,
+                attempt_id=attempt.attempt_id, acknowledged_order_ids=order_ids,
+                public_generation=attempt.public_generation,
+                user_generation=attempt.user_generation,
+                first_receipt_monotonic_ns=window.first_receipt_monotonic_ns,
+                duration_s=window.duration_s, deadline_monotonic_ns=deadline,
+                reliable=True,
+            )
+        return RDPFillWindowDecision(
+            attempt_id=attempt.attempt_id, slug=attempt.slug,
+            condition_id=attempt.condition_id,
+            acknowledged_order_ids=order_ids, reliable=reason is None,
+            reason=reason or (None if started else "AWAITING_CONFIRMED_FILL"),
+            started=started,
+            first_receipt_monotonic_ns=window.first_receipt_monotonic_ns,
+            duration_s=window.duration_s, deadline_monotonic_ns=deadline,
+            closure_due=due, inventory=inventory,
+        )
 
     async def close_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, *, deadline: float,

@@ -172,7 +172,7 @@ async def start_rdp_user_channel_session(
         await gateway.connect(derive_only=True)
         _validate_connected_gateway(gateway, signer, funder)
         store = store_factory(":memory:")
-        processor = UserEventProcessor(store)
+        processor = UserEventProcessor(store, retain_confirmed_receipts=True)
         token_pair = {token_ids[0]: token_ids[1], token_ids[1]: token_ids[0]}
         token_conditions = {token_id: condition_id for token_id in token_ids}
         stream = user_stream_factory(
@@ -186,6 +186,7 @@ async def start_rdp_user_channel_session(
             heartbeat_interval_s=10.0,
             heartbeat_timeout_s=15.0,
             sanitize_errors=True,
+            capture_receipts=True,
         )
         stream.set_markets([condition_id])
         market_deadline = monotonic() + max(0.0, bootstrap.end_epoch - now())

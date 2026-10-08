@@ -327,6 +327,8 @@ async def test_composed_account_capture_uses_one_gateway_and_current_user_stream
     assert result.user_channel.connection_generation == 1
     assert result.user_channel.explicit_server_authentication_acknowledgment is False
     assert "sentinel" not in repr(result)
+    assert made[0].stream._capture_receipts is True
+    assert made[0].stream._proc._retain_confirmed_receipts is True
     assert store.owned_orders_at_close == []
     assert store.orders_at_close == {}
     assert made[0].closed and store.closed and not ws.active
@@ -616,6 +618,110 @@ async def test_delayed_pong_does_not_shift_fixed_send_cadence(monkeypatch):
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capture_receipts", [False, True], ids=["default-off", "rdp-opt-in"])
+async def test_userstream_receipt_capture_is_opt_in_and_independent_of_research(
+    monkeypatch, capture_receipts,
+):
+    import polymaker.userstream.client as client
+    from polymaker.domain import Side
+    from polymaker.state.store import StateStore
+    from polymaker.state.tracker import UserEventProcessor
+    from polymaker.userstream.client import UserStream
+
+    store = StateStore(":memory:")
+    processor = UserEventProcessor(store, retain_confirmed_receipts=capture_receipts)
+    processor.register_order("our-order", CONDITION, "up", Side.BUY, 5, .39, "rdp_initial")
+    ws = FakeWebSocket()
+    ws.queue.put_nowait(json.dumps({
+        "event_type": "trade", "market": CONDITION, "asset_id": "up",
+        "side": "SELL", "status": "CONFIRMED", "id": "confirmed-trade",
+        "timestamp": "1800000000000", "maker_orders": [{
+            "order_id": "our-order", "asset_id": "up", "matched_amount": "1",
+            "price": ".39", "side": "BUY", "maker_address": "wallet",
+        }],
+    }))
+    ws.queue.put_nowait(None)
+    stream = UserStream(
+        SimpleNamespace(api_key="key", api_secret="secret", api_passphrase="passphrase"),
+        "wallet", processor, other_token=lambda _token: None,
+        condition_of_token=lambda _token: CONDITION,
+        capture_receipts=capture_receipts,
+    )
+    stream.set_markets([CONDITION])
+    monkeypatch.setattr(client, "clock", lambda: (1_800_000_000_000_000, 987_654_321))
+    monkeypatch.setattr(
+        client.websockets, "connect",
+        lambda url, **kwargs: FakeConnect(ws, url, kwargs),
+    )
+    try:
+        await stream.run_once()
+        if capture_receipts:
+            receipt = processor.confirmed_receipts[("confirmed-trade", "our-order")]
+            assert receipt == (1_800_000_000_000_000, 987_654_321, 1, "WS")
+        else:
+            assert processor.confirmed_receipts == {}
+        assert stream._receipt_us is None and stream._receipt_ns is None
+        assert stream._research is None
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capture_receipts", [False, True], ids=["default-off", "rdp-opt-in"])
+async def test_receipt_context_is_cleared_after_control_frames_and_handler_failure(
+    monkeypatch, capture_receipts,
+):
+    import polymaker.userstream.client as client
+    from polymaker.state.store import StateStore
+    from polymaker.state.tracker import UserEventProcessor
+    from polymaker.userstream.client import UserStream
+
+    store = StateStore(":memory:")
+    ws = FakeWebSocket()
+    ws.queue.put_nowait("PONG")
+    ws.queue.put_nowait("data-frame")
+    ws.queue.put_nowait(None)
+    stream = UserStream(
+        SimpleNamespace(api_key="key", api_secret="secret", api_passphrase="passphrase"),
+        "wallet", UserEventProcessor(store), other_token=lambda _token: None,
+        condition_of_token=lambda _token: None, application_heartbeat=True,
+        sanitize_errors=True, capture_receipts=capture_receipts,
+    )
+    stream.set_markets([CONDITION])
+    monkeypatch.setattr(client, "clock", lambda: (1_800_000_000_000_000, 987_654_321))
+    monkeypatch.setattr(
+        client.websockets, "connect",
+        lambda url, **kwargs: FakeConnect(ws, url, kwargs),
+    )
+    control_context = []
+    handle_count = 0
+    original_control = stream._handle_probe_control
+
+    async def observe_control(raw, active_ws, generation):
+        control_context.append((stream._receipt_us, stream._receipt_ns))
+        return await original_control(raw, active_ws, generation)
+
+    def fail_on_data(_raw):
+        nonlocal handle_count
+        handle_count += 1
+        raise ValueError("synthetic parser failure")
+
+    stream._handle_probe_control = observe_control
+    stream._handle = fail_on_data
+    try:
+        from polymaker.userstream.client import UserStreamError
+        with pytest.raises(UserStreamError):
+            await stream.run_once()
+        assert control_context[0] == (
+            (1_800_000_000_000_000, 987_654_321) if capture_receipts else (None, None)
+        )
+        assert handle_count == 1
+        assert stream._receipt_us is None and stream._receipt_ns is None
+    finally:
         store.close()
 
 
