@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0021`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0021 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -97,7 +97,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0021 Architect selecting next prerequisite. ITER-0020 fully archived414c949; see RESULT,Reviewer05,receipt06. Explicit started-window coordinator ready. Submission/pre-fill/subsequentNORMAL/REBALANCE/metrics remain outstanding; no real-money authority.
+ITER-0021 contract01 approved: fresh exact Gamma status composed into initial NORMAL admission; Worker pending. ITER-0020 fully archived414c949; see RESULT,Reviewer05,receipt06. Explicit started-window coordinator ready. Submission/pre-fill/subsequentNORMAL/REBALANCE/metrics remain outstanding; no real-money authority.
 
 ---
 
