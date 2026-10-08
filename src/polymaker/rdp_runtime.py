@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 from polymaker.config import Config
@@ -100,6 +100,31 @@ class RDPInitialNormalAdmission:
 
 
 @dataclass(frozen=True, slots=True)
+class RDPInitialPreFillDecision:
+    """Read-only validity evidence for the retained acknowledged initial pair."""
+
+    action: str
+    reason: str
+    attempt_id: int
+    slug: str
+    condition_id: str
+    acknowledged_order_ids: tuple[str, ...]
+    submitted_quotes: tuple[Any, ...]
+    public_generation: int
+    user_generation: int
+    captured_at: float | None
+    market_status: RDPMarketStatusEvidence | None
+    order_receipt_ts: float | None
+    order_age_s: float | None
+    book_filter: RDPBookFilterResult | None
+    inventory: Any | None
+    capital_projection: RDPCapitalProjection | None
+    current_candidate: RDPQuoteDecision | None
+    fill_window: RDPFillWindowDecision | None
+    execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(frozen=True, slots=True)
 class RDPInitialPlacementClose:
     """Immutable evidence from one explicit, scoped placement close."""
 
@@ -144,6 +169,7 @@ class RDPInputSession:
                  now: Callable[[], float], sleep: Callable[[float], Any],
                  poll_interval_s: float, started_at: float,
                  account_max_age_s: float | None = None,
+                 market_data_max_age_s: float | None = None,
                  fill_window_s: float = 3.0,
                  monotonic_ns: Callable[[], int] | None = None,
                  gamma_origin: str | None = None,
@@ -165,6 +191,19 @@ class RDPInputSession:
         self._poll_interval_s = poll_interval_s
         self._account_max_age_s = (Config().risk.user_ws_blind_halt_s
                                    if account_max_age_s is None else account_max_age_s)
+        self._market_data_max_age_s = (
+            Config().risk.ws_stale_halt_s
+            if market_data_max_age_s is None else market_data_max_age_s
+        )
+        if (isinstance(self._market_data_max_age_s, bool)
+                or not isinstance(self._market_data_max_age_s, (int, float))
+                or not math.isfinite(self._market_data_max_age_s)
+                or self._market_data_max_age_s <= 0):
+            raise RDPObservationError(
+                "INVALID_MARKET_DATA_MAX_AGE",
+                "market-data freshness limit must be finite and positive",
+            )
+        self._market_data_max_age_s = float(self._market_data_max_age_s)
         default_gamma_origin, default_status_max_age = validate_rdp_market_status_config(Config())
         self._gamma_origin = default_gamma_origin if gamma_origin is None else gamma_origin
         status_max_age = default_status_max_age if market_status_max_age_s is None else market_status_max_age_s
@@ -183,6 +222,9 @@ class RDPInputSession:
         self._market_status_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
         self._fill_window_task: asyncio.Task[RDPFillWindowCompletion] | None = None
+        self._prefill_task: asyncio.Task[RDPInitialPreFillDecision] | None = None
+        self._prefill_read_task: asyncio.Task[Any] | None = None
+        self._prefill_order_read_started_at: float | None = None
         self._fill_window_result: RDPFillWindowCompletion | None = None
         self._fill_window_cancel_requested: str | None = None
         self._fill_window_wakeup = asyncio.Event()
@@ -277,6 +319,7 @@ class RDPInputSession:
                 now=now, sleep=sleep, poll_interval_s=poll_interval_s,
                 started_at=started_at,
                 account_max_age_s=runtime_cfg.risk.user_ws_blind_halt_s,
+                market_data_max_age_s=runtime_cfg.risk.ws_stale_halt_s,
                 gamma_origin=gamma_origin,
                 market_status_max_age_s=market_status_max_age_s,
                 fill_window_s=fill_window_s,
@@ -765,6 +808,707 @@ class RDPInputSession:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
         return self.placement_owner.resolve(attempt, outcome)
 
+    async def evaluate_initial_prefill(
+        self, attempt: RDPPlacementAttempt,
+    ) -> RDPInitialPreFillDecision:
+        """Evaluate the retained acknowledged pair without taking an order action."""
+        active = self._prefill_task
+        if active is not None and not active.done():
+            return self._prefill_decision("CLOSE", "PREFILL_EVALUATION_IN_PROGRESS", attempt)
+        if (self._admission_active
+                or (self._placement_close_task is not None
+                    and not self._placement_close_task.done())
+                or (self._fill_window_task is not None and not self._fill_window_task.done())):
+            return self._prefill_decision("CLOSE", "PLACEMENT_COORDINATION_IN_PROGRESS", attempt)
+        task = asyncio.create_task(
+            self._run_initial_prefill_evaluation(attempt),
+            name="rdp-initial-prefill-evaluation",
+        )
+        self._prefill_task = task
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await _drain_read_task(task)
+            raise
+        finally:
+            if task.done() and self._prefill_task is task:
+                self._prefill_task = None
+                self._prefill_order_read_started_at = None
+
+    def _prefill_decision(
+        self, action: str, reason: str, attempt: Any, *,
+        captured_at: float | None = None,
+        market_status: RDPMarketStatusEvidence | None = None,
+        order_receipt_ts: float | None = None,
+        order_age_s: float | None = None,
+        book_filter: RDPBookFilterResult | None = None,
+        inventory: Any | None = None,
+        capital_projection: RDPCapitalProjection | None = None,
+        current_candidate: RDPQuoteDecision | None = None,
+        fill_window: RDPFillWindowDecision | None = None,
+    ) -> RDPInitialPreFillDecision:
+        # Every terminal decision is itself an evidence capture point. Refresh
+        # timestamps here as well as on the happy path so a read/health failure
+        # reports the age of evidence that was actually available at failure.
+        # Keep the caller's primary categorical reason unchanged, and never
+        # manufacture a receipt for an order read that did not succeed.
+        try:
+            terminal_capture = (captured_at if action != "CLOSE" and captured_at is not None
+                                else self._now())
+            if (isinstance(terminal_capture, bool)
+                    or not isinstance(terminal_capture, (int, float))
+                    or not math.isfinite(terminal_capture)):
+                terminal_capture = None
+        except Exception:  # noqa: BLE001 - failure reason remains primary
+            terminal_capture = None
+        captured_at = terminal_capture
+        if market_status is not None:
+            if terminal_capture is None:
+                market_status = replace(
+                    market_status, age_s=None,
+                    max_age_s=self._market_status_max_age_s,
+                )
+            else:
+                try:
+                    market_status, _freshness_failure = self._evaluate_market_status_freshness(
+                        market_status, at=terminal_capture,
+                    )
+                except Exception:  # noqa: BLE001 - preserve primary decision category
+                    market_status = replace(
+                        market_status, age_s=None,
+                        max_age_s=self._market_status_max_age_s,
+                    )
+        if order_receipt_ts is not None:
+            if terminal_capture is None:
+                order_age_s = None
+            else:
+                order_age_s, _age_failure = _freshness_age(
+                    (self._prefill_order_read_started_at
+                     if self._prefill_order_read_started_at is not None
+                     else order_receipt_ts),
+                    terminal_capture, self._account_max_age_s,
+                    "ORDER_STATE",
+                )
+        try:
+            attempt_id = attempt.attempt_id
+            slug = attempt.slug
+            condition_id = attempt.condition_id
+            order_ids = tuple(attempt.acknowledged_order_ids)
+            submitted_quotes = tuple(getattr(attempt, "quotes", ()))
+            public_generation = attempt.public_generation
+            user_generation = attempt.user_generation
+        except (AttributeError, TypeError):
+            attempt_id = 0
+            slug = self.bootstrap.market.slug
+            condition_id = self.bootstrap.market.condition_id
+            order_ids = ()
+            submitted_quotes = ()
+            public_generation = self.public_generation
+            user_generation = self.user_generation
+        snapshot = (capital_projection.snapshot
+                    if capital_projection is not None else None)
+        current_inventory = inventory or (snapshot.inventory if snapshot is not None else None)
+        result = RDPInitialPreFillDecision(
+            action, reason, attempt_id, slug, condition_id, order_ids, submitted_quotes,
+            public_generation, user_generation, captured_at, market_status,
+            order_receipt_ts, order_age_s, book_filter, inventory,
+            capital_projection, current_candidate, fill_window,
+        )
+        log.info(
+            "rdp_initial_prefill_decision", action=action, reason=reason,
+            slug=slug, condition_id=condition_id, attempt_id=attempt_id,
+            acknowledged_order_ids=order_ids,
+            submitted_quotes=tuple(
+                (quote.token_id, quote.side.value, quote.price, quote.size)
+                for quote in submitted_quotes
+            ),
+            public_generation=public_generation, user_generation=user_generation,
+            captured_at=captured_at,
+            market_status_receipt_ts=(market_status.receipt_ts if market_status else None),
+            market_status_age_s=(market_status.age_s if market_status else None),
+            order_receipt_ts=order_receipt_ts, order_age_s=order_age_s,
+            book_filter_ready=(book_filter.ready if book_filter else None),
+            book_filter_reasons=(book_filter.reasons if book_filter else ()),
+            candidate_reason=(current_candidate.reason if current_candidate else None),
+            candidate_quotes=(
+                tuple((quote.token_id, quote.side.value, quote.price, quote.size)
+                      for quote in current_candidate.quotes)
+                if current_candidate else ()
+            ),
+            inventory_qy=(str(current_inventory.qy) if current_inventory is not None else None),
+            inventory_qn=(str(current_inventory.qn) if current_inventory is not None else None),
+            inventory_delta=(str(current_inventory.delta) if current_inventory is not None else None),
+            capital_certified=(capital_projection.certified
+                               if capital_projection is not None else None),
+            capital_reason=(capital_projection.reason if capital_projection is not None else None),
+            free_cash=(str(snapshot.free_cash) if snapshot is not None else None),
+            reserved_cash=(str(snapshot.reserved_cash) if snapshot is not None else None),
+            inventory_cost=(str(snapshot.inventory_cost) if snapshot is not None else None),
+            fill_window_started=(fill_window.started if fill_window else None),
+            fill_window_first_receipt_monotonic_ns=(
+                fill_window.first_receipt_monotonic_ns if fill_window else None
+            ),
+            fill_window_deadline_monotonic_ns=(
+                fill_window.deadline_monotonic_ns if fill_window else None
+            ),
+            execution_authorized=False,
+        )
+        return result
+
+    def _prefill_scope_failure(
+        self, attempt: RDPPlacementAttempt,
+        registry: tuple[tuple[Any, ...], ...] | None = None,
+    ) -> tuple[str | None, tuple[tuple[Any, ...], ...] | None]:
+        if self.placement_owner.current is not attempt:
+            return "PLACEMENT_ATTEMPT_CHANGED", None
+        if (attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id
+                or not _is_complete_initial_pair(self.bootstrap, attempt)
+                or attempt.pending_anomalies or not attempt.replacement_blocked
+                or attempt.execution_authorized):
+            return "PLACEMENT_SCOPE_UNRESOLVED", None
+        current_registry = _placement_registry_snapshot(
+            self.processor, self.bootstrap, attempt,
+        )
+        if current_registry is None:
+            return "OWNERSHIP_SCOPE_CONTRADICTION", None
+        if registry is not None and current_registry != registry:
+            return "OWNERSHIP_SCOPE_CHANGED", None
+        return None, current_registry
+
+    def _prefill_system_failure(
+        self, attempt: RDPPlacementAttempt,
+        registry: tuple[tuple[Any, ...], ...],
+        *, at: float | None = None,
+    ) -> str | None:
+        if self._closed:
+            return "SESSION_CLOSED"
+        try:
+            current_time = self._now() if at is None else at
+            if (isinstance(current_time, bool)
+                    or not isinstance(current_time, (int, float))
+                    or not math.isfinite(current_time)):
+                return "INVALID_EVALUATION_TIME"
+            if current_time >= self.bootstrap.end_epoch:
+                return "MARKET_EXPIRED"
+            failure = self._health_failure()
+        except Exception as exc:  # noqa: BLE001 - never expose source exception text
+            return f"INPUT_HEALTH_FAILED:{type(exc).__name__}"
+        if failure is not None:
+            return failure
+        try:
+            if (self.public_session.service.connection_generation != self.public_generation
+                    or self.user_session.observation.user_channel.connection_generation
+                    != self.user_generation
+                    or attempt.public_generation != self.public_generation
+                    or attempt.user_generation != self.user_generation):
+                return "INPUT_GENERATION_CHANGED"
+            scope_failure, _ = self._prefill_scope_failure(attempt, registry)
+            if scope_failure is not None:
+                return scope_failure
+            if _has_public_input_backlog(self.public_session.service.metrics):
+                return "PUBLIC_INPUT_BACKLOG"
+        except Exception as exc:  # noqa: BLE001 - corrupted input scope is not safe
+            return f"INPUT_STATE_FAILED:{type(exc).__name__}"
+        return None
+
+    def _prefill_terminal_read_check(
+        self, attempt: RDPPlacementAttempt,
+        registry: tuple[tuple[Any, ...], ...],
+        market_status: RDPMarketStatusEvidence,
+        order_receipt_ts: float,
+    ) -> tuple[float | None, RDPMarketStatusEvidence, float | None, str | None]:
+        """Validate all read-based positive evidence at one final capture time."""
+        try:
+            captured_at = self._now()
+        except Exception as exc:  # noqa: BLE001 - failed time is not positive evidence
+            return None, market_status, None, f"EVALUATION_TIME_FAILED:{type(exc).__name__}"
+        if (isinstance(captured_at, bool) or not isinstance(captured_at, (int, float))
+                or not math.isfinite(captured_at)):
+            return None, market_status, None, "INVALID_EVALUATION_TIME"
+
+        # Evaluate every available age against this same timestamp even when
+        # another system failure is already primary, so result/log evidence is
+        # internally consistent on every terminal path.
+        system_failure = self._prefill_system_failure(attempt, registry, at=captured_at)
+        try:
+            market_status, status_failure = self._evaluate_market_status_freshness(
+                market_status, at=captured_at,
+            )
+        except Exception as exc:  # noqa: BLE001 - freshness evidence fails closed
+            status_failure = f"MARKET_STATUS_FRESHNESS_FAILED:{type(exc).__name__}"
+            market_status = replace(
+                market_status, age_s=None, max_age_s=self._market_status_max_age_s,
+            )
+        order_age, order_failure = _freshness_age(
+            (self._prefill_order_read_started_at
+             if self._prefill_order_read_started_at is not None else order_receipt_ts),
+            captured_at, self._account_max_age_s, "ORDER_STATE",
+        )
+        return (captured_at, market_status, order_age,
+                system_failure or status_failure or order_failure)
+
+    def _prefill_status_identity_failure(
+        self, evidence: RDPMarketStatusEvidence,
+    ) -> str | None:
+        market = self.bootstrap.market
+        if (evidence.slug != market.slug
+                or evidence.condition_id != market.condition_id
+                or evidence.token_ids != tuple(token.token_id for token in market.tokens)
+                or evidence.outcomes != tuple(token.outcome for token in market.tokens)
+                or evidence.neg_risk is not market.neg_risk
+                or evidence.end_epoch != self.bootstrap.end_epoch):
+            return "MARKET_STATUS_IDENTITY_MISMATCH"
+        if evidence.accepting_orders is not True or evidence.closed is not False:
+            return "CURRENT_MARKET_TRADABILITY"
+        return None
+
+    async def _run_initial_prefill_evaluation(
+        self, attempt: RDPPlacementAttempt,
+    ) -> RDPInitialPreFillDecision:
+        scope_failure, registry = self._prefill_scope_failure(attempt)
+        if scope_failure is not None or registry is None:
+            return self._prefill_decision("CLOSE", scope_failure or "OWNERSHIP_SCOPE_CONTRADICTION", attempt)
+        if self._admission_active:
+            return self._prefill_decision("CLOSE", "INITIAL_ADMISSION_IN_PROGRESS", attempt)
+        failure = self._prefill_system_failure(attempt, registry)
+        if failure is not None:
+            return self._prefill_decision("CLOSE", failure, attempt)
+
+        window = self.initial_fill_window()
+        if not window.reliable:
+            return self._prefill_decision("CLOSE", window.reason or "FILL_EVIDENCE_UNRELIABLE",
+                                          attempt, fill_window=window)
+        if window.started:
+            return self._prefill_decision("FILL_WINDOW", "CONFIRMED_FILL_HANDOFF", attempt,
+                                          fill_window=window)
+
+        status_task = asyncio.create_task(
+            read_rdp_market_status(self.bootstrap, self._gamma_origin, now=self._now),
+            name="rdp-initial-prefill-market-status-read",
+        )
+        self._market_status_read_task = status_task
+        try:
+            try:
+                market_status = await asyncio.shield(status_task)
+            except asyncio.CancelledError:
+                await _drain_read_task(status_task)
+                raise
+            except RDPBootstrapError as exc:
+                return self._prefill_decision("CLOSE", exc.category, attempt)
+            except Exception as exc:  # noqa: BLE001 - categorical diagnostic only
+                return self._prefill_decision(
+                    "CLOSE", f"MARKET_STATUS_READ_FAILED:{type(exc).__name__}", attempt,
+                )
+        finally:
+            if status_task.done() and self._market_status_read_task is status_task:
+                self._market_status_read_task = None
+        failure = self._prefill_system_failure(attempt, registry)
+        if failure is not None:
+            return self._prefill_decision("CLOSE", failure, attempt, market_status=market_status)
+        try:
+            status_checked_at = self._now()
+        except Exception as exc:  # noqa: BLE001 - evidence time must fail closed
+            return self._prefill_decision(
+                "CLOSE", f"EVALUATION_TIME_FAILED:{type(exc).__name__}", attempt,
+                market_status=market_status,
+            )
+        market_status, status_failure = self._evaluate_market_status_freshness(
+            market_status, at=status_checked_at,
+        )
+        if status_failure is not None:
+            return self._prefill_decision(
+                "CLOSE", status_failure, attempt, captured_at=status_checked_at,
+                market_status=market_status,
+            )
+        status_identity_failure = self._prefill_status_identity_failure(market_status)
+        if status_identity_failure is not None:
+            return self._prefill_decision(
+                "CLOSE", status_identity_failure, attempt,
+                captured_at=status_checked_at, market_status=market_status,
+            )
+
+        gateway = getattr(self.user_session, "gateway", None)
+        if gateway is None:
+            return self._prefill_decision(
+                "CLOSE", "ORDER_GATEWAY_UNAVAILABLE", attempt, market_status=market_status,
+            )
+        try:
+            order_read_started_at = self._now()
+        except Exception as exc:  # noqa: BLE001 - do not start an unowned read
+            return self._prefill_decision(
+                "CLOSE", f"EVALUATION_TIME_FAILED:{type(exc).__name__}", attempt,
+                market_status=market_status,
+            )
+        self._prefill_order_read_started_at = order_read_started_at
+        order_task = asyncio.create_task(
+            _StrictCloseGateway(gateway).open_orders(),
+            name="rdp-initial-prefill-open-orders-read",
+        )
+        self._prefill_read_task = order_task
+        try:
+            try:
+                open_orders = await asyncio.shield(order_task)
+                order_receipt_ts = self._now()
+            except asyncio.CancelledError:
+                await _drain_read_task(order_task)
+                raise
+            except Exception as exc:  # noqa: BLE001 - categorical diagnostic only
+                return self._prefill_decision(
+                    "CLOSE", f"ORDER_STATE_READ_FAILED:{type(exc).__name__}", attempt,
+                    market_status=market_status,
+                )
+        finally:
+            if order_task.done() and self._prefill_read_task is order_task:
+                self._prefill_read_task = None
+
+        try:
+            captured_at = self._now()
+        except Exception as exc:  # noqa: BLE001
+            return self._prefill_decision(
+                "CLOSE", f"EVALUATION_TIME_FAILED:{type(exc).__name__}", attempt,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+            )
+        failure = self._prefill_system_failure(attempt, registry)
+        if failure is not None:
+            return self._prefill_decision(
+                "CLOSE", failure, attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+            )
+
+        market_status, status_failure = self._evaluate_market_status_freshness(
+            market_status, at=captured_at,
+        )
+        if status_failure is not None:
+            return self._prefill_decision(
+                "CLOSE", status_failure, attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+            )
+        status_identity_failure = self._prefill_status_identity_failure(market_status)
+        if status_identity_failure is not None:
+            return self._prefill_decision(
+                "CLOSE", status_identity_failure, attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts,
+            )
+
+        order_age, order_failure = _freshness_age(
+            order_read_started_at, captured_at, self._account_max_age_s,
+            "ORDER_STATE",
+        )
+        if order_failure is not None:
+            return self._prefill_decision(
+                "CLOSE", order_failure, attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age,
+            )
+        window = self.initial_fill_window()
+        if not window.reliable:
+            return self._prefill_decision(
+                "CLOSE", window.reason or "FILL_EVIDENCE_UNRELIABLE", attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                fill_window=window,
+            )
+
+        tokens = {self.bootstrap.market.yes.token_id, self.bootstrap.market.no.token_id}
+        if not isinstance(open_orders, list) or any(
+            not isinstance(row, OpenOrder)
+            or not isinstance(row.order_id, str) or not row.order_id.strip()
+            or not isinstance(row.token_id, str) or not row.token_id.strip()
+            or not isinstance(row.side, Side)
+            or not isinstance(row.price, Decimal) or not row.price.is_finite()
+            or not isinstance(row.size, Decimal)
+            or not row.size.is_finite() or row.size <= 0
+            for row in open_orders
+        ):
+            return self._prefill_decision(
+                "CLOSE", "MALFORMED_OPEN_ORDER_EVIDENCE", attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+            )
+        # Validate identity globally before selecting this market's tokens.
+        # An acknowledged ID repeated on a foreign token is still a collision,
+        # while uniquely identified unrelated foreign orders remain ignored.
+        order_ids = [row.order_id for row in open_orders]
+        if len(order_ids) != len(set(order_ids)):
+            return self._prefill_decision(
+                "CLOSE", "DUPLICATE_OPEN_ORDER_ID", attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age,
+            )
+        owned_ids = set(attempt.acknowledged_order_ids)
+        quotes_by_id: dict[str, Any] = {}
+        registry_by_id = {row[0]: row for row in registry}
+        for order_id in attempt.acknowledged_order_ids:
+            owned = registry_by_id.get(order_id)
+            quote = next((item for item in attempt.quotes
+                          if owned is not None and item.token_id == owned[2]), None)
+            if quote is None:
+                return self._prefill_decision(
+                    "CLOSE", "OWNERSHIP_SCOPE_CONTRADICTION", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                )
+            quotes_by_id[order_id] = quote
+        for row in open_orders:
+            quote = quotes_by_id.get(row.order_id)
+            if quote is not None and (
+                row.token_id != quote.token_id
+                or row.side is not quote.side
+                or not _same_decimal(row.price, quote.price)
+            ):
+                return self._prefill_decision(
+                    "CLOSE", "OPEN_ORDER_IDENTITY_OR_PRICE_MISMATCH", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                )
+        selected_orders = [row for row in open_orders if row.token_id in tokens]
+        if any(row.order_id not in owned_ids for row in selected_orders):
+            return self._prefill_decision(
+                "CLOSE", "FOREIGN_SELECTED_OPEN_ORDER", attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age,
+            )
+        orders_by_id = {row.order_id: row for row in selected_orders}
+        expected_remaining: dict[str, Decimal] = {}
+        for order_id, quote in quotes_by_id.items():
+            confirmed = _prefill_confirmed_quantity(self.processor, order_id)
+            if confirmed is None:
+                return self._prefill_decision(
+                    "CLOSE", "FILL_EVIDENCE_UNRELIABLE", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                )
+            submitted = _decimal_value(quote.size)
+            if submitted is None or confirmed > submitted:
+                return self._prefill_decision(
+                    "CLOSE", "FILL_ECONOMICS_UNRELIABLE", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                )
+            with localcontext() as context:
+                context.prec = 64
+                expected_remaining[order_id] = submitted - confirmed
+            row = orders_by_id.get(order_id)
+            if expected_remaining[order_id] == 0:
+                if row is not None:
+                    return self._prefill_decision(
+                        "CLOSE", "FULLY_FILLED_ORDER_STILL_OPEN", attempt,
+                        captured_at=captured_at, market_status=market_status,
+                        order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                        fill_window=window,
+                    )
+                continue
+            if row is None:
+                return self._prefill_decision(
+                    "CLOSE", "ACKNOWLEDGED_ORDER_MISSING", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                    fill_window=window,
+                )
+            if (row.token_id != quote.token_id or row.side is not quote.side
+                    or not _same_decimal(row.price, quote.price)):
+                return self._prefill_decision(
+                    "CLOSE", "OPEN_ORDER_IDENTITY_OR_PRICE_MISMATCH", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                    fill_window=window,
+                )
+            if not _same_decimal(row.size, expected_remaining[order_id]):
+                return self._prefill_decision(
+                    "CLOSE", "OPEN_ORDER_REMAINING_QUANTITY_CHANGED", attempt,
+                    captured_at=captured_at, market_status=market_status,
+                    order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                    fill_window=window,
+                )
+
+        failure = self._prefill_system_failure(attempt, registry)
+        if failure is not None:
+            return self._prefill_decision(
+                "CLOSE", failure, attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, fill_window=window,
+            )
+        if not window.reliable:
+            return self._prefill_decision(
+                "CLOSE", window.reason or "FILL_EVIDENCE_UNRELIABLE", attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                fill_window=window,
+            )
+        if window.started:
+            terminal_at, terminal_status, terminal_order_age, terminal_failure = (
+                self._prefill_terminal_read_check(
+                    attempt, registry, market_status, order_receipt_ts,
+                )
+            )
+            if terminal_failure is not None:
+                return self._prefill_decision(
+                    "CLOSE", terminal_failure, attempt, captured_at=terminal_at,
+                    market_status=terminal_status, order_receipt_ts=order_receipt_ts,
+                    order_age_s=terminal_order_age, fill_window=window,
+                )
+            return self._prefill_decision(
+                "FILL_WINDOW", "CONFIRMED_FILL_HANDOFF", attempt,
+                captured_at=terminal_at, market_status=terminal_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=terminal_order_age,
+                inventory=window.inventory,
+                fill_window=window,
+            )
+
+        inventory = None
+        projection = project_rdp_capital(
+            self.bootstrap.market, self.processor, owned_ids, selected_orders,
+            market_state_reliable=True, order_state_reliable=True,
+        )
+        if not projection.certified or projection.snapshot is None:
+            return self._prefill_decision(
+                "CLOSE", projection.reason or "CAPITAL_PROJECTION_UNRELIABLE", attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                capital_projection=projection, fill_window=window,
+            )
+        inventory = projection.snapshot.inventory
+
+        service = self.public_session.service
+        books = (service.book(self.bootstrap.market.yes.token_id),
+                 service.book(self.bootstrap.market.no.token_id))
+        if any(book is None for book in books):
+            return self._prefill_decision(
+                "CLOSE", "BOOK_UNAVAILABLE", attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, inventory=inventory,
+                capital_projection=projection, fill_window=window,
+            )
+        yes_book, no_book = books
+        assert yes_book is not None and no_book is not None
+        if any(book.snapshot_generation != self.public_generation for book in books):
+            return self._prefill_decision(
+                "CLOSE", "BOOK_GENERATION_CHANGED", attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, inventory=inventory,
+                capital_projection=projection, fill_window=window,
+            )
+        for book in books:
+            age, age_failure = _freshness_age(
+                book.local_ts, captured_at, self._market_data_max_age_s, "MARKET_DATA",
+            )
+            if age_failure is not None:
+                return self._prefill_decision(
+                    "CLOSE", age_failure, attempt, captured_at=captured_at,
+                    market_status=market_status, order_receipt_ts=order_receipt_ts,
+                    order_age_s=order_age, inventory=inventory,
+                    capital_projection=projection, fill_window=window,
+                )
+
+        try:
+            book_filter = self.book_filter_result()
+        except Exception as exc:  # noqa: BLE001 - filter failures are not safe to rest
+            return self._prefill_decision(
+                "CLOSE", f"BOOK_FILTER_FAILED:{type(exc).__name__}", attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                inventory=inventory, capital_projection=projection,
+                fill_window=window,
+            )
+        if not book_filter.ready:
+            return self._prefill_decision(
+                "CLOSE", _filter_rejection_reason(book_filter), attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, fill_window=window,
+            )
+        if book_filter.rejected:
+            return self._prefill_decision(
+                "CLOSE", _filter_rejection_reason(book_filter), attempt,
+                captured_at=captured_at, market_status=market_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, fill_window=window,
+            )
+        metadata = _validated_token_metadata(self.bootstrap)
+        if metadata is None:
+            return self._prefill_decision(
+                "CLOSE", "INVALID_TOKEN_METADATA", attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, fill_window=window,
+            )
+        decision_market = replace(
+            self.bootstrap.market,
+            min_order_size=max(metadata[token][1] for token in tokens),
+        )
+        candidate = build_normal_quotes(
+            decision_market, inventory, yes_book.view(), no_book.view(),
+            yes_book.tick_size, no_book.tick_size,
+        )
+        if candidate.reason is not None:
+            return self._prefill_decision(
+                "CLOSE", candidate.reason, attempt, captured_at=captured_at,
+                market_status=market_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, current_candidate=candidate,
+                fill_window=window,
+            )
+        current_quotes = {quote.token_id: quote for quote in candidate.quotes}
+        for quote in attempt.quotes:
+            current = current_quotes.get(quote.token_id)
+            if current is None or not _same_decimal(current.price, quote.price):
+                return self._prefill_decision(
+                    "CLOSE", "QUOTE_PRICE_CHANGED", attempt, captured_at=captured_at,
+                    market_status=market_status, order_receipt_ts=order_receipt_ts,
+                    order_age_s=order_age, book_filter=book_filter, inventory=inventory,
+                    capital_projection=projection, current_candidate=candidate,
+                    fill_window=window,
+                )
+            if not _same_decimal(current.size, quote.size):
+                return self._prefill_decision(
+                    "CLOSE", "QUOTE_SIZE_CHANGED", attempt, captured_at=captured_at,
+                    market_status=market_status, order_receipt_ts=order_receipt_ts,
+                    order_age_s=order_age, book_filter=book_filter, inventory=inventory,
+                    capital_projection=projection, current_candidate=candidate,
+                    fill_window=window,
+                )
+        captured_at, final_status, order_age, failure = self._prefill_terminal_read_check(
+            attempt, registry, market_status, order_receipt_ts,
+        )
+        if failure is not None:
+            return self._prefill_decision(
+                "CLOSE", failure, attempt, captured_at=captured_at,
+                market_status=final_status, order_receipt_ts=order_receipt_ts,
+                order_age_s=order_age, book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, current_candidate=candidate,
+                fill_window=window,
+            )
+        if not window.reliable:
+            return self._prefill_decision(
+                "CLOSE", window.reason or "FILL_EVIDENCE_UNRELIABLE", attempt,
+                captured_at=captured_at, market_status=final_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, current_candidate=candidate,
+                fill_window=window,
+            )
+        if window.started:
+            return self._prefill_decision(
+                "FILL_WINDOW", "CONFIRMED_FILL_HANDOFF", attempt,
+                captured_at=captured_at, market_status=final_status,
+                order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+                book_filter=book_filter, inventory=inventory,
+                capital_projection=projection, current_candidate=candidate,
+                fill_window=window,
+            )
+        return self._prefill_decision(
+            "REST", "ACKNOWLEDGED_PAIR_STILL_VALID", attempt,
+            captured_at=captured_at, market_status=final_status,
+            order_receipt_ts=order_receipt_ts, order_age_s=order_age,
+            book_filter=book_filter, inventory=inventory,
+            capital_projection=projection, current_candidate=candidate,
+            fill_window=window,
+        )
+
     def initial_fill_window(
         self, *, now_monotonic_ns: int | None = None,
     ) -> RDPFillWindowDecision:
@@ -925,6 +1669,8 @@ class RDPInputSession:
     ) -> RDPFillWindowCompletion:
         """Wait for the retained window, then run its existing scoped close once."""
         budget_s = _positive_finite_seconds(close_budget_s, "close budget")
+        if self._prefill_task is not None and not self._prefill_task.done():
+            raise RDPPlacementError("PREFILL_EVALUATION_IN_PROGRESS")
         active = self._fill_window_task
         if active is not None and not active.done():
             raise RDPPlacementError("FILL_WINDOW_COORDINATOR_IN_PROGRESS")
@@ -1130,6 +1876,10 @@ class RDPInputSession:
         if (coordinator is not None and not coordinator.done()
                 and asyncio.current_task() is not coordinator):
             raise RDPPlacementError("FILL_WINDOW_COORDINATOR_IN_PROGRESS")
+        prefill = self._prefill_task
+        if (prefill is not None and not prefill.done()
+                and asyncio.current_task() is not prefill):
+            raise RDPPlacementError("PREFILL_EVALUATION_IN_PROGRESS")
         active = self._placement_close_task
         if active is not None and not active.done():
             raise RDPPlacementError("PLACEMENT_CLOSE_IN_PROGRESS")
@@ -1374,6 +2124,10 @@ class RDPInputSession:
             return
         self._closed = True
         interrupted = False
+        prefill = self._prefill_task
+        if (prefill is not None and prefill is not asyncio.current_task()
+                and not prefill.done()):
+            interrupted = await _drain_read_task(prefill)
         coordinator = self._fill_window_task
         if (coordinator is not None and coordinator is not asyncio.current_task()
                 and not coordinator.done()):
@@ -1628,6 +2382,67 @@ def _same_decimal(actual: Any, expected: Any) -> bool:
         return False
     return (actual_value.is_finite() and expected_value.is_finite()
             and actual_value == expected_value)
+
+
+def _freshness_age(
+    receipt: Any, captured_at: Any, max_age_s: Any, label: str,
+) -> tuple[float | None, str | None]:
+    """Compare receipt freshness exactly while exposing only a category."""
+    if (isinstance(receipt, bool) or not isinstance(receipt, (int, float))
+            or not math.isfinite(receipt)):
+        return None, f"INVALID_{label}_RECEIPT"
+    if (isinstance(captured_at, bool) or not isinstance(captured_at, (int, float))
+            or not math.isfinite(captured_at)):
+        return None, f"INVALID_{label}_EVALUATION_TIME"
+    try:
+        age = Decimal(str(captured_at)) - Decimal(str(receipt))
+        limit = Decimal(str(max_age_s))
+        age_float = float(age)
+    except (InvalidOperation, OverflowError, TypeError, ValueError):
+        return None, f"INVALID_{label}_AGE"
+    if (not age.is_finite() or not limit.is_finite() or not math.isfinite(age_float)
+            or limit <= 0):
+        return age_float if math.isfinite(age_float) else None, f"INVALID_{label}_AGE"
+    if age < 0:
+        return age_float, f"{label}_RECEIPT_IN_FUTURE"
+    if age >= limit:
+        return age_float, f"{label}_STALE"
+    return age_float, None
+
+
+def _decimal_value(value: Any) -> Decimal | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        result = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return result if result.is_finite() else None
+
+
+def _prefill_confirmed_quantity(processor: Any, order_id: str) -> Decimal | None:
+    """Sum only applied confirmed fills and reject unadmitted order evidence."""
+    try:
+        applied = set(processor.applied_fill_keys)
+        for key, event in processor.fill_records.items():
+            if event.maker_order_id != order_id:
+                continue
+            if (event.status in (TradeState.MATCHED, TradeState.MINED, TradeState.RETRYING)
+                    or (event.status is TradeState.CONFIRMED and key not in applied)):
+                return None
+        total = Decimal("0")
+        with localcontext() as context:
+            context.prec = 64
+            for event in processor.economic_fills_for_order(order_id):
+                if event.status is not TradeState.CONFIRMED:
+                    continue
+                quantity = _decimal_value(event.size)
+                if quantity is None or quantity <= 0:
+                    return None
+                total += quantity
+        return total if total.is_finite() else None
+    except Exception:  # noqa: BLE001 - malformed processor state is not certifiable
+        return None
 
 
 def _positive_finite_seconds(value: object, label: str) -> float:

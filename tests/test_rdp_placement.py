@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import logging
+import math
 import socket
 import threading
 import time
@@ -17,6 +18,7 @@ import httpx
 import pytest
 import respx
 import structlog
+from structlog.testing import capture_logs
 
 from polymaker.config import Config
 from polymaker.domain import (
@@ -28,7 +30,12 @@ from polymaker.domain import (
     TokenMeta,
     TradeState,
 )
-from polymaker.execution.gateway import ExecutionGateway, GatewayReadError, PlacementUnknown
+from polymaker.execution.gateway import (
+    ExactOpenOrder,
+    ExecutionGateway,
+    GatewayReadError,
+    PlacementUnknown,
+)
 from polymaker.execution.rdp_lifecycle import close_rdp_cycle
 from polymaker.execution.rdp_placement import RDPPlacementError
 from polymaker.logging import configure as configure_logging
@@ -36,6 +43,7 @@ from polymaker.marketdata.parse import TradePrint
 from polymaker.rdp_account import RDPAccountError
 from polymaker.rdp_live import (
     RDPBootstrap,
+    RDPBootstrapError,
     RDPMarketStatusEvidence,
     TokenBookMetadata,
     read_rdp_market_status,
@@ -1708,6 +1716,1193 @@ def _prepare_real_admission(scope):
         signer=account_gateway.address, funder=account_gateway.funder,
     )
     return service, account_gateway
+
+
+class FakePrefillGateway:
+    def __init__(self, rows, *, hook=None, error=None):
+        self.rows = rows
+        self.hook = hook
+        self.error = error
+        self.calls = []
+
+    async def open_orders(self, *, strict_account, exact_decimal, safe_diagnostics):
+        self.calls.append((strict_account, exact_decimal, safe_diagnostics))
+        assert strict_account is True and exact_decimal is True and safe_diagnostics is True
+        if self.hook is not None:
+            result = self.hook()
+            if asyncio.iscoroutine(result):
+                await result
+        if self.error is not None:
+            raise self.error
+        return self.rows() if callable(self.rows) else list(self.rows)
+
+
+def _prefill_rows(attempt, *, remaining=None):
+    rows = []
+    for quote in attempt.quotes:
+        size = (remaining or {}).get(quote.token_id, Decimal(str(quote.size)))
+        rows.append(ExactOpenOrder(
+            "yes-order" if quote.token_id == "yes-token" else "no-order",
+            quote.token_id, quote.side, Decimal(str(quote.price)), size,
+        ))
+    return rows
+
+
+def _retarget_prefill_market_to_current_epoch(scope):
+    epoch = ((int(time.time()) // 300) + 1) * 300
+    end_epoch = epoch + 300
+    market = replace(
+        scope.market,
+        slug=f"btc-updown-5m-{epoch}",
+        end_date_iso=datetime.fromtimestamp(end_epoch, UTC).isoformat().replace("+00:00", "Z"),
+    )
+    bootstrap = replace(scope.bootstrap, market=market, epoch=epoch, end_epoch=end_epoch)
+    scope.market = market
+    scope.bootstrap = bootstrap
+    scope.session.bootstrap = bootstrap
+    scope.session.placement_owner._bootstrap = bootstrap
+    scope.admission = replace(scope.admission, slug=market.slug)
+    return market
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_valid_pair_reads_gamma_and_exact_gateway_then_returns_rest(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    status_calls = []
+    original_status = runtime.read_rdp_market_status
+
+    async def capture_status(bootstrap, origin, *, now):
+        status_calls.append((bootstrap, origin))
+        return await original_status(bootstrap, origin, now=now)
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", capture_status)
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "REST" and result.reason == "ACKNOWLEDGED_PAIR_STILL_VALID"
+    assert result.market_status is not None and result.market_status.age_s is not None
+    assert (result.order_receipt_ts is not None and result.order_age_s is not None
+            and 0 <= result.order_age_s < scope.session._account_max_age_s)
+    assert result.book_filter is not None and result.book_filter.ready
+    assert result.capital_projection is not None and result.capital_projection.certified
+    assert result.current_candidate is not None
+    assert result.execution_authorized is False
+    assert status_calls == [(scope.bootstrap, scope.session._gamma_origin)]
+    assert gateway.calls == [(True, True, True)]
+    assert not hasattr(gateway, "cancel_calls")
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_id", ["yes-token", "no-token"])
+async def test_initial_prefill_closes_when_either_current_quote_moves(
+    placement_scope, blocked_network, token_id,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    book = scope.session.public_session.service.book(token_id)
+    assert book is not None
+    bid = .57 if token_id == "yes-token" else .43
+    book.apply_snapshot([(bid, 10)], [(bid + .03, 10)], 3)
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason == "QUOTE_PRICE_CHANGED"
+    assert result.current_candidate is not None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_closes_on_price_gate_or_book_filter_rejection(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    service = scope.session.public_session.service
+    yes_book = service.book("yes-token")
+    assert yes_book is not None
+    yes_book.apply_snapshot([(.80, 10)], [(.82, 10)], 3)
+    no_book = service.book("no-token")
+    assert no_book is not None
+    no_book.apply_snapshot([(.30, 10)], [(.32, 10)], 3)
+    price_gate = await scope.session.evaluate_initial_prefill(attempt)
+    assert price_gate.action == "CLOSE" and price_gate.reason == "PRICE_GATE"
+
+    service.book_filter.evaluate = lambda *_args, **_kwargs: SimpleNamespace(
+        ready=True, rejected=True, reasons=("INACTIVE_YES",),
+    )
+    rejected = await scope.session.evaluate_initial_prefill(attempt)
+    assert rejected.action == "CLOSE" and rejected.reason == "INACTIVE_YES"
+    assert rejected.book_filter is not None and rejected.book_filter.rejected
+    assert gateway.calls == [(True, True, True), (True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filter_reason",
+    ["INACTIVE_YES", "INACTIVE_NO", "DEPTH_EXTREME", "FAST_MOVE_YES", "FAST_MOVE_NO"],
+)
+async def test_initial_prefill_closes_for_each_book_filter_rejection(
+    placement_scope, blocked_network, filter_reason,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    scope.session.public_session.service.book_filter.evaluate = (
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ready=True, rejected=True, reasons=(filter_reason,),
+        )
+    )
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE" and result.reason == filter_reason
+    assert result.book_filter is not None and result.book_filter.rejected
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_price_gate_equality_is_not_rejected(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    service = scope.session.public_session.service
+    for token_id in ("yes-token", "no-token"):
+        book = service.book(token_id)
+        assert book is not None
+        book.apply_snapshot([(.50, 10)], [(.52, 10)], 4)
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE"
+    assert result.reason == "QUOTE_PRICE_CHANGED"
+    assert result.reason != "PRICE_GATE"
+    assert result.current_candidate is not None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_id", ["yes-token", "no-token"])
+async def test_initial_prefill_dynamic_tick_change_on_either_token_closes(
+    placement_scope, blocked_network, token_id,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    book = scope.session.public_session.service.book(token_id)
+    assert book is not None
+    book.set_tick_size(.02)
+    scope.session.book_filter_result = lambda: SimpleNamespace(
+        ready=True, rejected=False, reasons=(),
+    )
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE" and result.reason == "QUOTE_PRICE_CHANGED"
+    assert result.current_candidate is not None
+    changed = next(q for q in result.current_candidate.quotes if q.token_id == token_id)
+    submitted = next(q for q in attempt.quotes if q.token_id == token_id)
+    assert changed.price != submitted.price
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_tiny_exact_remaining_reduction_requires_close(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    tiny = Decimal("1e-25")
+    reduced = {
+        "yes-token": Decimal(str(attempt.quotes[0].size)) - tiny,
+    }
+    gateway = FakePrefillGateway(_prefill_rows(attempt, remaining=reduced))
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE"
+    assert result.reason == "OPEN_ORDER_REMAINING_QUANTITY_CHANGED"
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row_change", ["missing", "foreign", "duplicate", "wrong-price", "wrong-side", "wrong-token"],
+)
+async def test_initial_prefill_rejects_unowned_or_contradictory_open_orders(
+    placement_scope, blocked_network, row_change,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    rows = _prefill_rows(attempt)
+    if row_change == "missing":
+        rows.pop()
+    elif row_change == "foreign":
+        rows.append(ExactOpenOrder(
+            "manual-order", "yes-token", Side.BUY, Decimal(".20"), Decimal("5"),
+        ))
+    elif row_change == "duplicate":
+        rows.append(rows[0])
+    elif row_change == "wrong-price":
+        rows[0] = replace(rows[0], price=rows[0].price + Decimal(".01"))
+    elif row_change == "wrong-side":
+        rows[0] = replace(rows[0], side=Side.SELL)
+    else:
+        rows[0] = replace(rows[0], token_id="foreign-token")
+    gateway = FakePrefillGateway(rows)
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE"
+    assert result.reason in {
+        "ACKNOWLEDGED_ORDER_MISSING", "FOREIGN_SELECTED_OPEN_ORDER",
+        "DUPLICATE_OPEN_ORDER_ID", "OPEN_ORDER_IDENTITY_OR_PRICE_MISMATCH",
+    }
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", ["wrong-row-type", "float-price", "nan-quantity"])
+async def test_initial_prefill_malformed_open_order_evidence_closes(
+    placement_scope, blocked_network, monkeypatch, malformed,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    rows = _prefill_rows(attempt)
+    if malformed == "wrong-row-type":
+        rows[0] = {"order_id": "yes-order"}
+    elif malformed == "float-price":
+        rows[0] = replace(rows[0], price=.39)
+    else:
+        rows[0] = replace(rows[0], remaining_size=Decimal("NaN"))
+    gateway = FakePrefillGateway(rows)
+    scope.session.user_session.gateway = gateway
+
+    async def malformed_read(_self):
+        return [
+            (OpenOrder(row.order_id, row.token_id, row.side, row.price,
+                       row.remaining_size, OrderState.LIVE)
+             if isinstance(row, ExactOpenOrder) else row)
+            for row in rows
+        ]
+
+    monkeypatch.setattr(runtime._StrictCloseGateway, "open_orders", malformed_read)
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE"
+    assert result.reason == "MALFORMED_OPEN_ORDER_EVIDENCE"
+    # The strict wrapper is replaced here so malformed normalized evidence
+    # reaches the pre-fill validator instead of failing in the lower adapter.
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_owned_order_id_collision_on_foreign_token_closes(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    rows = _prefill_rows(attempt)
+    rows.append(replace(rows[0], token_id="foreign-token"))
+    gateway = FakePrefillGateway(rows)
+    scope.session.user_session.gateway = gateway
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE" and result.reason == "DUPLICATE_OPEN_ORDER_ID"
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_confirmed_fill_during_reads_precedes_quote_movement(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(q for q in attempt.quotes if q.token_id == "yes-token")
+    remaining = {"yes-token": Decimal(str(yes_quote.size)) - Decimal("1")}
+    base_rows = _prefill_rows(attempt, remaining=remaining)
+
+    def during_open_read():
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=time.monotonic_ns(),
+            trade_id="prefill-race-fill", size=1, price=yes_quote.price,
+        )
+        book = scope.session.public_session.service.book("yes-token")
+        assert book is not None
+        book.apply_snapshot([(.57, 10)], [(.60, 10)], 4)
+
+    gateway = FakePrefillGateway(base_rows, hook=during_open_read)
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "FILL_WINDOW"
+    assert result.reason == "CONFIRMED_FILL_HANDOFF"
+    assert result.fill_window is not None and result.fill_window.started
+    assert result.inventory is not None and result.inventory.qy == 1
+    assert result.current_candidate is None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_read_failure_overrides_confirmation_during_gamma_read(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(q for q in attempt.quotes if q.token_id == "yes-token")
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+
+    async def failed_status(bootstrap, _origin, *, now):
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=time.monotonic_ns(),
+            trade_id="prefill-before-gamma-failure", size=1, price=yes_quote.price,
+        )
+        raise RDPBootstrapError("MARKET_STATUS_LOOKUP_FAILED", "sanitized")
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", failed_status)
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason == "MARKET_STATUS_LOOKUP_FAILED"
+    assert result.fill_window is None
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_order_read_failure_overrides_confirmation_during_read(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    quote = next(q for q in attempt.quotes if q.token_id == "yes-token")
+
+    def fill_then_fail():
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=time.monotonic_ns(),
+            trade_id="prefill-before-order-failure", size=1, price=quote.price,
+        )
+
+    gateway = FakePrefillGateway(
+        _prefill_rows(attempt), hook=fill_then_fail, error=RuntimeError("private"),
+    )
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason.startswith("ORDER_STATE_READ_FAILED:")
+    assert "private" not in result.reason
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["delayed-read-error", "delayed-registry-change"])
+async def test_initial_prefill_terminal_failure_recaptures_freshness_and_event(
+    placement_scope, blocked_network, monkeypatch, failure,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    scope.session._market_status_max_age_s = 100
+    scope.session._account_max_age_s = 100
+    origin = time.time()
+    clock = [origin]
+    scope.session._now = lambda: clock[0]
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, origin,
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+
+    def delayed_failure():
+        clock[0] += 11
+        if failure == "delayed-registry-change":
+            scope.store.register_owned_order(
+                "yes-order", scope.market.condition_id, "yes-token", Side.BUY,
+                5, .40, "ITER-0022-test-mutation",
+            )
+
+    gateway = FakePrefillGateway(
+        _prefill_rows(attempt), hook=delayed_failure,
+        error=(RuntimeError("private") if failure == "delayed-read-error" else None),
+    )
+    scope.session.user_session.gateway = gateway
+
+    with capture_logs() as events:
+        result = await scope.session.evaluate_initial_prefill(attempt)
+
+    if failure == "delayed-read-error":
+        assert result.reason == "ORDER_STATE_READ_FAILED:RuntimeError"
+        assert result.order_receipt_ts is None and result.order_age_s is None
+    else:
+        assert result.reason == "OWNERSHIP_SCOPE_CONTRADICTION"
+        assert result.order_receipt_ts is not None and result.order_age_s is not None
+        assert result.order_age_s >= 11
+    assert result.action == "CLOSE"
+    assert result.captured_at == clock[0]
+    assert result.market_status is not None and result.market_status.age_s == 11
+    evidence = [event for event in events
+                if event.get("event") == "rdp_initial_prefill_decision"]
+    assert evidence
+    event_fields = evidence[-1]
+    assert event_fields["captured_at"] == result.captured_at
+    assert event_fields["market_status_age_s"] == result.market_status.age_s
+    assert event_fields["order_receipt_ts"] == result.order_receipt_ts
+    assert event_fields["order_age_s"] == result.order_age_s
+    assert event_fields["reason"] == result.reason
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence_kind", "at_limit", "expected_action", "expected_reason"),
+    [
+        ("market-status", True, "CLOSE", "MARKET_STATUS_STALE"),
+        ("market-status", False, "REST",
+         "ACKNOWLEDGED_PAIR_STILL_VALID"),
+        ("order-state", True, "CLOSE", "ORDER_STATE_STALE"),
+        ("order-state", False, "REST",
+         "ACKNOWLEDGED_PAIR_STILL_VALID"),
+    ],
+)
+async def test_initial_prefill_terminal_freshness_boundary_matches_result_and_event(
+    placement_scope, blocked_network, monkeypatch, evidence_kind, at_limit,
+    expected_action, expected_reason,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    scope.session._market_status_max_age_s = 10 if evidence_kind == "market-status" else 100
+    scope.session._account_max_age_s = 100 if evidence_kind == "market-status" else 10
+    scope.session._market_data_max_age_s = 100
+    origin = time.time()
+    terminal_time = origin + 10.0
+    if not at_limit:
+        terminal_time = math.nextafter(terminal_time, origin)
+    age = float(Decimal(str(terminal_time)) - Decimal(str(origin)))
+    clock = [origin]
+    scope.session._now = lambda: clock[0]
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, origin,
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+    original_builder = runtime.build_normal_quotes
+
+    def advance_clock_after_candidate(*args, **kwargs):
+        candidate = original_builder(*args, **kwargs)
+        # Earlier post-read checks see fresh evidence. The one final capture
+        # happens only after candidate construction and must govern the action.
+        clock[0] = terminal_time
+        return candidate
+
+    monkeypatch.setattr(runtime, "build_normal_quotes", advance_clock_after_candidate)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+
+    with capture_logs() as events:
+        result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == expected_action and result.reason == expected_reason
+    assert result.captured_at == terminal_time
+    assert result.market_status is not None
+    assert result.market_status.age_s == age
+    assert result.order_receipt_ts is not None and result.order_age_s == age
+    event = next(
+        row for row in reversed(events)
+        if row.get("event") == "rdp_initial_prefill_decision"
+    )
+    assert event["action"] == result.action
+    assert event["reason"] == result.reason
+    assert event["captured_at"] == result.captured_at
+    assert event["market_status_age_s"] == result.market_status.age_s
+    assert event["order_age_s"] == result.order_age_s
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_fill_during_healthy_gamma_read_keeps_original_deadline(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    yes_quote = next(q for q in attempt.quotes if q.token_id == "yes-token")
+    gateway = FakePrefillGateway(_prefill_rows(
+        attempt, remaining={"yes-token": Decimal(str(yes_quote.size)) - Decimal("1")},
+    ))
+    scope.session.user_session.gateway = gateway
+    receipt_ns = time.monotonic_ns()
+    initial_book = scope.session.public_session.service.book("yes-token")
+    assert initial_book is not None
+
+    async def delayed_status(bootstrap, _origin, *, now):
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=receipt_ns,
+            trade_id="prefill-gamma-delayed-fill", size=1, price=yes_quote.price,
+        )
+        initial_book.apply_snapshot([(.57, 10)], [(.60, 10)], 5)
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", delayed_status)
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "FILL_WINDOW" and result.reason == "CONFIRMED_FILL_HANDOFF"
+    assert result.fill_window is not None and result.fill_window.started
+    assert result.fill_window.first_receipt_monotonic_ns == receipt_ns
+    assert result.fill_window.deadline_monotonic_ns == (
+        receipt_ns + round(scope.session._fill_window_s * 1_000_000_000)
+    )
+    assert result.current_candidate is None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["quarantined", "failed"])
+async def test_initial_prefill_quarantined_or_failed_fill_evidence_closes(
+    placement_scope, blocked_network, evidence,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    if evidence == "quarantined":
+        scope.processor.quarantine_order("yes-order", "synthetic", notify=False)
+    else:
+        _send_window_trade(
+            scope, "yes-order", status=TradeState.FAILED,
+            trade_id="prefill-failed-fill", receipt_ns=time.monotonic_ns(),
+        )
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE"
+    assert not (result.fill_window is not None and result.fill_window.started)
+    assert result.reason in {
+        "FILL_EVIDENCE_QUARANTINED", "FILL_EVIDENCE_UNRELIABLE",
+        "CONFIRMED_RECEIPT_UNAVAILABLE",
+    }
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_existing_confirmed_window_hands_off_without_rest_reads(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=time.monotonic_ns(),
+        trade_id="prefill-before-call", size=1,
+    )
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "FILL_WINDOW" and result.fill_window is not None
+    assert result.fill_window.started
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["health", "generation", "backlog", "stale-book"])
+async def test_initial_prefill_unreliable_public_state_never_returns_rest(
+    placement_scope, blocked_network, failure,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    service = scope.session.public_session.service
+    if failure == "health":
+        scope.session.public_session.failure_category = lambda _generation: "FEED_DISCONNECTED"
+    elif failure == "generation":
+        service.connection_generation += 1
+    elif failure == "backlog":
+        service.metrics["received"] += 1
+    else:
+        book = service.book("yes-token")
+        assert book is not None
+        book.local_ts -= scope.session._market_data_max_age_s + 1
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE"
+    assert result.reason in {
+        "FEED_DISCONNECTED", "INPUT_GENERATION_CHANGED", "PUBLIC_INPUT_BACKLOG",
+        "MARKET_DATA_STALE",
+    }
+    if failure in {"health", "generation", "backlog"}:
+        assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["matched", "confirmed-only"])
+async def test_initial_prefill_unadmitted_fill_evidence_cannot_return_rest_or_handoff(
+    placement_scope, blocked_network, evidence,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    quote = next(q for q in attempt.quotes if q.token_id == "yes-token")
+    if evidence == "matched":
+        _send_window_trade(
+            scope, "yes-order", status=TradeState.MATCHED,
+            trade_id="prefill-matched-only", receipt_ns=time.monotonic_ns(),
+            size=1, price=quote.price,
+        )
+    else:
+        _send_window_trade(
+            scope, "yes-order", status=TradeState.CONFIRMED,
+            trade_id="prefill-confirmed-only", receipt_ns=time.monotonic_ns(),
+            size=1, price=quote.price,
+        )
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE"
+    assert result.reason in {
+        "PENDING_CAPTURE_UNRESOLVED", "FILL_EVIDENCE_UNRELIABLE",
+        "CONFIRMED_RECEIPT_UNAVAILABLE",
+    }
+    assert not (result.fill_window is not None and result.fill_window.started)
+    assert len(gateway.calls) <= 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_stale_gamma_status_closes_before_order_read(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+
+    async def stale_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False,
+            now() - scope.session._market_status_max_age_s,
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", stale_status)
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason == "MARKET_STATUS_STALE"
+    assert result.market_status is not None
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_rechecks_status_and_order_age_at_terminal_capture(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    scope.session._market_status_max_age_s = 100
+    scope.session._account_max_age_s = 5
+    origin = time.time()
+    clock = [origin]
+    scope.session._now = lambda: clock[0]
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, origin,
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+
+    class AdvancingClockGateway(FakePrefillGateway):
+        async def open_orders(self, **kwargs):
+            result = await super().open_orders(**kwargs)
+            clock[0] += 6
+            return result
+
+    gateway = AdvancingClockGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason == "ORDER_STATE_STALE"
+    assert result.order_age_s is not None and result.order_age_s >= 5
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_overlap_and_caller_cancellation_keep_read_owned(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_open_read():
+        entered.set()
+        await release.wait()
+
+    gateway = FakePrefillGateway(_prefill_rows(attempt), hook=hold_open_read)
+    scope.session.user_session.gateway = gateway
+    caller = asyncio.create_task(scope.session.evaluate_initial_prefill(attempt))
+    await entered.wait()
+    active = scope.session._prefill_task
+    assert active is not None and not active.done()
+    overlap = await scope.session.evaluate_initial_prefill(attempt)
+    assert overlap.action == "CLOSE" and overlap.reason == "PREFILL_EVALUATION_IN_PROGRESS"
+    with pytest.raises(RDPPlacementError, match="PREFILL_EVALUATION_IN_PROGRESS"):
+        await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 1,
+        )
+    caller.cancel()
+    await asyncio.sleep(0)
+    caller.cancel()
+    await asyncio.sleep(0)
+    assert not caller.done() and not active.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert active.done()
+    assert scope.session._prefill_task is None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_session_teardown_waits_for_owned_order_read(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_open_read():
+        entered.set()
+        await release.wait()
+
+    gateway = FakePrefillGateway(_prefill_rows(attempt), hook=hold_open_read)
+    scope.session.user_session.gateway = gateway
+    caller = asyncio.create_task(scope.session.evaluate_initial_prefill(attempt))
+    await entered.wait()
+    active = scope.session._prefill_task
+    assert active is not None and not active.done()
+    teardown = asyncio.create_task(scope.session.aclose())
+    await asyncio.sleep(0)
+    assert not teardown.done() and not active.done()
+    release.set()
+    result = await caller
+    await teardown
+    assert result.action == "CLOSE" and result.reason == "SESSION_CLOSED"
+    assert active.done() and scope.session._prefill_task is None
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_cancellation_drains_real_gamma_and_gateway_executor_reads(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.catalog.gamma as gamma_module
+    import polymaker.rdp_live as live_module
+    import polymaker.rdp_runtime as runtime
+    from polymaker.catalog.gamma import GammaClient as RealGammaClient
+
+    scope = placement_scope
+    epoch = ((int(time.time()) // 300) + 1) * 300
+    end_epoch = epoch + 300
+    market = replace(
+        scope.market,
+        slug=f"btc-updown-5m-{epoch}",
+        end_date_iso=datetime.fromtimestamp(end_epoch, UTC).isoformat().replace("+00:00", "Z"),
+    )
+    bootstrap = replace(scope.bootstrap, market=market, epoch=epoch, end_epoch=end_epoch)
+    scope.market = market
+    scope.bootstrap = bootstrap
+    scope.session.bootstrap = bootstrap
+    scope.session.placement_owner._bootstrap = bootstrap
+    scope.admission = replace(scope.admission, slug=market.slug)
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    monkeypatch.setattr(runtime, "read_rdp_market_status", live_module.read_rdp_market_status)
+
+    clients = []
+
+    class TrackingGammaClient(RealGammaClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.closed_by_context = False
+            clients.append(self)
+
+        async def aclose(self):
+            await super().aclose()
+            self.closed_by_context = True
+
+    monkeypatch.setattr(gamma_module, "GammaClient", TrackingGammaClient)
+    monkeypatch.setattr(live_module, "GammaClient", TrackingGammaClient)
+    raw = {
+        "acceptingOrders": True, "closed": False, "negRisk": False,
+        "conditionId": market.condition_id, "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01, "orderMinSize": 5,
+    }
+    started, release = threading.Event(), threading.Event()
+
+    def hold_sdk_read(*_args):
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("fake SDK release timeout")
+
+    gateway, client = _close_gateway_real_executor(scope, quotes)
+    client.open_hook = hold_sdk_read
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+                return_value=httpx.Response(200, json=[raw]),
+            )
+            caller = asyncio.create_task(scope.session.evaluate_initial_prefill(attempt))
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+            active = scope.session._prefill_task
+            assert active is not None and not active.done()
+            assert gamma.call_count == 1
+            assert dict(gamma.calls[0].request.url.params) == {
+                "slug": market.slug, "limit": "1",
+            }
+            caller.cancel()
+            await asyncio.sleep(0)
+            caller.cancel()
+            await asyncio.sleep(0)
+            assert not caller.done() and not active.done()
+            assert clients and clients[0].closed_by_context
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert active.done()
+            assert clients[0].closed_by_context
+            assert client.open_count == 1
+            assert not gateway._account_io
+            assert client.cancel_calls == []
+    finally:
+        release.set()
+        gateway.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_first_and_repeated_cancellation_drain_active_gamma_http(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.catalog.gamma as gamma_module
+    import polymaker.rdp_live as live_module
+    import polymaker.rdp_runtime as runtime
+    from polymaker.catalog.gamma import GammaClient as RealGammaClient
+
+    scope = placement_scope
+    market = _retarget_prefill_market_to_current_epoch(scope)
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    monkeypatch.setattr(runtime, "read_rdp_market_status", live_module.read_rdp_market_status)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    clients = []
+
+    class TrackingGammaClient(RealGammaClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.closed_by_context = False
+            clients.append(self)
+
+        async def aclose(self):
+            await super().aclose()
+            self.closed_by_context = True
+
+    monkeypatch.setattr(gamma_module, "GammaClient", TrackingGammaClient)
+    monkeypatch.setattr(live_module, "GammaClient", TrackingGammaClient)
+    raw = {
+        "acceptingOrders": True, "closed": False, "negRisk": False,
+        "conditionId": market.condition_id, "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01, "orderMinSize": 5,
+    }
+    http_entered, release_http = asyncio.Event(), asyncio.Event()
+
+    async def hold_gamma_http(_request):
+        http_entered.set()
+        await release_http.wait()
+        return httpx.Response(200, json=[raw])
+
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+                side_effect=hold_gamma_http,
+            )
+            caller = asyncio.create_task(scope.session.evaluate_initial_prefill(attempt))
+            await asyncio.wait_for(http_entered.wait(), timeout=2)
+            active = scope.session._prefill_task
+            assert active is not None and not active.done()
+            assert clients and not clients[0].closed_by_context
+            caller.cancel()
+            await asyncio.sleep(0)
+            caller.cancel()
+            await asyncio.sleep(0)
+            assert not caller.done() and not active.done()
+            assert gateway.calls == []
+            release_http.set()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert active.done() and scope.session._prefill_task is None
+            assert gamma.call_count == 1
+            assert clients[0].closed_by_context
+    finally:
+        release_http.set()
+
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_teardown_drains_actual_gateway_executor_read(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.catalog.gamma as gamma_module
+    import polymaker.rdp_live as live_module
+    import polymaker.rdp_runtime as runtime
+    from polymaker.catalog.gamma import GammaClient as RealGammaClient
+
+    scope = placement_scope
+    market = _retarget_prefill_market_to_current_epoch(scope)
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    monkeypatch.setattr(runtime, "read_rdp_market_status", live_module.read_rdp_market_status)
+    clients = []
+
+    class TrackingGammaClient(RealGammaClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.closed_by_context = False
+            clients.append(self)
+
+        async def aclose(self):
+            await super().aclose()
+            self.closed_by_context = True
+
+    monkeypatch.setattr(gamma_module, "GammaClient", TrackingGammaClient)
+    monkeypatch.setattr(live_module, "GammaClient", TrackingGammaClient)
+    raw = {
+        "acceptingOrders": True, "closed": False, "negRisk": False,
+        "conditionId": market.condition_id, "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01, "orderMinSize": 5,
+    }
+    started, release = threading.Event(), threading.Event()
+
+    def hold_sdk_read(*_args):
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("fake SDK release timeout")
+
+    gateway, client = _close_gateway_real_executor(scope, quotes)
+    client.open_hook = hold_sdk_read
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+                return_value=httpx.Response(200, json=[raw]),
+            )
+            caller = asyncio.create_task(scope.session.evaluate_initial_prefill(attempt))
+            assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+            active = scope.session._prefill_task
+            assert active is not None and not active.done()
+            assert gamma.call_count == 1
+            teardown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not teardown.done() and not active.done()
+            release.set()
+            result = await caller
+            await teardown
+    finally:
+        release.set()
+        gateway.close()
+
+    assert result.action == "CLOSE" and result.reason == "SESSION_CLOSED"
+    assert active.done() and scope.session._prefill_task is None
+    assert clients and clients[0].closed_by_context
+    assert client.open_count == 1
+    assert not gateway._account_io
+    assert client.cancel_calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_market_expiry_and_untradable_status_close_fail_closed(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    gateway = FakePrefillGateway(_prefill_rows(attempt))
+    scope.session.user_session.gateway = gateway
+    scope.session._now = lambda: float(scope.bootstrap.end_epoch)
+    expired = await scope.session.evaluate_initial_prefill(attempt)
+    assert expired.action == "CLOSE" and expired.reason == "MARKET_EXPIRED"
+    assert gateway.calls == []
+
+    scope.session._now = time.time
+
+    async def untradable_status(_bootstrap, _origin, *, now):
+        raise RDPBootstrapError("MARKET_NOT_TRADABLE", "sanitized")
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", untradable_status)
+    untradable = await scope.session.evaluate_initial_prefill(attempt)
+    assert untradable.action == "CLOSE" and untradable.reason == "MARKET_NOT_TRADABLE"
+    assert gateway.calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_attempt_registry_mutation_during_read_closes(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+    changed = replace(attempt, attempt_id=attempt.attempt_id + 1)
+
+    def mutate_registry():
+        scope.owner._current = changed
+
+    gateway = FakePrefillGateway(_prefill_rows(attempt), hook=mutate_registry)
+    scope.session.user_session.gateway = gateway
+    result = await scope.session.evaluate_initial_prefill(attempt)
+    assert result.action == "CLOSE" and result.reason == "PLACEMENT_ATTEMPT_CHANGED"
+    assert scope.owner.current is changed
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_registered_economics_mutation_during_read_closes(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, _quotes = await _compose_accepted_initial_pair(scope)
+
+    def mutate_economics():
+        scope.store.register_owned_order(
+            "yes-order", scope.market.condition_id, "yes-token", Side.BUY,
+            5, .40, "ITER-0022-test-mutation",
+        )
+
+    gateway = FakePrefillGateway(_prefill_rows(attempt), hook=mutate_economics)
+    scope.session.user_session.gateway = gateway
+
+    result = await scope.session.evaluate_initial_prefill(attempt)
+
+    assert result.action == "CLOSE" and result.reason == "OWNERSHIP_SCOPE_CONTRADICTION"
+    assert scope.owner.current is attempt
+    assert gateway.calls == [(True, True, True)]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_prefill_excludes_active_fill_window_coordinator(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    clock = _DeterministicMonotonicClock(time.monotonic_ns())
+    scope.session._monotonic_ns = clock.read
+    sleeper_entered, release_sleep = asyncio.Event(), asyncio.Event()
+
+    async def held_sleep(_delay):
+        sleeper_entered.set()
+        await release_sleep.wait()
+
+    scope.session._sleep = held_sleep
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    _send_matched_then_confirmed(
+        scope, "yes-order", receipt_ns=clock.read(), trade_id="prefill-coordinator-fill",
+    )
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("1")),
+        trades=(_rest_trade(
+            "yes-order", "yes-token", ".39", "1",
+            trade_id="prefill-coordinator-fill",
+        ),),
+    )
+    coordinator = asyncio.create_task(
+        scope.session.complete_initial_fill_window(attempt, close_budget_s=2),
+    )
+    try:
+        await asyncio.wait_for(sleeper_entered.wait(), timeout=1)
+        decision = await scope.session.evaluate_initial_prefill(attempt)
+        assert decision.action == "CLOSE"
+        assert decision.reason == "PLACEMENT_COORDINATION_IN_PROGRESS"
+        assert client.open_count == 0 and client.cancel_calls == []
+        clock.now_ns = clock.read() + round(scope.session._fill_window_s * 1_000_000_000)
+        release_sleep.set()
+        completion = await coordinator
+    finally:
+        release_sleep.set()
+        gateway.close()
+
+    assert completion.close_result.barrier_complete
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
 
 
 @pytest.mark.asyncio
