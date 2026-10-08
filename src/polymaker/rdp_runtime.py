@@ -24,7 +24,14 @@ from polymaker.execution.rdp_placement import (
 )
 from polymaker.logging import get_logger
 from polymaker.rdp_account import RDPAccountError, _capture_account_with_gateway
-from polymaker.rdp_live import RDPBootstrap, RDPBootstrapError, bootstrap_rdp_market
+from polymaker.rdp_live import (
+    RDPBootstrap,
+    RDPBootstrapError,
+    RDPMarketStatusEvidence,
+    bootstrap_rdp_market,
+    read_rdp_market_status,
+    validate_rdp_market_status_config,
+)
 from polymaker.rdp_marketdata import (
     RDPFeedReadiness,
     RDPMarketDataSession,
@@ -88,6 +95,7 @@ class RDPInitialNormalAdmission:
     token_ticks: tuple[tuple[str, float], ...]
     minimum_sizes: tuple[tuple[str, float], ...]
     outstanding_execution_gates: tuple[str, ...]
+    market_status: RDPMarketStatusEvidence | None = None
     execution_authorized: bool = field(default=False, init=False)
 
 
@@ -137,7 +145,9 @@ class RDPInputSession:
                  poll_interval_s: float, started_at: float,
                  account_max_age_s: float | None = None,
                  fill_window_s: float = 3.0,
-                 monotonic_ns: Callable[[], int] | None = None) -> None:
+                 monotonic_ns: Callable[[], int] | None = None,
+                 gamma_origin: str | None = None,
+                 market_status_max_age_s: float | None = None) -> None:
         self.bootstrap = bootstrap
         self.public_session = public_session
         self.user_session = user_session
@@ -155,12 +165,22 @@ class RDPInputSession:
         self._poll_interval_s = poll_interval_s
         self._account_max_age_s = (Config().risk.user_ws_blind_halt_s
                                    if account_max_age_s is None else account_max_age_s)
+        default_gamma_origin, default_status_max_age = validate_rdp_market_status_config(Config())
+        self._gamma_origin = default_gamma_origin if gamma_origin is None else gamma_origin
+        status_max_age = default_status_max_age if market_status_max_age_s is None else market_status_max_age_s
+        if (isinstance(status_max_age, bool) or not isinstance(status_max_age, (int, float))
+                or not math.isfinite(status_max_age) or status_max_age <= 0):
+            raise RDPObservationError(
+                "INVALID_MARKET_STATUS_MAX_AGE", "market-status freshness limit must be finite and positive",
+            )
+        self._market_status_max_age_s = float(status_max_age)
         self._fill_window_s = RDPFillWindow(fill_window_s).duration_s
         self._fill_windows: dict[int, RDPFillWindow] = {}
         self._closed = False
         self._admission_active = False
         self._admission_task: asyncio.Task[Any] | None = None
         self._account_read_task: asyncio.Task[Any] | None = None
+        self._market_status_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
         self._fill_window_task: asyncio.Task[RDPFillWindowCompletion] | None = None
         self._fill_window_result: RDPFillWindowCompletion | None = None
@@ -210,6 +230,13 @@ class RDPInputSession:
         except Exception as exc:  # noqa: BLE001
             raise RDPObservationError("CONFIGURATION_CAPTURE_FAILED", "RDP configuration could not be captured") from exc
 
+        try:
+            gamma_origin, market_status_max_age_s = validate_rdp_market_status_config(runtime_cfg)
+        except RDPBootstrapError as exc:
+            raise RDPObservationError(
+                exc.category, "official Gamma origin or market-status freshness configuration is invalid",
+            ) from None
+
         bootstrap = await bootstrap_factory(runtime_cfg, slug, now=now)
         if _termination_context is not None:
             _termination_context["condition_id"] = bootstrap.market.condition_id
@@ -250,6 +277,8 @@ class RDPInputSession:
                 now=now, sleep=sleep, poll_interval_s=poll_interval_s,
                 started_at=started_at,
                 account_max_age_s=runtime_cfg.risk.user_ws_blind_halt_s,
+                gamma_origin=gamma_origin,
+                market_status_max_age_s=market_status_max_age_s,
                 fill_window_s=fill_window_s,
                 monotonic_ns=monotonic_ns,
             )
@@ -332,27 +361,111 @@ class RDPInputSession:
 
     async def initial_normal_admission(self) -> RDPInitialNormalAdmission:
         """Capture one read-only initial NORMAL decision from retained inputs."""
+        market_status: RDPMarketStatusEvidence | None = None
+        market_status_verified = False
+
+        def rejected(reason: str, **kwargs: Any) -> RDPInitialNormalAdmission:
+            nonlocal market_status, market_status_verified
+            if market_status is None:
+                market_status_verified = False
+            else:
+                try:
+                    capture_time = self._now()
+                except Exception:  # noqa: BLE001 - rejection remains fail-closed
+                    market_status = replace(
+                        market_status, age_s=None,
+                        max_age_s=self._market_status_max_age_s,
+                    )
+                    market_status_verified = False
+                else:
+                    market_status, status_failure = self._evaluate_market_status_freshness(
+                        market_status, at=capture_time,
+                    )
+                    market_status_verified = (
+                        status_failure is None and capture_time < self.bootstrap.end_epoch
+                    )
+            kwargs["market_status"] = market_status
+            kwargs["market_status_verified"] = market_status_verified
+            return self._admission_rejected(reason, **kwargs)
+
         task = asyncio.current_task()
         if self._closed:
-            return self._admission_rejected("SESSION_CLOSED")
+            return rejected("SESSION_CLOSED")
         if self._admission_active:
-            return self._admission_rejected("INITIAL_ADMISSION_IN_PROGRESS")
+            return rejected("INITIAL_ADMISSION_IN_PROGRESS")
         self._admission_active = True
         self._admission_task = task
         try:
             reason = self._admission_precondition_failure()
             if reason is not None:
-                return self._admission_rejected(reason)
+                return rejected(reason)
+
+            status_task = asyncio.create_task(
+                read_rdp_market_status(
+                    self.bootstrap, self._gamma_origin, now=self._now,
+                ),
+                name="rdp-initial-admission-market-status-read",
+            )
+            self._market_status_read_task = status_task
+            try:
+                market_status = await asyncio.shield(status_task)
+            except asyncio.CancelledError:
+                await _drain_read_task(status_task)
+                raise
+            except RDPBootstrapError as exc:
+                precondition = self._admission_precondition_failure()
+                if precondition is not None:
+                    return rejected(precondition)
+                log.warning(
+                    "rdp_initial_market_status", result="REJECTED", category=exc.category,
+                    slug=self.bootstrap.market.slug,
+                    condition_id=self.bootstrap.market.condition_id,
+                    real_money_trading_performed=False,
+                )
+                return rejected(exc.category)
+            except Exception as exc:  # noqa: BLE001 - sanitize unexpected HTTP/parser errors
+                precondition = self._admission_precondition_failure()
+                if precondition is not None:
+                    return rejected(precondition)
+                reason = f"MARKET_STATUS_READ_FAILED:{type(exc).__name__}"
+                log.warning(
+                    "rdp_initial_market_status", result="REJECTED", category=reason,
+                    slug=self.bootstrap.market.slug,
+                    condition_id=self.bootstrap.market.condition_id,
+                    real_money_trading_performed=False,
+                )
+                return rejected(reason)
+            finally:
+                if status_task.done():
+                    self._market_status_read_task = None
+
+            reason = self._admission_precondition_failure()
+            if reason is not None:
+                return rejected(reason)
+            market_status, status_failure = self._evaluate_market_status_freshness(market_status)
+            if status_failure is not None:
+                market_status_verified = False
+                return rejected(status_failure)
+            market_status_verified = True
+            log.info(
+                "rdp_initial_market_status", result="SUCCESS", category="MARKET_STATUS_FRESH",
+                slug=market_status.slug, condition_id=market_status.condition_id,
+                token_ids=market_status.token_ids, outcomes=market_status.outcomes,
+                neg_risk=market_status.neg_risk, end_epoch=market_status.end_epoch,
+                accepting_orders=market_status.accepting_orders, closed=market_status.closed,
+                receipt_ts=market_status.receipt_ts, age_s=market_status.age_s,
+                max_age_s=market_status.max_age_s, real_money_trading_performed=False,
+            )
 
             account = self.observation.account
             gateway = getattr(self.user_session, "gateway", None)
             if gateway is None:
-                return self._admission_rejected("ACCOUNT_GATEWAY_UNAVAILABLE")
+                return rejected("ACCOUNT_GATEWAY_UNAVAILABLE")
             signer = getattr(account, "signer", None)
             funder = getattr(account, "funder", None)
             if (not isinstance(signer, str) or not signer.strip()
                     or not isinstance(funder, str) or not funder.strip()):
-                return self._admission_rejected("ACCOUNT_IDENTITY_UNAVAILABLE")
+                return rejected("ACCOUNT_IDENTITY_UNAVAILABLE")
             read_task = asyncio.create_task(
                 _capture_account_with_gateway(
                     self.bootstrap, gateway, signer, funder,
@@ -367,9 +480,12 @@ class RDPInputSession:
                 await _drain_read_task(read_task)
                 raise
             except RDPAccountError as exc:
-                return self._admission_rejected(exc.category)
+                return rejected(self._admission_precondition_failure() or exc.category)
             except Exception as exc:  # noqa: BLE001 - sanitize unexpected read errors
-                return self._admission_rejected(f"ACCOUNT_READ_FAILED:{type(exc).__name__}")
+                return rejected(
+                    self._admission_precondition_failure()
+                    or f"ACCOUNT_READ_FAILED:{type(exc).__name__}"
+                )
             finally:
                 if read_task.done():
                     self._account_read_task = None
@@ -378,40 +494,46 @@ class RDPInputSession:
             # every predicate and output below describes one synchronous capture.
             reason = self._admission_precondition_failure()
             if reason is not None:
-                return self._admission_rejected(reason)
+                return rejected(reason)
+            market_status, status_failure = self._evaluate_market_status_freshness(
+                market_status,
+            )
+            if status_failure is not None:
+                market_status_verified = False
+                return rejected(status_failure, account=current_account)
             backing = evaluate_initial_rdp_backing(
                 self.bootstrap, current_account, now=self._now(),
                 max_age_s=self._account_max_age_s,
             )
             if not backing.eligible:
-                return self._admission_rejected(
+                return rejected(
                     backing.reason or "INITIAL_BACKING_INELIGIBLE", backing=backing,
                     account=current_account,
                 )
             if not backing.selected_state_empty:
-                return self._admission_rejected(
+                return rejected(
                     "SELECTED_STATE_NOT_EMPTY", backing=backing, account=current_account,
                 )
 
             reason = self._admission_precondition_failure()
             if reason is not None:
-                return self._admission_rejected(
+                return rejected(
                     reason, backing=backing, account=current_account,
                 )
             service = self.public_session.service
             metrics = service.metrics
             if _has_public_input_backlog(metrics):
-                return self._admission_rejected(
+                return rejected(
                     "PUBLIC_INPUT_BACKLOG", backing=backing, account=current_account,
                 )
             filter_result = self.book_filter_result()
             if not filter_result.ready:
-                return self._admission_rejected(
+                return rejected(
                     _filter_rejection_reason(filter_result), backing=backing,
                     account=current_account, book_filter=filter_result,
                 )
             if filter_result.rejected:
-                return self._admission_rejected(
+                return rejected(
                     "BOOK_FILTER_REJECTED", backing=backing, account=current_account,
                     book_filter=filter_result,
                 )
@@ -421,7 +543,7 @@ class RDPInputSession:
             if (yes_book is None or no_book is None
                     or yes_book.snapshot_generation != self.public_generation
                     or no_book.snapshot_generation != self.public_generation):
-                return self._admission_rejected(
+                return rejected(
                     "BOOK_UNAVAILABLE", backing=backing, account=current_account,
                     book_filter=filter_result,
                 )
@@ -430,14 +552,14 @@ class RDPInputSession:
                      (self.bootstrap.market.no.token_id, no_book.tick_size))
             metadata = _validated_token_metadata(self.bootstrap)
             if metadata is None:
-                return self._admission_rejected(
+                return rejected(
                     "INVALID_TOKEN_METADATA", backing=backing, account=current_account,
                     book_filter=filter_result, token_ticks=ticks,
                 )
             minimums = tuple((token, metadata[token][1]) for token in (
                 self.bootstrap.market.yes.token_id, self.bootstrap.market.no.token_id))
             if any(size > 5 for _token, size in minimums):
-                return self._admission_rejected(
+                return rejected(
                     "CLOB_MINIMUM_EXCEEDS_FROZEN_CLIP", backing=backing,
                     account=current_account, book_filter=filter_result,
                     token_ticks=ticks, minimum_sizes=minimums,
@@ -452,7 +574,7 @@ class RDPInputSession:
                 market_state_reliable=True, order_state_reliable=True,
             )
             if not projection.certified:
-                return self._admission_rejected(
+                return rejected(
                     projection.reason or "CAPITAL_PROJECTION_REJECTED",
                     backing=backing, account=current_account, book_filter=filter_result,
                     capital_projection=projection, token_ticks=ticks,
@@ -463,14 +585,14 @@ class RDPInputSession:
                 yes_view, no_view, yes_book.tick_size, no_book.tick_size,
             )
             if candidate.reason is not None:
-                return self._admission_rejected(
+                return rejected(
                     candidate.reason, backing=backing, account=current_account,
                     book_filter=filter_result, capital_projection=projection,
                     candidate=candidate, token_ticks=ticks, minimum_sizes=minimums,
                 )
             capital = evaluate_rdp_capital_gate(RDPMode.NORMAL, candidate, projection)
             if not capital.admitted:
-                return self._admission_rejected(
+                return rejected(
                     capital.reason or "CAPITAL_GATE_REJECTED", backing=backing,
                     account=current_account, book_filter=filter_result,
                     capital_projection=projection, capital_admission=capital,
@@ -478,11 +600,35 @@ class RDPInputSession:
                 )
             # Final health/generation/expiry/backlog checks are synchronous and
             # immediately precede returning the immutable decision.
+            decision_now = self._now()
+            market_status, status_failure = self._evaluate_market_status_freshness(
+                market_status, at=decision_now,
+            )
+            if status_failure is not None:
+                market_status_verified = False
+                return rejected(
+                    status_failure, backing=backing, account=current_account,
+                    book_filter=filter_result, capital_projection=projection,
+                    capital_admission=capital, candidate=candidate,
+                    token_ticks=ticks, minimum_sizes=minimums,
+                )
+            final_backing = evaluate_initial_rdp_backing(
+                self.bootstrap, current_account, now=decision_now,
+                max_age_s=self._account_max_age_s,
+            )
+            if not final_backing.eligible or not final_backing.selected_state_empty:
+                return rejected(
+                    final_backing.reason or "ACCOUNT_EVIDENCE_STALE",
+                    backing=final_backing, account=current_account,
+                    book_filter=filter_result, capital_projection=projection,
+                    capital_admission=capital, candidate=candidate,
+                    token_ticks=ticks, minimum_sizes=minimums,
+                )
             reason = self._admission_precondition_failure()
             if reason is None and _has_public_input_backlog(metrics):
                 reason = "PUBLIC_INPUT_BACKLOG"
             if reason is not None:
-                return self._admission_rejected(
+                return rejected(
                     reason, backing=backing, account=current_account,
                     book_filter=filter_result, capital_projection=projection,
                     capital_admission=capital, candidate=candidate,
@@ -494,25 +640,82 @@ class RDPInputSession:
                 eligible=True,
                 reason=None,
                 candidate=candidate,
-                backing=backing,
                 book_filter=filter_result,
                 capital_projection=projection,
                 capital_admission=capital,
                 public_generation=self.public_generation,
                 user_generation=self.user_generation,
                 account_receipt_times=_account_receipt_times(current_account),
+                backing=final_backing,
                 token_ticks=ticks,
                 minimum_sizes=minimums,
+                market_status=market_status,
                 outstanding_execution_gates=(
-                    "CURRENT_MARKET_TRADABILITY", "CURRENT_CYCLE_RECONCILIATION",
+                    "CURRENT_CYCLE_RECONCILIATION",
                     "OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
                     "HUMAN_LIVE_AUTHORIZATION",
                 ),
             )
         finally:
             self._account_read_task = None
+            self._market_status_read_task = None
             self._admission_task = None
             self._admission_active = False
+
+    def _evaluate_market_status_freshness(
+        self,
+        evidence: RDPMarketStatusEvidence,
+        *,
+        at: float | None = None,
+    ) -> tuple[RDPMarketStatusEvidence, str | None]:
+        at = self._now() if at is None else at
+        receipt_ts = evidence.receipt_ts
+        if (isinstance(receipt_ts, bool) or not isinstance(receipt_ts, (int, float))
+                or not math.isfinite(receipt_ts)):
+            category = "INVALID_MARKET_STATUS_RECEIPT"
+            age = None
+        elif (isinstance(at, bool) or not isinstance(at, (int, float))
+                or not math.isfinite(at)):
+            category = "INVALID_MARKET_STATUS_EVALUATION_TIME"
+            age = None
+        else:
+            exact_age = exact_limit = None
+            try:
+                exact_age = Decimal(str(at)) - Decimal(str(receipt_ts))
+                exact_limit = Decimal(str(self._market_status_max_age_s))
+                age = float(exact_age)
+            except (InvalidOperation, OverflowError, ValueError):
+                exact_age = None
+                exact_limit = None
+                age = None
+            if (exact_age is None or exact_limit is None or not exact_age.is_finite()
+                    or not exact_limit.is_finite() or not math.isfinite(age)):
+                category = "INVALID_MARKET_STATUS_AGE"
+            elif exact_age < 0:
+                category = "MARKET_STATUS_RECEIPT_IN_FUTURE"
+            elif exact_age >= exact_limit:
+                category = "MARKET_STATUS_STALE"
+            else:
+                evaluated = replace(
+                    evidence, age_s=age, max_age_s=self._market_status_max_age_s,
+                )
+                return evaluated, None
+        if age is not None and math.isfinite(age):
+            evaluated = replace(
+                evidence, age_s=age, max_age_s=self._market_status_max_age_s,
+            )
+        else:
+            evaluated = replace(evidence, age_s=age, max_age_s=self._market_status_max_age_s)
+        log.warning(
+            "rdp_initial_market_status", result="REJECTED", category=category,
+            slug=evidence.slug, condition_id=evidence.condition_id,
+            token_ids=evidence.token_ids, outcomes=evidence.outcomes,
+            neg_risk=evidence.neg_risk, end_epoch=evidence.end_epoch,
+            accepting_orders=evidence.accepting_orders, closed=evidence.closed,
+            receipt_ts=evidence.receipt_ts, age_s=evaluated.age_s,
+            max_age_s=evaluated.max_age_s, real_money_trading_performed=False,
+        )
+        return evaluated, category
 
     def _admission_precondition_failure(self) -> str | None:
         if self._closed:
@@ -1101,7 +1304,8 @@ class RDPInputSession:
     def _admission_rejected(self, reason: str, *, backing=None, account=None,
                             book_filter=None, capital_projection=None,
                             capital_admission=None, candidate=None,
-                            token_ticks=(), minimum_sizes=()) -> RDPInitialNormalAdmission:
+                            token_ticks=(), minimum_sizes=(), market_status=None,
+                            market_status_verified=False) -> RDPInitialNormalAdmission:
         return RDPInitialNormalAdmission(
             slug=self.bootstrap.market.slug,
             condition_id=self.bootstrap.market.condition_id,
@@ -1119,8 +1323,10 @@ class RDPInputSession:
             ),
             token_ticks=tuple(token_ticks),
             minimum_sizes=tuple(minimum_sizes),
+            market_status=market_status,
             outstanding_execution_gates=(
-                "CURRENT_MARKET_TRADABILITY", "CURRENT_CYCLE_RECONCILIATION",
+                *(("CURRENT_MARKET_TRADABILITY",) if not market_status_verified else ()),
+                "CURRENT_CYCLE_RECONCILIATION",
                 "OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
                 "HUMAN_LIVE_AUTHORIZATION",
             ),

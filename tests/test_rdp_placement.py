@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import socket
 import threading
@@ -12,7 +13,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
+import httpx
 import pytest
+import respx
 import structlog
 
 from polymaker.config import Config
@@ -30,7 +33,13 @@ from polymaker.execution.rdp_lifecycle import close_rdp_cycle
 from polymaker.execution.rdp_placement import RDPPlacementError
 from polymaker.logging import configure as configure_logging
 from polymaker.marketdata.parse import TradePrint
-from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
+from polymaker.rdp_account import RDPAccountError
+from polymaker.rdp_live import (
+    RDPBootstrap,
+    RDPMarketStatusEvidence,
+    TokenBookMetadata,
+    read_rdp_market_status,
+)
 from polymaker.rdp_marketdata import RDPMarketDataService
 from polymaker.rdp_runtime import (
     RDPInitialNormalAdmission,
@@ -64,7 +73,7 @@ def blocked_network(monkeypatch):
 
 
 @pytest.fixture
-def placement_scope(tmp_path):
+def placement_scope(tmp_path, monkeypatch):
     end_epoch = int(time.time()) + 300
     market = MarketMeta(
         condition_id="rdp-placement-condition",
@@ -142,6 +151,19 @@ def placement_scope(tmp_path):
 
     session = make_session()
     owner = session.placement_owner
+    async def fake_market_status(current_bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            slug=current_bootstrap.market.slug,
+            condition_id=current_bootstrap.market.condition_id,
+            token_ids=tuple(token.token_id for token in current_bootstrap.market.tokens),
+            outcomes=tuple(token.outcome for token in current_bootstrap.market.tokens),
+            neg_risk=current_bootstrap.market.neg_risk,
+            end_epoch=current_bootstrap.end_epoch,
+            accepting_orders=True,
+            closed=False,
+            receipt_ts=now(),
+        )
+    monkeypatch.setattr("polymaker.rdp_runtime.read_rdp_market_status", fake_market_status)
     yield SimpleNamespace(
         bootstrap=bootstrap,
         market=market,
@@ -169,6 +191,7 @@ class FakeAccountReadGateway:
             api_key="fake-key", api_secret="fake-secret", api_passphrase="fake-passphrase",
         )
         self.spender = "0x" + "a" * 40
+        self.positions_hook = None
 
     async def open_orders(self, *, strict_account, exact_decimal):
         self.calls.append("open_orders")
@@ -178,6 +201,8 @@ class FakeAccountReadGateway:
     async def positions(self, *, strict_account):
         self.calls.append("positions")
         assert strict_account is True
+        if callable(self.positions_hook):
+            self.positions_hook()
         return {"yes-token": ("0", "0"), "no-token": ("0", "0")}
 
     async def required_collateral_spenders(self, _market):
@@ -1763,6 +1788,491 @@ async def test_real_initial_admission_arms_same_session_and_resolves_strict_gate
                for order_id in result.acknowledged_order_ids)
     assert len(client.posts) == 1 and client.posts[0][1] is True
     assert service.connection_generation == admission.public_generation == 3
+
+
+@pytest.mark.asyncio
+async def test_initial_admission_uses_fresh_exact_gamma_http_status(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    epoch = ((int(time.time()) // 300) + 1) * 300
+    end_epoch = epoch + 300
+    market = replace(
+        scope.market,
+        slug=f"btc-updown-5m-{epoch}",
+        end_date_iso=datetime.fromtimestamp(end_epoch, UTC).isoformat().replace("+00:00", "Z"),
+    )
+    scope.market = market
+    scope.bootstrap = replace(
+        scope.bootstrap, market=market, epoch=epoch, end_epoch=end_epoch,
+    )
+    scope.session.bootstrap = scope.bootstrap
+    scope.session.placement_owner.bootstrap = scope.bootstrap
+    monkeypatch.setattr(runtime, "read_rdp_market_status", read_rdp_market_status)
+    _service, _account_gateway = _prepare_real_admission(scope)
+    raw = {
+        "acceptingOrders": True,
+        "closed": False,
+        "negRisk": market.neg_risk,
+        "conditionId": market.condition_id,
+        "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01,
+        "orderMinSize": 5,
+    }
+    with respx.mock(assert_all_called=True) as router:
+        gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+            return_value=httpx.Response(200, json=[raw]),
+        )
+        admission = await scope.session.initial_normal_admission()
+        repeated = await scope.session.initial_normal_admission()
+
+    assert admission.eligible and admission.reason is None
+    assert repeated.eligible and repeated.reason is None
+    assert admission.market_status is not None
+    status = admission.market_status
+    assert status.slug == market.slug
+    assert status.condition_id == market.condition_id
+    assert status.token_ids == ("yes-token", "no-token")
+    assert status.outcomes == ("Up", "Down")
+    assert status.neg_risk is False
+    assert status.end_epoch == end_epoch
+    assert status.accepting_orders is True and status.closed is False
+    assert 0 <= status.age_s < status.max_age_s
+    assert "CURRENT_MARKET_TRADABILITY" not in admission.outstanding_execution_gates
+    assert gamma.call_count == 2
+    assert dict(gamma.calls[0].request.url.params) == {"slug": market.slug, "limit": "1"}
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_real_gamma_http_read_drains_and_closes_before_repeated_cancellation_returns(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_live as rdp_live
+    import polymaker.rdp_runtime as runtime
+    from polymaker.catalog.gamma import GammaClient as RealGammaClient
+
+    scope = placement_scope
+    epoch = ((int(time.time()) // 300) + 1) * 300
+    end_epoch = epoch + 300
+    market = replace(
+        scope.market,
+        slug=f"btc-updown-5m-{epoch}",
+        end_date_iso=datetime.fromtimestamp(end_epoch, UTC).isoformat().replace("+00:00", "Z"),
+    )
+    scope.market = market
+    scope.bootstrap = replace(scope.bootstrap, market=market, epoch=epoch, end_epoch=end_epoch)
+    scope.session.bootstrap = scope.bootstrap
+    scope.session.placement_owner.bootstrap = scope.bootstrap
+    _prepare_real_admission(scope)
+    monkeypatch.setattr(runtime, "read_rdp_market_status", read_rdp_market_status)
+
+    created_clients = []
+
+    class TrackingGammaClient(RealGammaClient):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.closed_by_context = False
+            created_clients.append(self)
+
+        async def aclose(self):
+            await super().aclose()
+            self.closed_by_context = True
+
+    monkeypatch.setattr(rdp_live, "GammaClient", TrackingGammaClient)
+    raw = {
+        "acceptingOrders": True, "closed": False, "negRisk": False,
+        "conditionId": market.condition_id, "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01, "orderMinSize": 5,
+    }
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_response(_request):
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json=[raw])
+
+    with respx.mock(assert_all_called=True) as router:
+        gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+            side_effect=delayed_response,
+        )
+        admission_task = asyncio.create_task(scope.session.initial_normal_admission())
+        await entered.wait()
+        status_task = scope.session._market_status_read_task
+        assert status_task is not None and not status_task.done()
+        admission_task.cancel()
+        await asyncio.sleep(0)
+        admission_task.cancel()
+        await asyncio.sleep(0)
+        assert not admission_task.done()
+        assert not created_clients[0].closed_by_context
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await admission_task
+    assert gamma.call_count == 1
+    assert created_clients and created_clients[0].closed_by_context
+    assert status_task.done() and scope.session._market_status_read_task is None
+    assert scope.session._admission_task is None and not scope.session._admission_active
+    assert not scope.session.user_session.gateway.calls
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("age", "expected_reason"),
+    [(1.0, None), (10.0, "MARKET_STATUS_STALE"),
+     (11.0, "MARKET_STATUS_STALE"), (-1.0, "MARKET_STATUS_RECEIPT_IN_FUTURE"),
+     (float("nan"), "INVALID_MARKET_STATUS_RECEIPT")],
+)
+async def test_initial_admission_status_age_is_strict_and_fail_closed(
+    placement_scope, blocked_network, monkeypatch, age, expected_reason,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [time.time()]
+    scope.session._now = lambda: clock[0]
+
+    async def age_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False,
+            now() - age,
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", age_status)
+    _prepare_real_admission(scope)
+    result = await scope.session.initial_normal_admission()
+    if expected_reason is None:
+        assert result.eligible
+        assert result.market_status is not None and result.market_status.age_s < 10
+        assert "CURRENT_MARKET_TRADABILITY" not in result.outstanding_execution_gates
+    else:
+        assert not result.eligible and result.reason == expected_reason
+        assert result.market_status is not None
+        assert "CURRENT_MARKET_TRADABILITY" in result.outstanding_execution_gates
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("offset", "expected_reason"),
+    [("0.0999", None), ("0.1", "MARKET_STATUS_STALE"),
+     ("0.1001", "MARKET_STATUS_STALE")],
+)
+async def test_real_gamma_receipt_uses_exact_fractional_freshness_boundary(
+    placement_scope, blocked_network, monkeypatch, offset, expected_reason,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    epoch = ((int(time.time()) // 300) + 1) * 300
+    end_epoch = epoch + 300
+    market = replace(
+        scope.market,
+        slug=f"btc-updown-5m-{epoch}",
+        end_date_iso=datetime.fromtimestamp(end_epoch, UTC).isoformat().replace("+00:00", "Z"),
+    )
+    scope.market = market
+    scope.bootstrap = replace(scope.bootstrap, market=market, epoch=epoch, end_epoch=end_epoch)
+    scope.session.bootstrap = scope.bootstrap
+    scope.session.placement_owner.bootstrap = scope.bootstrap
+    scope.session._market_status_max_age_s = 0.1
+    clock = [float(epoch + 2)]
+    scope.session._now = lambda: clock[0]
+    monkeypatch.setattr(runtime, "read_rdp_market_status", read_rdp_market_status)
+    _service, gateway = _prepare_real_admission(scope)
+    gateway.positions_hook = lambda: clock.__setitem__(
+        0, float(epoch + 2) + float(offset),
+    )
+    raw = {
+        "acceptingOrders": True, "closed": False, "negRisk": market.neg_risk,
+        "conditionId": market.condition_id, "question": market.question,
+        "slug": market.slug,
+        "clobTokenIds": json.dumps([token.token_id for token in market.tokens]),
+        "outcomes": json.dumps([token.outcome for token in market.tokens]),
+        "endDate": market.end_date_iso,
+        "orderPriceMinTickSize": .01, "orderMinSize": 5,
+    }
+    with respx.mock(assert_all_called=True) as router:
+        gamma = router.get("https://gamma-api.polymarket.com/markets").mock(
+            return_value=httpx.Response(200, json=[raw]),
+        )
+        result = await scope.session.initial_normal_admission()
+
+    assert gamma.call_count == 1
+    assert result.market_status is not None
+    assert result.market_status.receipt_ts == float(epoch + 2)
+    if expected_reason is None:
+        assert result.eligible
+        assert "CURRENT_MARKET_TRADABILITY" not in result.outstanding_execution_gates
+    else:
+        assert not result.eligible and result.reason == expected_reason
+        assert "CURRENT_MARKET_TRADABILITY" in result.outstanding_execution_gates
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_fresh_market_status_does_not_clear_other_admission_gates(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [time.time()]
+    scope.session._now = lambda: clock[0]
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+    _prepare_real_admission(scope)
+    scope.session.user_session.gateway = None
+    result = await scope.session.initial_normal_admission()
+    assert not result.eligible and result.reason == "ACCOUNT_GATEWAY_UNAVAILABLE"
+    assert result.market_status is not None
+    assert "CURRENT_MARKET_TRADABILITY" not in result.outstanding_execution_gates
+    assert result.outstanding_execution_gates == (
+        "CURRENT_CYCLE_RECONCILIATION", "OPERATIONAL_TIME_SUFFICIENCY",
+        "FINAL_SUBMIT_REVALIDATION", "HUMAN_LIVE_AUTHORIZATION",
+    )
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_slow_account_read_cannot_admit_status_stale_at_joint_capture(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [time.time()]
+    scope.session._now = lambda: clock[0]
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+    _service, gateway = _prepare_real_admission(scope)
+    gateway.positions_hook = lambda: clock.__setitem__(0, clock[0] + 11)
+    result = await scope.session.initial_normal_admission()
+    assert not result.eligible and result.reason == "MARKET_STATUS_STALE"
+    assert result.market_status is not None and result.market_status.age_s == 11
+    assert not result.execution_authorized
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_reason", "failure_time", "expected_age"),
+    [("categorized", "POSITIONS_UNAVAILABLE", 111.0, 11.0),
+     ("unexpected", "ACCOUNT_READ_FAILED", 111.0, 11.0),
+     ("unexpected", "ACCOUNT_READ_FAILED", 99.0, -1.0),
+     ("unexpected", "ACCOUNT_READ_FAILED", float("nan"), None)],
+)
+async def test_terminal_account_read_failure_recaptures_market_status_freshness(
+    placement_scope, blocked_network, monkeypatch, failure_kind, expected_reason,
+    failure_time, expected_age,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [100.0]
+    scope.session._now = lambda: clock[0]
+    scope.session._market_status_max_age_s = 10.0
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+    _service, gateway = _prepare_real_admission(scope)
+
+    def fail_positions():
+        clock[0] = failure_time
+        if failure_kind == "categorized":
+            raise RDPAccountError("POSITIONS_UNAVAILABLE", "positions unavailable")
+        raise RuntimeError("private-account-payload-sentinel")
+
+    gateway.positions_hook = fail_positions
+    result = await scope.session.initial_normal_admission()
+
+    assert not result.eligible and result.reason == expected_reason
+    assert result.market_status is not None
+    assert result.market_status.age_s == expected_age
+    assert result.market_status.max_age_s == 10.0
+    assert "CURRENT_MARKET_TRADABILITY" in result.outstanding_execution_gates
+    assert result.execution_authorized is False
+    assert gateway.calls == ["open_orders", "positions"]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [("public_generation", "FEED_GENERATION_CHANGED"),
+     ("user_generation", "USER_STREAM_GENERATION_CHANGED"),
+     ("public_failure", "FEED_TEST_FAILURE"),
+     ("expired", "MARKET_EXPIRED"),
+     ("closed", "SESSION_CLOSED")],
+)
+async def test_status_await_rechecks_health_generation_expiry_and_closure(
+    placement_scope, blocked_network, monkeypatch, change, reason,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [time.time()]
+    scope.session._now = lambda: clock[0]
+
+    async def status_with_state_change(bootstrap, _origin, *, now):
+        if change == "public_generation":
+            scope.session.public_session.service.connection_generation += 1
+        elif change == "user_generation":
+            scope.session.user_session.observation.user_channel.connection_generation += 1
+        elif change == "public_failure":
+            scope.session.public_session.failure_category = lambda _generation: "FEED_TEST_FAILURE"
+        elif change == "expired":
+            clock[0] = bootstrap.end_epoch
+        else:
+            scope.session._closed = True
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", status_with_state_change)
+    _prepare_real_admission(scope)
+    result = await scope.session.initial_normal_admission()
+    assert not result.eligible and result.reason == reason
+    assert result.execution_authorized is False
+    assert result.market_status is not None and result.market_status.age_s == 0
+    if change == "expired":
+        assert "CURRENT_MARKET_TRADABILITY" in result.outstanding_execution_gates
+    else:
+        assert "CURRENT_MARKET_TRADABILITY" not in result.outstanding_execution_gates
+    assert scope.session.user_session.gateway.calls == []
+    assert scope.session.placement_owner.current is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_final_account_freshness_is_rechecked_after_status_read(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    clock = [time.time()]
+    scope.session._now = lambda: clock[0]
+    scope.session._market_status_max_age_s = 30
+
+    async def fresh_status(bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            bootstrap.market.slug, bootstrap.market.condition_id,
+            tuple(token.token_id for token in bootstrap.market.tokens),
+            tuple(token.outcome for token in bootstrap.market.tokens),
+            bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fresh_status)
+    _service, gateway = _prepare_real_admission(scope)
+    gateway.positions_hook = lambda: clock.__setitem__(0, clock[0] + 16)
+    result = await scope.session.initial_normal_admission()
+    assert not result.eligible
+    assert result.reason == "STALE_ACCOUNT_EVIDENCE"
+    assert result.market_status is not None and result.market_status.age_s == 16
+    assert result.market_status.age_s < result.market_status.max_age_s
+    assert result.backing is not None and not result.backing.eligible
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("teardown", [False, True])
+async def test_market_status_read_is_owned_through_repeated_cancel_and_teardown(
+    placement_scope, blocked_network, monkeypatch, teardown,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    cleaned = asyncio.Event()
+
+    async def blocked_status(bootstrap, _origin, *, now):
+        entered.set()
+        try:
+            await release.wait()
+            return RDPMarketStatusEvidence(
+                bootstrap.market.slug, bootstrap.market.condition_id,
+                tuple(token.token_id for token in bootstrap.market.tokens),
+                tuple(token.outcome for token in bootstrap.market.tokens),
+                bootstrap.market.neg_risk, bootstrap.end_epoch, True, False, now(),
+            )
+        finally:
+            cleaned.set()
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", blocked_status)
+    _prepare_real_admission(scope)
+    admission_task = asyncio.create_task(scope.session.initial_normal_admission())
+    await entered.wait()
+    status_task = scope.session._market_status_read_task
+    assert status_task is not None and not status_task.done()
+    if teardown:
+        close_task = asyncio.create_task(scope.session.aclose())
+        await asyncio.sleep(0)
+        assert not close_task.done()
+    else:
+        admission_task.cancel()
+        await asyncio.sleep(0)
+        admission_task.cancel()
+        await asyncio.sleep(0)
+        assert not admission_task.done()
+    assert not cleaned.is_set()
+    assert scope.session._admission_active
+    release.set()
+    if teardown:
+        with pytest.raises(asyncio.CancelledError):
+            await admission_task
+        await close_task
+    else:
+        with pytest.raises(asyncio.CancelledError):
+            await admission_task
+    assert cleaned.is_set() and status_task.done()
+    assert scope.session._market_status_read_task is None
+    assert scope.session._admission_task is None
+    assert not scope.session._admission_active
+    assert not scope.session.user_session.gateway.calls
+    assert blocked_network == []
     assert blocked_network == []
 
 

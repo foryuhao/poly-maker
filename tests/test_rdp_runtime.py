@@ -12,7 +12,7 @@ import pytest
 
 from polymaker.config import Config
 from polymaker.domain import MarketMeta, TokenMeta
-from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
+from polymaker.rdp_live import RDPBootstrap, RDPMarketStatusEvidence, TokenBookMetadata
 from polymaker.rdp_marketdata import RDPFeedReadiness, RDPMarketDataSession, TokenBookEvidence
 from polymaker.rdp_runtime import RDPInputSession, RDPObservationError, observe_rdp_market
 from polymaker.rdp_userstream import RDPAuthenticatedObservation, RDPUserChannelEvidence
@@ -41,6 +41,7 @@ class FakePublicSession:
         self.active = False
         self.closed = False
         self.generation = 0
+        self.service = SimpleNamespace(connection_generation=0)
         self.failure = None
         self.terminated = False
         self.feed = feed or RDPFeedReadiness(
@@ -53,6 +54,7 @@ class FakePublicSession:
     async def start(self):
         self.active = True
         self.generation = 1
+        self.service.connection_generation = 1
 
     async def wait_ready(self, **_kwargs):
         return self.feed
@@ -247,6 +249,79 @@ async def test_closed_admission_rejections_keep_distinct_immutable_market_scope(
     assert first.execution_authorized is second.execution_authorized is False
     with pytest.raises((AttributeError, TypeError)):
         first.slug = "mutated"
+
+
+@pytest.mark.asyncio
+async def test_open_freezes_gamma_origin_and_status_limit_before_first_startup_await(monkeypatch):
+    import polymaker.rdp_runtime as runtime
+    from polymaker.state.store import StateStore
+    from polymaker.state.tracker import UserEventProcessor
+
+    clock = [100.0]
+    (bootstrap, _boot, public_factory, _user_factory, backing, _publics,
+     _users) = _dependencies(clock)
+    cfg = Config()
+    seen = []
+
+    async def mutating_bootstrap_factory(_runtime_cfg, slug, *, now):
+        assert slug == bootstrap.market.slug and now() < bootstrap.end_epoch
+        cfg.wallet.gamma_host = "https://unapproved.example"
+        cfg.risk.ws_stale_halt_s = 999
+        return bootstrap
+
+    async def fake_status(current_bootstrap, origin, *, now):
+        seen.append((origin, now()))
+        return RDPMarketStatusEvidence(
+            current_bootstrap.market.slug, current_bootstrap.market.condition_id,
+            tuple(token.token_id for token in current_bootstrap.market.tokens),
+            tuple(token.outcome for token in current_bootstrap.market.tokens),
+            current_bootstrap.market.neg_risk, current_bootstrap.end_epoch,
+            True, False, now(),
+        )
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", fake_status)
+    store = StateStore(":memory:")
+
+    async def fake_user_factory(_cfg, current_bootstrap, *, now):
+        user = FakeUserSession(current_bootstrap)
+        user.processor = UserEventProcessor(store, retain_confirmed_receipts=True)
+        user.store = store
+        return user
+
+    session = await RDPInputSession.open(
+        cfg, bootstrap.market.slug, now=lambda: clock[0],
+        bootstrap_factory=mutating_bootstrap_factory,
+        public_session_factory=public_factory,
+        user_session_factory=fake_user_factory,
+        backing_evaluator=backing,
+    )
+    try:
+        assert session._gamma_origin == "https://gamma-api.polymarket.com"
+        assert session._market_status_max_age_s == Config().risk.ws_stale_halt_s
+        admission = await session.initial_normal_admission()
+        assert admission.reason == "ACCOUNT_GATEWAY_UNAVAILABLE"
+        assert seen == [("https://gamma-api.polymarket.com", clock[0])]
+    finally:
+        await session.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_open_rejects_unapproved_gamma_origin_before_startup_requests():
+    cfg = Config()
+    cfg.wallet.gamma_host = "https://credential-sentinel@unapproved.example"
+    called = []
+
+    async def bootstrap_factory(*_args, **_kwargs):
+        called.append(True)
+        raise AssertionError("bootstrap must not run for an unapproved Gamma origin")
+
+    with pytest.raises(RDPObservationError) as caught:
+        await RDPInputSession.open(cfg, "btc-updown-5m-2000000100",
+                                   bootstrap_factory=bootstrap_factory)
+    assert caught.value.category == "UNAPPROVED_GAMMA_ORIGIN"
+    assert "credential-sentinel" not in str(caught.value)
+    assert called == []
 
 
 @pytest.mark.asyncio
@@ -785,7 +860,7 @@ def test_cli_observe_only_uses_real_retained_owners_and_ends_market(
     import polymaker.rdp_userstream as rdp_userstream
     from polymaker.cli import app
     from polymaker.marketdata import service as market_service
-    from polymaker.rdp_live import TokenBookMetadata
+    from polymaker.rdp_live import RDPMarketStatusEvidence, TokenBookMetadata
     from polymaker.rdp_marketdata import RDPMarketDataSession as RealPublicOwner
     from polymaker.rdp_runtime import RDPInputSession as RealInputSession
     from polymaker.rdp_userstream import UserStream as RealUserStream
@@ -1164,6 +1239,21 @@ def test_cli_observe_only_uses_real_retained_owners_and_ends_market(
     monkeypatch.setattr(rdp_runtime, "RDPMarketDataSession", public_factory)
     monkeypatch.setattr(rdp_runtime, "bootstrap_rdp_market",
                         lambda *_args, **_kwargs: _return(bootstrap))
+
+    async def fake_market_status(current_bootstrap, _origin, *, now):
+        return RDPMarketStatusEvidence(
+            slug=current_bootstrap.market.slug,
+            condition_id=current_bootstrap.market.condition_id,
+            token_ids=tuple(token.token_id for token in current_bootstrap.market.tokens),
+            outcomes=tuple(token.outcome for token in current_bootstrap.market.tokens),
+            neg_risk=current_bootstrap.market.neg_risk,
+            end_epoch=current_bootstrap.end_epoch,
+            accepting_orders=True,
+            closed=False,
+            receipt_ts=now(),
+        )
+
+    monkeypatch.setattr(rdp_runtime, "read_rdp_market_status", fake_market_status)
     monkeypatch.setattr(rdp_userstream, "ExecutionGateway", gateway_factory)
     monkeypatch.setattr(rdp_userstream, "UserStream", stream_factory)
     monkeypatch.setattr(market_service.websockets, "connect", fake_connect)
@@ -1315,6 +1405,7 @@ def test_cli_observe_only_uses_real_retained_owners_and_ends_market(
                     else:
                         assert not decision.eligible
                         assert decision.reason in ("FEED_GENERATION_CHANGED", "MARKET_INTERVAL_ELAPSED",
+                                                   "MARKET_EXPIRED",
                                                    "USER_STREAM_TERMINATED")
                 elif scenario == "admission_fresh_selected":
                     assert not decision.eligible and decision.reason == "SELECTED_STATE_NOT_EMPTY"

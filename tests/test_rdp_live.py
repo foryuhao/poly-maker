@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 import respx
+import structlog
 from typer.testing import CliRunner
 
 from polymaker.btc5m import PERIOD_S
 from polymaker.cli import app
 from polymaker.config import Config, PathsConfig
-from polymaker.rdp_live import RDPBootstrapError, bootstrap_rdp_market
+from polymaker.rdp_live import (
+    RDPBootstrapError,
+    bootstrap_rdp_market,
+    read_rdp_market_status,
+)
 
 EPOCH = 2_000_000_100
 SLUG = f"btc-updown-5m-{EPOCH}"
@@ -80,6 +86,251 @@ def install_mocks(router, raw=None, *, books=None):
 
     book = router.get(f"{CLOB}/book").mock(side_effect=fetch_book)
     return gamma, book
+
+
+async def _valid_bootstrap():
+    with respx.mock(assert_all_called=True) as router:
+        install_mocks(router)
+        return await bootstrap_rdp_market(Config(), SLUG, now=lambda: EPOCH + 1)
+
+
+@pytest.mark.asyncio
+async def test_fresh_status_uses_exact_official_gamma_get_and_returns_immutable_identity():
+    bootstrap = await _valid_bootstrap()
+    with respx.mock(assert_all_called=True) as router:
+        gamma = router.get(f"{GAMMA}/markets").mock(
+            return_value=httpx.Response(200, json=[raw_market()]),
+        )
+        evidence = await read_rdp_market_status(
+            bootstrap, GAMMA, now=lambda: EPOCH + 2,
+        )
+    assert evidence.slug == SLUG
+    assert evidence.condition_id == "condition-btc5m"
+    assert evidence.token_ids == ("token-up", "token-down")
+    assert evidence.outcomes == ("Up", "Down")
+    assert evidence.neg_risk is False and evidence.end_epoch == END_EPOCH
+    assert evidence.accepting_orders is True and evidence.closed is False
+    assert evidence.receipt_ts == EPOCH + 2
+    assert gamma.call_count == 1
+    assert dict(gamma.calls[0].request.url.params) == {"slug": SLUG, "limit": "1"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("change", "category"), [
+    ({"acceptingOrders": "true"}, "MARKET_NOT_TRADABLE"),
+    ({"acceptingOrders": 1}, "MARKET_NOT_TRADABLE"),
+    ({"acceptingOrders": False}, "MARKET_NOT_TRADABLE"),
+    ({"acceptingOrders": "__MISSING__"}, "MARKET_NOT_TRADABLE"),
+    ({"closed": 0}, "MARKET_NOT_TRADABLE"),
+    ({"closed": True}, "MARKET_NOT_TRADABLE"),
+    ({"closed": "__MISSING__"}, "MARKET_NOT_TRADABLE"),
+    ({"slug": "btc-updown-5m-2000000400"}, "MARKET_STATUS_LOOKUP_FAILED"),
+    ({"conditionId": "different-condition"}, "MARKET_STATUS_IDENTITY_MISMATCH"),
+    ({"clobTokenIds": '["token-down", "token-up"]'}, "MARKET_STATUS_IDENTITY_MISMATCH"),
+    ({"outcomes": '["Down", "Up"]'}, "INVALID_OUTCOME_MAPPING"),
+    ({"negRisk": True}, "MARKET_STATUS_IDENTITY_MISMATCH"),
+    ({"endDate": "2033-05-18T03:50:00Z"}, "INVALID_END_TIME"),
+])
+async def test_fresh_status_rejects_nontradable_or_changed_exact_identity(change, category):
+    bootstrap = await _valid_bootstrap()
+    raw = apply_market_changes(change)
+    with respx.mock(assert_all_called=True) as router:
+        gamma = router.get(f"{GAMMA}/markets").mock(
+            return_value=httpx.Response(200, json=[raw]),
+        )
+        with pytest.raises(RDPBootstrapError) as caught:
+            await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+    assert caught.value.category == category
+    assert gamma.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fresh_status_http_failure_and_redirect_have_no_cached_or_alternate_fallback():
+    bootstrap = await _valid_bootstrap()
+    alternate = "https://unapproved.example/markets"
+    with respx.mock(assert_all_called=False) as router:
+        gamma = router.get(f"{GAMMA}/markets").mock(
+            return_value=httpx.Response(302, headers={"Location": alternate}),
+        )
+        alternate_route = router.get(alternate).mock(
+            return_value=httpx.Response(200, json=[raw_market()]),
+        )
+        with pytest.raises(RDPBootstrapError) as caught:
+            await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+    assert caught.value.category == "MARKET_STATUS_LOOKUP_FAILED"
+    assert gamma.call_count == 1 and alternate_route.call_count == 0
+
+    with respx.mock(assert_all_called=True) as router:
+        route = router.get(f"{GAMMA}/markets").mock(return_value=httpx.Response(503))
+        with pytest.raises(RDPBootstrapError) as caught:
+            await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+    assert caught.value.category == "MARKET_STATUS_LOOKUP_FAILED"
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("logger_mode", ["default", "configured"])
+@pytest.mark.parametrize(
+    "malformed_field",
+    ["orderPriceMinTickSize", "orderMinSize", "feeSchedule.rate", "bestBid"],
+)
+async def test_malformed_status_metadata_never_logs_raw_gamma_value(
+    logger_mode, malformed_field, capsys,
+):
+    import io
+
+    bootstrap = await _valid_bootstrap()
+    sentinel = "private-gamma-payload-sentinel"
+    stream = io.StringIO()
+    old_config = structlog.get_config()
+    root_logger = logging.getLogger()
+    old_handlers, old_level = root_logger.handlers[:], root_logger.level
+    if logger_mode == "default":
+        structlog.configure(
+            processors=[],
+            logger_factory=structlog.PrintLoggerFactory(file=stream),
+            cache_logger_on_first_use=False,
+        )
+    else:
+        from polymaker.logging import configure
+
+        configure(console=False)
+    raw = (raw_market(feeSchedule={"rate": sentinel})
+           if malformed_field == "feeSchedule.rate"
+           else raw_market(**{malformed_field: sentinel}))
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get(f"{GAMMA}/markets").mock(
+                return_value=httpx.Response(200, json=[raw]),
+            )
+            with pytest.raises(RDPBootstrapError) as caught:
+                await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+        assert caught.value.category == "INVALID_GAMMA_MARKET"
+        assert gamma.call_count == 1
+    finally:
+        structlog.configure(**old_config)
+        root_logger.handlers[:] = old_handlers
+        root_logger.setLevel(old_level)
+    assert sentinel not in stream.getvalue()
+    assert sentinel not in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("logger_mode", ["default", "configured"])
+async def test_status_http_failure_sanitizes_upstream_reason_phrase(
+    logger_mode, tmp_path, capsys,
+):
+    from polymaker.logging import configure
+
+    bootstrap = await _valid_bootstrap()
+    reason_sentinel = "private-gamma-reason-sentinel"
+    body_sentinel = "private-gamma-body-sentinel"
+    durable_log = tmp_path / "rdp-status.jsonl"
+    old_config = structlog.get_config()
+    root_logger = logging.getLogger()
+    old_handlers, old_level = root_logger.handlers[:], root_logger.level
+    configure(console=True, json_file=durable_log if logger_mode == "configured" else None)
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get(f"{GAMMA}/markets").mock(
+                return_value=httpx.Response(
+                    503,
+                    headers={"X-Gamma-Test": "preserved"},
+                    content=body_sentinel.encode(),
+                    extensions={"reason_phrase": reason_sentinel.encode()},
+                ),
+            )
+            with pytest.raises(RDPBootstrapError) as caught:
+                await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+        assert caught.value.category == "MARKET_STATUS_LOOKUP_FAILED"
+        assert gamma.call_count == 1
+        response = gamma.calls[0].response
+        assert response.status_code == 503
+        assert response.content == body_sentinel.encode()
+        assert response.headers["X-Gamma-Test"] == "preserved"
+        assert dict(gamma.calls[0].request.url.params) == {"slug": SLUG, "limit": "1"}
+        console_output = capsys.readouterr().err
+        durable_output = durable_log.read_text() if logger_mode == "configured" else ""
+        for output in (console_output, durable_output):
+            assert reason_sentinel not in output
+            assert body_sentinel not in output
+        assert "HTTPStatusError" in console_output
+        assert "market_by_slug_failed" in console_output
+        assert "HTTP Request" in console_output
+        assert "<redacted>" in console_output
+        if logger_mode == "configured":
+            assert "HTTPStatusError" in durable_output
+            assert "market_by_slug_failed" in durable_output
+            assert "HTTP Request" in durable_output
+            assert "<redacted>" in durable_output
+    finally:
+        new_handlers = [handler for handler in root_logger.handlers
+                        if handler not in old_handlers]
+        structlog.configure(**old_config)
+        root_logger.handlers[:] = old_handlers
+        root_logger.setLevel(old_level)
+        for handler in new_handlers:
+            handler.close()
+
+
+@pytest.mark.asyncio
+async def test_status_safe_diagnostic_handler_failure_does_not_disclose_http_exception(
+    capsys, monkeypatch,
+):
+    import io
+
+    from polymaker.logging import configure
+
+    bootstrap = await _valid_bootstrap()
+    sentinel = "private-untrusted-status-line-sentinel"
+    old_config = structlog.get_config()
+    root_logger = logging.getLogger()
+    old_handlers, old_level = root_logger.handlers[:], root_logger.level
+    emitted = io.StringIO()
+
+    class FailingStream:
+        def write(self, _message):
+            raise OSError("diagnostic stream unavailable")
+
+        def flush(self):
+            pass
+
+    failing_handler = logging.StreamHandler(FailingStream())
+    capture_handler = logging.StreamHandler(emitted)
+    close_calls = 0
+    original_aclose = httpx.AsyncClient.aclose
+
+    async def count_aclose(client):
+        nonlocal close_calls
+        close_calls += 1
+        await original_aclose(client)
+
+    monkeypatch.setattr(httpx.AsyncClient, "aclose", count_aclose)
+    configure(console=False)
+    root_logger.addHandler(failing_handler)
+    root_logger.addHandler(capture_handler)
+    try:
+        with respx.mock(assert_all_called=True) as router:
+            gamma = router.get(f"{GAMMA}/markets").mock(
+                side_effect=httpx.RemoteProtocolError(sentinel),
+            )
+            with pytest.raises(RDPBootstrapError) as caught:
+                await read_rdp_market_status(bootstrap, GAMMA, now=lambda: EPOCH + 2)
+        assert caught.value.category == "MARKET_STATUS_LOOKUP_FAILED"
+        assert gamma.call_count == 1
+        assert close_calls == 1
+        assert "market_by_slug_failed" in emitted.getvalue()
+        assert "RemoteProtocolError" in emitted.getvalue()
+        stderr = capsys.readouterr().err
+        assert "Logging error" in stderr
+        assert sentinel not in stderr
+        assert sentinel not in emitted.getvalue()
+    finally:
+        structlog.configure(**old_config)
+        root_logger.handlers[:] = old_handlers
+        root_logger.setLevel(old_level)
+        failing_handler.close()
+        capture_handler.close()
 
 
 def apply_market_changes(changes):

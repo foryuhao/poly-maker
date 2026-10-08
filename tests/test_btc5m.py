@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 import pytest
+import respx
 
 from polymaker.btc5m import (
     PERIOD_S,
@@ -49,6 +51,26 @@ async def test_gamma_slug_lookup_is_exact_and_does_not_scan() -> None:
     gamma._client = Client()  # type: ignore[assignment]
     assert await gamma.market_by_slug("wanted") == {"slug": "wanted"}
     assert seen == [("/markets", {"slug": "wanted", "limit": 1})]
+
+
+async def test_gamma_slug_lookup_default_retains_legacy_failure_diagnostics(caplog, capsys) -> None:
+    sentinel = "legacy-gamma-reason-sentinel"
+    caplog.set_level(logging.INFO, logger="httpx")
+    with respx.mock(assert_all_called=True) as router:
+        route = router.get("https://gamma-api.polymarket.com/markets").mock(
+            return_value=httpx.Response(
+                503, extensions={"reason_phrase": sentinel.encode()},
+            ),
+        )
+        async with GammaClient() as gamma:
+            assert await gamma.market_by_slug("wanted") is None
+    assert route.call_count == 1
+    assert "HTTP Request" in caplog.text
+    assert sentinel in caplog.text
+    captured = capsys.readouterr()
+    diagnostics = caplog.text + captured.out + captured.err
+    assert "market_by_slug_failed" in diagnostics
+    assert "Server error '503" in diagnostics
 
 
 async def test_btc5m_resolver_uses_exact_gamma_and_caches_market(tmp_path, monkeypatch) -> None:

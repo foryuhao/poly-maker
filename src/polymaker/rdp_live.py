@@ -55,6 +55,23 @@ class RDPBootstrap:
 
 
 @dataclass(frozen=True, slots=True)
+class RDPMarketStatusEvidence:
+    """One exact Gamma status response, bound to the retained BTC5m identity."""
+
+    slug: str
+    condition_id: str
+    token_ids: tuple[str, str]
+    outcomes: tuple[str, str]
+    neg_risk: bool
+    end_epoch: int
+    accepting_orders: bool
+    closed: bool
+    receipt_ts: float
+    age_s: float | None = None
+    max_age_s: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RDPPreflight:
     bootstrap: RDPBootstrap
     feed: Any
@@ -151,6 +168,102 @@ def _validate_market(raw: Any, slug: str, epoch: int, end_epoch: int) -> MarketM
             or tuple(token.outcome for token in market.tokens) != tuple(outcomes)):
         raise RDPBootstrapError("INVALID_GAMMA_MARKET", "Gamma market could not be parsed consistently")
     return market
+
+
+def _validate_status_market(raw: Any, slug: str, epoch: int, end_epoch: int) -> MarketMeta:
+    """Preflight parser-converted metadata before delegating to the shared validator."""
+    if isinstance(raw, dict):
+        fee = raw.get("feeSchedule") or {}
+        if not isinstance(fee, dict):
+            raise RDPBootstrapError("INVALID_GAMMA_MARKET", "Gamma market metadata is malformed")
+        numeric_fields = [
+            ("feeSchedule.rate", fee.get("rate", 0.0), 0.0),
+            ("feeSchedule.rebateRate", fee.get("rebateRate", 0.0), 0.0),
+            ("orderPriceMinTickSize", raw.get("orderPriceMinTickSize", 0.001), 0.001),
+            ("orderMinSize", raw.get("orderMinSize", 5), 5),
+            ("rewardsMinSize", raw.get("rewardsMinSize", 0), 0),
+            ("rewardsMaxSpread", raw.get("rewardsMaxSpread", 0), 0),
+            ("bestBid", raw.get("bestBid", 0), 0),
+            ("bestAsk", raw.get("bestAsk", 0), 0),
+            ("liquidityNum", raw.get("liquidityNum", 0), 0),
+            ("volumeNum", raw.get("volumeNum", 0), 0),
+            ("volume24hr", raw.get("volume24hrClob") or raw.get("volume24hr") or 0, 0),
+        ]
+        for _field, value, default in numeric_fields:
+            try:
+                float(value or default)
+            except (TypeError, ValueError, OverflowError):
+                raise RDPBootstrapError(
+                    "INVALID_GAMMA_MARKET", "Gamma market metadata is malformed",
+                ) from None
+    return _validate_market(raw, slug, epoch, end_epoch)
+
+
+def validate_rdp_market_status_config(cfg: Config) -> tuple[str, float]:
+    """Freeze the approved Gamma origin and status-age limit before startup awaits."""
+    origin = cfg.wallet.gamma_host
+    _validate_official_origin(origin, _GAMMA_ORIGIN, "UNAPPROVED_GAMMA_ORIGIN")
+    limit = cfg.risk.ws_stale_halt_s
+    if (isinstance(limit, bool) or not isinstance(limit, (int, float))
+            or not math.isfinite(limit) or limit <= 0):
+        raise RDPBootstrapError(
+            "INVALID_MARKET_STATUS_MAX_AGE", "market-status freshness limit must be finite and positive",
+        )
+    return str(origin), float(limit)
+
+
+async def read_rdp_market_status(
+    bootstrap: RDPBootstrap,
+    gamma_origin: str,
+    *,
+    now: Callable[[], float] = time.time,
+) -> RDPMarketStatusEvidence:
+    """Read and validate fresh tradability for the already selected exact market."""
+    _validate_official_origin(gamma_origin, _GAMMA_ORIGIN, "UNAPPROVED_GAMMA_ORIGIN")
+    if now() >= bootstrap.end_epoch:
+        raise RDPBootstrapError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval has ended")
+    try:
+        async with GammaClient(gamma_origin, safe_diagnostics=True) as gamma:
+            raw = await gamma.market_by_slug(bootstrap.market.slug)
+            receipt_ts = now()
+    except RDPBootstrapError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - status failure is categorical and sanitized
+        raise RDPBootstrapError(
+            "MARKET_STATUS_READ_FAILED", f"official Gamma status read failed ({type(exc).__name__})",
+        ) from None
+    if raw is None:
+        raise RDPBootstrapError("MARKET_STATUS_LOOKUP_FAILED", "exact Gamma status lookup returned no market")
+    epoch, end_epoch = _parse_slug(bootstrap.market.slug)
+    market = _validate_status_market(raw, bootstrap.market.slug, epoch, end_epoch)
+    expected_tokens = tuple(token.token_id for token in bootstrap.market.tokens)
+    expected_outcomes = tuple(token.outcome for token in bootstrap.market.tokens)
+    if (market.slug != bootstrap.market.slug
+            or market.condition_id != bootstrap.market.condition_id
+            or tuple(token.token_id for token in market.tokens) != expected_tokens
+            or tuple(token.outcome for token in market.tokens) != expected_outcomes
+            or market.neg_risk is not bootstrap.market.neg_risk
+            or end_epoch != bootstrap.end_epoch):
+        raise RDPBootstrapError(
+            "MARKET_STATUS_IDENTITY_MISMATCH",
+            "fresh Gamma status does not match the retained market identity",
+        )
+    if (isinstance(receipt_ts, bool) or not isinstance(receipt_ts, (int, float))
+            or not math.isfinite(receipt_ts)):
+        raise RDPBootstrapError("INVALID_MARKET_STATUS_RECEIPT", "Gamma status receipt time is invalid")
+    if receipt_ts >= bootstrap.end_epoch:
+        raise RDPBootstrapError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended during status read")
+    return RDPMarketStatusEvidence(
+        slug=market.slug,
+        condition_id=market.condition_id,
+        token_ids=expected_tokens,
+        outcomes=expected_outcomes,
+        neg_risk=market.neg_risk,
+        end_epoch=end_epoch,
+        accepting_orders=True,
+        closed=False,
+        receipt_ts=float(receipt_ts),
+    )
 
 
 def _positive_number(value: Any, *, field: str, token_id: str, upper_bound: Decimal | None = None) -> float:
