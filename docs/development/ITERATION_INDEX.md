@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0019`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0019 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0017 | Initial NORMAL placement ownership capture | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0016 | Initial empty-run NORMAL admission composition | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -95,7 +95,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0019 Architect selecting next minimum prerequisite. ITER-0018 fully archived7a787b1; see RESULT,Reviewer08,receipt09. Explicit retained initial close barrier and safe gateway delegation ready; submission/cycles/REBALANCE/complete metrics remain outstanding. No real-money authority.
+ITER-0019 contract01 approved: retain original confirmed receipts through replay and expose initial-attempt FillWindow; Worker pending. ITER-0018 fully archived7a787b1; see RESULT,Reviewer08,receipt09. Explicit retained initial close barrier and safe gateway delegation ready; submission/cycles/REBALANCE/complete metrics remain outstanding. No real-money authority.
 
 ---
 
