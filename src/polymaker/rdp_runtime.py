@@ -11,6 +11,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from polymaker.config import Config
+from polymaker.execution.rdp_placement import (
+    RDPPlacementAttempt,
+    RDPPlacementError,
+    RDPPlacementOwner,
+)
 from polymaker.logging import get_logger
 from polymaker.rdp_account import RDPAccountError, _capture_account_with_gateway
 from polymaker.rdp_live import RDPBootstrap, RDPBootstrapError, bootstrap_rdp_market
@@ -108,6 +113,11 @@ class RDPInputSession:
         self._admission_active = False
         self._admission_task: asyncio.Task[Any] | None = None
         self._account_read_task: asyncio.Task[Any] | None = None
+        self.placement_owner = RDPPlacementOwner(
+            bootstrap, self.processor,
+            getattr(self.user_session, "store", getattr(self.processor, "_store", None)),
+            initial_scope_empty=lambda: _initial_processor_is_empty(self.processor),
+        )
 
     @classmethod
     async def open(
@@ -453,9 +463,41 @@ class RDPInputSession:
             return "FEED_GENERATION_CHANGED"
         if self.user_session.observation.user_channel.connection_generation != self.user_generation:
             return "USER_STREAM_GENERATION_CHANGED"
+        if self.placement_owner.blocks_initial_admission:
+            return "INITIAL_PLACEMENT_UNRESOLVED"
         if not _initial_processor_is_empty(self.processor):
             return "LOCAL_SCOPE_NOT_EMPTY"
         return None
+
+    def arm_initial_normal_placement(
+        self, admission: RDPInitialNormalAdmission,
+    ) -> RDPPlacementAttempt:
+        """Arm existing processor capture for an admitted pair; never sends it."""
+        if self._admission_active:
+            raise RDPPlacementError("INITIAL_ADMISSION_IN_PROGRESS")
+        current_attempt = self.placement_owner.current
+        if current_attempt is not None and current_attempt.replacement_blocked:
+            category = ("PLACEMENT_ATTEMPT_IN_PROGRESS"
+                        if current_attempt.outcome == "ARMED"
+                        else "PLACEMENT_REPLACEMENT_BLOCKED")
+            raise RDPPlacementError(category)
+        failure = self._admission_precondition_failure()
+        if failure is not None:
+            raise RDPPlacementError(failure)
+        return self.placement_owner.arm(
+            admission,
+            current_public_generation=self.public_session.service.connection_generation,
+            current_user_generation=(
+                self.user_session.observation.user_channel.connection_generation),
+            session_healthy=self._health_failure() is None,
+            now=self._now(),
+        )
+
+    def resolve_initial_normal_placement(
+        self, attempt: RDPPlacementAttempt, outcome: Any,
+    ) -> RDPPlacementAttempt:
+        """Resolve typed acknowledgment evidence into retained processor ownership."""
+        return self.placement_owner.resolve(attempt, outcome)
 
     def _admission_rejected(self, reason: str, *, backing=None, account=None,
                             book_filter=None, capital_projection=None,
@@ -526,6 +568,9 @@ class RDPInputSession:
         if self._closed:
             return
         self._closed = True
+        armed = self.placement_owner.current
+        if armed is not None and armed.outcome == "ARMED":
+            self.placement_owner.resolve(armed, asyncio.CancelledError())
         active = self._admission_task
         interrupted = False
         if active is not None and active is not asyncio.current_task() and not active.done():
@@ -591,6 +636,8 @@ def _initial_processor_is_empty(processor: Any) -> bool:
             return False
         store = processor._store
         if store.owned_orders():
+            return False
+        if getattr(store, "orders", None):
             return False
         # Pending placement can be durable in a store implementation even when
         # the processor's in-memory capture is empty.

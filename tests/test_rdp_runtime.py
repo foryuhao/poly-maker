@@ -1236,6 +1236,7 @@ def test_cli_observe_only_uses_real_retained_owners_and_ends_market(
         input_session = next(owner for owner in owners if isinstance(owner, RealInputSession))
         assert input_session.processor is processors[0]
         assert input_session.user_session.processor is processors[0]
+        assert input_session.placement_owner.current is None
         assert input_session.feed.connection_generation == 1
         assert input_session.backing.eligible is True
         if admission_scenario:
