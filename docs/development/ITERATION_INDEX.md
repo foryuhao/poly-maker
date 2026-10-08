@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0016`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0016 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0016 | Initial empty-run NORMAL admission composition | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0015 | Authoritative feed wiring for NORMAL Book Filter | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0014 | Shared single-market read-only input-session lifetime | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -92,7 +92,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0016 Architect selects next minimum prerequisite. ITER-0015 PASS archived715521f7; see RESULT,Reviewer05,receipt06. Existing NORMAL Book Filter is now wired to authoritative queued public events/socket receipts and retained session evaluation. Shared input lifetime exists. NORMAL admission/cycle/execution, current account/order reliability and complete metrics remain outstanding. Approved reserve/depth decisions settled; no real-money authority.
+ITER-0016 contract01 approved; Worker composes initial empty-run NORMAL admission with current account/read-only inputs. ITER-0015 PASS archived715521f7; see RESULT,Reviewer05,receipt06. Existing NORMAL Book Filter is now wired to authoritative queued public events/socket receipts and retained session evaluation. Shared input lifetime exists. NORMAL admission/cycle/execution, current account/order reliability and complete metrics remain outstanding. Approved reserve/depth decisions settled; no real-money authority.
 
 ---
 
