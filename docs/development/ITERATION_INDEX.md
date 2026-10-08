@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`cdd8930c47cd5e30a4859c04e965a77e8c477137`
+`42a3ac58b1167115f8818b7930cd456fc57a345e`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0013`
+Current Iteration: `ITER-0014`
 
-Current Stage: `ARCHIVING`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVE_PENDING | NOT_RUN | PENDING |
+| ITER-0014 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0012 | Frozen $30 initial capital backing | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0011 | Read-only authenticated account snapshot | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0010 | Read-only single-market WS readiness | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -89,7 +90,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0013 approved contract01 adds bounded read-only user-channel evidence; Reviewer03 returns four implementation defects; Reviewer07 PASS closes all four defects; final archive pending. Continue automatically to next minimal prerequisite. ITER-0012 PASS archived; see its RESULT.md, final Reviewer06 and archive receipt08 (server-error recovery preserves exact commit hashes). Public/account/startup backing preflight exists; integrated readiness remains NO. Approved reserve/depth decisions settled. Continue automatically, no real-money authority.
+ITER-0014 Architect selects one next minimal prerequisite. ITER-0013 PASS archived at42a3ac58; see RESULT, Reviewer07 and receipt08. Bounded public/account/user-channel evidence and startup backing exist. Continuous runtime ownership, confirmed-fill authority, cycle orchestration and metrics remain outstanding. Approved $5 reserve/total-variation decisions settled. No real-money authority.
 
 ---
 
