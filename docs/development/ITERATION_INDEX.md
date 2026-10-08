@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`414c9490fb9786151ed53b352640ff43756feabf`
+`a243d7ffe83a9085edcea6b027d88be068141650`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0021`
+Current Iteration: `ITER-0022`
 
-Current Stage: `ARCHIVE`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED_REVISION | IMPLEMENTED_REVISION | PASS | CODE_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0022 | Next smallest missing single-market prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED_REVISION | IMPLEMENTED_REVISION | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -97,7 +98,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0021 Reviewer10 PASS closes all findings. Worker final full suite: 1442 passed, 2 skipped, zero network attempts. Reviewed source hashes verified; Git archival pending. Project remains IN_PROGRESS, with no real-money authority.
+ITER-0021 is independently reviewed and remotely archived. ITER-0022 Architect must inspect actual code and choose exactly one smallest missing single-market delivery prerequisite. Project remains IN_PROGRESS; no real-money authority.
 
 ---
 
