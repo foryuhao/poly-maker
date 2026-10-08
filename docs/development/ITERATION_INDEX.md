@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`a243d7ffe83a9085edcea6b027d88be068141650`
+`0491c17d1b0c46f3f3200e1a776fcb05799605f3`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0022`
+Current Iteration: `ITER-0023`
 
-Current Stage: `ARCHIVE`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0023 | Next smallest missing single-market prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED_REVISION | IMPLEMENTED_REVISION | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0019 | Scoped confirmed-fill FillWindow receipt preservation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -98,7 +99,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0022 Reviewer07 PASS closes all findings on verified hashes. Worker final full suite1495/2, independent affected/predecessor631, zero network attempts. Archive pending; project remains IN_PROGRESS with no real-money authority.
+ITER-0022 is independently reviewed and remotely archived. ITER-0023 Architect must inspect actual code and select one smallest missing integrated single-market prerequisite. Project IN_PROGRESS; no real-money authority.
 
 ---
 
