@@ -60,6 +60,7 @@ class RDPPreflight:
     feed: Any
     account: Any | None = None
     account_backing: Any | None = None
+    user_channel: Any | None = None
 
 
 def _validate_official_origin(host: str, expected: str, category: str) -> None:
@@ -293,12 +294,29 @@ async def preflight_rdp_market(
         )
         account = None
         account_backing = None
+        user_channel = None
         if account_check:
-            from polymaker.rdp_account import account_snapshot
+            from polymaker.rdp_userstream import observe_rdp_account_and_user_channel
             from polymaker.risk.rdp_capital import evaluate_initial_rdp_backing
 
             try:
-                account = await account_snapshot(runtime_cfg, bootstrap, now=now)
+                observation = await observe_rdp_account_and_user_channel(
+                    runtime_cfg, bootstrap, now=now,
+                )
+                account = observation.account
+                user_channel = observation.user_channel
+                log.info(
+                    "rdp_user_channel_readiness", result="SUCCESS",
+                    category="CURRENT_GENERATION_APPLICATION_PONG_AND_ACCOUNT_READS",
+                    condition_id=user_channel.condition_id,
+                    subscription_frame_sent=user_channel.subscription_frame_sent,
+                    connection_generation=user_channel.connection_generation,
+                    application_pong_received=user_channel.application_pong_received,
+                    heartbeat_receipt_ts=user_channel.heartbeat_receipt_ts,
+                    capture_ts=user_channel.capture_ts,
+                    explicit_server_authentication_acknowledgment=False,
+                    real_money_trading_performed=False,
+                )
                 log.info(
                     "rdp_account_readiness", result="SUCCESS", category="ACCOUNT_SNAPSHOT_COMPLETE",
                     signer=account.signer, funder=account.funder,
@@ -338,10 +356,20 @@ async def preflight_rdp_market(
                     real_money_trading_performed=False,
                 )
             except RDPBootstrapError as exc:
+                log.error(
+                    "rdp_user_channel_readiness", result="FAILURE", category=exc.category,
+                    condition_id=bootstrap.market.condition_id,
+                    subscription_frame_sent=getattr(exc, "subscription_frame_sent", False),
+                    connection_generation=getattr(exc, "connection_generation", None),
+                    application_pong_received=getattr(exc, "application_pong_received", False),
+                    heartbeat_receipt_ts=getattr(exc, "heartbeat_receipt_ts", None),
+                    capture_ts=None,
+                    real_money_trading_performed=False,
+                )
                 log.error("rdp_account_readiness", result="FAILURE", category=exc.category,
                           slug=slug, error=str(exc), real_money_trading_performed=False)
                 raise
-        return RDPPreflight(bootstrap, feed, account, account_backing)
+        return RDPPreflight(bootstrap, feed, account, account_backing, user_channel)
     except RDPFeedError as exc:
         log.error("rdp_feed_readiness", result="FAILURE", category=exc.category,
                   slug=slug, condition_id=bootstrap.market.condition_id, error=str(exc),

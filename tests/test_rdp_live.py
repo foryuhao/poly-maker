@@ -353,6 +353,7 @@ def test_rdp_live_help_is_explicitly_read_only():
     assert "--preflight-only" in result.stdout
     assert "--account-check" in result.stdout
     assert "read-only" in result.stdout.lower() or "never trades" in result.stdout.lower()
+    assert "authenticated user stream" in result.stdout.lower()
 
 
 def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_scope(
@@ -396,17 +397,28 @@ def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_sco
     async def fake_account(_cfg, _bootstrap, *, now):
         assert _cfg.wallet.clob_host == "https://clob.polymarket.com"
         calls.append(("account",))
-        return account
+        return SimpleNamespace(
+            account=account,
+            user_channel=SimpleNamespace(
+                condition_id="condition-btc5m", subscription_frame_sent=True,
+                application_pong_received=True, connection_generation=1,
+                heartbeat_receipt_ts=1.5, capture_ts=2.0,
+            ),
+        )
 
     monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
     monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
-    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fake_account)
+    monkeypatch.setattr("polymaker.rdp_userstream.observe_rdp_account_and_user_channel", fake_account)
     result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
                                       "--preflight-only", "--account-check"])
     assert result.exit_code == 0, result.stdout
     assert calls == [("bootstrap", SLUG), ("feed",), ("account",)]
     assert "Read-only account snapshot" in result.stdout
     assert "Existing selected order: existing" in result.stdout
+    rendered = " ".join(result.stdout.split())
+    assert "Application PONG shows transport responsiveness" in rendered
+    assert "not an explicit server auth/subscription acknowledgment" in rendered
+    assert "sentinel" not in result.stdout
     assert "Initial RDP capital backing: ineligible (INVALID_MARKET_SCOPE)" in result.stdout
     events = [json.loads(line) for line in
               (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text().splitlines()]
@@ -415,6 +427,13 @@ def test_rdp_live_cli_account_check_is_explicit_and_reports_separate_account_sco
     account_event = next(event for event in events if event["event"] == "rdp_account_readiness")
     assert account_event["result"] == "SUCCESS"
     assert account_event["real_money_trading_performed"] is False
+    user_channel_event = next(event for event in events if event["event"] == "rdp_user_channel_readiness")
+    assert user_channel_event["result"] == "SUCCESS"
+    assert user_channel_event["subscription_frame_sent"] is True
+    assert user_channel_event["application_pong_received"] is True
+    assert user_channel_event["explicit_server_authentication_acknowledgment"] is False
+    assert user_channel_event["real_money_trading_performed"] is False
+    assert "sentinel" not in (tmp_path / "logs" / "rdp-live-preflight.jsonl").read_text()
     assert not any("secret" in key.lower() or "credential" in key.lower()
                    for key in account_event)
     backing_event = next(event for event in events
@@ -454,7 +473,7 @@ def test_rdp_live_cli_reports_startup_backing_separately(eligible, reason, expec
     feed = SimpleNamespace(connection_generation=1, tokens=())
     async def fake_preflight(*_args, **_kwargs):
         return SimpleNamespace(bootstrap=bootstrap, feed=feed, account=account,
-                               account_backing=backing)
+                               account_backing=backing, user_channel=None)
 
     monkeypatch.setattr("polymaker.rdp_live.preflight_rdp_market", fake_preflight)
     result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
@@ -516,11 +535,15 @@ async def test_account_preflight_reports_startup_backing_without_rejecting_accou
 
     async def fake_account(_cfg, _bootstrap, *, now):
         assert now() == timestamp
-        return account
+        return SimpleNamespace(account=account, user_channel=SimpleNamespace(
+            condition_id="condition-btc5m", subscription_frame_sent=True,
+            application_pong_received=True, connection_generation=1,
+            heartbeat_receipt_ts=timestamp, capture_ts=timestamp,
+        ))
 
     monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
     monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
-    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fake_account)
+    monkeypatch.setattr("polymaker.rdp_userstream.observe_rdp_account_and_user_channel", fake_account)
     result = await preflight_rdp_market(Config(), SLUG, account_check=True,
                                         now=lambda: timestamp)
     assert result.account is account
@@ -551,7 +574,7 @@ def test_rdp_live_cli_account_read_failure_is_separately_logged(tmp_path, monkey
 
     monkeypatch.setattr("polymaker.rdp_live.bootstrap_rdp_market", fake_bootstrap)
     monkeypatch.setattr("polymaker.rdp_marketdata.await_rdp_feed", fake_feed)
-    monkeypatch.setattr("polymaker.rdp_account.account_snapshot", fail_account)
+    monkeypatch.setattr("polymaker.rdp_userstream.observe_rdp_account_and_user_channel", fail_account)
     result = CliRunner().invoke(app, ["rdp-live", "--market", SLUG,
                                       "--preflight-only", "--account-check"])
     assert result.exit_code == 1
@@ -563,6 +586,9 @@ def test_rdp_live_cli_account_read_failure_is_separately_logged(tmp_path, monkey
     assert failure["result"] == "FAILURE"
     assert failure["category"] == "ACCOUNT_READ_FAILED"
     assert failure["real_money_trading_performed"] is False
+    channel_failure = next(event for event in events if event["event"] == "rdp_user_channel_readiness")
+    assert channel_failure["result"] == "FAILURE"
+    assert channel_failure["category"] == "ACCOUNT_READ_FAILED"
 
 
 def test_rdp_live_cli_success_persists_structured_evidence_and_never_trades(

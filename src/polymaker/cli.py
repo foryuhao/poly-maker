@@ -298,7 +298,7 @@ def rdp_live(
     preflight_only: bool = typer.Option(
         False, "--preflight-only", help="required read-only public metadata check; never trades"),
     account_check: bool = typer.Option(
-        False, "--account-check", help="also derive existing API credentials and read account state; never creates credentials"),
+        False, "--account-check", help="also observe the authenticated user stream and read account state with existing credentials; never creates credentials"),
     config_dir: str = typer.Option("config", help="config directory"),
 ) -> None:
     """Read public metadata and observe both books for one BTC5m market; cannot trade."""
@@ -349,6 +349,16 @@ def rdp_live(
                               f"cash backing=${backing.observed_cash_backing} | "
                               f"allowance backing=${backing.observed_allowance_backing} | "
                               f"read age={backing.read_age_s:.3f}s")
+    if result.user_channel is not None:
+        channel = result.user_channel
+        console.print(
+            "Read-only user-channel evidence: "
+            f"subscription_sent={channel.subscription_frame_sent} "
+            f"application_pong={channel.application_pong_received} "
+            f"generation={channel.connection_generation} "
+            f"receipt={channel.heartbeat_receipt_ts:.3f} capture={channel.capture_ts:.3f}"
+        )
+        console.print("Application PONG shows transport responsiveness; it is not an explicit server auth/subscription acknowledgment.")
     console.print("Read-only public metadata result; real_money_trading_performed=false")
 
 

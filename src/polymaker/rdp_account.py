@@ -171,6 +171,28 @@ async def account_snapshot(
     gateway_factory: Callable[..., ExecutionGateway] = ExecutionGateway,
 ) -> RDPAccountSnapshot:
     """Read immutable selected-market account evidence without account mutation."""
+    config, signer, funder = _prepare_account_config(cfg, bootstrap, now)
+    gateway = gateway_factory(config, paper=False)
+    try:
+        await gateway.connect(derive_only=True)
+        return await _capture_account_with_gateway(bootstrap, gateway, signer, funder, now=now)
+    except RDPAccountError:
+        raise
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - never persist SDK/network exception text
+        raise RDPAccountError("ACCOUNT_READ_FAILED", f"read-only account check failed ({type(exc).__name__})") from exc
+    finally:
+        drain = getattr(gateway, "aclose", None)
+        if callable(drain):
+            await drain()
+        else:
+            gateway.close()
+
+
+def _prepare_account_config(
+    cfg: Config, bootstrap: RDPBootstrap, now: Callable[[], float],
+) -> tuple[Config, str, str]:
     # Freeze all runtime inputs before the first await. The gateway operates on
     # this copy even if the caller changes its configuration during a read.
     try:
@@ -184,18 +206,31 @@ async def account_snapshot(
     signer, funder = _identity(config)
     if now() >= bootstrap.end_epoch:
         raise RDPAccountError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended before account reads")
+    return config, signer, funder
 
+
+def _validate_connected_gateway(gateway: ExecutionGateway, signer: str, funder: str) -> None:
+    if not _credentials_complete(gateway.creds):
+        raise RDPAccountError("DERIVED_CREDENTIALS_INCOMPLETE", "read-only API credentials are incomplete")
+    if gateway.address.lower() != signer.lower() or gateway.funder.lower() != funder.lower():
+        raise RDPAccountError("ACCOUNT_IDENTITY_MISMATCH", "connected gateway identity differs from configuration")
+
+
+async def _capture_account_with_gateway(
+    bootstrap: RDPBootstrap,
+    gateway: ExecutionGateway,
+    signer: str,
+    funder: str,
+    *,
+    now: Callable[[], float],
+) -> RDPAccountSnapshot:
+    """Read and validate account state from an already-connected gateway."""
     def ensure_market_open() -> None:
         if now() >= bootstrap.end_epoch:
             raise RDPAccountError("MARKET_INTERVAL_ELAPSED", "selected BTC5m interval ended during account reads")
 
-    gateway = gateway_factory(config, paper=False)
     try:
-        await gateway.connect(derive_only=True)
-        if not _credentials_complete(gateway.creds):
-            raise RDPAccountError("DERIVED_CREDENTIALS_INCOMPLETE", "read-only API credentials are incomplete")
-        if gateway.address.lower() != signer.lower() or gateway.funder.lower() != funder.lower():
-            raise RDPAccountError("ACCOUNT_IDENTITY_MISMATCH", "connected gateway identity differs from configuration")
+        _validate_connected_gateway(gateway, signer, funder)
 
         orders = await gateway.open_orders(strict_account=True, exact_decimal=True)
         orders_ts = now()
@@ -257,9 +292,3 @@ async def account_snapshot(
         raise
     except Exception as exc:  # noqa: BLE001 - never persist SDK/network exception text
         raise RDPAccountError("ACCOUNT_READ_FAILED", f"read-only account check failed ({type(exc).__name__})") from exc
-    finally:
-        drain = getattr(gateway, "aclose", None)
-        if callable(drain):
-            await drain()
-        else:
-            gateway.close()
