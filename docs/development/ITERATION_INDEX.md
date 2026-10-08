@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0023`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0023 | Next smallest missing single-market prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED_REVISION | IMPLEMENTED_REVISION | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -99,7 +99,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0022 is independently reviewed and remotely archived. ITER-0023 Architect must inspect actual code and select one smallest missing integrated single-market prerequisite. Project IN_PROGRESS; no real-money authority.
+ITER-0023 Architect approved one explicitly activated initial-cycle completion owner, consuming reviewed pre-fill/window/close APIs. No submission, new cycle, CLI activation or shared-core change. Worker implementation pending; project IN_PROGRESS and real-money authorization NOT_GRANTED.
 
 ---
 
