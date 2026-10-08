@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import logging
 import socket
+import threading
 import time
+from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+import structlog
 
 from polymaker.config import Config
 from polymaker.domain import (
@@ -19,17 +25,24 @@ from polymaker.domain import (
     TokenMeta,
     TradeState,
 )
-from polymaker.execution.gateway import ExecutionGateway, PlacementUnknown
+from polymaker.execution.gateway import ExecutionGateway, GatewayReadError, PlacementUnknown
+from polymaker.execution.rdp_lifecycle import close_rdp_cycle
 from polymaker.execution.rdp_placement import RDPPlacementError
+from polymaker.logging import configure as configure_logging
 from polymaker.marketdata.parse import TradePrint
 from polymaker.rdp_live import RDPBootstrap, TokenBookMetadata
 from polymaker.rdp_marketdata import RDPMarketDataService
-from polymaker.rdp_runtime import RDPInitialNormalAdmission, RDPInputSession
-from polymaker.risk.rdp_capital import RDPInitialBackingResult
+from polymaker.rdp_runtime import (
+    RDPInitialNormalAdmission,
+    RDPInputSession,
+    _StrictCloseGateway,
+)
+from polymaker.risk.rdp_capital import RDPInitialBackingResult, project_rdp_capital
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import TradeEvent, UserEventProcessor
 from polymaker.strategy.rdp_accounting import snapshot_inventory
 from polymaker.strategy.rdp_quotes import RDPQuoteDecision
+from polymaker.userstream.parse import normalize_order
 
 
 @pytest.fixture
@@ -185,6 +198,885 @@ class FakeBatchClient:
         if self.post_error is not None:
             raise self.post_error
         return self.response
+
+
+class FakeCloseSDKClient:
+    """Fake official SDK surface consumed by the real gateway/read barrier."""
+
+    def __init__(self, rows, *, trades=None):
+        self.rows = {row["id"]: dict(row) for row in rows}
+        self.trades = list(trades or [])
+        self.cancel_calls = []
+        self.cancel_error = None
+        self.cancel_mutates = True
+        self.cancel_hook = None
+        self.read_error = None
+        self.open_hook = None
+        self.open_count = 0
+        self.get_order_error = None
+        self.get_order_hook = None
+        self.get_order_count = 0
+        self.trades_error = None
+        self.get_trades_hook = None
+        self.get_trades_count = 0
+
+    def get_open_orders(self):
+        self.open_count += 1
+        if self.open_hook is not None:
+            self.open_hook(self.open_count)
+        if self.read_error is not None:
+            raise self.read_error
+        return [
+            dict(row) for row in self.rows.values()
+            if row["status"].upper() not in {"CANCELED", "CANCELLED", "MATCHED"}
+            and Decimal(row["original_size"]) > Decimal(row["size_matched"])
+        ]
+
+    def cancel_orders(self, order_ids):
+        self.cancel_calls.append(tuple(order_ids))
+        if self.cancel_hook is not None:
+            self.cancel_hook()
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        if self.cancel_mutates:
+            for order_id in order_ids:
+                self.rows[order_id]["status"] = "CANCELED"
+
+    def get_order(self, order_id):
+        self.get_order_count += 1
+        if self.get_order_hook is not None:
+            self.get_order_hook(order_id, self.get_order_count)
+        if self.get_order_error is not None:
+            raise self.get_order_error
+        return dict(self.rows[order_id])
+
+    def get_trades(self, _params):
+        self.get_trades_count += 1
+        if self.get_trades_hook is not None:
+            self.get_trades_hook(self.get_trades_count)
+        if self.trades_error is not None:
+            raise self.trades_error
+        return list(self.trades)
+
+
+def _close_gateway(scope, quotes, *, fill=None, extra_rows=(), trades=()):
+    rows = []
+    for quote in quotes:
+        order_id = ("yes-order" if quote.token_id == "yes-token" else "no-order")
+        matched = fill[1] if fill is not None and fill[0] == quote.token_id else 0
+        status = "MATCHED" if matched == quote.size else "LIVE"
+        if fill is not None and fill[0] == quote.token_id and matched < quote.size:
+            status = "LIVE"
+        rows.append({
+            "id": order_id, "asset_id": quote.token_id, "side": "BUY",
+            "price": str(quote.price), "original_size": str(quote.size),
+            "size_matched": str(matched), "status": status,
+            "market": scope.market.condition_id,
+        })
+    rows.extend(dict(row) for row in extra_rows)
+    client = FakeCloseSDKClient(rows, trades=trades)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+
+    async def inline_io(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    gateway._io = inline_io
+    scope.session.user_session.gateway = gateway
+    return gateway, client
+
+
+def _close_gateway_real_executor(scope, quotes):
+    """Retain ExecutionGateway._io and use only a fake SDK client."""
+    temporary, client = _close_gateway(scope, quotes)
+    temporary.close()
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    return gateway, client
+
+
+def _rest_trade(order_id, token_id, price, quantity, *, trade_id="close-fill"):
+    return {
+        "id": trade_id, "status": "CONFIRMED", "market": "rdp-placement-condition",
+        "asset_id": "other-token", "side": "SELL",
+        "maker_orders": [{
+            "order_id": order_id, "asset_id": token_id, "side": "BUY",
+            "matched_amount": str(quantity), "price": str(price),
+        }],
+    }
+
+
+async def _compose_accepted_initial_pair(scope):
+    _service, _account_gateway = _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    assert admission.eligible
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    outcome, _client = await _gateway_outcome(
+        scope, _accepted_rows(), quotes=admission.candidate.quotes,
+    )
+    resolved = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    assert resolved.outcome == "COMPLETE"
+    return resolved, admission.candidate.quotes
+
+
+@pytest.mark.asyncio
+async def test_complete_pair_closes_through_strict_gateway_and_certifies_capital(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete and result.barrier is not None
+    assert result.capital is not None and result.capital.certified
+    assert result.owned_order_ids == ("yes-order", "no-order")
+    assert result.closed_order_ids == ("no-order", "yes-order")
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert result.capital.snapshot.reserved_cash == 0
+    assert result.capital.snapshot.free_cash == Decimal("30.00")
+    assert result.next_mode.value == "NORMAL"
+    assert not result.replacement_blocked and not result.placement_unresolved
+    assert result.execution_authorized is False
+    assert scope.owner.current.replacement_blocked is False
+    assert scope.processor.owned_record("yes-order") is not None
+    assert scope.processor.owned_record("no-order") is not None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_id", "quantity", "expected_delta", "expected_mode"),
+    [
+        (None, "0", "0", "NORMAL"),
+        ("yes-token", "4.99", "4.99", "NORMAL"),
+        ("yes-token", "5", "5", "REBALANCE"),
+        ("no-token", "5", "-5", "REBALANCE"),
+    ],
+    ids=["zero-fill", "partial-below-five", "exact-five", "negative-exact-five"],
+)
+async def test_close_certifies_inventory_and_exact_five_share_classification(
+    placement_scope, blocked_network, token_id, quantity, expected_delta, expected_mode,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    fill = None if token_id is None else (token_id, Decimal(quantity))
+    trades = () if fill is None else (
+        _rest_trade("yes-order" if token_id == "yes-token" else "no-order",
+                    token_id, "0.39", quantity),
+    )
+    gateway, client = _close_gateway(scope, quotes, fill=fill, trades=trades)
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete and result.capital is not None
+    assert result.capital.certified
+    assert Decimal(str(result.barrier.inventory.delta)) == Decimal(expected_delta)
+    assert result.next_mode.value == expected_mode
+    assert not result.replacement_blocked
+    assert len(client.cancel_calls) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_confirmed_fill_during_cancel_enters_close_inventory(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+
+    def fill_during_cancel():
+        client.rows["yes-order"]["size_matched"] = "2"
+        client.trades = [_rest_trade("yes-order", "yes-token", "0.39", "2")]
+
+    client.cancel_hook = fill_during_cancel
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete and result.capital is not None
+    assert result.barrier.inventory.qy == 2
+    assert result.barrier.inventory.qn == 0
+    assert result.barrier.inventory.delta == 2
+    assert scope.processor.applied_fill_keys == {("close-fill", "yes-order")}
+    assert result.capital.snapshot.reserved_cash == 0
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_matched_only_fill_and_terminal_checksum_change_remain_blocked(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    matched_trade = _rest_trade("yes-order", "yes-token", "0.39", "5")
+    matched_trade["status"] = "MATCHED"
+    gateway, client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("5")), trades=(matched_trade,),
+    )
+
+    def change_terminal_cumulative(order_id, read_count):
+        if order_id == "yes-order" and read_count == 4:
+            # Reconciliation's own read saw five; the later terminal read says four.
+            client.rows[order_id]["size_matched"] = "4"
+
+    client.get_order_hook = change_terminal_cumulative
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert result.capital is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_matched_only_fill_remains_pending_without_terminal_conflict(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    trade = _rest_trade("yes-order", "yes-token", ".39", "5")
+    trade["status"] = "MATCHED"
+    gateway, _client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("5")), trades=(trade,),
+    )
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete
+    assert result.barrier.reason == "PENDING_CONFIRMATION"
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert result.capital is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_contradictory_confirmed_fill_is_quarantined_and_close_stays_blocked(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    trade = _rest_trade("yes-order", "foreign-token", ".39", "5")
+    gateway, _client = _close_gateway(
+        scope, quotes, fill=("yes-token", Decimal("5")), trades=(trade,),
+    )
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert "yes-order" in scope.processor.quarantined_orders
+    assert result.capital is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_processor_change_during_final_open_read_invalidates_close_proof(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+
+    def late_fill_on_final_snapshot(read_count):
+        if read_count == 3:
+            scope.processor.on_trade(
+                TradeEvent(
+                    "yes-token", Side.BUY, .39, 1, "late-close-fill",
+                    TradeState.CONFIRMED, 1, "yes-order", scope.market.condition_id,
+                ),
+                scope.market.condition_id,
+            )
+
+    client.open_hook = late_fill_on_final_snapshot
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert result.capital is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_market_order_is_never_a_close_cancellation_target(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    foreign = {
+        "id": "manual-foreign", "asset_id": "unrelated-token", "side": "BUY",
+        "price": ".4", "original_size": "7", "size_matched": "0",
+        "status": "LIVE", "market": "another-condition",
+    }
+    gateway, client = _close_gateway(scope, quotes, extra_rows=(foreign,))
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete and not result.replacement_blocked
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert client.rows["manual-foreign"]["status"] == "LIVE"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_lost_input_generation_still_closes_known_risk_but_cannot_certify_next_mode(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+    scope.session.public_session.service.connection_generation += 1
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete
+    assert result.reason == "UNRELIABLE_STATE"
+    assert result.capital is not None and not result.capital.certified
+    assert result.next_mode is None
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_partial_unknown_closes_known_subset_without_clearing_unresolved_block(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt = _arm(scope)
+    outcome, _client = await _gateway_outcome(scope, [
+        {"success": True, "orderID": "safe-yes"},
+        {"success": True, "orderID": "unknown-no", "id": "alias-no"},
+    ])
+    assert isinstance(outcome, PlacementUnknown)
+    attempt = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    gateway, client = _close_gateway(scope, (), extra_rows=({
+        "id": "safe-yes", "asset_id": "yes-token", "side": "BUY",
+        "price": ".39", "original_size": "5", "size_matched": "0",
+        "status": "LIVE", "market": scope.market.condition_id,
+    },))
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete
+    assert result.closed_order_ids == ("safe-yes",)
+    assert client.cancel_calls == [("safe-yes",)]
+    assert result.placement_unresolved and result.replacement_blocked
+    assert scope.owner.blocks_initial_admission
+    assert result.capital is None and result.next_mode is None
+    assert scope.processor.owned_record("unknown-no") is None
+    assert scope.processor.owned_record("alias-no") is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_observed_only_market_order_is_never_adopted_or_canceled(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt = _arm(scope)
+    outcome, _client = await _gateway_outcome(scope, [
+        {"success": True, "orderID": "safe-yes"},
+        {"success": True, "orderID": "observed-no", "id": "observed-alias"},
+    ])
+    assert isinstance(outcome, PlacementUnknown)
+    attempt = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    safe = {
+        "id": "safe-yes", "asset_id": "yes-token", "side": "BUY",
+        "price": ".39", "original_size": "5", "size_matched": "0",
+        "status": "LIVE", "market": scope.market.condition_id,
+    }
+    observed = {
+        "id": "observed-no", "asset_id": "no-token", "side": "BUY",
+        "price": ".39", "original_size": "5", "size_matched": "0",
+        "status": "LIVE", "market": scope.market.condition_id,
+    }
+    gateway, client = _close_gateway(scope, (), extra_rows=(safe, observed))
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete and result.replacement_blocked
+    assert client.cancel_calls == [("safe-yes",)]
+    assert client.rows["observed-no"]["status"] == "LIVE"
+    assert scope.processor.owned_record("observed-no") is None
+    assert scope.processor.owned_record("observed-alias") is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_zero_id_unknown_close_does_not_read_or_cancel(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt = _arm(scope)
+    outcome, _client = await _gateway_outcome(
+        scope, [{"success": True}, {"success": False}],
+    )
+    assert isinstance(outcome, PlacementUnknown)
+    attempt = scope.session.resolve_initial_normal_placement(attempt, outcome)
+    gateway, client = _close_gateway(scope, attempt.quotes)
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.reason == "PLACEMENT_OUTCOME_UNRESOLVED"
+    assert result.barrier is None and result.closed_order_ids == ()
+    assert client.open_count == 0 and client.cancel_calls == []
+    assert result.replacement_blocked
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fault", "expected_reason"),
+    [
+        ("cancel-exception", "CANCELLATION_UNCERTAIN"),
+        ("cancel-noop", "OPEN_ORDERS_REMAIN"),
+        ("open-read", "OPEN_ORDER_READ_FAILED"),
+        ("malformed-cumulative", "OPEN_ORDER_READ_FAILED"),
+        ("missing-matched", "OPEN_ORDER_READ_FAILED"),
+        ("float-cumulative", "OPEN_ORDER_READ_FAILED"),
+    ],
+)
+async def test_incomplete_close_evidence_never_releases_pair(
+    placement_scope, blocked_network, fault, expected_reason,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+    if fault == "cancel-exception":
+        client.cancel_error = RuntimeError("private cancel sentinel")
+    elif fault == "cancel-noop":
+        client.cancel_mutates = False
+    elif fault == "open-read":
+        client.read_error = RuntimeError("private order-read sentinel")
+    else:
+        if fault == "malformed-cumulative":
+            del client.rows["yes-order"]["original_size"]
+        elif fault == "missing-matched":
+            del client.rows["yes-order"]["size_matched"]
+        else:
+            client.rows["yes-order"]["original_size"] = 5.0
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert not result.barrier_complete
+    assert result.reason == expected_reason
+    assert result.replacement_blocked and scope.owner.blocks_initial_admission
+    assert result.capital is None
+    assert "private" not in repr(result)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation", ["local-live", "late-matched", "changed-price", "changed-condition"],
+)
+async def test_stale_close_proof_after_local_order_reappears_cannot_release_owner(
+    placement_scope, blocked_network, mutation,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, _client = _close_gateway(scope, quotes)
+    try:
+        deadline = asyncio.get_running_loop().time() + 2
+        barrier = await close_rdp_cycle(
+            scope.market, scope.processor, _StrictCloseGateway(gateway),
+            set(attempt.acknowledged_order_ids),
+            set(attempt.acknowledged_order_ids), deadline,
+        )
+        assert barrier.complete
+        capital = project_rdp_capital(
+            scope.market, scope.processor, set(attempt.acknowledged_order_ids), [],
+            market_state_reliable=True, order_state_reliable=True,
+            close_evidence=barrier,
+        )
+        assert capital.certified
+        if mutation == "local-live":
+            scope.processor.on_order(normalize_order({
+                "id": "yes-order", "asset_id": "yes-token", "side": "BUY",
+                "price": ".39", "original_size": "5", "size_matched": "0",
+                "status": "LIVE", "market": scope.market.condition_id,
+            }), scope.market.condition_id)
+        elif mutation == "late-matched":
+            scope.processor.on_trade(TradeEvent(
+                "yes-token", Side.BUY, .39, 1, "late-matched-fill",
+                TradeState.MATCHED, 1, "yes-order", scope.market.condition_id,
+            ), scope.market.condition_id)
+        else:
+            scope.store.register_owned_order(
+                "yes-order",
+                ("changed-condition" if mutation == "changed-condition"
+                 else scope.market.condition_id),
+                "yes-token", Side.BUY, 5,
+                (.40 if mutation == "changed-price" else .39), "rdp_initial",
+            )
+        updated = scope.owner.record_close(attempt, barrier, capital)
+    finally:
+        gateway.close()
+
+    assert updated.replacement_blocked
+    assert scope.owner.blocks_initial_admission
+    assert set(updated.closed_order_ids) == set(attempt.acknowledged_order_ids)
+    assert scope.processor.owned_record("yes-order") is not None
+    if mutation == "late-matched":
+        fresh = project_rdp_capital(
+            scope.market, scope.processor, set(attempt.acknowledged_order_ids), [],
+            market_state_reliable=True, order_state_reliable=True,
+            close_evidence=barrier,
+        )
+        assert not fresh.certified and fresh.reason == "PENDING_FILL"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_wrong_attempt_and_deadline_close_retain_block_without_scope_expansion(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway(scope, quotes)
+    try:
+        with pytest.raises(RDPPlacementError, match="PLACEMENT_ATTEMPT_NOT_ACTIVE"):
+            await scope.session.close_initial_normal_placement(
+                replace(attempt, slug="foreign-market"),
+                deadline=asyncio.get_running_loop().time() + 2,
+            )
+        expired = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() - 1,
+        )
+    finally:
+        gateway.close()
+
+    assert not expired.barrier_complete
+    assert expired.reason == "OPERATIONAL_DEADLINE"
+    assert expired.replacement_blocked and scope.owner.blocks_initial_admission
+    assert client.cancel_calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sdk_method", ["open_orders", "cancel", "get_order", "get_trades"])
+@pytest.mark.parametrize("mode", ["caller-cancel", "deadline", "teardown"])
+async def test_each_real_gateway_operation_drains_before_close_ownership_clears(
+    placement_scope, blocked_network, sdk_method, mode,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, client = _close_gateway_real_executor(scope, quotes)
+    sdk_started = threading.Event()
+    sdk_release = threading.Event()
+
+    def block_sdk(*_args):
+        sdk_started.set()
+        if not sdk_release.wait(timeout=5):
+            raise RuntimeError("fake SDK release timeout")
+
+    if sdk_method == "open_orders":
+        client.open_hook = block_sdk
+    elif sdk_method == "cancel":
+        client.cancel_hook = block_sdk
+    elif sdk_method == "get_order":
+        client.get_order_hook = block_sdk
+    else:
+        client.get_trades_hook = block_sdk
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + (.2 if mode == "deadline" else 5)
+    operation = asyncio.create_task(
+        scope.session.close_initial_normal_placement(attempt, deadline=deadline),
+    )
+    shutdown = None
+
+    def calls():
+        return (client.open_count, len(client.cancel_calls),
+                client.get_order_count, client.get_trades_count)
+
+    expected_calls = {
+        "open_orders": (1, 0, 0, 0),
+        "cancel": (1, 1, 0, 0),
+        "get_order": (2, 1, 1, 0),
+        "get_trades": (2, 1, 1, 1),
+    }[sdk_method]
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(sdk_started.wait, 2), timeout=3)
+        assert calls() == expected_calls
+        if mode == "caller-cancel":
+            operation.cancel()
+            await asyncio.sleep(0)
+            operation.cancel()
+            await asyncio.sleep(0)
+            with pytest.raises(RDPPlacementError, match="PLACEMENT_CLOSE_IN_PROGRESS"):
+                await scope.session.close_initial_normal_placement(
+                    attempt, deadline=loop.time() + 5,
+                )
+            assert not operation.done()
+            assert scope.session._placement_close_task is not None
+            sdk_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+        elif mode == "deadline":
+            await asyncio.sleep(.25)
+            assert not operation.done()
+            assert scope.session._placement_close_task is not None
+            with pytest.raises(RDPPlacementError, match="PLACEMENT_CLOSE_IN_PROGRESS"):
+                await scope.session.close_initial_normal_placement(
+                    attempt, deadline=loop.time() + 5,
+                )
+            sdk_release.set()
+            result = await operation
+            assert not result.barrier_complete
+            assert result.reason == "OPERATIONAL_DEADLINE"
+        else:
+            shutdown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            assert not shutdown.done() and not operation.done()
+            assert scope.session._placement_close_task is not None
+            sdk_release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+    finally:
+        sdk_release.set()
+        if not operation.done():
+            operation.cancel()
+            with suppress(asyncio.CancelledError):
+                await operation
+        if shutdown is not None and not shutdown.done():
+            shutdown.cancel()
+            with suppress(asyncio.CancelledError):
+                await shutdown
+        gateway.close()
+
+    assert calls() == expected_calls
+    assert scope.session._placement_close_task is None
+    assert scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["cancel", "open_orders", "get_order", "get_trades"])
+@pytest.mark.parametrize("failing_handler", [False, True], ids=["normal-log", "failing-log"])
+async def test_gateway_safe_diagnostics_hide_sdk_sentinel_and_error_chain(
+    operation, failing_handler, capsys, blocked_network,
+):
+    gateway = ExecutionGateway(Config(), paper=False)
+    client = FakeCloseSDKClient([{
+        "id": "order-1", "asset_id": "yes-token", "side": "BUY",
+        "price": ".39", "original_size": "5", "size_matched": "0",
+        "status": "LIVE", "market": "condition-1",
+    }])
+    gateway._client = client
+    gateway._derive_only = True
+    sentinel = "SYNTHETIC_CREDENTIAL_SENTINEL"
+    if operation == "cancel":
+        client.cancel_error = RuntimeError(sentinel)
+    elif operation == "open_orders":
+        client.read_error = RuntimeError(sentinel)
+    elif operation == "get_order":
+        client.get_order_error = RuntimeError(sentinel)
+    else:
+        client.trades_error = RuntimeError(sentinel)
+
+    class RaisingStream:
+        def write(self, _message):
+            raise OSError("synthetic log sink failure")
+
+        def flush(self):
+            return None
+
+    old_structlog_config = structlog.get_config()
+    root_logger = logging.getLogger()
+    old_root_handlers, old_root_level = root_logger.handlers[:], root_logger.level
+    configure_logging(console=False)
+    logger = logging.getLogger("execution.gateway")
+    old_handlers, old_level, old_propagate = logger.handlers[:], logger.level, logger.propagate
+    records = []
+
+    class CapturingHandler(logging.StreamHandler):
+        def emit(self, record):
+            records.append(record)
+            super().emit(record)
+
+    handler = CapturingHandler(RaisingStream() if failing_handler else io.StringIO())
+    handler.setFormatter(logging.Formatter("%(name)s %(message)s"))
+    logger.handlers[:] = [handler]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    try:
+        if operation == "cancel":
+            result = await gateway.cancel(["order-1"], safe_diagnostics=True)
+            assert result is False
+        else:
+            with pytest.raises(GatewayReadError) as caught:
+                if operation == "open_orders":
+                    await gateway.open_orders(
+                        strict_account=True, exact_decimal=True, safe_diagnostics=True,
+                    )
+                elif operation == "get_order":
+                    await gateway.get_order("order-1", safe_diagnostics=True)
+                else:
+                    await gateway.get_trades(
+                        market="condition-1", safe_diagnostics=True,
+                    )
+            assert caught.value.__cause__ is None
+            assert caught.value.__context__ is None
+            assert sentinel not in str(caught.value)
+    finally:
+        gateway.close()
+        logger.handlers[:] = old_handlers
+        logger.setLevel(old_level)
+        logger.propagate = old_propagate
+        root_logger.handlers[:] = old_root_handlers
+        root_logger.setLevel(old_root_level)
+        structlog.configure(**old_structlog_config)
+
+    stderr = capsys.readouterr().err
+    assert sentinel not in stderr
+    expected_event = {
+        "cancel": "cancel_failed", "open_orders": "open_orders_failed",
+        "get_order": "get_order_failed", "get_trades": "get_trades_failed",
+    }[operation]
+    matching = [
+        record.name == "execution.gateway"
+        and (record.msg == expected_event
+             or (isinstance(record.msg, dict)
+                 and record.msg.get("event") == expected_event))
+        for record in records
+    ]
+    assert any(matching), [(record.name, record.msg, record.__dict__) for record in records]
+    for record in records:
+        fields = record.msg if isinstance(record.msg, dict) else record.__dict__
+        assert fields.get("error_type") == "RuntimeError"
+        assert "err" not in fields
+        assert sentinel not in repr(record.__dict__)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_close_adapter_delegates_each_gateway_method_with_safe_diagnostics(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    gateway, _client = _close_gateway(scope, quotes)
+    observed = []
+    for name in ("open_orders", "cancel", "get_order", "get_trades"):
+        original = getattr(gateway, name)
+
+        async def delegate(*args, _name=name, _method=original, **kwargs):
+            observed.append((_name, kwargs.get("safe_diagnostics")))
+            return await _method(*args, **kwargs)
+
+        setattr(gateway, name, delegate)
+    try:
+        result = await scope.session.close_initial_normal_placement(
+            attempt, deadline=asyncio.get_running_loop().time() + 2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.barrier_complete
+    assert {name for name, safe in observed if safe is True} == {
+        "open_orders", "cancel", "get_order", "get_trades",
+    }
+    assert all(safe is True for _name, safe in observed)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_diagnostic_opt_in_defaults_off_and_legacy_reads_remain_usable(
+    monkeypatch, blocked_network,
+):
+    import polymaker.execution.gateway as gateway_module
+
+    gateway = ExecutionGateway(Config(), paper=False)
+    client = FakeCloseSDKClient([{
+        "id": "order-1", "asset_id": "yes-token", "side": "BUY",
+        "price": ".39", "original_size": "5", "size_matched": "0",
+        "status": "LIVE", "market": "condition-1",
+    }])
+    gateway._client = client
+    monkeypatch.setattr(
+        gateway_module, "_safe_gateway_diagnostic",
+        lambda *_args, **_kwargs: pytest.fail("diagnostic opt-in was not requested"),
+    )
+    try:
+        rows = await gateway.open_orders()
+        assert len(rows) == 1 and isinstance(rows[0].price, float)
+        assert await gateway.get_order("order-1") == client.rows["order-1"]
+        assert await gateway.get_trades(market="condition-1") == []
+        assert await gateway.cancel(["order-1"])
+    finally:
+        gateway.close()
+
+    assert gateway_module.ExecutionGateway.cancel.__kwdefaults__["safe_diagnostics"] is False
+    assert gateway_module.ExecutionGateway.open_orders.__kwdefaults__["safe_diagnostics"] is False
+    assert gateway_module.ExecutionGateway.get_order.__kwdefaults__["safe_diagnostics"] is False
+    assert gateway_module.ExecutionGateway.get_trades.__kwdefaults__["safe_diagnostics"] is False
+    assert client.cancel_calls == [("order-1",)]
+    assert blocked_network == []
 
 
 async def _gateway_outcome(scope, response=None, *, post_error=None, quotes=None):

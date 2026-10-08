@@ -15,7 +15,10 @@ from typing import Any
 
 from polymaker.domain import OpenOrder, OrderState, Quote, Side
 from polymaker.execution.gateway import PlacementUnknown
+from polymaker.execution.rdp_lifecycle import RDPCloseResult, ReconciliationOutcome
 from polymaker.logging import get_logger
+from polymaker.risk.rdp_capital import RDPCapitalProjection, project_rdp_capital
+from polymaker.strategy.rdp_accounting import snapshot_inventory
 
 log = get_logger("execution.rdp_placement")
 
@@ -40,6 +43,7 @@ class RDPPlacementAttempt:
     reason: str | None
     acknowledged_order_ids: tuple[str, ...]
     observed_order_ids: tuple[str, ...]
+    closed_order_ids: tuple[str, ...]
     pending_anomalies: tuple[str, ...]
     unresolved: bool
     replacement_blocked: bool
@@ -65,7 +69,8 @@ class RDPPlacementOwner:
     @property
     def blocks_initial_admission(self) -> bool:
         current = self._current
-        return bool(current is not None and (current.unresolved or current.outcome == "ARMED"))
+        return bool(current is not None and (
+            current.unresolved or current.replacement_blocked or current.outcome == "ARMED"))
 
     def arm(self, admission: Any, *, current_public_generation: int,
             current_user_generation: int, session_healthy: bool,
@@ -108,6 +113,7 @@ class RDPPlacementOwner:
             reason=None,
             acknowledged_order_ids=(),
             observed_order_ids=(),
+            closed_order_ids=(),
             pending_anomalies=(),
             unresolved=True,
             replacement_blocked=True,
@@ -249,6 +255,86 @@ class RDPPlacementOwner:
                  execution_authorized=False)
         return final
 
+    def record_close(
+        self, attempt: RDPPlacementAttempt, barrier: RDPCloseResult,
+        capital: RDPCapitalProjection | None,
+    ) -> RDPPlacementAttempt:
+        """Record barrier evidence; only a current full-pair proof can unblock."""
+        current = self._current
+        if current is None or attempt is not current or current.outcome == "ARMED":
+            raise RDPPlacementError("PLACEMENT_ATTEMPT_NOT_ACTIVE")
+        if not isinstance(barrier, RDPCloseResult):
+            raise RDPPlacementError("INVALID_CLOSE_EVIDENCE")
+
+        acknowledged = set(current.acknowledged_order_ids)
+        reconciled = {
+            order_id for order_id, outcome in barrier.reconciliation_outcomes
+            if outcome is ReconciliationOutcome.COMPLETE
+        }
+        closed = set(current.closed_order_ids)
+        if (barrier.complete is True and barrier.reason is None
+                and barrier.inventory is not None and reconciled == acknowledged
+                and not barrier.affected_order_ids):
+            closed.update(reconciled)
+
+        market_tokens = {self._bootstrap.market.yes.token_id,
+                         self._bootstrap.market.no.token_id}
+        quote_tokens = {quote.token_id for quote in current.quotes}
+        full_initial_pair = (
+            current.outcome == "COMPLETE" and not current.unresolved
+            and len(current.acknowledged_order_ids) == 2
+            and len(acknowledged) == 2 and quote_tokens == market_tokens
+            and acknowledged == closed
+        )
+        capital_snapshot = getattr(capital, "snapshot", None)
+        fresh_capital = (
+            project_rdp_capital(
+                self._bootstrap.market, self._processor, acknowledged, [],
+                market_state_reliable=True, order_state_reliable=True,
+                close_evidence=barrier,
+            ) if full_initial_pair and _registry_matches_attempt(
+                self._bootstrap, self._processor, current,
+            ) else None
+        )
+        try:
+            current_inventory = snapshot_inventory(
+                self._bootstrap.market, self._processor, acknowledged,
+            ) if acknowledged else None
+        except (TypeError, ValueError, OverflowError):
+            current_inventory = None
+        current_local_orders = getattr(self._store, "orders", None)
+        current_local_open = (
+            not isinstance(current_local_orders, dict)
+            or bool(acknowledged & set(current_local_orders))
+        )
+        current_unresolved = any(
+            order_id in self._processor.quarantined_orders
+            or self._processor.has_unresolved_fill_key(order_id)
+            or self._processor.has_failed_fill(order_id)
+            for order_id in acknowledged
+        )
+        can_release = (
+            full_initial_pair and barrier.complete is True and barrier.reason is None
+            and barrier.inventory is not None and not barrier.affected_order_ids
+            and current_inventory == barrier.inventory and not current_local_open
+            and not current_unresolved
+            and isinstance(capital, RDPCapitalProjection)
+            and capital.certified and capital_snapshot is not None
+            and isinstance(fresh_capital, RDPCapitalProjection)
+            and fresh_capital.certified and fresh_capital.snapshot == capital_snapshot
+            and set(capital_snapshot.run_order_ids) == acknowledged
+            and not capital_snapshot.resting_order_ids
+            and capital_snapshot.reserved_cash == 0
+            and capital_snapshot.inventory == barrier.inventory
+        )
+        updated = replace(
+            current,
+            closed_order_ids=tuple(sorted(closed)),
+            replacement_blocked=False if can_release else current.replacement_blocked,
+        )
+        self._current = updated
+        return updated
+
     def _validate_acknowledgements(
         self, attempt: RDPPlacementAttempt, acknowledgements: Any,
     ) -> tuple[tuple[OpenOrder, ...], tuple[str, ...]]:
@@ -320,6 +406,27 @@ def _valid_initial_pair(market: Any, quotes: tuple[Any, ...]) -> bool:
             return False
         by_token[quote.token_id] = quote
     return set(by_token) == {market.yes.token_id, market.no.token_id}
+
+
+def _registry_matches_attempt(
+    bootstrap: Any, processor: Any, attempt: RDPPlacementAttempt,
+) -> bool:
+    market = bootstrap.market
+    quotes = {quote.token_id: quote for quote in attempt.quotes}
+    if (attempt.condition_id != market.condition_id or attempt.slug != market.slug
+            or len(quotes) != 2
+            or set(quotes) != {market.yes.token_id, market.no.token_id}):
+        return False
+    for order_id in attempt.acknowledged_order_ids:
+        record = processor.owned_record(order_id)
+        quote = quotes.get((record or {}).get("token_id"))
+        if (record is None or quote is None
+                or record.get("condition_id") != market.condition_id
+                or record.get("side") != Side.BUY.value
+                or not _same_number(record.get("submitted_qty"), quote.size)
+                or not _same_number(record.get("submitted_price"), quote.price)):
+            return False
+    return True
 
 
 def _same_number(actual: Any, expected: Any) -> bool:

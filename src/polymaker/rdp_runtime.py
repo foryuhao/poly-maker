@@ -7,10 +7,15 @@ import copy
 import math
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from polymaker.config import Config
+from polymaker.domain import OpenOrder, OrderState, Side
+from polymaker.execution.gateway import ExactOpenOrder
+from polymaker.execution.rdp_lifecycle import RDPCloseResult, close_rdp_cycle
 from polymaker.execution.rdp_placement import (
     RDPPlacementAttempt,
     RDPPlacementError,
@@ -84,6 +89,25 @@ class RDPInitialNormalAdmission:
     execution_authorized: bool = field(default=False, init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class RDPInitialPlacementClose:
+    """Immutable evidence from one explicit, scoped placement close."""
+
+    attempt_id: int
+    slug: str
+    condition_id: str
+    owned_order_ids: tuple[str, ...]
+    closed_order_ids: tuple[str, ...]
+    barrier: RDPCloseResult | None
+    capital: RDPCapitalProjection | None
+    barrier_complete: bool
+    placement_unresolved: bool
+    replacement_blocked: bool
+    reason: str | None
+    next_mode: RDPMode | None
+    execution_authorized: bool = field(default=False, init=False)
+
+
 class RDPInputSession:
     """Retain one public service and one authenticated user/account owner."""
 
@@ -113,6 +137,7 @@ class RDPInputSession:
         self._admission_active = False
         self._admission_task: asyncio.Task[Any] | None = None
         self._account_read_task: asyncio.Task[Any] | None = None
+        self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
         self.placement_owner = RDPPlacementOwner(
             bootstrap, self.processor,
             getattr(self.user_session, "store", getattr(self.processor, "_store", None)),
@@ -499,6 +524,179 @@ class RDPInputSession:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
         return self.placement_owner.resolve(attempt, outcome)
 
+    async def close_initial_normal_placement(
+        self, attempt: RDPPlacementAttempt, *, deadline: float,
+    ) -> RDPInitialPlacementClose:
+        """Explicitly close this attempt's known owned IDs through the existing barrier."""
+        current = self.placement_owner.current
+        if (current is None or attempt is not current
+                or attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id
+                or attempt.outcome == "ARMED"):
+            raise RDPPlacementError("PLACEMENT_ATTEMPT_NOT_ACTIVE")
+        active = self._placement_close_task
+        if active is not None and not active.done():
+            raise RDPPlacementError("PLACEMENT_CLOSE_IN_PROGRESS")
+
+        order_ids = tuple(sorted(set(attempt.acknowledged_order_ids)))
+        if not order_ids:
+            return self._placement_close_result(
+                current, None, None,
+                reason=("PLACEMENT_OUTCOME_UNRESOLVED" if current.unresolved
+                        else "NO_ATTRIBUTABLE_ORDERS"),
+                barrier_complete=False,
+            )
+
+        registry_snapshot = _placement_registry_snapshot(
+            self.processor, self.bootstrap, attempt,
+        )
+        if registry_snapshot is None:
+            return self._placement_close_result(
+                current, None, None, reason="OWNERSHIP_SCOPE_CONTRADICTION",
+                barrier_complete=False,
+            )
+        task = asyncio.create_task(
+            self._close_initial_normal_placement(
+                attempt, order_ids, registry_snapshot, deadline,
+            ),
+            name="rdp-initial-placement-close",
+        )
+        self._placement_close_task = task
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.cancel()
+            await _drain_read_task(task)
+            raise
+        finally:
+            if self._placement_close_task is task:
+                self._placement_close_task = None
+
+    async def _close_initial_normal_placement(
+        self, attempt: RDPPlacementAttempt, order_ids: tuple[str, ...],
+        registry_snapshot: tuple[tuple[Any, ...], ...], deadline: float,
+    ) -> RDPInitialPlacementClose:
+        gateway = getattr(self.user_session, "gateway", None)
+        if gateway is None:
+            return self._placement_close_result(
+                attempt, None, None, reason="CLOSE_GATEWAY_UNAVAILABLE",
+                barrier_complete=False,
+            )
+        try:
+            barrier = await close_rdp_cycle(
+                self.bootstrap.market, self.processor, _StrictCloseGateway(gateway),
+                set(order_ids), set(order_ids), deadline,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - expose only the error category
+            barrier = RDPCloseResult(
+                False, f"CLOSE_OPERATION_FAILED:{type(exc).__name__}",
+                order_ids, (), None,
+            )
+
+        current = self.placement_owner.current
+        if current is not attempt:
+            return self._placement_close_result(
+                current or attempt, barrier, None,
+                reason="PLACEMENT_ATTEMPT_CHANGED", barrier_complete=False,
+            )
+        if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) != registry_snapshot:
+            return self._placement_close_result(
+                attempt, barrier, None, reason="OWNERSHIP_SCOPE_CHANGED",
+                barrier_complete=barrier.complete,
+            )
+
+        capital: RDPCapitalProjection | None = None
+        next_mode: RDPMode | None = None
+        reason = barrier.reason
+        full_pair = _is_complete_initial_pair(self.bootstrap, attempt)
+        state_reliable, health_reason = self._close_state_reliable()
+        if barrier.complete and full_pair:
+            capital = project_rdp_capital(
+                self.bootstrap.market, self.processor, set(order_ids), [],
+                market_state_reliable=state_reliable,
+                order_state_reliable=True,
+                close_evidence=barrier,
+            )
+            if capital.certified and state_reliable:
+                delta = capital.snapshot.inventory.delta
+                try:
+                    delta_value = Decimal(str(delta))
+                except (InvalidOperation, ValueError, TypeError):
+                    delta_value = None
+                if delta_value is not None and delta_value.is_finite():
+                    next_mode = (RDPMode.NORMAL if abs(delta_value) < Decimal("5")
+                                 else RDPMode.REBALANCE)
+            if not capital.certified:
+                reason = capital.reason or "CAPITAL_CERTIFICATION_FAILED"
+            elif next_mode is None:
+                reason = health_reason or "CLOSE_STATE_UNRELIABLE"
+        elif barrier.complete and attempt.unresolved:
+            reason = "PLACEMENT_OUTCOME_UNRESOLVED"
+        elif barrier.complete and not state_reliable:
+            reason = health_reason or "CLOSE_STATE_UNRELIABLE"
+
+        try:
+            updated = self.placement_owner.record_close(attempt, barrier, capital)
+        except RDPPlacementError:
+            return self._placement_close_result(
+                attempt, barrier, capital, reason="PLACEMENT_CLOSE_EVIDENCE_REJECTED",
+                barrier_complete=barrier.complete,
+            )
+        if updated.replacement_blocked and reason is None:
+            reason = ("PLACEMENT_OUTCOME_UNRESOLVED" if updated.unresolved
+                      else "CLOSE_PROOF_NOT_RELEASED")
+        return self._placement_close_result(
+            updated, barrier, capital, reason=reason,
+            barrier_complete=barrier.complete, next_mode=next_mode,
+        )
+
+    def _close_state_reliable(self) -> tuple[bool, str | None]:
+        if self._closed:
+            return False, "SESSION_CLOSED"
+        if self._now() >= self.bootstrap.end_epoch:
+            return False, "MARKET_EXPIRED"
+        try:
+            failure = self._health_failure()
+        except Exception as exc:  # noqa: BLE001 - only a sanitized category escapes
+            return False, f"INPUT_HEALTH_FAILED:{type(exc).__name__}"
+        if failure is not None:
+            return False, failure
+        if (self.public_session.service.connection_generation != self.public_generation
+                or self.user_session.observation.user_channel.connection_generation
+                != self.user_generation):
+            return False, "INPUT_GENERATION_CHANGED"
+        return True, None
+
+    @staticmethod
+    def _placement_close_result(
+        attempt: RDPPlacementAttempt, barrier: RDPCloseResult | None,
+        capital: RDPCapitalProjection | None, *, reason: str | None,
+        barrier_complete: bool, next_mode: RDPMode | None = None,
+    ) -> RDPInitialPlacementClose:
+        current = attempt
+        log.info(
+            "rdp_initial_placement_close", attempt_id=current.attempt_id,
+            condition_id=current.condition_id,
+            owned_order_ids=current.acknowledged_order_ids,
+            closed_order_ids=current.closed_order_ids,
+            barrier_complete=barrier_complete,
+            barrier_reason=(barrier.reason if barrier is not None else None),
+            capital_certified=(capital.certified if capital is not None else False),
+            capital_reason=(capital.reason if capital is not None else None),
+            placement_unresolved=current.unresolved,
+            replacement_blocked=current.replacement_blocked,
+            reason=reason, next_mode=(next_mode.value if next_mode is not None else None),
+            execution_authorized=False,
+        )
+        return RDPInitialPlacementClose(
+            current.attempt_id, current.slug, current.condition_id,
+            current.acknowledged_order_ids, current.closed_order_ids,
+            barrier, capital, barrier_complete, current.unresolved,
+            current.replacement_blocked, reason, next_mode,
+        )
+
     def _admission_rejected(self, reason: str, *, backing=None, account=None,
                             book_filter=None, capital_projection=None,
                             capital_admission=None, candidate=None,
@@ -571,11 +769,16 @@ class RDPInputSession:
         armed = self.placement_owner.current
         if armed is not None and armed.outcome == "ARMED":
             self.placement_owner.resolve(armed, asyncio.CancelledError())
-        active = self._admission_task
         interrupted = False
+        close_task = self._placement_close_task
+        if (close_task is not None and close_task is not asyncio.current_task()
+                and not close_task.done()):
+            close_task.cancel()
+            interrupted = await _drain_read_task(close_task)
+        active = self._admission_task
         if active is not None and active is not asyncio.current_task() and not active.done():
             active.cancel()
-            interrupted = await _drain_read_task(active)
+            interrupted = await _drain_read_task(active) or interrupted
         try:
             await _close_owned(self.public_session, self.user_session)
         except asyncio.CancelledError:
@@ -709,6 +912,123 @@ def _filter_rejection_reason(result: RDPBookFilterResult) -> str:
     if result.reasons:
         return result.reasons[0]
     return "BOOK_FILTER_REJECTED"
+
+
+class _StrictCloseGateway:
+    """Request exact authenticated open orders; delegate the barrier's other reads."""
+
+    def __init__(self, gateway: Any) -> None:
+        self._gateway = gateway
+
+    @staticmethod
+    async def _call(method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        operation = asyncio.create_task(
+            method(*args, safe_diagnostics=True, **kwargs),
+            name="rdp-close-gateway-operation",
+        )
+        interrupted = False
+        while not operation.done():
+            try:
+                await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                interrupted = True
+            except BaseException:
+                break
+        if interrupted:
+            # Consume a terminal SDK error but preserve the caller interruption.
+            with suppress(BaseException):
+                operation.result()
+            raise asyncio.CancelledError
+        return operation.result()
+
+    async def open_orders(self) -> list[OpenOrder]:
+        rows = await self._call(
+            self._gateway.open_orders, strict_account=True, exact_decimal=True,
+        )
+        if not isinstance(rows, list):
+            raise ValueError("strict open-order response is malformed")
+        converted: list[OpenOrder] = []
+        for row in rows:
+            if (not isinstance(row, ExactOpenOrder)
+                    or not isinstance(row.order_id, str) or not row.order_id.strip()
+                    or not isinstance(row.token_id, str) or not row.token_id.strip()
+                    or not isinstance(row.side, Side)
+                    or not isinstance(row.price, Decimal)
+                    or not isinstance(row.remaining_size, Decimal)
+                    or not row.price.is_finite() or not row.remaining_size.is_finite()
+                    or not Decimal("0") < row.price < Decimal("1")
+                    or row.remaining_size <= 0):
+                raise ValueError("strict open-order row is malformed")
+            # OpenOrder is the existing barrier interface. Retain Decimal values
+            # in its numeric fields instead of rounding exact account evidence.
+            converted.append(OpenOrder(
+                row.order_id, row.token_id, row.side, row.price,
+                row.remaining_size, OrderState.LIVE,
+            ))
+        return converted
+
+    async def cancel(self, order_ids: list[str]) -> bool:
+        return await self._call(self._gateway.cancel, order_ids)
+
+    async def get_order(self, order_id: str) -> Any:
+        return await self._call(self._gateway.get_order, order_id)
+
+    async def get_trades(self, *, market: str | None = None,
+                         asset_id: str | None = None) -> Any:
+        return await self._call(
+            self._gateway.get_trades, market=market, asset_id=asset_id,
+        )
+
+
+def _placement_registry_snapshot(
+    processor: Any, bootstrap: RDPBootstrap, attempt: RDPPlacementAttempt,
+) -> tuple[tuple[Any, ...], ...] | None:
+    market = bootstrap.market
+    snapshot = []
+    for order_id in attempt.acknowledged_order_ids:
+        record = processor.owned_record(order_id)
+        quote = next((item for item in attempt.quotes
+                      if item.token_id == (record or {}).get("token_id")), None)
+        if (record is None or quote is None
+                or record.get("condition_id") != market.condition_id
+                or record.get("side") != "BUY"
+                or not _same_decimal(record.get("submitted_qty"), quote.size)
+                or not _same_decimal(record.get("submitted_price"), quote.price)):
+            return None
+        snapshot.append((
+            order_id, record.get("condition_id"), record.get("token_id"),
+            record.get("side"), str(record.get("submitted_qty")),
+            str(record.get("submitted_price")),
+        ))
+    if len(snapshot) != len(set(attempt.acknowledged_order_ids)):
+        return None
+    return tuple(sorted(snapshot))
+
+
+def _same_decimal(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return False
+    try:
+        actual_value = actual if isinstance(actual, Decimal) else Decimal(str(actual))
+        expected_value = expected if isinstance(expected, Decimal) else Decimal(str(expected))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    return (actual_value.is_finite() and expected_value.is_finite()
+            and actual_value == expected_value)
+
+
+def _is_complete_initial_pair(
+    bootstrap: RDPBootstrap, attempt: RDPPlacementAttempt,
+) -> bool:
+    expected_tokens = {bootstrap.market.yes.token_id, bootstrap.market.no.token_id}
+    return (
+        attempt.outcome == "COMPLETE" and not attempt.unresolved
+        and not attempt.pending_anomalies and not attempt.observed_order_ids
+        and len(attempt.acknowledged_order_ids) == 2
+        and len(set(attempt.acknowledged_order_ids)) == 2
+        and {quote.token_id for quote in attempt.quotes} == expected_tokens
+        and len({quote.token_id for quote in attempt.quotes}) == 2
+    )
 
 
 async def _await_user_start_with_public_health(

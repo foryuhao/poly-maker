@@ -155,6 +155,19 @@ def _tick_str(tick: float) -> str:
     return f"{tick:g}"
 
 
+def _safe_gateway_diagnostic(
+    event: str, *, operation: str, error_type: str,
+    **fields: Any,
+) -> None:
+    """Emit categorized gateway diagnostics without retaining SDK exceptions."""
+    try:
+        log.warning(event, operation=operation, error_type=error_type, **fields)
+    except Exception:
+        # A broken log handler must not alter an authoritative read/cancel result.
+        # The caller invokes this only after leaving the SDK exception handler.
+        return
+
+
 class ExecutionGateway:
     def __init__(
         self,
@@ -639,7 +652,9 @@ class ExecutionGateway:
 
 
     # ── cancellation ────────────────────────────────────────────────────
-    async def cancel(self, order_ids: list[str]) -> bool:
+    async def cancel(
+        self, order_ids: list[str], *, safe_diagnostics: bool = False,
+    ) -> bool:
         """Cancel by id. Returns True on success — callers must NOT drop the
         orders from local state on failure (they may still be live)."""
         if not order_ids or self._paper:
@@ -650,6 +665,28 @@ class ExecutionGateway:
 
         def _cancel() -> None:
             self._client.cancel_orders(order_ids)
+
+        if safe_diagnostics:
+            error_type = None
+            try:
+                await self._io(_cancel)
+            except Exception as exc:  # noqa: BLE001 - retain only the safe category
+                error_type = type(exc).__name__
+            if error_type is not None:
+                self._order_observe("CANCEL_ACK", "", {
+                    "request_id": request_id, "order_ids": tuple(order_ids),
+                    "outcome": "UNKNOWN", "error_type": error_type,
+                })
+                _safe_gateway_diagnostic(
+                    "cancel_failed", operation="cancel", error_type=error_type,
+                    order_count=len(order_ids),
+                )
+                return False
+            self._order_observe("CANCEL_ACK", "", {
+                "request_id": request_id, "order_ids": tuple(order_ids),
+                "outcome": "ACK",
+            })
+            return True
 
         try:
             await self._io(_cancel)
@@ -931,6 +968,7 @@ class ExecutionGateway:
     # ── reads ───────────────────────────────────────────────────────────
     async def open_orders(
         self, *, strict_account: bool = False, exact_decimal: bool = False,
+        safe_diagnostics: bool = False,
     ) -> list[OpenOrder] | list[ExactOpenOrder]:
         if not isinstance(exact_decimal, bool):
             raise GatewayReadError("exact_decimal must be a boolean")
@@ -1001,6 +1039,20 @@ class ExecutionGateway:
                     raise GatewayReadError("open orders contained an invalid order row") from exc
             return out
 
+        if safe_diagnostics:
+            error_type = None
+            try:
+                result = await self._io(_get)
+            except Exception as exc:  # noqa: BLE001 - retain only the safe category
+                error_type = type(exc).__name__
+            if error_type is not None:
+                _safe_gateway_diagnostic(
+                    "open_orders_failed", operation="open_orders",
+                    error_type=error_type,
+                )
+                raise GatewayReadError("open orders snapshot failed")
+            return result
+
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
@@ -1068,7 +1120,9 @@ class ExecutionGateway:
         except GatewayReadError:
             raise
 
-    async def get_order(self, order_id: str) -> dict[str, Any]:
+    async def get_order(
+        self, order_id: str, *, safe_diagnostics: bool = False,
+    ) -> dict[str, Any]:
         """Strict authenticated CLOB order read; malformed/failed is UNKNOWN."""
         if self._paper or self._client is None:
             raise GatewayReadError("order read unavailable")
@@ -1083,6 +1137,20 @@ class ExecutionGateway:
             if normalize_order(row) is None:
                 raise GatewayReadError("order read omitted valid cumulative order fields")
             return row
+        if safe_diagnostics:
+            error_type = None
+            try:
+                result = await self._io(_get)
+            except Exception as exc:  # noqa: BLE001 - retain only the safe category
+                error_type = type(exc).__name__
+            if error_type is not None:
+                _safe_gateway_diagnostic(
+                    "get_order_failed", operation="get_order",
+                    error_type=error_type,
+                )
+                raise GatewayReadError("order read failed")
+            return result
+
         try:
             return await self._io(_get)
         except Exception as exc:
@@ -1090,7 +1158,10 @@ class ExecutionGateway:
                 raise
             raise GatewayReadError("order read failed") from exc
 
-    async def get_trades(self, *, market: str | None = None, asset_id: str | None = None) -> list[dict[str, Any]]:
+    async def get_trades(
+        self, *, market: str | None = None, asset_id: str | None = None,
+        safe_diagnostics: bool = False,
+    ) -> list[dict[str, Any]]:
         """Strict authenticated trade history read using supported V2 filters."""
         if self._paper or self._client is None:
             raise GatewayReadError("trade read unavailable")
@@ -1101,6 +1172,20 @@ class ExecutionGateway:
             if not isinstance(rows, list) or any(not isinstance(x, dict) for x in rows):
                 raise GatewayReadError("trade history returned malformed data")
             return rows
+        if safe_diagnostics:
+            error_type = None
+            try:
+                result = await self._io(_get)
+            except Exception as exc:  # noqa: BLE001 - retain only the safe category
+                error_type = type(exc).__name__
+            if error_type is not None:
+                _safe_gateway_diagnostic(
+                    "get_trades_failed", operation="get_trades",
+                    error_type=error_type,
+                )
+                raise GatewayReadError("trade history read failed")
+            return result
+
         try:
             return await self._io(_get)
         except Exception as exc:
