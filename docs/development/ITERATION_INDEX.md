@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0013`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0013 | Next smallest integrated-runtime prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0013 | Read-only authenticated user-channel heartbeat check | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0012 | Frozen $30 initial capital backing | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0011 | Read-only authenticated account snapshot | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0010 | Read-only single-market WS readiness | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -89,7 +89,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0013 Architect selects one next minimal prerequisite. ITER-0012 PASS archived; see its RESULT.md, final Reviewer06 and archive receipt08 (server-error recovery preserves exact commit hashes). Public/account/startup backing preflight exists; integrated readiness remains NO. Approved reserve/depth decisions settled. Continue automatically, no real-money authority.
+ITER-0013 approved contract01 adds bounded read-only user-channel evidence; Worker implementation next. ITER-0012 PASS archived; see its RESULT.md, final Reviewer06 and archive receipt08 (server-error recovery preserves exact commit hashes). Public/account/startup backing preflight exists; integrated readiness remains NO. Approved reserve/depth decisions settled. Continue automatically, no real-money authority.
 
 ---
 
