@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`a2ce5f163b48494ad76373330c7bc182f8ca4cb7`
+`7a787b1d83b4894e71bb2ec16cd57bfc92428561`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0018`
+Current Iteration: `ITER-0019`
 
-Current Stage: `ARCHIVE`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0019 | Architect selecting next minimum prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0018 | Retained initial-placement close barrier composition | APPROVED_REVISION | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0017 | Initial NORMAL placement ownership capture | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0016 | Initial empty-run NORMAL admission composition | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0015 | Authoritative feed wiring for NORMAL Book Filter | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -94,7 +95,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0018 Reviewer08 PASS; all findings closed under Architect06 revision. Final archive pending. Submission/cycles/REBALANCE/complete metrics remain outstanding; no real-money authority.
+ITER-0019 Architect selecting next minimum prerequisite. ITER-0018 fully archived7a787b1; see RESULT,Reviewer08,receipt09. Explicit retained initial close barrier and safe gateway delegation ready; submission/cycles/REBALANCE/complete metrics remain outstanding. No real-money authority.
 
 ---
 
