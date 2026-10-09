@@ -1,0 +1,9 @@
+...............                                                          [100%]
+=============================== warnings summary ===============================
+test_iter0026_review_matrix.py::test_actual_partial_submission_failure_matrix[cancel-exception]
+  /home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+15 passed, 1 warning in 0.58s
+REVIEW_NETWORK_ATTEMPTS []
