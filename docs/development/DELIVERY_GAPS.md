@@ -7,10 +7,10 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest archived implementation: ITER-0024, CODE_READY, final Reviewer06 PASS.
+Latest reviewed implementation: ITER-0025, CODE_READY, final Reviewer06 PASS; remote archival verification is recorded in its archive receipt.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
-Implementation resume authorization: GRANTED by explicit human resume; ITER-0025 requires a fresh formal Architect Contract.
+Implementation resume authorization: GRANTED by explicit human resume; normal requirement-linked serial iterations continue automatically.
 
 This register covers the required initial delivery: one explicitly selected BTC 5-minute market inside poly-maker. It does not schedule implementation iterations or design a new platform.
 
@@ -55,7 +55,7 @@ These are implemented prerequisites, not declarations that the integrated runner
 | Initial pre-fill REST/FILL_WINDOW/CLOSE and original-receipt window completion | rdp_runtime.py: evaluate_initial_prefill, initial_fill_window, complete_initial_normal_cycle | test_rdp_placement.py: validity, confirmation races, window timing, close once and interrupted continuation |
 | Coherent final initial-intent factual revalidation | rdp_runtime.py: revalidate_initial_normal_intent and retained bridge/capture helpers | test_rdp_placement.py: actual gateway pre/post-sign guards, bridge timeout, freshness, intent mutation and provenance |
 
-At this baseline, the RDP CLI accepts preflight/observation modes and rejects an invocation without a supported read-only mode. No production RDP runtime call to gateway.place exists. The runtime does not compose build_rebalance_quote into an operating REBALANCE loop.
+At this baseline, the RDP CLI accepts preflight/observation modes and rejects an invocation without a supported read-only mode. ITER-0025 now connects explicitly authorized initial submission to gateway.place; default authorization remains denied. The runtime does not compose build_rebalance_quote into an operating REBALANCE loop.
 
 Existing accounting fields and structured decision logs are valuable evidence. They do not constitute the complete required metrics artifact.
 
@@ -63,7 +63,7 @@ Existing accounting fields and structured decision logs are valuable evidence. T
 
 ### DG-001 — Authorized Initial NORMAL Submission
 
-Status: OPEN.
+Status: CLOSED.
 
 Sources: Frozen §§4, 15–18; AGENTS §§31, 36; delivery execution/send-gate requirements.
 
@@ -74,6 +74,8 @@ Missing behavior: An explicitly authorized initial submission must enforce all o
 Closure: Offline integration proves default denial causes no signing/POST; valid explicitly activated fake execution uses both current guards and per-token ticks; complete/empty/partial/unknown/error outcomes retain correct ownership; interruption drains the SDK operation before outcome resolution. Actual live authorization remains ungranted during development.
 
 TimeAvailable is not already implemented. A contract introducing the send path must implement and test its operational budget check; it cannot accept factual validity or a caller’s unexplained “time safe” boolean as proof.
+
+Closure evidence: ITER-0025/01_ARCHITECT.md, 02_WORKER.md, 04_REVIEWER.md, 05_WORKER_FIX_01.md and 06_REVIEWER_REREVIEW_01.md. Final independent PASS explicitly verifies all closure conditions, including retained typed Gateway evidence before resolver failure and completed-guard absolute-deadline enforcement. Current full suite: 1625 passed, 2 skipped; independent 40-test matrix and original failure probes pass. Existing Evidence/Missing behavior paragraphs above describe the convergence baseline, superseded by this closure evidence. This closes only initial submission, not subsequent cycles or CLI activation.
 
 ### DG-002 — Current Capital and Inventory Across Successive Orders
 

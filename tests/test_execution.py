@@ -318,6 +318,23 @@ async def test_opt_in_pair_accepts_two_positional_ids_and_forces_post_only_gtc(m
 
 
 @pytest.mark.asyncio
+async def test_legacy_generic_place_failure_keeps_default_empty_return_and_diagnostic(
+    meta, caplog, capsys,
+):
+    sentinel = "legacy-placement-detail"
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient(on_create=lambda: (_ for _ in ()).throw(RuntimeError(sentinel)))
+    gw._client, gw._io = client, _inline_io
+    placed = await gw.place(
+        rdp_pair_quotes(meta), meta, force_post_only=True, strict_placement=True,
+    )
+    assert placed == [] and client.posts == []
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    assert "place_failed" in output and sentinel in output
+
+
+@pytest.mark.asyncio
 async def test_opt_in_pair_two_explicit_rejections_returns_empty(meta):
     gw = ExecutionGateway(Config(), paper=False)
     client = FakeBatchClient([placement_row(False), placement_row(False)])

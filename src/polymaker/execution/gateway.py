@@ -104,11 +104,24 @@ class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
 
     def __init__(self, message: str, *, acknowledged_orders: tuple[OpenOrder, ...] = (),
-                 observed_order_ids: tuple[str, ...] = (), reason: str | None = None) -> None:
+                 observed_order_ids: tuple[str, ...] = (), reason: str | None = None,
+                 post_attempted: bool = True, error_type: str | None = None) -> None:
         super().__init__(message)
         self.acknowledged_orders = tuple(acknowledged_orders)
         self.observed_order_ids = tuple(observed_order_ids)
         self.reason = reason
+        self.post_attempted = post_attempted
+        self.error_type = error_type
+
+
+class PlacementNotAttempted(PlacementUnknown):
+    """Typed categorical failure known to precede any order POST."""
+
+    def __init__(self, *, reason: str, error_type: str) -> None:
+        super().__init__(
+            "placement failed before order POST", reason=reason,
+            post_attempted=False, error_type=error_type,
+        )
 
 
 class BatchPlacementIncomplete(PlacementUnknown):
@@ -125,6 +138,11 @@ def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
 
 
 _ORDER_ID_FIELDS = ("orderID", "order_id", "orderId", "id")
+_SAFE_PLACEMENT_REASONS = frozenset({
+    "BATCH_POST_EXCEPTION", "BATCH_CARDINALITY_UNKNOWN", "DUPLICATE_ACCEPTED_ID",
+    "UNRESOLVED_BATCH_RESULT", "PARTIAL_ACCEPTANCE", "PLACEMENT_NOT_ATTEMPTED",
+    "PLACEMENT_OUTCOME_UNKNOWN",
+})
 
 
 def _usable_order_ids(row: Mapping[str, Any]) -> tuple[str, ...]:
@@ -342,7 +360,13 @@ class ExecutionGateway:
         strict_placement: bool = False,
         allow_two_order_rdp_pair: bool = False,
         token_ticks: Mapping[str, int | float | Decimal] | None = None,
+        safe_diagnostics: bool = False,
+        on_post_start: Callable[[], None] | None = None,
     ) -> list[OpenOrder]:
+        if not isinstance(safe_diagnostics, bool):
+            raise ValueError("safe_diagnostics must be a boolean")
+        if on_post_start is not None and not callable(on_post_start):
+            raise ValueError("on_post_start must be callable")
         signing_ticks: dict[str, str] | None = None
         if token_ticks is not None:
             quotes, signing_ticks = self._snapshot_token_tick_request(
@@ -410,13 +434,23 @@ class ExecutionGateway:
                 log.info("order_place_aborted_stale_connectivity", cid=meta.condition_id[:8])
                 return []
             attempted = True
+            if on_post_start is not None:
+                on_post_start()
+            post_error_type = None
             try:
                 resp = self._client.post_orders(
                     args, post_only=(True if force_post_only else self._cfg.execution.post_only)
                 )
             except Exception as exc:
-                reason = "BATCH_POST_EXCEPTION" if allow_two_order_rdp_pair else None
-                raise PlacementUnknown("order POST outcome is unknown", reason=reason) from exc
+                if not safe_diagnostics:
+                    reason = "BATCH_POST_EXCEPTION" if allow_two_order_rdp_pair else None
+                    raise PlacementUnknown("order POST outcome is unknown", reason=reason) from exc
+                post_error_type = type(exc).__name__
+            if post_error_type is not None:
+                raise PlacementUnknown(
+                    "order POST outcome is unknown", reason="BATCH_POST_EXCEPTION",
+                    post_attempted=True, error_type=post_error_type,
+                )
             try:
                 if allow_two_order_rdp_pair:
                     return self._parse_two_order_rdp_pair_response(resp, quotes)
@@ -426,29 +460,100 @@ class ExecutionGateway:
             except Exception as exc:
                 raise PlacementUnknown("order POST response could not be parsed") from exc
 
+        def _place_with_safe_diagnostics() -> list[OpenOrder]:
+            previous = getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
+            _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = True
+            try:
+                return _place()
+            finally:
+                _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = previous
+
+        safe_unknown: PlacementUnknown | None = None
+        safe_failure_type: str | None = None
         try:
-            placed = await self._io(_place)
+            placed = await self._io(
+                _place_with_safe_diagnostics if safe_diagnostics else _place,
+            )
             if request_id is not None:
                 self._order_observe("ORDER_ACK", meta.condition_id,
                     {"request_id": request_id, "order_ids": [o.order_id for o in placed],
                      "outcome": "ACK" if placed else "REJECTED" if attempted else "ABORTED"})
             return placed
         except PlacementUnknown as exc:
-            payload = {"request_id": request_id, "outcome": "UNKNOWN"}
-            if exc.reason is not None or exc.acknowledged_orders or exc.observed_order_ids:
-                payload.update({
-                    "reason": exc.reason,
-                    "acknowledged_order_ids": tuple(o.order_id for o in exc.acknowledged_orders),
-                    "observed_order_ids": exc.observed_order_ids,
-                })
+            if safe_diagnostics:
+                safe_unknown = exc
+            else:
+                payload = {"request_id": request_id, "outcome": "UNKNOWN"}
+                if exc.reason is not None or exc.acknowledged_orders or exc.observed_order_ids:
+                    payload.update({
+                        "reason": exc.reason,
+                        "acknowledged_order_ids": tuple(o.order_id for o in exc.acknowledged_orders),
+                        "observed_order_ids": exc.observed_order_ids,
+                    })
+                self._order_observe("ORDER_ACK", meta.condition_id, payload)
+                if strict_placement:
+                    raise
+                log.error("place_outcome_unknown", n=len(quotes))
+                return []
+        except Exception as exc:  # noqa: BLE001 - legacy preserves its historical diagnostic
+            if safe_diagnostics:
+                safe_failure_type = type(exc).__name__
+            else:
+                self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "FAILED", "error_type": type(exc).__name__})
+                log.error("place_failed", err=str(exc), n=len(quotes))
+                return []
+
+        if safe_unknown is not None:
+            error_type = safe_unknown.error_type
+            if error_type is None and safe_unknown.__cause__ is not None:
+                error_type = type(safe_unknown.__cause__).__name__
+            safe_reason = safe_unknown.reason
+            if safe_reason not in _SAFE_PLACEMENT_REASONS:
+                safe_reason = "PLACEMENT_OUTCOME_UNKNOWN"
+            sanitized = PlacementUnknown(
+                "order placement outcome is unknown",
+                acknowledged_orders=safe_unknown.acknowledged_orders,
+                observed_order_ids=safe_unknown.observed_order_ids,
+                reason=safe_reason, post_attempted=safe_unknown.post_attempted,
+                error_type=error_type,
+            )
+            payload = {
+                "request_id": request_id, "outcome": "UNKNOWN", "reason": safe_reason,
+                "error_type": error_type,
+                "acknowledged_order_ids": tuple(
+                    order.order_id for order in sanitized.acknowledged_orders),
+                "observed_order_ids": sanitized.observed_order_ids,
+            }
             self._order_observe("ORDER_ACK", meta.condition_id, payload)
+            if error_type is not None:
+                _safe_gateway_diagnostic(
+                    "place_failed", operation="place", error_type=error_type,
+                    post_attempted=sanitized.post_attempted, n=len(quotes),
+                )
             if strict_placement:
-                raise
+                raise sanitized
             log.error("place_outcome_unknown", n=len(quotes))
             return []
-        except Exception as exc:  # noqa: BLE001 - surface + continue; engine handles error rate
-            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "FAILED", "error_type": type(exc).__name__})
-            log.error("place_failed", err=str(exc), n=len(quotes))
+
+        if safe_failure_type is not None:
+            failure = (PlacementUnknown(
+                "order POST outcome is unknown", reason="BATCH_POST_EXCEPTION",
+                post_attempted=True, error_type=safe_failure_type,
+            ) if attempted else PlacementNotAttempted(
+                reason="PLACEMENT_NOT_ATTEMPTED", error_type=safe_failure_type,
+            ))
+            self._order_observe("ORDER_ACK", meta.condition_id, {
+                "request_id": request_id,
+                "outcome": "UNKNOWN" if attempted else "FAILED_BEFORE_POST",
+                "reason": failure.reason, "error_type": safe_failure_type,
+                "post_attempted": attempted,
+            })
+            _safe_gateway_diagnostic(
+                "place_failed", operation="place", error_type=safe_failure_type,
+                post_attempted=attempted, n=len(quotes),
+            )
+            if strict_placement:
+                raise failure
             return []
 
     def _paper_order(self, q: Quote) -> OpenOrder:

@@ -3099,6 +3099,142 @@ async def test_real_gateway_guard_revalidates_on_loop_before_and_after_signing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("delay_guard", [1, 2], ids=["first-guard", "final-guard"])
+async def test_real_executor_guard_rechecks_deadline_after_delayed_retention(
+    placement_scope, blocked_network, delay_guard,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    original_retain = scope.session._retain_intent_validation
+    calls = [0]
+
+    def delayed_retain(result):
+        calls[0] += 1
+        if calls[0] == delay_guard:
+            time.sleep(.3)
+        return original_retain(result)
+
+    scope.session._retain_intent_validation = delayed_retain
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=.2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+
+    assert calls == [delay_guard]
+    assert result.outcome == "NO_SEND" and not result.post_started
+    assert result.guard_reasons[-1] == "ORDER_OPERATION_DEADLINE"
+    assert client.posts == []
+    if delay_guard == 1:
+        assert client.created == []
+        assert result.guard_reasons == ("ORDER_OPERATION_DEADLINE",)
+    else:
+        assert len(client.created) == 2
+        assert result.guard_reasons == (None, "ORDER_OPERATION_DEADLINE")
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("clock_case", "expected_reason"),
+    [
+        ("deadline-equality", "ORDER_OPERATION_DEADLINE"),
+        ("invalid-monotonic", "INVALID_MONOTONIC_CLOCK"),
+        ("market-time-equality", "INSUFFICIENT_MARKET_TIME"),
+    ],
+)
+async def test_sdk_thread_final_guard_fails_closed_on_clock_boundaries(
+    placement_scope, blocked_network, monkeypatch, clock_case, expected_reason,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    owner_thread = threading.get_ident()
+    original_time = runtime.time
+    original_now = scope.session._now
+    final_check_enabled = threading.Event()
+    monotonic_index = [0]
+    market_boundary: list[float] = []
+
+    class RuntimeClockProxy:
+        def __getattr__(self, name):
+            return getattr(original_time, name)
+
+        def monotonic(self):
+            operation = scope.session._initial_submission_operation
+            if (final_check_enabled.is_set()
+                    and threading.get_ident() != owner_thread
+                    and operation is not None):
+                if clock_case == "deadline-equality":
+                    return operation.order_deadline_monotonic
+                if clock_case == "invalid-monotonic":
+                    return float("nan")
+                value = operation.order_deadline_monotonic - (
+                    1.1 if monotonic_index[0] == 0 else 1.0)
+                monotonic_index[0] += 1
+                return value
+            return original_time.monotonic()
+
+    proxy = RuntimeClockProxy()
+    monkeypatch.setattr(runtime, "time", proxy)
+
+    def controlled_now():
+        if final_check_enabled.is_set() and threading.get_ident() != owner_thread:
+            return market_boundary[0]
+        return original_now()
+
+    scope.session._now = controlled_now
+    original_retain = scope.session._retain_intent_validation
+    retain_calls = [0]
+
+    def enable_final_clock_after_capture(result):
+        retain_calls[0] += 1
+        retained = original_retain(result)
+        if retain_calls[0] == 2:
+            operation = scope.session._initial_submission_operation
+            assert operation is not None
+            if clock_case == "market-time-equality":
+                remaining_order = Decimal(str(
+                    operation.order_deadline_monotonic
+                    - (operation.order_deadline_monotonic - 1.0)
+                ))
+                market_boundary.append(float(
+                    Decimal(str(operation.market_end_epoch))
+                    - remaining_order - Decimal(str(operation.close_budget_s))
+                ))
+            final_check_enabled.set()
+        return retained
+
+    scope.session._retain_intent_validation = enable_final_clock_after_capture
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+    assert final_check_enabled.is_set() and retain_calls == [2]
+    assert result.outcome == "NO_SEND" and not result.post_started
+    assert result.guard_reasons == (None, expected_reason)
+    assert len(client.created) == 2
+    assert client.posts == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mutation", ["copied-admission", "copied-attempt", "pending-buffer"])
 async def test_initial_intent_revalidation_rejects_unprovenanced_or_changed_arm(
     placement_scope, blocked_network, mutation,
@@ -4651,6 +4787,810 @@ async def test_acknowledgment_economic_mismatch_never_establishes_ownership(
     assert scope.processor.owned_record(invalid_order.order_id) is None
     assert scope.processor.owned_record("safe-no") is not None
     assert scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_authorized_initial_submission_uses_real_gateway_and_retains_pair(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    assert admission.eligible
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+
+    assert result.outcome == "COMPLETE" and result.post_started
+    assert result.execution_authorized is False
+    assert result.resolved_attempt is scope.owner.current
+    assert result.resolved_attempt.outcome == "COMPLETE"
+    assert result.resolved_attempt.acknowledged_order_ids == ("yes-order", "no-order")
+    assert len(client.created) == 2 and len(client.posts) == 1
+    post_args, post_only = client.posts[0]
+    assert post_only is True and len(post_args) == 2
+    assert [entry[1]["options"].tick_size for entry in client.created] == ["0.01", "0.01"]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_submission_defaults_denied_before_arm_sign_or_post(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+
+    assert result.outcome == "DENIED" and not result.authorization_granted
+    assert result.reason == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert scope.owner.current is None
+    assert client.created == [] and client.posts == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("authorization", "order_budget", "close_budget", "denial"),
+    [
+        (1, 2, 2, "HUMAN_AUTHORIZATION_REQUIRED"),
+        (True, 0, 2, "INVALID_ORDER_BUDGET"),
+        (True, 2, float("nan"), "INVALID_CLOSE_BUDGET"),
+        (True, 2, 2, "INSUFFICIENT_MARKET_TIME"),
+    ],
+    ids=["authorization-is-not-true", "zero-order-budget", "nonfinite-close-budget",
+         "exact-market-time-boundary"],
+)
+async def test_initial_submission_rejects_authority_budget_and_exact_time_boundaries(
+    placement_scope, blocked_network, authorization, order_budget, close_budget, denial,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    if denial == "INSUFFICIENT_MARKET_TIME":
+        scope.session._now = lambda: scope.bootstrap.end_epoch - 4
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=authorization,
+            order_budget_s=order_budget, close_budget_s=close_budget,
+        )
+    finally:
+        await gateway.aclose()
+    assert result.outcome == "DENIED" and result.reason == denial
+    assert scope.owner.current is None
+    assert client.created == [] and client.posts == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["sign", "post"])
+async def test_authorized_submission_retains_categorical_failure_without_raw_sentinel(
+    placement_scope, blocked_network, capsys, failure_stage,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    sentinel = "SYNTHETIC_AUTH_SENTINEL"
+    client = FakeBatchClient(
+        _accepted_rows(),
+        post_error=RuntimeError(sentinel) if failure_stage == "post" else None,
+    )
+    if failure_stage == "sign":
+        def fail_sign():
+            raise RuntimeError(sentinel)
+        client.on_create = fail_sign
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+
+    assert result.outcome == ("FAILURE_PRE_POST" if failure_stage == "sign" else "UNKNOWN")
+    assert result.post_started is (failure_stage == "post")
+    assert scope.owner.current is not None and scope.owner.current.unresolved
+    assert scope.owner.blocks_initial_admission
+    assert sentinel not in repr(result) and sentinel not in capsys.readouterr().err
+    if failure_stage == "sign":
+        assert client.posts == []
+    else:
+        assert len(client.posts) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_opt_in_place_error_survives_failing_handler_without_raw_chain(
+    placement_scope, blocked_network, capsys,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    sentinel = "SYNTHETIC_POST_SENTINEL"
+    client = FakeBatchClient(_accepted_rows(), post_error=RuntimeError(sentinel))
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+
+    class RaisingStream:
+        def write(self, _message):
+            raise OSError("synthetic log sink failure")
+
+        def flush(self):
+            return None
+
+    old_structlog_config = structlog.get_config()
+    root_logger = logging.getLogger()
+    old_root_handlers, old_root_level = root_logger.handlers[:], root_logger.level
+    configure_logging(console=False)
+    logger = logging.getLogger("execution.gateway")
+    old_handlers, old_level, old_propagate = logger.handlers[:], logger.level, logger.propagate
+    handler = logging.StreamHandler(RaisingStream())
+    logger.handlers[:] = [handler]
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    try:
+        with pytest.raises(PlacementUnknown) as caught:
+            await gateway.place(
+                list(admission.candidate.quotes), scope.market,
+                submit_guard=lambda: True, force_post_only=True, strict_placement=True,
+                allow_two_order_rdp_pair=True,
+                token_ticks=dict(admission.token_ticks), safe_diagnostics=True,
+            )
+    finally:
+        await gateway.aclose()
+        logger.handlers[:] = old_handlers
+        logger.setLevel(old_level)
+        logger.propagate = old_propagate
+        root_logger.handlers[:] = old_root_handlers
+        root_logger.setLevel(old_root_level)
+        structlog.configure(**old_structlog_config)
+
+    error = caught.value
+    assert error.reason == "BATCH_POST_EXCEPTION" and error.post_attempted
+    assert error.error_type == "RuntimeError"
+    assert error.__cause__ is None and error.__context__ is None
+    assert sentinel not in str(error) and sentinel not in repr(error.__dict__)
+    assert sentinel not in capsys.readouterr().err
+    assert len(client.posts) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_authorized_submission_second_guard_revalidates_after_signing(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(_accepted_rows())
+
+    def invalidate_after_first_signature():
+        book = scope.session.public_session.service.book("yes-token")
+        assert book is not None
+        book.bids.clear()
+        book.bids[.80] = 10
+        book.asks.clear()
+        book.asks[.82] = 10
+
+    client.on_create = invalidate_after_first_signature
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+
+    assert result.outcome == "NO_SEND" and not result.post_started
+    assert result.guard_reasons == (None, "PRICE_GATE")
+    assert len(client.created) == 2 and client.posts == []
+    assert scope.owner.current is not None and scope.owner.current.outcome == "EMPTY"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected", "blocked", "observed"),
+    [
+        (_accepted_rows(), "COMPLETE", True, ()),
+        ([{"success": False}, {"success": False}], "EMPTY", False, ()),
+        ([{"success": True, "orderID": "yes-order"}, {"success": False}],
+         "PARTIAL", True, ()),
+        ([{"success": True, "orderID": "yes-order"}, {"success": None, "orderID": "seen-no"}],
+         "PARTIAL", True, ("seen-no",)),
+        ([{"success": True, "orderID": "yes-order"}], "UNKNOWN", True, ("yes-order",)),
+    ],
+    ids=["complete", "clean-empty", "partial", "unknown-row", "ambiguous-cardinality"],
+)
+async def test_authorized_submission_retains_actual_gateway_outcome_matrix(
+    placement_scope, blocked_network, response, expected, blocked, observed,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(response)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+    assert result.outcome == expected
+    assert result.post_started and len(client.posts) == 1
+    assert result.resolved_attempt is scope.owner.current
+    assert result.resolved_attempt.replacement_blocked is blocked
+    assert result.resolved_attempt.observed_order_ids == observed
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_authorized_submission_replays_one_preack_confirmed_fill(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+
+    def inject_preack_confirmation():
+        matched = TradeEvent(
+            "yes-token", Side.BUY, .39, 1, "preack-submit-fill",
+            TradeState.MATCHED, time.time(), "yes-order", scope.market.condition_id,
+        )
+        for event in (matched, replace(matched, status=TradeState.CONFIRMED)):
+            scope.processor.on_trade(
+                event, scope.market.condition_id,
+                received_at_us=1_800_000_000_000_000,
+                received_monotonic_ns=1_800_000_000_000_000,
+                connection_generation=4,
+            )
+
+    client = FakeBatchClient(_accepted_rows())
+    def post_with_preack_fill(args, *, post_only):
+        assert post_only is True and len(args) == 2
+        inject_preack_confirmation()
+        return _accepted_rows()
+
+    client.post_orders = post_with_preack_fill
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+    assert result.outcome == "COMPLETE"
+    snapshot = snapshot_inventory(
+        scope.market, scope.processor,
+        set(result.resolved_attempt.acknowledged_order_ids),
+    )
+    assert snapshot.qy == 1 and snapshot.qn == 0
+    assert len(scope.processor.economic_fills_for_orders(
+        set(result.resolved_attempt.acknowledged_order_ids),
+    )) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolution_stage", ["before-update", "after-update"])
+@pytest.mark.parametrize(
+    ("response", "expected_owner", "expected_ack", "expected_observed"),
+    [
+        (_accepted_rows(), "COMPLETE", ("yes-order", "no-order"), ()),
+        ([{"success": True, "orderID": "yes-order"}, {"success": False}],
+         "PARTIAL", ("yes-order",), ("yes-order",)),
+        ([{"success": True, "orderID": "observed-only"}],
+         "UNKNOWN", (), ("observed-only",)),
+    ],
+    ids=["complete", "partial", "observed-unknown"],
+)
+async def test_submission_keeps_actual_owner_state_when_resolve_raises(
+    placement_scope, blocked_network, monkeypatch, resolution_stage,
+    response, expected_owner, expected_ack, expected_observed,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    original_resolve = scope.owner.resolve
+    calls = []
+
+    def update_then_raise(attempt, outcome):
+        calls.append(outcome)
+        if resolution_stage == "after-update":
+            original_resolve(attempt, outcome)
+        raise RuntimeError("synthetic post-resolution interruption")
+
+    monkeypatch.setattr(scope.owner, "resolve", update_then_raise)
+    client = FakeBatchClient(response)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+    assert result.outcome == "RESOLUTION_ERROR"
+    assert result.resolution_error_type == "RuntimeError"
+    assert result.resolved_attempt is scope.owner.current
+    assert result.resolved_attempt.outcome == (
+        expected_owner if resolution_stage == "after-update" else "ARMED")
+    evidence = result.gateway_evidence
+    assert evidence is not None
+    assert tuple(order.order_id for order in evidence.acknowledged_orders) == expected_ack
+    assert evidence.observed_order_ids == expected_observed
+    assert evidence.post_attempted is True
+    if resolution_stage == "before-update":
+        assert result.resolved_attempt.replacement_blocked
+        assert result.resolved_attempt.acknowledged_order_ids == ()
+        assert not scope.processor._owned
+    assert len(calls) == 1 and len(client.posts) == 1
+    await scope.session.aclose()
+    assert len(calls) == 1
+    assert scope.session._initial_submission_result.gateway_evidence is evidence
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_evidence_survives_caller_cancel_and_teardown_after_resolve_failure(
+    placement_scope, blocked_network, monkeypatch, capsys,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    started = threading.Event()
+    release = threading.Event()
+    post_calls = []
+    client = FakeBatchClient([
+        {"success": True, "orderID": "yes-order"}, {"success": False},
+    ])
+
+    def blocked_partial_post(_args, *, post_only):
+        assert post_only is True
+        post_calls.append("POST")
+        started.set()
+        if not release.wait(timeout=4):
+            raise RuntimeError("synthetic post release timeout")
+        return [
+            {"success": True, "orderID": "yes-order"}, {"success": False},
+        ]
+
+    client.post_orders = blocked_partial_post
+    resolve_calls = []
+
+    def fail_before_update(attempt, outcome):
+        resolve_calls.append(outcome)
+        raise RuntimeError("SYNTHETIC_RESOLUTION_SECRET")
+
+    monkeypatch.setattr(scope.owner, "resolve", fail_before_update)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        submission.cancel()
+        await asyncio.sleep(0)
+        submission.cancel()
+        await asyncio.sleep(0)
+        assert not submission.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await submission
+    finally:
+        release.set()
+        await gateway.aclose()
+
+    result = scope.session._initial_submission_result
+    assert result is not None and result.outcome == "RESOLUTION_ERROR"
+    assert result.post_started
+    assert result.interruption_reason == "CALLER_CANCELLED"
+    assert result.gateway_evidence is not None
+    assert tuple(order.order_id for order in result.gateway_evidence.acknowledged_orders) == (
+        "yes-order",
+    )
+    assert result.gateway_evidence.observed_order_ids == ("yes-order",)
+    assert scope.owner.current is not None and scope.owner.current.outcome == "ARMED"
+    assert not scope.processor._owned
+    assert len(resolve_calls) == 1 and post_calls == ["POST"]
+
+    await scope.session.aclose()
+    assert len(resolve_calls) == 1
+    assert scope.session._initial_submission_result.gateway_evidence is result.gateway_evidence
+    assert "SYNTHETIC_RESOLUTION_SECRET" not in capsys.readouterr().out
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["caller-cancel", "teardown"])
+async def test_submission_interruption_drains_real_gateway_post_before_return(
+    placement_scope, blocked_network, interruption,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    started = threading.Event()
+    release = threading.Event()
+
+    def block_post(_args, *, post_only):
+        assert post_only is True
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("fake post release timeout")
+        return _accepted_rows()
+
+    client = FakeBatchClient(_accepted_rows())
+    client.post_orders = block_post
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        shutdown = None
+        if interruption == "caller-cancel":
+            submission.cancel()
+            await asyncio.sleep(0)
+            submission.cancel()
+            await asyncio.sleep(0)
+            assert not submission.done()
+        else:
+            shutdown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not submission.done() and not shutdown.done()
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            assert not submission.done() and not shutdown.done()
+        with pytest.raises(RDPPlacementError, match="INITIAL_SUBMISSION_IN_PROGRESS"):
+            scope.session.arm_initial_normal_placement(admission)
+        denied_admission = await scope.session.initial_normal_admission()
+        assert not denied_admission.eligible
+        assert denied_admission.reason == (
+            "INITIAL_SUBMISSION_IN_PROGRESS" if interruption == "caller-cancel"
+            else "SESSION_CLOSED")
+        with pytest.raises(RDPPlacementError, match="INITIAL_SUBMISSION_IN_PROGRESS"):
+            scope.session.resolve_initial_normal_placement(scope.owner.current, [])
+        with pytest.raises(RDPPlacementError, match="INITIAL_SUBMISSION_IN_PROGRESS"):
+            await scope.session.close_initial_normal_placement(
+                scope.owner.current, deadline=asyncio.get_running_loop().time() + 1,
+            )
+        with pytest.raises(RDPPlacementError, match="INITIAL_SUBMISSION_IN_PROGRESS"):
+            await scope.session.complete_initial_fill_window(
+                scope.owner.current, close_budget_s=1,
+            )
+        with pytest.raises(RDPPlacementError, match="INITIAL_SUBMISSION_IN_PROGRESS"):
+            await scope.session.complete_initial_normal_cycle(
+                scope.owner.current, close_budget_s=1,
+            )
+        competing_prefill = await scope.session.evaluate_initial_prefill(scope.owner.current)
+        assert competing_prefill.action == "CLOSE"
+        assert competing_prefill.reason == "INITIAL_SUBMISSION_IN_PROGRESS"
+        release.set()
+        if interruption == "caller-cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await submission
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            result = await submission
+        result = scope.session._initial_submission_result
+        assert result is not None and result.outcome == "COMPLETE"
+        assert result.interruption_reason == (
+            "CALLER_CANCELLED" if interruption == "caller-cancel" else "SESSION_TEARDOWN")
+        assert scope.owner.current is result.resolved_attempt
+        assert result.resolved_attempt.outcome == "COMPLETE"
+    finally:
+        release.set()
+        await gateway.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["caller-cancel", "teardown"])
+async def test_submission_interruption_drains_real_gateway_signing_without_post(
+    placement_scope, blocked_network, interruption,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    started = threading.Event()
+    release = threading.Event()
+    client = FakeBatchClient(_accepted_rows())
+
+    def block_signing():
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("fake signing release timeout")
+
+    client.on_create = block_signing
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    shutdown = None
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        if interruption == "caller-cancel":
+            submission.cancel()
+            await asyncio.sleep(0)
+            submission.cancel()
+            await asyncio.sleep(0)
+            assert not submission.done()
+        else:
+            shutdown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not submission.done() and not shutdown.done()
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            assert not submission.done() and not shutdown.done()
+        release.set()
+        if interruption == "caller-cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await submission
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            await submission
+        result = scope.session._initial_submission_result
+        assert result is not None and result.outcome == "NO_SEND"
+        assert not result.post_started and result.interruption_reason == (
+            "CALLER_CANCELLED" if interruption == "caller-cancel" else "SESSION_TEARDOWN")
+        assert client.posts == []
+        assert scope.owner.current is result.resolved_attempt
+        assert result.resolved_attempt.outcome == "EMPTY"
+    finally:
+        release.set()
+        await gateway.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["rate-wait", "first-sign", "second-sign"])
+async def test_submission_deadline_during_rate_or_signing_denies_post(
+    placement_scope, blocked_network, stage,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    started = threading.Event()
+    release = threading.Event()
+    creates = [0]
+
+    async def block_rate_wait(_count):
+        started.set()
+        await asyncio.to_thread(release.wait, 2)
+
+    original_acquire = gateway._order_bucket.acquire
+    if stage == "rate-wait":
+        gateway._order_bucket.acquire = block_rate_wait
+    else:
+        def block_sign():
+            creates[0] += 1
+            if creates[0] == (1 if stage == "first-sign" else 2):
+                started.set()
+                if not release.wait(timeout=3):
+                    raise RuntimeError("fake signing release timeout")
+        client.on_create = block_sign
+
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=.08, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        await asyncio.sleep(.12)
+        release.set()
+        result = await submission
+    finally:
+        release.set()
+        if stage == "rate-wait":
+            gateway._order_bucket.acquire = original_acquire
+        await gateway.aclose()
+    assert result.outcome == "NO_SEND"
+    assert result.interruption_reason == "ORDER_OPERATION_DEADLINE"
+    assert not result.post_started and client.posts == []
+    assert scope.owner.current is not None and not scope.owner.current.replacement_blocked
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_submission_revalidates_changed_book_after_rate_wait_before_signing(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    started = threading.Event()
+    release = threading.Event()
+
+    async def block_rate_wait(_count):
+        started.set()
+        await asyncio.to_thread(release.wait, 2)
+
+    original_acquire = gateway._order_bucket.acquire
+    gateway._order_bucket.acquire = block_rate_wait
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        book = scope.session.public_session.service.book("yes-token")
+        assert book is not None
+        book.bids.clear()
+        book.bids[.80] = 10
+        book.asks.clear()
+        book.asks[.82] = 10
+        release.set()
+        result = await submission
+    finally:
+        release.set()
+        gateway._order_bucket.acquire = original_acquire
+        await gateway.aclose()
+    assert result.outcome == "NO_SEND" and result.guard_reasons == ("PRICE_GATE",)
+    assert client.created == [] and client.posts == []
+    assert scope.owner.current is not None and scope.owner.current.outcome == "EMPTY"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (_accepted_rows(), "COMPLETE"),
+        ([{"success": True, "orderID": "yes-order"}, {"success": False}], "PARTIAL"),
+        ([{"success": True, "orderID": "observed-id"}], "UNKNOWN"),
+    ],
+    ids=["late-complete", "late-partial", "late-ambiguous"],
+)
+async def test_submission_deadline_after_post_started_drains_actual_gateway_outcome(
+    placement_scope, blocked_network, response, expected,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    started = threading.Event()
+    release = threading.Event()
+    client = FakeBatchClient(response)
+
+    def blocked_post(args, *, post_only):
+        assert post_only is True and len(args) == 2
+        started.set()
+        if not release.wait(timeout=4):
+            raise RuntimeError("fake post release timeout")
+        return response
+
+    client.post_orders = blocked_post
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=.08, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        await asyncio.sleep(.12)
+        assert not submission.done()
+        release.set()
+        result = await submission
+    finally:
+        release.set()
+        await gateway.aclose()
+    assert result.outcome == expected and result.post_started
+    assert result.interruption_reason == "ORDER_OPERATION_DEADLINE"
+    assert result.resolved_attempt is scope.owner.current
+    assert len(client.posts) == 0  # The controlled blocking method owns the SDK POST call.
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    started = threading.Event()
+    release = threading.Event()
+    client = FakeBatchClient(_accepted_rows())
+
+    def blocked_post(args, *, post_only):
+        assert post_only is True and len(args) == 2
+        started.set()
+        if not release.wait(timeout=4):
+            raise RuntimeError("SYNTHETIC_WAIT_FAILURE_SENTINEL")
+        return _accepted_rows()
+
+    client.post_orders = blocked_post
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    original_wait = asyncio.wait
+
+    async def failing_wait(_tasks, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
+        assert await asyncio.to_thread(started.wait, 2)
+        raise RuntimeError("SYNTHETIC_WAIT_FAILURE_SENTINEL")
+
+    monkeypatch.setattr(asyncio, "wait", failing_wait)
+    submission = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
+        assert not submission.done()
+        release.set()
+        result = await submission
+    finally:
+        release.set()
+        monkeypatch.setattr(asyncio, "wait", original_wait)
+        await gateway.aclose()
+    assert result.outcome == "COMPLETE" and result.post_started
+    assert result.interruption_reason == "SUBMISSION_WAIT_FAILED:RuntimeError"
+    assert result.resolved_attempt is scope.owner.current
+    assert result.resolved_attempt.outcome == "COMPLETE"
+    assert len(client.created) == 2
     assert blocked_network == []
 
 

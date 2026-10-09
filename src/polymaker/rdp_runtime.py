@@ -15,7 +15,11 @@ from typing import Any
 
 from polymaker.config import Config
 from polymaker.domain import OpenOrder, OrderState, Side, TradeState
-from polymaker.execution.gateway import ExactOpenOrder
+from polymaker.execution.gateway import (
+    ExactOpenOrder,
+    PlacementNotAttempted,
+    PlacementUnknown,
+)
 from polymaker.execution.rdp_fill_window import RDPFillWindow, RDPFillWindowDecision
 from polymaker.execution.rdp_lifecycle import RDPCloseResult, close_rdp_cycle
 from polymaker.execution.rdp_placement import (
@@ -124,6 +128,142 @@ class RDPInitialIntentValidation:
     capital_admission: RDPCapitalAdmission | None
     outstanding_execution_gates: tuple[str, ...]
     execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RDPGatewayAcknowledgmentEvidence:
+    """Immutable observed Gateway acknowledgment, separate from owner registration."""
+
+    order_id: str
+    token_id: str
+    side: str
+    price: float
+    size: float
+    state: str
+
+
+@dataclass(frozen=True, slots=True)
+class RDPGatewayPlacementEvidence:
+    """Sanitized typed result returned by the actual Gateway placement call."""
+
+    result_type: str
+    reason: str | None
+    post_attempted: bool
+    error_type: str | None
+    acknowledged_orders: tuple[RDPGatewayAcknowledgmentEvidence, ...]
+    observed_order_ids: tuple[str, ...]
+    invalid_acknowledgment_count: int
+
+
+def _gateway_placement_evidence(
+    outcome: Any, *, post_started: bool,
+) -> RDPGatewayPlacementEvidence:
+    """Copy typed exchange evidence without treating it as registered ownership."""
+    reason: str | None = None
+    error_type: str | None = None
+    observed: tuple[str, ...] = ()
+    acknowledgments: tuple[Any, ...] = ()
+    attempted = post_started
+    if isinstance(outcome, PlacementNotAttempted):
+        result_type = "PLACEMENT_NOT_ATTEMPTED"
+        reason = outcome.reason
+        error_type = outcome.error_type
+        attempted = False
+    elif isinstance(outcome, PlacementUnknown):
+        result_type = "PLACEMENT_UNKNOWN"
+        reason = outcome.reason
+        error_type = outcome.error_type
+        observed = outcome.observed_order_ids
+        acknowledgments = outcome.acknowledged_orders
+        attempted = outcome.post_attempted
+    elif isinstance(outcome, list):
+        result_type = "ACKNOWLEDGMENTS" if outcome else "EMPTY"
+        acknowledgments = tuple(outcome)
+    elif isinstance(outcome, BaseException):
+        result_type = "ERROR"
+        error_type = type(outcome).__name__
+        reason = f"PLACEMENT_ERROR:{error_type}"
+    else:
+        result_type = type(outcome).__name__
+
+    safe_reasons = {
+        "BATCH_POST_EXCEPTION", "BATCH_CARDINALITY_UNKNOWN", "DUPLICATE_ACCEPTED_ID",
+        "UNRESOLVED_BATCH_RESULT", "PARTIAL_ACCEPTANCE", "PLACEMENT_NOT_ATTEMPTED",
+        "PLACEMENT_OUTCOME_UNKNOWN", "GATEWAY_UNAVAILABLE",
+    }
+    if reason not in safe_reasons and not (
+        isinstance(reason, str) and reason.startswith("PLACEMENT_ERROR:")
+        and reason.removeprefix("PLACEMENT_ERROR:").replace("_", "").isalnum()
+    ):
+        reason = None
+    if not isinstance(error_type, str) or not error_type.replace("_", "").isalnum():
+        error_type = None
+
+    observed_ids = tuple(dict.fromkeys(
+        value for value in observed
+        if isinstance(value, str) and value.strip()
+    ))
+    copied: list[RDPGatewayAcknowledgmentEvidence] = []
+    invalid_count = 0
+    for order in acknowledgments:
+        if (not isinstance(order, OpenOrder)
+                or not isinstance(order.order_id, str) or not order.order_id.strip()
+                or not isinstance(order.token_id, str) or not order.token_id.strip()
+                or not isinstance(order.side, Side)
+                or not isinstance(order.state, OrderState)
+                or isinstance(order.price, bool)
+                or not isinstance(order.price, (int, float))
+                or not math.isfinite(order.price)
+                or isinstance(order.size, bool)
+                or not isinstance(order.size, (int, float))
+                or not math.isfinite(order.size)):
+            invalid_count += 1
+            continue
+        copied.append(RDPGatewayAcknowledgmentEvidence(
+            order.order_id, order.token_id, order.side.value,
+            float(order.price), float(order.size), order.state.value,
+        ))
+    return RDPGatewayPlacementEvidence(
+        result_type, reason, attempted, error_type, tuple(copied), observed_ids,
+        invalid_count,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RDPInitialSubmissionResult:
+    """Retained outcome for one default-denied initial NORMAL submission."""
+
+    outcome: str
+    reason: str | None
+    authorization_granted: bool
+    post_started: bool
+    order_budget_s: float | None
+    close_budget_s: float | None
+    order_deadline_monotonic: float | None
+    attempt: RDPPlacementAttempt | None
+    resolved_attempt: RDPPlacementAttempt | None
+    guard_reasons: tuple[str | None, ...]
+    interruption_reason: str | None
+    resolution_error_type: str | None
+    gateway_evidence: RDPGatewayPlacementEvidence | None = None
+    execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(slots=True)
+class _RDPInitialSubmissionOperation:
+    admission: RDPInitialNormalAdmission
+    order_budget_s: float
+    close_budget_s: float
+    order_deadline_monotonic: float
+    started_monotonic: float
+    market_end_epoch: float
+    post_started: threading.Event = field(default_factory=threading.Event)
+    send_revoked: bool = False
+    interruption_reason: str | None = None
+    attempt: RDPPlacementAttempt | None = None
+    gateway_evidence: RDPGatewayPlacementEvidence | None = None
+    guard_reasons: list[str | None] = field(default_factory=list)
+    guard_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 @dataclass(eq=False, slots=True)
@@ -283,6 +423,10 @@ class RDPInputSession:
         self._intent_result_lock = threading.Lock()
         self._intent_bridge_requests: set[_IntentBridgeRequest] = set()
         self._intent_bridge_lock = threading.Lock()
+        self._initial_submission_invoked = False
+        self._initial_submission_operation: _RDPInitialSubmissionOperation | None = None
+        self._initial_submission_task: asyncio.Task[RDPInitialSubmissionResult] | None = None
+        self._initial_submission_result: RDPInitialSubmissionResult | None = None
         self._account_read_task: asyncio.Task[Any] | None = None
         self._market_status_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
@@ -505,6 +649,8 @@ class RDPInputSession:
         task = asyncio.current_task()
         if self._closed:
             return rejected("SESSION_CLOSED")
+        if self._initial_submission_conflicts_with_current_task():
+            return rejected("INITIAL_SUBMISSION_IN_PROGRESS")
         if self._admission_active:
             return rejected("INITIAL_ADMISSION_IN_PROGRESS")
         loop = asyncio.get_running_loop()
@@ -859,10 +1005,23 @@ class RDPInputSession:
             return "LOCAL_SCOPE_NOT_EMPTY"
         return None
 
+    def _initial_submission_conflicts_with_current_task(self) -> bool:
+        """Keep the submission task as the sole owner of its pending attempt."""
+        task = self._initial_submission_task
+        if task is None or task.done():
+            return False
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        return current is not task
+
     def arm_initial_normal_placement(
         self, admission: RDPInitialNormalAdmission,
     ) -> RDPPlacementAttempt:
         """Arm existing processor capture for an admitted pair; never sends it."""
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if self._admission_active:
             raise RDPPlacementError("INITIAL_ADMISSION_IN_PROGRESS")
         current_attempt = self.placement_owner.current
@@ -890,6 +1049,8 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt, outcome: Any,
     ) -> RDPPlacementAttempt:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         return self.placement_owner.resolve(attempt, outcome)
 
     @property
@@ -899,16 +1060,65 @@ class RDPInputSession:
 
     def initial_normal_submit_guard(
         self, admission: RDPInitialNormalAdmission, attempt: RDPPlacementAttempt,
+        *, _submission_operation: _RDPInitialSubmissionOperation | None = None,
     ) -> Callable[[], bool]:
         """Build the factual callback for the existing gateway guard points."""
+        guard_index = 0
+        guard_index_lock = threading.Lock()
+
         def guard() -> bool:
-            return self.revalidate_initial_normal_intent(admission, attempt).factual_valid
+            nonlocal guard_index
+            with guard_index_lock:
+                current_index = guard_index
+                guard_index += 1
+            if _submission_operation is None:
+                result = self.revalidate_initial_normal_intent(admission, attempt)
+                return result.factual_valid
+            result = self.revalidate_initial_normal_intent(
+                admission, attempt, _submission_operation=_submission_operation,
+                _guard_index=current_index,
+            )
+            with _submission_operation.guard_lock:
+                reason = (
+                    _submission_operation.guard_reasons[current_index]
+                    if current_index < len(_submission_operation.guard_reasons)
+                    else "SUBMISSION_GUARD_RESULT_UNAVAILABLE"
+                )
+            if result.factual_valid and reason is None:
+                # This runs after owner-loop evidence retention/logging. In the
+                # executor case it also runs after bridge publication, so neither
+                # a slow log handler nor a delayed Event wake can extend permission.
+                reason = self._initial_submission_permission_failure(
+                    _submission_operation,
+                )
+                if reason is not None:
+                    with _submission_operation.guard_lock:
+                        _submission_operation.guard_reasons[current_index] = reason
+            return result.factual_valid and reason is None
         return guard
 
     def revalidate_initial_normal_intent(
         self, admission: RDPInitialNormalAdmission, attempt: RDPPlacementAttempt,
+        *, _submission_operation: _RDPInitialSubmissionOperation | None = None,
+        _guard_index: int | None = None,
     ) -> RDPInitialIntentValidation:
         """Capture current intent validity on the owning loop from either gateway thread."""
+
+        def capture() -> RDPInitialIntentValidation:
+            result = self._capture_initial_normal_intent(admission, attempt)
+            if _submission_operation is not None and _guard_index is not None:
+                operation_failure = self._initial_submission_guard_failure(
+                    _submission_operation,
+                )
+                reason = result.reason if not result.factual_valid else operation_failure
+                with _submission_operation.guard_lock:
+                    while len(_submission_operation.guard_reasons) <= _guard_index:
+                        _submission_operation.guard_reasons.append(
+                            "SUBMISSION_GUARD_RESULT_UNAVAILABLE",
+                        )
+                    _submission_operation.guard_reasons[_guard_index] = reason
+            return result
+
         loop = self._intent_loop
         if loop is None or self._intent_loop_thread_id is None:
             return self._retain_intent_validation(
@@ -921,7 +1131,7 @@ class RDPInputSession:
                 )
             else:
                 try:
-                    result = self._capture_initial_normal_intent(admission, attempt)
+                    result = capture()
                 except Exception as exc:  # noqa: BLE001 - categorical fail closed
                     result = self._intent_validation_failure(
                         admission, attempt, f"VALIDATION_FAILED:{type(exc).__name__}",
@@ -965,7 +1175,7 @@ class RDPInputSession:
                     self._retain_intent_validation(result)
                     return
                 try:
-                    result = self._capture_initial_normal_intent(admission, attempt)
+                    result = capture()
                 except Exception as exc:  # noqa: BLE001 - categorical fail closed
                     result = self._intent_validation_failure(
                         admission, attempt, f"VALIDATION_FAILED:{type(exc).__name__}",
@@ -1011,6 +1221,368 @@ class RDPInputSession:
         return self._retain_intent_validation(
             self._intent_validation_failure(admission, attempt, "VALIDATION_BRIDGE_CANCELLED"),
         )
+
+    def _initial_submission_guard_failure(
+        self, operation: _RDPInitialSubmissionOperation,
+    ) -> str | None:
+        if operation is not self._initial_submission_operation:
+            return "SUBMISSION_OPERATION_MISMATCH"
+        if operation.admission is not self._issued_initial_admission:
+            return "ADMISSION_PROVENANCE_MISMATCH"
+        if operation.attempt is None or operation.attempt is not self.placement_owner.current:
+            return "ARMED_ATTEMPT_PROVENANCE_MISMATCH"
+        return self._initial_submission_permission_failure(operation)
+
+    def _initial_submission_permission_failure(
+        self, operation: _RDPInitialSubmissionOperation,
+    ) -> str | None:
+        """Recheck only immutable operation scope and clocks at the SDK guard edge."""
+        with operation.guard_lock:
+            if operation.send_revoked or operation.interruption_reason is not None:
+                return operation.interruption_reason or "SUBMISSION_SEND_REVOKED"
+        try:
+            monotonic_before = time.monotonic()
+        except Exception as exc:  # noqa: BLE001 - categorical fail closed
+            return f"INVALID_MONOTONIC_CLOCK:{type(exc).__name__}"
+        if (isinstance(monotonic_before, bool)
+                or not isinstance(monotonic_before, (int, float))
+                or not math.isfinite(monotonic_before)):
+            return "INVALID_MONOTONIC_CLOCK"
+        if monotonic_before >= operation.order_deadline_monotonic:
+            return "ORDER_OPERATION_DEADLINE"
+        try:
+            wall_now = self._now()
+            monotonic_after = time.monotonic()
+            remaining_market = (
+                Decimal(str(operation.market_end_epoch)) - Decimal(str(wall_now))
+            )
+            remaining_order = Decimal(str(
+                operation.order_deadline_monotonic - float(monotonic_after),
+            ))
+            required = remaining_order + Decimal(str(operation.close_budget_s))
+        except (InvalidOperation, TypeError, ValueError, OverflowError):
+            return "INVALID_OPERATION_CLOCK"
+        except Exception as exc:  # noqa: BLE001 - categorical fail closed
+            return f"OPERATION_CLOCK_FAILED:{type(exc).__name__}"
+        if (isinstance(wall_now, bool)
+                or not isinstance(wall_now, (int, float))
+                or not math.isfinite(wall_now)
+                or isinstance(monotonic_after, bool)
+                or not isinstance(monotonic_after, (int, float))
+                or not math.isfinite(monotonic_after)
+                or not remaining_market.is_finite()
+                or not required.is_finite()):
+            return "INVALID_OPERATION_CLOCK"
+        if monotonic_after >= operation.order_deadline_monotonic:
+            return "ORDER_OPERATION_DEADLINE"
+        if remaining_market <= required:
+            return "INSUFFICIENT_MARKET_TIME"
+        return None
+
+    @staticmethod
+    def _revoke_initial_submission(
+        operation: _RDPInitialSubmissionOperation, reason: str,
+    ) -> None:
+        with operation.guard_lock:
+            operation.send_revoked = True
+            if operation.interruption_reason is None:
+                operation.interruption_reason = reason
+
+    async def submit_initial_normal(
+        self, admission: RDPInitialNormalAdmission, *, authorization: Any = False,
+        order_budget_s: object = None, close_budget_s: object = None,
+    ) -> RDPInitialSubmissionResult:
+        """Own at most one explicitly authorized initial NORMAL fake/live-capable call."""
+        if self._initial_submission_invoked:
+            return self._initial_submission_result or RDPInitialSubmissionResult(
+                "DENIED", "INITIAL_SUBMISSION_ALREADY_USED", authorization is True,
+                False, None, None, None, None, self.placement_owner.current,
+                (), None, None,
+            )
+        self._initial_submission_invoked = True
+        if authorization is not True:
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "HUMAN_AUTHORIZATION_REQUIRED", False,
+                    False, None, None, None, None, self.placement_owner.current,
+                    (), None, None,
+                ),
+            )
+        if (not isinstance(admission, RDPInitialNormalAdmission)
+                or admission is not self._issued_initial_admission
+                or not admission.eligible or admission.reason is not None
+                or admission.execution_authorized is not False):
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "ADMISSION_PROVENANCE_MISMATCH", True,
+                    False, None, None, None, None, self.placement_owner.current,
+                    (), None, None,
+                ),
+            )
+        try:
+            order_budget = _positive_finite_seconds(order_budget_s, "order budget")
+            close_budget = _positive_finite_seconds(close_budget_s, "close budget")
+        except RDPPlacementError as exc:
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", exc.category, True,
+                    False, None, None, None, None, self.placement_owner.current,
+                    (), None, None,
+                ),
+            )
+        if (self._closed or self._admission_active
+                or (self._initial_cycle_task is not None and not self._initial_cycle_task.done())
+                or (self._prefill_task is not None and not self._prefill_task.done())
+                or (self._fill_window_task is not None and not self._fill_window_task.done())
+                or (self._placement_close_task is not None
+                    and not self._placement_close_task.done())):
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "CONFLICTING_RUNTIME_OPERATION", True,
+                    False, order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+        precondition = self._admission_precondition_failure()
+        if precondition is not None:
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", precondition, True, False,
+                    order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+        try:
+            wall_now = self._now()
+            monotonic_now = time.monotonic()
+            remaining = Decimal(str(self.bootstrap.end_epoch)) - Decimal(str(wall_now))
+            required = Decimal(str(order_budget)) + Decimal(str(close_budget))
+            deadline = monotonic_now + order_budget
+        except (InvalidOperation, TypeError, ValueError, OverflowError):
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "INVALID_OPERATION_CLOCK", True,
+                    False, order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - categorical, no clock detail
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", f"OPERATION_CLOCK_FAILED:{type(exc).__name__}", True,
+                    False, order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+        if (isinstance(wall_now, bool) or not isinstance(wall_now, (int, float))
+                or not math.isfinite(wall_now)
+                or isinstance(monotonic_now, bool)
+                or not isinstance(monotonic_now, (int, float))
+                or not math.isfinite(monotonic_now)
+                or not math.isfinite(deadline)
+                or not remaining.is_finite() or not required.is_finite()):
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "INVALID_OPERATION_CLOCK", True,
+                    False, order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+        if remaining <= required:
+            return self._retain_initial_submission_result(
+                RDPInitialSubmissionResult(
+                    "DENIED", "INSUFFICIENT_MARKET_TIME", True,
+                    False, order_budget, close_budget, None, None,
+                    self.placement_owner.current, (), None, None,
+                ),
+            )
+
+        operation = _RDPInitialSubmissionOperation(
+            admission, order_budget, close_budget, float(deadline),
+            float(monotonic_now), float(self.bootstrap.end_epoch),
+        )
+        self._initial_submission_operation = operation
+        task = asyncio.create_task(
+            self._run_initial_normal_submission(operation),
+            name="rdp-initial-normal-submission",
+        )
+        self._initial_submission_task = task
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._revoke_initial_submission(operation, "CALLER_CANCELLED")
+            await _drain_read_task(task)
+            raise
+
+    async def _run_initial_normal_submission(
+        self, operation: _RDPInitialSubmissionOperation,
+    ) -> RDPInitialSubmissionResult:
+        admission = operation.admission
+        attempt: RDPPlacementAttempt | None = None
+        gateway_outcome: Any = None
+        resolution_error_type: str | None = None
+        resolved_attempt: RDPPlacementAttempt | None = None
+        try:
+            attempt = self.arm_initial_normal_placement(admission)
+            operation.attempt = attempt
+        except Exception as exc:  # noqa: BLE001 - categorical rejection only
+            result = RDPInitialSubmissionResult(
+                "DENIED", getattr(exc, "category", type(exc).__name__), True,
+                False, operation.order_budget_s, operation.close_budget_s,
+                operation.order_deadline_monotonic, None,
+                self.placement_owner.current, tuple(operation.guard_reasons),
+                operation.interruption_reason, None,
+            )
+            return self._retain_initial_submission_result(result)
+
+        gateway = getattr(self.user_session, "gateway", None)
+        if gateway is None or not callable(getattr(gateway, "place", None)):
+            gateway_outcome = PlacementNotAttempted(
+                reason="GATEWAY_UNAVAILABLE", error_type="GatewayUnavailable",
+            )
+        else:
+            guard = self.initial_normal_submit_guard(
+                admission, attempt, _submission_operation=operation,
+            )
+            placement_task = asyncio.create_task(
+                gateway.place(
+                    list(attempt.quotes), self.bootstrap.market,
+                    submit_guard=guard, force_post_only=True, strict_placement=True,
+                    allow_two_order_rdp_pair=True,
+                    token_ticks=dict(admission.token_ticks),
+                    safe_diagnostics=True,
+                    on_post_start=operation.post_started.set,
+                ),
+                name="rdp-initial-normal-gateway-place",
+            )
+            try:
+                remaining_s = max(
+                    0.0, operation.order_deadline_monotonic - time.monotonic(),
+                )
+                done, _pending = await asyncio.wait(
+                    (placement_task,), timeout=remaining_s,
+                )
+                if not done:
+                    self._revoke_initial_submission(
+                        operation, "ORDER_OPERATION_DEADLINE",
+                    )
+                    # Gateway._io owns a blocking SDK future. Keep awaiting the
+                    # same placement task so its real acknowledgment/error is
+                    # reconciled before this operation can release ownership.
+                    gateway_outcome = await placement_task
+                else:
+                    gateway_outcome = placement_task.result()
+            except BaseException as exc:  # noqa: BLE001 - preserve typed outcome; never log raw
+                if not placement_task.done():
+                    self._revoke_initial_submission(
+                        operation, f"SUBMISSION_WAIT_FAILED:{type(exc).__name__}",
+                    )
+                    # Read the child task's actual typed outcome below.
+                    with suppress(BaseException):
+                        await _drain_read_task(placement_task)
+                try:
+                    gateway_outcome = placement_task.result()
+                except BaseException as placement_error:  # noqa: BLE001 - categorical only
+                    gateway_outcome = placement_error
+
+        operation.gateway_evidence = _gateway_placement_evidence(
+            gateway_outcome, post_started=operation.post_started.is_set(),
+        )
+        try:
+            resolved_attempt = self.resolve_initial_normal_placement(attempt, gateway_outcome)
+        except BaseException as exc:  # noqa: BLE001 - inspect retained owner; never resolve twice
+            resolution_error_type = type(exc).__name__
+            current = self.placement_owner.current
+            if (current is not None and current.attempt_id == attempt.attempt_id
+                    and current.condition_id == attempt.condition_id):
+                resolved_attempt = current
+
+        guard_reasons = tuple(operation.guard_reasons)
+        post_started = operation.post_started.is_set()
+        if resolution_error_type is not None:
+            outcome = "RESOLUTION_ERROR"
+            reason = f"RESOLUTION_FAILED:{resolution_error_type}"
+        elif isinstance(gateway_outcome, PlacementNotAttempted):
+            outcome = "FAILURE_PRE_POST"
+            reason = gateway_outcome.reason or "PLACEMENT_NOT_ATTEMPTED"
+        elif isinstance(gateway_outcome, PlacementUnknown):
+            current = resolved_attempt
+            if current is not None and current.outcome == "PARTIAL":
+                outcome = "PARTIAL"
+            else:
+                outcome = "UNKNOWN"
+            reason = (gateway_outcome.reason or current.reason
+                      if current is not None else gateway_outcome.reason)
+            if reason is None:
+                reason = "PLACEMENT_OUTCOME_UNKNOWN"
+        elif isinstance(gateway_outcome, BaseException):
+            outcome = "UNKNOWN"
+            reason = f"PLACEMENT_ERROR:{type(gateway_outcome).__name__}"
+        elif isinstance(gateway_outcome, list) and not gateway_outcome:
+            if not post_started and guard_reasons and guard_reasons[-1] is not None:
+                outcome, reason = "NO_SEND", guard_reasons[-1]
+            elif post_started:
+                outcome, reason = "EMPTY", "AUTHORITATIVE_EMPTY_RESPONSE"
+            else:
+                outcome, reason = "NO_SEND", "GATEWAY_RETURNED_WITHOUT_POST"
+        elif resolved_attempt is not None and resolved_attempt.outcome == "COMPLETE":
+            outcome, reason = "COMPLETE", None
+        else:
+            outcome, reason = "UNKNOWN", (
+                resolved_attempt.reason if resolved_attempt is not None
+                else "PLACEMENT_OUTCOME_UNAVAILABLE")
+        result = RDPInitialSubmissionResult(
+            outcome, reason, True, post_started,
+            operation.order_budget_s, operation.close_budget_s,
+            operation.order_deadline_monotonic, attempt, resolved_attempt,
+            guard_reasons, operation.interruption_reason,
+            resolution_error_type, operation.gateway_evidence,
+        )
+        return self._retain_initial_submission_result(result)
+
+    def _retain_initial_submission_result(
+        self, result: RDPInitialSubmissionResult,
+    ) -> RDPInitialSubmissionResult:
+        self._initial_submission_result = result
+        log.info(
+            "rdp_initial_submission_result",
+            outcome=result.outcome, reason=result.reason,
+            authorization_granted=result.authorization_granted,
+            post_started=result.post_started,
+            order_budget_s=result.order_budget_s,
+            close_budget_s=result.close_budget_s,
+            order_deadline_monotonic=result.order_deadline_monotonic,
+            attempt_id=(result.attempt.attempt_id if result.attempt is not None else None),
+            resolved_outcome=(result.resolved_attempt.outcome
+                              if result.resolved_attempt is not None else None),
+            acknowledged_order_ids=(result.resolved_attempt.acknowledged_order_ids
+                                    if result.resolved_attempt is not None else ()),
+            observed_order_ids=(result.resolved_attempt.observed_order_ids
+                                if result.resolved_attempt is not None else ()),
+            gateway_result_type=(result.gateway_evidence.result_type
+                                 if result.gateway_evidence is not None else None),
+            gateway_reason=(result.gateway_evidence.reason
+                            if result.gateway_evidence is not None else None),
+            gateway_post_attempted=(result.gateway_evidence.post_attempted
+                                    if result.gateway_evidence is not None else None),
+            gateway_error_type=(result.gateway_evidence.error_type
+                                if result.gateway_evidence is not None else None),
+            gateway_acknowledged_orders=(tuple(
+                (order.order_id, order.token_id, order.side, order.price,
+                 order.size, order.state)
+                for order in result.gateway_evidence.acknowledged_orders
+            ) if result.gateway_evidence is not None else ()),
+            gateway_observed_order_ids=(result.gateway_evidence.observed_order_ids
+                                        if result.gateway_evidence is not None else ()),
+            gateway_invalid_acknowledgment_count=(
+                result.gateway_evidence.invalid_acknowledgment_count
+                if result.gateway_evidence is not None else 0),
+            guard_reasons=result.guard_reasons,
+            interruption_reason=result.interruption_reason,
+            resolution_error_type=result.resolution_error_type,
+            execution_authorized=False,
+        )
+        return result
 
     def _intent_validation_failure(
         self, admission: Any, attempt: Any, reason: str,
@@ -1364,6 +1936,8 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPInitialCycleCompletion:
         """Explicitly own one acknowledged initial pair through its close proof."""
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         budget_s = _positive_finite_seconds(close_budget_s, "close budget")
         if self._initial_cycle_result is not None:
             current = self.placement_owner.current
@@ -1776,6 +2350,8 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt,
     ) -> RDPInitialPreFillDecision:
         """Evaluate the retained acknowledged pair without taking an order action."""
+        if self._initial_submission_conflicts_with_current_task():
+            return self._prefill_decision("CLOSE", "INITIAL_SUBMISSION_IN_PROGRESS", attempt)
         if not self._initial_cycle_call_allowed():
             return self._prefill_decision(
                 "CLOSE", "INITIAL_CYCLE_COORDINATION_IN_PROGRESS", attempt,
@@ -2643,6 +3219,8 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPFillWindowCompletion:
         """Wait for the retained window, then run its existing scoped close once."""
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if not self._initial_cycle_call_allowed():
             raise RDPPlacementError("INITIAL_CYCLE_COORDINATION_IN_PROGRESS")
         budget_s = _positive_finite_seconds(close_budget_s, "close budget")
@@ -2846,6 +3424,8 @@ class RDPInputSession:
         _window_continuation_safe: bool = True,
     ) -> RDPInitialPlacementClose:
         """Explicitly close this attempt's known owned IDs through the existing barrier."""
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if not self._initial_cycle_call_allowed():
             raise RDPPlacementError("INITIAL_CYCLE_COORDINATION_IN_PROGRESS")
         current = self.placement_owner.current
@@ -3120,6 +3700,13 @@ class RDPInputSession:
         self._closed = True
         self._abandon_intent_bridges("SESSION_CLOSED")
         interrupted = False
+        submission = self._initial_submission_task
+        if (submission is not None and submission is not asyncio.current_task()
+                and not submission.done()):
+            operation = self._initial_submission_operation
+            if operation is not None:
+                self._revoke_initial_submission(operation, "SESSION_TEARDOWN")
+            interrupted = await _drain_read_task(submission) or interrupted
         cycle = self._initial_cycle_task
         if (cycle is not None and cycle is not asyncio.current_task()
                 and not cycle.done()):
@@ -3127,25 +3714,31 @@ class RDPInputSession:
             self._initial_cycle_wakeup.set()
             self._fill_window_cancel_requested = "SESSION_TEARDOWN"
             self._fill_window_wakeup.set()
-            interrupted = await _drain_read_task(cycle)
+            interrupted = await _drain_read_task(cycle) or interrupted
         prefill = self._prefill_task
         if (prefill is not None and prefill is not asyncio.current_task()
                 and not prefill.done()):
-            interrupted = await _drain_read_task(prefill)
+            interrupted = await _drain_read_task(prefill) or interrupted
         coordinator = self._fill_window_task
         if (coordinator is not None and coordinator is not asyncio.current_task()
                 and not coordinator.done()):
             self._fill_window_cancel_requested = "SESSION_TEARDOWN"
             self._fill_window_wakeup.set()
-            interrupted = await _drain_read_task(coordinator)
+            interrupted = await _drain_read_task(coordinator) or interrupted
         armed = self.placement_owner.current
-        if armed is not None and armed.outcome == "ARMED":
+        submission_operation = self._initial_submission_operation
+        submission_owns_armed = (
+            submission_operation is not None and submission_operation.attempt is armed
+        )
+        if (armed is not None and armed.outcome == "ARMED"
+                and (submission is None or submission.done())
+                and not submission_owns_armed):
             self.placement_owner.resolve(armed, asyncio.CancelledError())
         close_task = self._placement_close_task
         if (close_task is not None and close_task is not asyncio.current_task()
                 and not close_task.done()):
             close_task.cancel()
-            interrupted = await _drain_read_task(close_task)
+            interrupted = await _drain_read_task(close_task) or interrupted
         active = self._admission_task
         if active is not None and active is not asyncio.current_task() and not active.done():
             active.cancel()
