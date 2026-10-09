@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0028`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0028 | One remaining required delivery problem; Architect inspection pending | PENDING | NOT_STARTED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0028 | DG-003: retained automatic repeated NORMAL operation | APPROVED | PENDING | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0027 | DG-002 prerequisite: current post-cycle next-action admission | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -104,7 +104,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0028 Architect is inspecting current code/tests and the finite delivery register; no implementation contract or Worker dispatch is claimed yet. See ITER-0028/00_INITIALIZATION.md. ITER-0027 independent PASS and RESULT are archived at 7df8722cfec7f2a4b16468124ff2ae6b8382b8e2, with receipt commit a1061aac2d0a3b40b6f5a705977f3314c57f356d exactly verified on origin. Full1683 passed / 2 skipped; independent22 probes passed; zero network attempts. DG-002 remains OPEN until actual successive actions consume cumulative evidence.
+Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0028 Architect01 is frozen APPROVED_FOR_IMPLEMENTATION for full DG-003 repeated NORMAL delivery using existing gateway/lifecycle and cumulative confirmed evidence; Worker is next. DG-002 remains OPEN for REBALANCE successive-order coverage and DG-004 for its operating loop. ITER-0027 independent PASS and RESULT are archived at 7df8722cfec7f2a4b16468124ff2ae6b8382b8e2, with receipt commit a1061aac2d0a3b40b6f5a705977f3314c57f356d exactly verified on origin. Full1683 passed / 2 skipped; independent22 probes passed; zero network attempts.
 
 ITER-0026 is fully archived at e4ab1532043f47af9e416e9e8ef632440bb8608a; Reviewer12 PASS matched its archived implementation. ITER-0027 Reviewer04 verifies the current extended runtime. DG-001 and DG-006 CLOSED; other gaps OPEN. No ITER-0025/0026 reimplementation. See ITER-0027/00_INITIALIZATION.md for startup evidence and current authorization.
 

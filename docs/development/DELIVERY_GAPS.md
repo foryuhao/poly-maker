@@ -7,7 +7,7 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest reviewed implementation: ITER-0026, CODE_READY, final Reviewer12 PASS; final archive verification is recorded in ITER-0026/13_ARCHIVE_RECEIPT.md after push.
+Latest reviewed implementation: ITER-0027, CODE_READY, final Reviewer04 PASS; final archive verification is recorded in ITER-0027/05_ARCHIVE_RECEIPT.md. DG-002 remains OPEN after that necessary factual-admission prerequisite.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
 Implementation resume authorization: GRANTED by explicit human resume for automatic required serial iterations and repairs until MICRO_LIVE_READY. No real-money/main merge/strategy-semantic change is authorized.
@@ -286,9 +286,9 @@ CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is ar
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0028.
-Current Stage: ARCHITECT.
+Current Stage: WORKER.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 independent PASS and verified archive deliver the necessary integrated post-cycle factual admission prerequisite under DG-002. ITER-0028 Architect is selecting one remaining minimal required delivery problem from actual current code/tests. DG-002 stays OPEN pending actual successive-order consumption. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 independent PASS and verified archive deliver the necessary integrated post-cycle factual admission prerequisite under DG-002. ITER-0028 Architect01 is frozen for full DG-003 retained repeated NORMAL operation, preserving cumulative inventory/cost and existing gateway/lifecycle safety. DG-002 stays OPEN for REBALANCE successive-order coverage; DG-004 stays OPEN. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
