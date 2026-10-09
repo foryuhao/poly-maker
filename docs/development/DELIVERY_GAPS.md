@@ -285,10 +285,10 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is archived and DG-001 CLOSED. ITER-0026 final Reviewer12 PASS closes DG-006 for the implemented runtime; final receipt records archival. DG-002–DG-005 and DG-007–DG-012 remain OPEN.
 
 Development Status: IN_PROGRESS.
-Current Iteration: ITER-0027.
-Current Stage: ARCHIVED.
+Current Iteration: ITER-0028.
+Current Stage: ARCHITECT.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 frozen Architect01 targets the necessary integrated post-cycle factual admission prerequisite under DG-002. DG-002 stays OPEN pending actual successive-order consumption. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 independent PASS and verified archive deliver the necessary integrated post-cycle factual admission prerequisite under DG-002. ITER-0028 Architect is selecting one remaining minimal required delivery problem from actual current code/tests. DG-002 stays OPEN pending actual successive-order consumption. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
