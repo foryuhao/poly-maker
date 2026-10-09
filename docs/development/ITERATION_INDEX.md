@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0026`
 
-Current Stage: `WORKER`
+Current Stage: `WORKER_DISPATCH_BLOCKED`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IN_PROGRESS | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | DISPATCH_BLOCKED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -178,3 +178,5 @@ ITER-0025 final Reviewer06 PASS verifies DG-001 complete closure. DG-001 is CLOS
 ITER-0025 reviewed implementation b0de5de89d23441b2fe6f7531ab092874678db24 was pushed and remotely verified; see 07_ARCHIVE_RECEIPT.md. ITER-0026 is initialized for Architect selection. Human resume authorizes automatic continuation; real-money and main merge remain denied.
 
 ITER-0026 Architect01 is approved: connect failed/partial/unknown initial submission and unreliable cycle evidence to latched no-new-risk handling, registered-only scoped cleanup and honest unresolved STOP. No acknowledgment/observed-ID adoption, shared-core or live action authorized. DG-006 remains OPEN until full closure is independently verified.
+
+ITER-0026 Worker dispatch is blocked by repeated collaboration `agent thread limit reached` errors, not a strategy decision. See 02_DISPATCH_BLOCKER.md. No ITER-0026 source/test implementation began. Existing human resume authority persists; next action is configured Worker under frozen Architect01 when dispatch recovers.
