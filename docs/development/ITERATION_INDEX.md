@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0025`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0025 | DG-001: authorized initial NORMAL submission | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IN_PROGRESS | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -101,7 +101,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-CONVERGENCE-0001 approved and development explicitly resumed from verified27908548acbf595e4abdc7282252185d4163e267. ITER-0025 Architect rechecks DG-001 draft against actual code before formal approval/Worker. All delivery gaps remain OPEN until full reviewed closure. Automatic serial iterations authorized; real-money trading and main merge NOT_GRANTED.
+ITER-0025 formal Architect01 approved DG-001 initial submission to retained typed ownership. Bounded default-off gateway placement diagnostics/outcomes authorized; legacy behavior/FL regressions required. Worker next; DG-001 remains OPEN until full Reviewer-verified closure. Other gaps OPEN; no real-money or main merge authorization.
 
 ---
 
