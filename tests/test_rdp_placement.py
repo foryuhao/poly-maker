@@ -4859,6 +4859,8 @@ async def test_initial_submission_defaults_denied_before_arm_sign_or_post(
     assert result.outcome == "DENIED" and not result.authorization_granted
     assert result.reason == "HUMAN_AUTHORIZATION_REQUIRED"
     assert scope.owner.current is None
+    assert scope.session.terminal_failure_result is None
+    assert not scope.session._terminal_stop_latched
     assert client.created == [] and client.posts == []
     assert blocked_network == []
 
@@ -5564,6 +5566,115 @@ async def test_terminal_registration_evidence_matches_actual_registry_per_id(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["guard-denial", "sign-failure"])
+async def test_no_post_with_unresolved_capture_latches_terminal_without_cancel(
+    placement_scope, blocked_network, monkeypatch, stage,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    injected = False
+
+    def inject_unmatched_capture():
+        nonlocal injected
+        if injected:
+            return
+        injected = True
+        event = TradeEvent(
+            "yes-token", Side.BUY, .55, 1, "unattributed-before-post",
+            TradeState.MATCHED, time.time(), "unattributed-order",
+            scope.market.condition_id,
+        )
+        scope.processor.on_trade(
+            event, scope.market.condition_id,
+            received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=2_000_000_000_000,
+            connection_generation=4,
+        )
+        if stage == "sign-failure":
+            raise RuntimeError("synthetic signing failure")
+
+    client = FakeBatchClient(_accepted_rows(), on_create=inject_unmatched_capture)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    original_resolve = scope.owner.resolve
+    resolve_calls = []
+
+    def counted_resolve(attempt, outcome):
+        resolve_calls.append(outcome)
+        return original_resolve(attempt, outcome)
+
+    monkeypatch.setattr(scope.owner, "resolve", counted_resolve)
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        expected = "NO_SEND" if stage == "guard-denial" else "FAILURE_PRE_POST"
+        assert result.outcome == expected and not result.post_started
+        assert result.resolved_attempt is scope.owner.current
+        assert result.resolved_attempt.outcome == "UNKNOWN"
+        assert result.resolved_attempt.unresolved
+        assert result.resolved_attempt.replacement_blocked
+        assert result.resolved_attempt.reason == "PENDING_CAPTURE_ANOMALY"
+        assert "UNMATCHED_CANDIDATE_TRADE:unattributed-before-post" in (
+            result.resolved_attempt.pending_anomalies
+        )
+        assert len(resolve_calls) == 1
+        terminal = scope.session.terminal_failure_result
+        assert terminal is not None and terminal.source_submission is result
+        assert terminal.cause == "PENDING_CAPTURE_ANOMALY"
+        assert terminal.registered_order_ids == ()
+        assert terminal.unregistered_acknowledgment_ids == ()
+        assert terminal.unresolved_exposure and terminal.human_attention_required
+        assert terminal.cleanup.barrier is None
+        assert terminal.cleanup.closed_order_ids == ()
+        assert scope.session._terminal_stop_latched
+        assert scope.owner.blocks_initial_admission
+        assert client.posts == []
+        assert scope.processor.owned_record("unattributed-order") is None
+        cached = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        assert cached is result
+        assert scope.session.terminal_failure_result is terminal
+        assert len(resolve_calls) == 1 and client.posts == []
+    finally:
+        await gateway.aclose()
+        await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_clean_authoritative_empty_submission_has_no_terminal_cleanup(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient([{"success": False}, {"success": False}])
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        await gateway.aclose()
+    assert result.outcome == "EMPTY" and result.post_started
+    assert result.resolved_attempt is not None
+    assert result.resolved_attempt.outcome == "EMPTY"
+    assert not result.resolved_attempt.unresolved
+    assert scope.session.terminal_failure_result is None
+    assert not scope.session._terminal_stop_latched
+    assert client.posts and len(client.posts) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
 async def test_terminal_stop_rejects_public_close_and_fill_window_reentry(
     placement_scope, blocked_network, monkeypatch,
 ):
@@ -6030,6 +6141,8 @@ async def test_submission_revalidates_changed_book_after_rate_wait_before_signin
     assert result.outcome == "NO_SEND" and result.guard_reasons == ("PRICE_GATE",)
     assert client.created == [] and client.posts == []
     assert scope.owner.current is not None and scope.owner.current.outcome == "EMPTY"
+    assert scope.session.terminal_failure_result is None
+    assert not scope.session._terminal_stop_latched
     assert blocked_network == []
 
 

@@ -1597,15 +1597,14 @@ class RDPInputSession:
         if self._submission_requires_terminal_stop(result):
             await self._ensure_terminal_failure(
                 resolved_attempt or attempt,
-                cause=result.interruption_reason or result.outcome,
+                cause=self._submission_terminal_cause(result),
                 submission=result,
                 close_budget_s=operation.close_budget_s,
             )
         return result
 
-    @staticmethod
     def _submission_requires_terminal_stop(
-        result: RDPInitialSubmissionResult,
+        self, result: RDPInitialSubmissionResult,
     ) -> bool:
         if not result.authorization_granted:
             return False
@@ -1614,7 +1613,36 @@ class RDPInputSession:
         # A fully acknowledged pair is still unsafe when the caller, deadline,
         # or teardown interrupted its continuation. Keep the immutable COMPLETE
         # result, but connect its actual interruption evidence to terminal close.
-        return result.post_started and result.interruption_reason is not None
+        if result.post_started and result.interruption_reason is not None:
+            return True
+        if result.outcome not in {"NO_SEND", "FAILURE_PRE_POST"}:
+            return False
+
+        # A no-POST wrapper result says this attempt did not send. It does not
+        # make a separately retained unresolved placement capture reliable.
+        # Require the exact current owner snapshot so stale/fabricated caller
+        # evidence cannot trigger the terminal path.
+        resolved = result.resolved_attempt
+        current = self.placement_owner.current
+        return bool(
+            result.attempt is not None and resolved is current
+            and resolved is not None
+            and resolved.attempt_id == result.attempt.attempt_id
+            and resolved.slug == self.bootstrap.market.slug
+            and resolved.condition_id == self.bootstrap.market.condition_id
+            and resolved.outcome in {"PARTIAL", "UNKNOWN"}
+            and resolved.unresolved and resolved.replacement_blocked
+        )
+
+    @staticmethod
+    def _submission_terminal_cause(result: RDPInitialSubmissionResult) -> str:
+        if result.interruption_reason is not None:
+            return result.interruption_reason
+        if result.outcome in {"NO_SEND", "FAILURE_PRE_POST"}:
+            resolved = result.resolved_attempt
+            if resolved is not None and resolved.unresolved:
+                return resolved.reason or "UNRESOLVED_PLACEMENT_CAPTURE"
+        return result.outcome
 
     @property
     def terminal_failure_result(self) -> RDPTerminalFailureResult | None:
