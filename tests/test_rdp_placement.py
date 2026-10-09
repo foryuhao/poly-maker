@@ -5,7 +5,10 @@ import io
 import json
 import logging
 import math
+import os
 import socket
+import subprocess
+import sys
 import threading
 import time
 from contextlib import suppress
@@ -79,6 +82,18 @@ def blocked_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", blocked("create_connection"))
     yield attempts
     assert attempts == []
+
+
+def test_rdp_runtime_import_is_dns_and_socket_blocked():
+    script = "import socket\nattempts = []\ndef blocked(name):\n    def deny(*_args, **_kwargs):\n        attempts.append(name)\n        raise AssertionError('network during import: ' + name)\n    return deny\nsocket.socket.connect = blocked('socket.connect')\nsocket.socket.connect_ex = blocked('socket.connect_ex')\nsocket.getaddrinfo = blocked('getaddrinfo')\nsocket.create_connection = blocked('create_connection')\nimport polymaker.rdp_runtime\nprint(len(attempts))\n"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(("src", env.get("PYTHONPATH", "")))
+    completed = subprocess.run(
+        [sys.executable, "-c", script], cwd=os.getcwd(), env=env,
+        text=True, capture_output=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "0"
 
 
 @pytest.fixture
@@ -4916,8 +4931,12 @@ async def test_authorized_submission_retains_categorical_failure_without_raw_sen
 
     assert result.outcome == ("FAILURE_PRE_POST" if failure_stage == "sign" else "UNKNOWN")
     assert result.post_started is (failure_stage == "post")
-    assert scope.owner.current is not None and scope.owner.current.unresolved
-    assert scope.owner.blocks_initial_admission
+    assert scope.owner.current is not None
+    assert scope.owner.current.unresolved is (failure_stage == "post")
+    assert scope.owner.blocks_initial_admission is (failure_stage == "post")
+    assert (scope.session.terminal_failure_result is None
+            if failure_stage == "sign"
+            else scope.session.terminal_failure_result is not None)
     assert sentinel not in repr(result) and sentinel not in capsys.readouterr().err
     if failure_stage == "sign":
         assert client.posts == []
@@ -5052,7 +5071,10 @@ async def test_authorized_submission_retains_actual_gateway_outcome_matrix(
         await gateway.aclose()
     assert result.outcome == expected
     assert result.post_started and len(client.posts) == 1
-    assert result.resolved_attempt is scope.owner.current
+    if expected == "PARTIAL":
+        assert result.resolved_attempt is not scope.owner.current
+    else:
+        assert result.resolved_attempt is scope.owner.current
     assert result.resolved_attempt.replacement_blocked is blocked
     assert result.resolved_attempt.observed_order_ids == observed
     assert blocked_network == []
@@ -5151,7 +5173,15 @@ async def test_submission_keeps_actual_owner_state_when_resolve_raises(
         await gateway.aclose()
     assert result.outcome == "RESOLUTION_ERROR"
     assert result.resolution_error_type == "RuntimeError"
-    assert result.resolved_attempt is scope.owner.current
+    if resolution_stage == "before-update":
+        assert result.resolved_attempt is scope.owner.current
+    elif result.resolved_attempt.acknowledged_order_ids:
+        # Terminal cleanup advances the current owner snapshot while the
+        # submission result preserves its original resolver evidence.
+        assert result.resolved_attempt is not scope.owner.current
+        assert result.resolved_attempt.attempt_id == scope.owner.current.attempt_id
+    else:
+        assert result.resolved_attempt is scope.owner.current
     assert result.resolved_attempt.outcome == (
         expected_owner if resolution_stage == "after-update" else "ARMED")
     evidence = result.gateway_evidence
@@ -5167,6 +5197,320 @@ async def test_submission_keeps_actual_owner_state_when_resolve_raises(
     await scope.session.aclose()
     assert len(calls) == 1
     assert scope.session._initial_submission_result.gateway_evidence is evidence
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_partial_submission_latches_stop_and_closes_only_registered_scope(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt_quotes = admission.candidate.quotes
+    yes_quote = next(q for q in attempt_quotes if q.token_id == "yes-token")
+    gateway, client = _close_gateway(
+        scope, attempt_quotes,
+        fill=("yes-token", Decimal("1")),
+        trades=(_rest_trade("yes-order", "yes-token", str(yes_quote.price), "1",
+                            trade_id="terminal-confirmed-fill"),),
+    )
+    # The unaccepted leg and the ambiguous observed ID do not exist in this
+    # fake venue. They remain evidence, never cleanup targets.
+    client.rows.pop("no-order")
+    client.posts = []
+
+    def post_orders(_orders, *, post_only):
+        assert post_only is True
+        client.posts.append("POST")
+        return [
+            {"success": True, "orderID": "yes-order"},
+            {"success": None, "orderID": "seen-no"},
+        ]
+
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.post_orders = post_orders
+    gateway._derive_only = True
+    try:
+        submission = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        assert submission.outcome == "PARTIAL"
+        assert terminal is not None and terminal.stop_reason == "STATE_UNRELIABLE"
+        assert terminal.registered_order_ids == ("yes-order",)
+        assert terminal.closed_order_ids == ("yes-order",)
+        assert terminal.unregistered_acknowledgment_ids == ()
+        assert terminal.observed_order_ids == ("seen-no",)
+        assert terminal.registered_reconciliation_complete
+        assert terminal.unresolved_exposure
+        assert terminal.confirmed_inventory is not None
+        assert terminal.confirmed_inventory.qy == 1
+        assert terminal.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
+        assert client.cancel_calls == [("yes-order",)]
+        assert scope.session.terminal_failure_result is terminal
+        assert scope.session.initial_cycle_completion_result is None
+        assert scope.session._terminal_stop_latched
+
+        denied = await scope.session.initial_normal_admission()
+        assert not denied.eligible and denied.reason == "TERMINAL_STOP_LATCHED"
+        with pytest.raises(RDPPlacementError, match="TERMINAL_STOP_LATCHED"):
+            scope.session.arm_initial_normal_placement(admission)
+        permission = scope.session._initial_submission_permission_failure(
+            scope.session._initial_submission_operation,
+        )
+        assert permission == "TERMINAL_STOP_LATCHED"
+        assert len(client.posts) == 1
+    finally:
+        await gateway.aclose()
+    await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_zero_id_post_failure_has_no_speculative_cancel(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    gateway, client = _close_gateway(scope, admission.candidate.quotes)
+    client.posts = []
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+
+    def failed_post(*_args, **_kwargs):
+        client.posts.append("POST")
+        raise RuntimeError("private sentinel")
+
+    client.post_orders = failed_post
+    gateway._derive_only = True
+    try:
+        submission = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        assert submission.outcome == "UNKNOWN" and submission.post_started
+        assert terminal is not None
+        assert terminal.registered_order_ids == ()
+        assert terminal.closed_order_ids == ()
+        assert terminal.unregistered_acknowledgment_ids == ()
+        assert terminal.observed_order_ids == ()
+        assert terminal.cleanup.barrier is None
+        assert terminal.unresolved_exposure and terminal.human_attention_required
+        assert client.cancel_calls == [] and len(client.posts) == 1
+    finally:
+        await gateway.aclose()
+    await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_incomplete_cleanup_retains_preclose_confirmed_inventory(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    quotes = admission.candidate.quotes
+    yes_quote = next(q for q in quotes if q.token_id == "yes-token")
+    gateway, client = _close_gateway(scope, quotes)
+    client.rows.pop("no-order")
+    client.posts = []
+    client.get_order_error = RuntimeError("private read failure")
+
+    def post_orders(_orders, *, post_only):
+        assert post_only is True
+        client.posts.append("POST")
+        return [
+            {"success": True, "orderID": "yes-order"},
+            {"success": None, "orderID": "seen-no"},
+        ]
+
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.post_orders = post_orders
+    gateway._derive_only = True
+    original_resolve = scope.owner.resolve
+
+    def resolve_with_pending_confirmed_fill(attempt, outcome):
+        matched = TradeEvent(
+            "yes-token", Side.BUY, yes_quote.price, 1,
+            "terminal-preclose-confirmed", TradeState.MATCHED,
+            time.time(), "yes-order", scope.market.condition_id,
+        )
+        for event in (matched, replace(matched, status=TradeState.CONFIRMED)):
+            scope.processor.on_trade(
+                event, scope.market.condition_id, received_at_us=1_800_000_000_000_000,
+                received_monotonic_ns=2_000_000_000_000,
+                connection_generation=4,
+            )
+        return original_resolve(attempt, outcome)
+
+    monkeypatch.setattr(scope.owner, "resolve", resolve_with_pending_confirmed_fill)
+    try:
+        await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        assert terminal is not None
+        assert not terminal.registered_reconciliation_complete
+        assert terminal.unresolved_exposure
+        assert terminal.confirmed_inventory is not None
+        assert terminal.confirmed_inventory.qy == 1
+        assert terminal.confirmed_inventory_order_ids == ("yes-order",)
+        assert terminal.inventory_capture_phase == "BEFORE_CLEANUP"
+        assert terminal.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
+        assert "yes-order" in scope.processor.quarantined_orders
+        assert client.cancel_calls == [("yes-order",)]
+        assert client.posts == ["POST"]
+    finally:
+        await gateway.aclose()
+    await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolution_stage", ["before-update", "after-update"])
+async def test_terminal_resolver_failure_preserves_acknowledgment_without_adoption(
+    placement_scope, blocked_network, monkeypatch, resolution_stage,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    quotes = admission.candidate.quotes
+    gateway, client = _close_gateway(scope, quotes)
+    client.rows.pop("no-order")
+    client.posts = []
+
+    def post_orders(_orders, *, post_only):
+        assert post_only is True
+        client.posts.append("POST")
+        return [
+            {"success": True, "orderID": "yes-order"},
+            {"success": None, "orderID": "seen-no"},
+        ]
+
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.post_orders = post_orders
+    gateway._derive_only = True
+    original_resolve = scope.owner.resolve
+    calls = []
+
+    def fail_resolution(attempt, outcome):
+        calls.append(outcome)
+        if resolution_stage == "after-update":
+            original_resolve(attempt, outcome)
+        raise RuntimeError("private resolution sentinel")
+
+    monkeypatch.setattr(scope.owner, "resolve", fail_resolution)
+    try:
+        submission = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        assert submission.outcome == "RESOLUTION_ERROR"
+        assert terminal is not None
+        assert len(calls) == 1 and len(client.posts) == 1
+        assert terminal.unregistered_acknowledgment_ids == (
+            ("yes-order",) if resolution_stage == "before-update" else ()
+        )
+        assert terminal.observed_order_ids == ("seen-no",)
+        if resolution_stage == "before-update":
+            assert terminal.registered_order_ids == ()
+            assert client.cancel_calls == []
+            assert scope.owner.current.outcome == "ARMED"
+        else:
+            assert terminal.registered_order_ids == ("yes-order",)
+            assert client.cancel_calls == [("yes-order",)]
+        assert "private resolution sentinel" not in repr(terminal)
+    finally:
+        await gateway.aclose()
+    await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sdk_method", ["open_orders", "cancel", "get_order", "get_trades"])
+@pytest.mark.parametrize("interruption", ["caller-cancel", "teardown"])
+async def test_terminal_cleanup_drains_blocked_sdk_operation_before_release(
+    placement_scope, blocked_network, sdk_method, interruption,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
+    client.rows.pop("no-order")
+    client.posts = []
+
+    def post_orders(_orders, *, post_only):
+        assert post_only is True
+        client.posts.append("POST")
+        return [
+            {"success": True, "orderID": "yes-order"},
+            {"success": None, "orderID": "seen-no"},
+        ]
+
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.post_orders = post_orders
+    cancel_started = threading.Event()
+    release_cancel = threading.Event()
+
+    def block_cancel():
+        cancel_started.set()
+        if not release_cancel.wait(timeout=5):
+            raise RuntimeError("fake cancel release timed out")
+
+    if sdk_method == "open_orders":
+        client.open_hook = lambda count: block_cancel() if count == 2 else None
+    elif sdk_method == "cancel":
+        client.cancel_hook = block_cancel
+    elif sdk_method == "get_order":
+        client.get_order_hook = lambda *_args: block_cancel()
+    else:
+        client.get_trades_hook = lambda *_args: block_cancel()
+    operation = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    teardown = None
+    try:
+        assert await asyncio.wait_for(
+            asyncio.to_thread(cancel_started.wait, 2), timeout=3,
+        )
+        if interruption == "caller-cancel":
+            operation.cancel()
+            await asyncio.sleep(0)
+            operation.cancel()
+            await asyncio.sleep(0)
+            assert not operation.done()
+            release_cancel.set()
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+        else:
+            teardown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not teardown.done()
+            release_cancel.set()
+            await teardown
+            assert (await operation).outcome == "PARTIAL"
+        terminal = scope.session.terminal_failure_result
+        assert terminal is not None and terminal.registered_order_ids == ("yes-order",)
+        if sdk_method == "cancel":
+            assert client.cancel_calls == [("yes-order",)]
+        elif sdk_method == "open_orders":
+            assert client.open_count >= 2
+        elif sdk_method == "get_order":
+            assert client.get_order_count > 0
+        else:
+            assert client.get_trades_count > 0
+        assert client.posts == ["POST"]
+    finally:
+        release_cancel.set()
+        if not operation.done():
+            await operation
+        if teardown is not None and not teardown.done():
+            await teardown
+        await gateway.aclose()
+        if not scope.session._closed:
+            await scope.session.aclose()
     assert blocked_network == []
 
 
@@ -5539,7 +5883,10 @@ async def test_submission_deadline_after_post_started_drains_actual_gateway_outc
         await gateway.aclose()
     assert result.outcome == expected and result.post_started
     assert result.interruption_reason == "ORDER_OPERATION_DEADLINE"
-    assert result.resolved_attempt is scope.owner.current
+    if expected == "PARTIAL":
+        assert result.resolved_attempt is not scope.owner.current
+    else:
+        assert result.resolved_attempt is scope.owner.current
     assert len(client.posts) == 0  # The controlled blocking method owns the SDK POST call.
     assert blocked_network == []
 

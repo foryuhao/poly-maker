@@ -355,6 +355,32 @@ class RDPInitialCycleCompletion:
     execution_authorized: bool = field(default=False, init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class RDPTerminalFailureResult:
+    """Retained fail-closed STOP evidence for one failed initial attempt."""
+
+    slug: str
+    condition_id: str
+    attempt_id: int
+    stop_reason: str
+    cause: str
+    source_submission: RDPInitialSubmissionResult | None
+    source_cycle_trigger: str | None
+    cleanup: RDPInitialPlacementClose
+    registered_order_ids: tuple[str, ...]
+    closed_order_ids: tuple[str, ...]
+    unregistered_acknowledgment_ids: tuple[str, ...]
+    observed_order_ids: tuple[str, ...]
+    registered_reconciliation_complete: bool
+    unresolved_exposure: bool
+    confirmed_inventory: Any | None
+    confirmed_inventory_order_ids: tuple[str, ...]
+    inventory_capture_phase: str
+    inventory_scope: str
+    human_attention_required: bool
+    execution_authorized: bool = field(default=False, init=False)
+
+
 class RDPInputSession:
     """Retain one public service and one authenticated user/account owner."""
 
@@ -443,6 +469,11 @@ class RDPInputSession:
         self._initial_cycle_interrupt_reason: str | None = None
         self._initial_cycle_wakeup = asyncio.Event()
         self._initial_cycle_delegate_tasks: set[asyncio.Task[Any]] = set()
+        self._terminal_stop_latched = False
+        self._terminal_stop_cause: str | None = None
+        self._terminal_failure_task: asyncio.Task[RDPTerminalFailureResult] | None = None
+        self._terminal_failure_result: RDPTerminalFailureResult | None = None
+        self._terminal_delegate_tasks: set[asyncio.Task[Any]] = set()
         self.placement_owner = RDPPlacementOwner(
             bootstrap, self.processor,
             getattr(self.user_session, "store", getattr(self.processor, "_store", None)),
@@ -990,6 +1021,8 @@ class RDPInputSession:
     def _admission_precondition_failure(self) -> str | None:
         if self._closed:
             return "SESSION_CLOSED"
+        if self._terminal_stop_latched:
+            return "TERMINAL_STOP_LATCHED"
         if self._now() >= self.bootstrap.end_epoch:
             return "MARKET_EXPIRED"
         failure = self._health_failure()
@@ -1014,12 +1047,15 @@ class RDPInputSession:
             current = asyncio.current_task()
         except RuntimeError:
             current = None
-        return current is not task
+        return (current is not task
+                and current not in self._terminal_delegate_tasks)
 
     def arm_initial_normal_placement(
         self, admission: RDPInitialNormalAdmission,
     ) -> RDPPlacementAttempt:
         """Arm existing processor capture for an admitted pair; never sends it."""
+        if self._terminal_stop_latched:
+            raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         if self._initial_submission_conflicts_with_current_task():
             raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if self._admission_active:
@@ -1237,6 +1273,8 @@ class RDPInputSession:
         self, operation: _RDPInitialSubmissionOperation,
     ) -> str | None:
         """Recheck only immutable operation scope and clocks at the SDK guard edge."""
+        if self._terminal_stop_latched:
+            return "TERMINAL_STOP_LATCHED"
         with operation.guard_lock:
             if operation.send_revoked or operation.interruption_reason is not None:
                 return operation.interruption_reason or "SUBMISSION_SEND_REVOKED"
@@ -1488,8 +1526,21 @@ class RDPInputSession:
         operation.gateway_evidence = _gateway_placement_evidence(
             gateway_outcome, post_started=operation.post_started.is_set(),
         )
+        resolve_outcome = gateway_outcome
+        if (not operation.post_started.is_set()
+                and isinstance(gateway_outcome, PlacementNotAttempted)):
+            # The typed gateway result proves no POST began. Discard the armed
+            # processor capture as a clean no-send; do not turn it into a false
+            # unknown placement or terminal cancellation request.
+            resolve_outcome = []
+        elif (not operation.post_started.is_set()
+              and isinstance(gateway_outcome, PlacementUnknown)
+              and gateway_outcome.post_attempted is False
+              and not gateway_outcome.acknowledged_orders
+              and not gateway_outcome.observed_order_ids):
+            resolve_outcome = []
         try:
-            resolved_attempt = self.resolve_initial_normal_placement(attempt, gateway_outcome)
+            resolved_attempt = self.resolve_initial_normal_placement(attempt, resolve_outcome)
         except BaseException as exc:  # noqa: BLE001 - inspect retained owner; never resolve twice
             resolution_error_type = type(exc).__name__
             current = self.placement_owner.current
@@ -1506,15 +1557,19 @@ class RDPInputSession:
             outcome = "FAILURE_PRE_POST"
             reason = gateway_outcome.reason or "PLACEMENT_NOT_ATTEMPTED"
         elif isinstance(gateway_outcome, PlacementUnknown):
-            current = resolved_attempt
-            if current is not None and current.outcome == "PARTIAL":
-                outcome = "PARTIAL"
+            if resolve_outcome == [] and not post_started:
+                outcome = "NO_SEND"
+                reason = gateway_outcome.reason or "PLACEMENT_NOT_ATTEMPTED"
             else:
-                outcome = "UNKNOWN"
-            reason = (gateway_outcome.reason or current.reason
-                      if current is not None else gateway_outcome.reason)
-            if reason is None:
-                reason = "PLACEMENT_OUTCOME_UNKNOWN"
+                current = resolved_attempt
+                if current is not None and current.outcome == "PARTIAL":
+                    outcome = "PARTIAL"
+                else:
+                    outcome = "UNKNOWN"
+                reason = (gateway_outcome.reason or current.reason
+                          if current is not None else gateway_outcome.reason)
+                if reason is None:
+                    reason = "PLACEMENT_OUTCOME_UNKNOWN"
         elif isinstance(gateway_outcome, BaseException):
             outcome = "UNKNOWN"
             reason = f"PLACEMENT_ERROR:{type(gateway_outcome).__name__}"
@@ -1538,7 +1593,237 @@ class RDPInputSession:
             guard_reasons, operation.interruption_reason,
             resolution_error_type, operation.gateway_evidence,
         )
-        return self._retain_initial_submission_result(result)
+        result = self._retain_initial_submission_result(result)
+        if self._submission_requires_terminal_stop(result):
+            await self._ensure_terminal_failure(
+                resolved_attempt or attempt, cause=result.outcome, submission=result,
+                close_budget_s=operation.close_budget_s,
+            )
+        return result
+
+    @staticmethod
+    def _submission_requires_terminal_stop(
+        result: RDPInitialSubmissionResult,
+    ) -> bool:
+        if not result.authorization_granted:
+            return False
+        return result.outcome in {"PARTIAL", "UNKNOWN", "RESOLUTION_ERROR"}
+
+    @property
+    def terminal_failure_result(self) -> RDPTerminalFailureResult | None:
+        """Return the cached no-new-risk STOP evidence, if a failure latched."""
+        return self._terminal_failure_result
+
+    def _latch_terminal_stop(self, cause: str) -> None:
+        if not self._terminal_stop_latched:
+            self._terminal_stop_latched = True
+            self._terminal_stop_cause = cause
+            log.error(
+                "rdp_terminal_stop_latched", action="STOP",
+                stop_reason="STATE_UNRELIABLE", cause=cause,
+                slug=self.bootstrap.market.slug,
+                condition_id=self.bootstrap.market.condition_id,
+                execution_authorized=False,
+            )
+
+    def _terminal_scope(self, attempt: RDPPlacementAttempt) -> tuple[str, ...] | None:
+        current = self.placement_owner.current
+        if (current is not attempt or attempt.outcome == "ARMED"
+                or attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id):
+            return None
+        if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) is None:
+            return None
+        return tuple(sorted(set(attempt.acknowledged_order_ids)))
+
+    async def _ensure_terminal_failure(
+        self, attempt: RDPPlacementAttempt, *, cause: str,
+        submission: RDPInitialSubmissionResult | None = None,
+        cycle_trigger: str | None = None, close_budget_s: float,
+        existing_close: RDPInitialPlacementClose | None = None,
+        inventory_before_cleanup: tuple[Any | None, tuple[str, ...], str] | None = None,
+    ) -> RDPTerminalFailureResult:
+        """Latch STOP, then retain one bounded registered-scope cleanup result."""
+        self._latch_terminal_stop(cause)
+        if self._terminal_failure_result is not None:
+            return self._terminal_failure_result
+        if existing_close is not None:
+            return self._retain_terminal_failure(
+                attempt, cause=cause, submission=submission,
+                cycle_trigger=cycle_trigger, cleanup=existing_close,
+                inventory_before_cleanup=(inventory_before_cleanup
+                                          or self._capture_terminal_inventory(attempt)),
+            )
+        task = self._terminal_failure_task
+        if task is None:
+            task = asyncio.create_task(
+                self._run_terminal_failure(
+                    attempt, cause=cause, submission=submission,
+                    cycle_trigger=cycle_trigger, close_budget_s=close_budget_s,
+                    inventory_before_cleanup=inventory_before_cleanup,
+                ),
+                name="rdp-terminal-failure-cleanup",
+            )
+            self._terminal_failure_task = task
+            self._terminal_delegate_tasks.add(task)
+            self._register_initial_cycle_delegate(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await _drain_read_task(task)
+            raise
+        finally:
+            self._terminal_delegate_tasks.discard(task)
+            self._initial_cycle_delegate_tasks.discard(task)
+
+    async def _run_terminal_failure(
+        self, attempt: RDPPlacementAttempt, *, cause: str,
+        submission: RDPInitialSubmissionResult | None,
+        cycle_trigger: str | None, close_budget_s: float,
+        inventory_before_cleanup: tuple[Any | None, tuple[str, ...], str] | None,
+    ) -> RDPTerminalFailureResult:
+        inventory_before_cleanup = (
+            inventory_before_cleanup or self._capture_terminal_inventory(attempt)
+        )
+        registered = self._terminal_scope(attempt)
+        if registered is None:
+            cleanup = self._placement_close_result(
+                self.placement_owner.current or attempt, None, None,
+                reason="TERMINAL_OWNERSHIP_SCOPE_UNPROVABLE",
+                barrier_complete=False,
+            )
+        elif registered:
+            try:
+                cleanup = await self.close_initial_normal_placement(
+                    attempt,
+                    deadline=asyncio.get_running_loop().time() + close_budget_s,
+                    _window_continuation_safe=False,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - retain category only
+                cleanup = self._placement_close_result(
+                    self.placement_owner.current or attempt, None, None,
+                    reason=f"TERMINAL_CLOSE_FAILED:{type(exc).__name__}",
+                    barrier_complete=False,
+                )
+        else:
+            cleanup = self._placement_close_result(
+                attempt, None, None,
+                reason=("PLACEMENT_OUTCOME_UNRESOLVED" if attempt.unresolved
+                        else "NO_ATTRIBUTABLE_ORDERS"),
+                barrier_complete=False,
+            )
+        return self._retain_terminal_failure(
+            attempt, cause=cause, submission=submission,
+            cycle_trigger=cycle_trigger, cleanup=cleanup,
+            inventory_before_cleanup=inventory_before_cleanup,
+        )
+
+    def _capture_terminal_inventory(
+        self, attempt: RDPPlacementAttempt,
+    ) -> tuple[Any | None, tuple[str, ...], str]:
+        current = self.placement_owner.current
+        if current is None or self._terminal_scope(current) is None:
+            return None, (), "NONE"
+        registered = tuple(sorted(set(current.acknowledged_order_ids)))
+        inventory_order_ids = tuple(
+            order_id for order_id in registered
+            if (order_id not in self.processor.quarantined_orders
+                and not self.processor.has_unresolved_fill_key(order_id)
+                and not self.processor.has_failed_fill(order_id))
+        )
+        if not inventory_order_ids:
+            return None, (), "NONE"
+        try:
+            inventory = snapshot_inventory(
+                self.bootstrap.market, self.processor, set(inventory_order_ids),
+            )
+        except Exception:  # noqa: BLE001 - keep uncertainty categorical
+            return None, (), "REGISTERED_ORDERS_UNAVAILABLE"
+        scope = (
+            "REGISTERED_ORDERS_CONFIRMED_FILLS"
+            if inventory_order_ids == registered
+            else "CLEAN_REGISTERED_SUBSET_CONFIRMED_FILLS"
+        )
+        return inventory, inventory_order_ids, scope
+
+    def _retain_terminal_failure(
+        self, attempt: RDPPlacementAttempt, *, cause: str,
+        submission: RDPInitialSubmissionResult | None,
+        cycle_trigger: str | None, cleanup: RDPInitialPlacementClose,
+        inventory_before_cleanup: tuple[Any | None, tuple[str, ...], str],
+    ) -> RDPTerminalFailureResult:
+        if self._terminal_failure_result is not None:
+            return self._terminal_failure_result
+        current = self.placement_owner.current
+        evidence = submission.gateway_evidence if submission is not None else None
+        registered = tuple(sorted(set(
+            current.acknowledged_order_ids if current is not None else ()
+        )))
+        registered_set = set(registered)
+        acknowledgment_ids = (
+            tuple(order.order_id for order in evidence.acknowledged_orders)
+            if evidence is not None else ()
+        )
+        unregistered = tuple(order_id for order_id in dict.fromkeys(acknowledgment_ids)
+                             if order_id not in registered_set)
+        observed_values = list(evidence.observed_order_ids if evidence is not None else ())
+        if current is not None:
+            observed_values.extend(current.observed_order_ids)
+        observed = tuple(order_id for order_id in dict.fromkeys(observed_values)
+                         if order_id not in registered_set
+                         and order_id not in set(acknowledgment_ids))
+        inventory_after, inventory_ids_after, scope_after = (
+            self._capture_terminal_inventory(current or attempt)
+        )
+        inventory_before, inventory_ids_before, scope_before = inventory_before_cleanup
+        if (inventory_before is not None
+                and inventory_ids_before != inventory_ids_after):
+            inventory = inventory_before
+            inventory_order_ids = inventory_ids_before
+            inventory_scope = scope_before
+            inventory_phase = "BEFORE_CLEANUP"
+        else:
+            inventory = inventory_after
+            inventory_order_ids = inventory_ids_after
+            inventory_scope = scope_after
+            inventory_phase = "AFTER_CLEANUP"
+        barrier = cleanup.barrier
+        registered_complete = bool(
+            cleanup.barrier_complete and barrier is not None and barrier.complete
+            and barrier.reason is None and barrier.inventory is not None
+        )
+        unresolved = bool(
+            (current.unresolved if current is not None else True)
+            or unregistered or observed or not registered_complete
+        )
+        result = RDPTerminalFailureResult(
+            attempt.slug, attempt.condition_id, attempt.attempt_id,
+            "STATE_UNRELIABLE", cause, submission, cycle_trigger, cleanup,
+            registered, cleanup.closed_order_ids, unregistered, observed,
+            registered_complete, unresolved, inventory, inventory_order_ids,
+            inventory_phase, inventory_scope,
+            unresolved or cleanup.replacement_blocked,
+        )
+        self._terminal_failure_result = result
+        log.error(
+            "rdp_terminal_failure_finished", action="STOP",
+            stop_reason=result.stop_reason, cause=result.cause,
+            condition_id=result.condition_id, attempt_id=result.attempt_id,
+            registered_order_ids=result.registered_order_ids,
+            closed_order_ids=result.closed_order_ids,
+            unregistered_acknowledgment_ids=result.unregistered_acknowledgment_ids,
+            observed_order_ids=result.observed_order_ids,
+            registered_reconciliation_complete=result.registered_reconciliation_complete,
+            unresolved_exposure=result.unresolved_exposure,
+            inventory_scope=result.inventory_scope,
+            confirmed_inventory_order_ids=result.confirmed_inventory_order_ids,
+            inventory_capture_phase=result.inventory_capture_phase,
+            human_attention_required=result.human_attention_required,
+            execution_authorized=False,
+        )
+        return result
 
     def _retain_initial_submission_result(
         self, result: RDPInitialSubmissionResult,
@@ -1947,6 +2232,8 @@ class RDPInputSession:
                     and _initial_cycle_scope_identity(current) == self._initial_cycle_identity):
                 return self._initial_cycle_result
             raise RDPPlacementError("INITIAL_CYCLE_ALREADY_USED")
+        if self._terminal_stop_latched:
+            raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         active = self._initial_cycle_task
         if active is not None and not active.done():
             raise RDPPlacementError("INITIAL_CYCLE_IN_PROGRESS")
@@ -2149,13 +2436,33 @@ class RDPInputSession:
         if interruption is not None:
             trigger = interruption
             healthy_close = False
+        expected_fill_close = bool(
+            fill_completion is not None
+            and fill_completion.trigger == "WINDOW_EXPIRED"
+            and fill_completion.close_result.barrier_complete
+            and fill_completion.close_result.next_mode is not None
+            and not fill_completion.close_result.replacement_blocked
+        )
+        terminal_inventory_before = self._capture_terminal_inventory(attempt)
+        terminal_before_close = not healthy_close and not expected_fill_close
+        if terminal_before_close:
+            self._latch_terminal_stop(trigger)
         try:
-            close_result = (fill_completion.close_result if fill_completion is not None
-                            else await self.close_initial_normal_placement(
-                                attempt,
-                                deadline=(asyncio.get_running_loop().time() + close_budget_s),
-                                _window_continuation_safe=healthy_close,
-                            ))
+            if fill_completion is not None:
+                close_result = fill_completion.close_result
+            elif terminal_before_close:
+                terminal = await self._ensure_terminal_failure(
+                    attempt, cause=trigger, cycle_trigger=trigger,
+                    close_budget_s=close_budget_s,
+                    inventory_before_cleanup=terminal_inventory_before,
+                )
+                close_result = terminal.cleanup
+            else:
+                close_result = await self.close_initial_normal_placement(
+                    attempt,
+                    deadline=(asyncio.get_running_loop().time() + close_budget_s),
+                    _window_continuation_safe=healthy_close,
+                )
         except asyncio.CancelledError:
             # The owner remains responsible for closure. This is only expected
             # during teardown and must never escape as an unowned task failure.
@@ -2168,6 +2475,22 @@ class RDPInputSession:
                 attempt, None, None,
                 reason=f"INITIAL_CYCLE_CLOSE_FAILED:{type(exc).__name__}",
                 barrier_complete=False,
+            )
+
+        unsafe_close = bool(
+            not close_result.barrier_complete or close_result.replacement_blocked
+            or close_result.next_mode is None or close_result.capital is None
+            or not close_result.capital.certified
+        )
+        if (not self._terminal_stop_latched
+                and (not healthy_close and not expected_fill_close or unsafe_close)):
+            self._latch_terminal_stop(trigger)
+        if self._terminal_stop_latched and self._terminal_failure_result is None:
+            await self._ensure_terminal_failure(
+                attempt, cause=self._terminal_stop_cause or trigger,
+                cycle_trigger=trigger, close_budget_s=close_budget_s,
+                existing_close=close_result,
+                inventory_before_cleanup=terminal_inventory_before,
             )
 
         if self._initial_cycle_interrupt_reason is not None:
@@ -2350,6 +2673,8 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt,
     ) -> RDPInitialPreFillDecision:
         """Evaluate the retained acknowledged pair without taking an order action."""
+        if self._terminal_stop_latched:
+            return self._prefill_decision("CLOSE", "TERMINAL_STOP_LATCHED", attempt)
         if self._initial_submission_conflicts_with_current_task():
             return self._prefill_decision("CLOSE", "INITIAL_SUBMISSION_IN_PROGRESS", attempt)
         if not self._initial_cycle_call_allowed():
@@ -3219,6 +3544,9 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPFillWindowCompletion:
         """Wait for the retained window, then run its existing scoped close once."""
+        if (self._terminal_stop_latched
+                and not self._initial_cycle_call_allowed()):
+            raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         if self._initial_submission_conflicts_with_current_task():
             raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if not self._initial_cycle_call_allowed():
@@ -3345,6 +3673,10 @@ class RDPInputSession:
 
         operational_deadline = asyncio.get_running_loop().time() + close_budget_s
         close_result: RDPInitialPlacementClose
+        terminal_inventory_before = self._capture_terminal_inventory(attempt)
+        terminal_expected = trigger != "WINDOW_EXPIRED"
+        if terminal_expected:
+            self._latch_terminal_stop(trigger or "FILL_WINDOW_UNRELIABLE")
         try:
             close_result = await self.close_initial_normal_placement(
                 attempt, deadline=operational_deadline,
@@ -3359,6 +3691,20 @@ class RDPInputSession:
                 attempt, None, None,
                 reason=f"COORDINATED_CLOSE_FAILED:{type(exc).__name__}",
                 barrier_complete=False,
+            )
+        terminal_close = bool(
+            not close_result.barrier_complete or close_result.replacement_blocked
+            or close_result.next_mode is None or close_result.capital is None
+            or not close_result.capital.certified
+        )
+        if terminal_close and not self._terminal_stop_latched:
+            self._latch_terminal_stop(trigger or "FILL_WINDOW_CLOSE_UNRELIABLE")
+        if (self._terminal_stop_latched and self._terminal_failure_result is None):
+            await self._ensure_terminal_failure(
+                attempt, cause=self._terminal_stop_cause or trigger or "FILL_WINDOW_UNRELIABLE",
+                cycle_trigger=trigger, close_budget_s=close_budget_s,
+                existing_close=close_result,
+                inventory_before_cleanup=terminal_inventory_before,
             )
         result = RDPFillWindowCompletion(
             attempt_id=attempt.attempt_id, slug=attempt.slug,
@@ -3715,6 +4061,10 @@ class RDPInputSession:
             self._fill_window_cancel_requested = "SESSION_TEARDOWN"
             self._fill_window_wakeup.set()
             interrupted = await _drain_read_task(cycle) or interrupted
+        terminal = self._terminal_failure_task
+        if (terminal is not None and terminal is not asyncio.current_task()
+                and not terminal.done()):
+            interrupted = await _drain_read_task(terminal) or interrupted
         prefill = self._prefill_task
         if (prefill is not None and prefill is not asyncio.current_task()
                 and not prefill.done()):
