@@ -2,7 +2,7 @@
 
 ## State and Authority
 
-Status: PAUSED_FOR_DEVELOPMENT_CONVERGENCE.
+Status: IN_PROGRESS.
 
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
@@ -10,7 +10,7 @@ Branch: rdp-phase0-dev.
 Latest archived implementation: ITER-0024, CODE_READY, final Reviewer06 PASS.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
-Implementation resume authorization: NOT_GRANTED.
+Implementation resume authorization: GRANTED by explicit human resume; ITER-0025 requires a fresh formal Architect Contract.
 
 This register covers the required initial delivery: one explicitly selected BTC 5-minute market inside poly-maker. It does not schedule implementation iterations or design a new platform.
 
@@ -274,17 +274,17 @@ Not required for this delivery:
 
 Safe unknown-state handling, required metrics and final resolved accounting are not optional.
 
-## Pause and Next Action
+## Resume and Current Action
 
-This register authorizes no implementation.
+CONVERGENCE-0001 remains immutable reviewed historical evidence. Human explicitly approved it and resumed development from27908548acbf595e4abdc7282252185d4163e267. The archived next contract remains a DRAFT; Architect must recheck actual code and freeze ITER-0025 before Worker.
 
-The next proposed contract is stored only at docs/development/CONVERGENCE-0001/NEXT_ITERATION_CONTRACT_DRAFT.md.
+Current target: DG-001 authorized initial NORMAL submission. AllDG-001–DG-012 currently OPEN. No gap closes automatically from an iterationPASS; only reviewed full closure or explicit still-open prerequisite evidence updates this register.
 
-After independent document review and archival:
-Development Status: PAUSED_FOR_DEVELOPMENT_CONVERGENCE.
-Current Iteration: NONE.
-Current Stage: AWAITING_EXPLICIT_HUMAN_RESUME.
+Development Status: IN_PROGRESS.
+Current Iteration: ITER-0025.
+Current Stage: ARCHITECT.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
+Main Merge Authorization: NOT_GRANTED.
 
-Await explicit human resume. Do not initialize ITER-0025 or dispatch a Worker from document approval.
+Serial Architect→Worker→Reviewer and automatic repairs/next minimalrequirement-linked iterations are authorized after formal contract approval. Stop only for genuine reservedhuman decision or independently reviewedMICRO_LIVE_READY. No real orders/cancels, strategyextensions, optionalsafetyrelaxation or optionalfeatures.

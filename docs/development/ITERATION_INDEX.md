@@ -50,11 +50,11 @@ Baseline details:
 
 ## Project State
 
-Development Status: `PAUSED_FOR_DEVELOPMENT_CONVERGENCE`
+Development Status: `IN_PROGRESS`
 
-Current Iteration: `NONE`
+Current Iteration: `ITER-0025`
 
-Current Stage: `AWAITING_EXPLICIT_HUMAN_RESUME`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,6 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
+| ITER-0025 | DG-001: authorized initial NORMAL submission | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -100,7 +101,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0024 archived with final Reviewer PASS. CONVERGENCE-0001 document review PASS, ARCHIVED. Reviewed convergence commit281f9565bdb20d3ee23b0fd88189e34ac1fe0451 pushed and exactly verified; additive receipt records archival. Delivery register: DELIVERY_GAPS.md (DG-001–DG-012 all OPEN). Audit: CONVERGENCE-0001/RESULT.md and 04_ARCHIVE_RECEIPT.md; next contract: CONVERGENCE-0001/NEXT_ITERATION_CONTRACT_DRAFT.md, unassigned and NOT AUTHORIZED. Remain PAUSED_FOR_DEVELOPMENT_CONVERGENCE; wait for explicit human resume. No ITER-0025, Worker, implementation or real-money authorization.
+CONVERGENCE-0001 approved and development explicitly resumed from verified27908548acbf595e4abdc7282252185d4163e267. ITER-0025 Architect rechecks DG-001 draft against actual code before formal approval/Worker. All delivery gaps remain OPEN until full reviewed closure. Automatic serial iterations authorized; real-money trading and main merge NOT_GRANTED.
 
 ---
 
