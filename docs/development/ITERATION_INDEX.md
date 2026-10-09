@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Latest archived implementation HEAD:
 
-`eb35b7a663c7e10f8f34e700a0d7dbe922590c77`
+`b0de5de89d23441b2fe6f7531ab092874678db24`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0025`
+Current Iteration: `ITER-0026`
 
-Current Stage: `ARCHIVAL`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | PENDING | NOT_RUN | KEEP |
+| ITER-0026 | OPEN-gap next smallest delivery behavior; Architect selecting | IN_PROGRESS | NOT_STARTED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -173,3 +174,5 @@ ITER-0025 independent Reviewer04 returned RETURN_TO_WORKER: preserve actual type
 Worker05 repair reports 12 targeted, 780 affected, and 1625 passed / 2 skipped full-suite checks, with zero network attempts. Reviewer re-review of the exact repaired tree is pending; DG-001 remains OPEN.
 
 ITER-0025 final Reviewer06 PASS verifies DG-001 complete closure. DG-001 is CLOSED; DG-002–DG-012 remain OPEN. Final full suite 1625 passed / 2 skipped; independent 40-test matrix and original failure probes pass. Archival and remote verification precede the next required behavior.
+
+ITER-0025 reviewed implementation b0de5de89d23441b2fe6f7531ab092874678db24 was pushed and remotely verified; see 07_ARCHIVE_RECEIPT.md. ITER-0026 is initialized for Architect selection. Human resume authorizes automatic continuation; real-money and main merge remain denied.
