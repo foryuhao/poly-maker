@@ -89,6 +89,8 @@ Missing behavior: Every subsequent NORMAL/REBALANCE order must use the same auth
 
 Closure: Integrated consecutive-cycle tests preserve all prior confirmed fills/costs, account for partial remaining reservations exactly once, reject stale or contradictory account/order/fill evidence and enforce actual cash/allowance plus the Frozen capital model before each new order.
 
+Verified partial prerequisite: ITER-0027/01_ARCHITECT.md, 03_WORKER.md and independent 04_REVIEWER.md PASS establish retained actual-cycle next-action factual admission with current confirmed inventory/cost, fresh physical backing, both mode boundaries and fail-closed read/drain behavior. Full1683 passed / 2 skipped; independent22 probes passed; zero network attempts. DG-002 stays OPEN: actual successive sends and cumulative-cycle consumption above remain unimplemented and unverified.
+
 ### DG-003 — Repeated NORMAL Operation in One Market
 
 Status: OPEN.
@@ -284,7 +286,7 @@ CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is ar
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0027.
-Current Stage: WORKER.
+Current Stage: ARCHIVE_PENDING.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.

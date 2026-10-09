@@ -43,7 +43,7 @@ from polymaker.execution.rdp_lifecycle import close_rdp_cycle
 from polymaker.execution.rdp_placement import RDPPlacementError
 from polymaker.logging import configure as configure_logging
 from polymaker.marketdata.parse import TradePrint
-from polymaker.rdp_account import RDPAccountError
+from polymaker.rdp_account import RDPAccountError, RDPOrderEvidence
 from polymaker.rdp_live import (
     RDPBootstrap,
     RDPBootstrapError,
@@ -57,7 +57,11 @@ from polymaker.rdp_runtime import (
     RDPInputSession,
     _StrictCloseGateway,
 )
-from polymaker.risk.rdp_capital import RDPInitialBackingResult, project_rdp_capital
+from polymaker.risk.rdp_capital import (
+    RDPInitialBackingResult,
+    RDPMode,
+    project_rdp_capital,
+)
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import TradeEvent, UserEventProcessor
 from polymaker.strategy.rdp_accounting import snapshot_inventory
@@ -216,18 +220,25 @@ class FakeAccountReadGateway:
         )
         self.spender = "0x" + "a" * 40
         self.positions_hook = None
+        self.positions_result = {
+            "yes-token": ("0", "0"), "no-token": ("0", "0"),
+        }
+        self.open_orders_result = []
+        self.balance_allowance_result = {
+            "balance": "30000000", "allowances": {self.spender: "30000000"},
+        }
 
     async def open_orders(self, *, strict_account, exact_decimal):
         self.calls.append("open_orders")
         assert strict_account is True and exact_decimal is True
-        return []
+        return self.open_orders_result
 
     async def positions(self, *, strict_account):
         self.calls.append("positions")
         assert strict_account is True
         if callable(self.positions_hook):
             self.positions_hook()
-        return {"yes-token": ("0", "0"), "no-token": ("0", "0")}
+        return self.positions_result
 
     async def required_collateral_spenders(self, _market):
         self.calls.append("required_collateral_spenders")
@@ -235,7 +246,7 @@ class FakeAccountReadGateway:
 
     async def balance_allowance(self):
         self.calls.append("balance_allowance")
-        return {"balance": "30000000", "allowances": {self.spender: "30000000"}}
+        return self.balance_allowance_result
 
 
 class FakeBatchClient:
@@ -380,6 +391,56 @@ async def _compose_accepted_initial_pair(scope):
     resolved = scope.session.resolve_initial_normal_placement(attempt, outcome)
     assert resolved.outcome == "COMPLETE"
     return resolved, admission.candidate.quotes
+
+
+async def _complete_cycle_with_confirmed_fill(
+    scope, *, token_id="yes-token", size=1.25, cash=30, allowance=30,
+):
+    attempt, quotes = await _compose_accepted_initial_pair(scope)
+    quote = next(quote for quote in quotes if quote.token_id == token_id)
+    clock = _DeterministicMonotonicClock(time.monotonic_ns())
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+    trade_id = f"next-action-fill-{token_id}-{size}"
+    _send_matched_then_confirmed(
+        scope, "yes-order" if token_id == "yes-token" else "no-order",
+        receipt_ns=clock.read(), trade_id=trade_id, size=size, price=quote.price,
+    )
+    gateway, client = _close_gateway(
+        scope, quotes, fill=(token_id, Decimal(str(size))),
+        trades=(_rest_trade(
+            "yes-order" if token_id == "yes-token" else "no-order",
+            token_id, str(quote.price), str(size), trade_id=trade_id,
+        ),),
+    )
+    try:
+        completion = await scope.session.complete_initial_normal_cycle(
+            attempt, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+    assert completion.close_result.barrier_complete
+    assert completion.close_result.capital is not None
+    assert completion.close_result.capital.certified
+    assert not completion.close_result.replacement_blocked
+
+    account_gateway = FakeAccountReadGateway()
+    account_gateway.positions_result = {
+        "yes-token": (str(size if token_id == "yes-token" else 0), str(quote.price)),
+        "no-token": (str(size if token_id == "no-token" else 0), str(quote.price)),
+    }
+    account_gateway.balance_allowance_result = {
+        "balance": str(int(Decimal(str(cash)) * Decimal("1000000"))),
+        "allowances": {
+            account_gateway.spender:
+                str(int(Decimal(str(allowance)) * Decimal("1000000"))),
+        },
+    }
+    scope.session.user_session.gateway = account_gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer=account_gateway.address, funder=account_gateway.funder,
+    )
+    return completion, account_gateway, client
 
 
 def _send_window_trade(scope, order_id, *, status, trade_id="window-fill",
@@ -6291,6 +6352,7 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
     gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
     client.posts = []
     client.created = []
+    waiter_failed = asyncio.Event()
 
     def blocked_post(args, *, post_only):
         assert post_only is True and len(args) == 2
@@ -6307,6 +6369,7 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
 
     async def failing_wait(_tasks, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
         assert await asyncio.to_thread(started.wait, 2)
+        waiter_failed.set()
         raise RuntimeError("SYNTHETIC_WAIT_FAILURE_SENTINEL")
 
     monkeypatch.setattr(asyncio, "wait", failing_wait)
@@ -6316,6 +6379,7 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
     try:
         assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), timeout=3)
         assert not submission.done()
+        await asyncio.wait_for(waiter_failed.wait(), timeout=2)
         release.set()
         result = await submission
     finally:
@@ -8151,4 +8215,466 @@ async def test_initial_cycle_does_not_trust_healthy_reason_string_without_eviden
     assert result.close_result.next_mode is None
     assert result.close_result.replacement_blocked and scope.owner.blocks_initial_admission
     assert client.cancel_calls == [("no-order", "yes-order")]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_uses_retained_fractional_inventory_and_current_cash(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    completion, account_gateway, close_client = await _complete_cycle_with_confirmed_fill(
+        scope, size=1.25, cash=11, allowance=11,
+    )
+    cancel_calls_before = tuple(close_client.cancel_calls)
+    result = await scope.session.post_cycle_next_action_admission()
+
+    assert result.eligible and result.reason is None
+    assert scope.session.next_action_admission_result is result
+    assert result.attempt_id == completion.attempt_id
+    assert result.run_order_ids == completion.acknowledged_order_ids
+    assert result.mode is RDPMode.NORMAL
+    assert result.capital_projection is not None
+    snapshot = result.capital_projection.snapshot
+    assert snapshot is not None
+    assert snapshot.inventory.qy == 1.25 and snapshot.inventory.qn == 0
+    assert snapshot.inventory.cy == pytest.approx(.6875)
+    assert snapshot.inventory_cost == Decimal("0.6875")
+    assert snapshot.free_cash == Decimal("29.3125")
+    sizes = {quote.token_id: quote.size for quote in result.candidate.quotes}
+    assert sizes == {"yes-token": 5, "no-token": 6.25}
+    assert result.current_backing.eligible
+    assert result.observed_cash_backing == result.observed_allowance_backing == Decimal("11")
+    assert result.current_backing.required_backing == (
+        result.capital_admission.new_notional + Decimal("5.00")
+    )
+    assert result.execution_authorized is False
+    assert "OPERATIONAL_TIME_SUFFICIENCY" in result.outstanding_execution_gates
+    assert "FINAL_SUBMIT_REVALIDATION" in result.outstanding_execution_gates
+    assert "HUMAN_LIVE_AUTHORIZATION" in result.outstanding_execution_gates
+    assert account_gateway.calls == [
+        "open_orders", "positions", "required_collateral_spenders", "balance_allowance",
+    ]
+    assert tuple(close_client.cancel_calls) == cancel_calls_before
+    assert not scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token_id", "size", "expected_token", "expected_price"),
+    [
+        ("yes-token", 5, "no-token", .47),
+        ("no-token", 5, "yes-token", .59),
+    ],
+)
+async def test_post_cycle_next_action_rebalance_boundary_is_deficient_side_only(
+    placement_scope, blocked_network, token_id, size, expected_token, expected_price,
+):
+    scope = placement_scope
+    completion, _account_gateway, _client = await _complete_cycle_with_confirmed_fill(
+        scope, token_id=token_id, size=size,
+    )
+    result = await scope.session.post_cycle_next_action_admission()
+
+    assert result.eligible and result.reason is None
+    assert result.attempt_id == completion.attempt_id
+    assert result.mode is RDPMode.REBALANCE
+    assert result.capital_projection.snapshot.inventory.delta == (
+        5 if token_id == "yes-token" else -5
+    )
+    assert len(result.candidate.quotes) == 1
+    quote = result.candidate.quotes[0]
+    assert quote.token_id == expected_token and quote.size == 5
+    assert quote.price == pytest.approx(expected_price)
+    assert result.capital_admission.protected_amount == 0
+    assert result.current_backing.eligible
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_rejects_without_retained_completion_and_stop_latch(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    before = await scope.session.post_cycle_next_action_admission()
+    assert not before.eligible and before.reason == "COMPLETED_CYCLE_EVIDENCE_UNAVAILABLE"
+    scope.session._terminal_stop_latched = True
+    stopped = await scope.session.post_cycle_next_action_admission()
+    assert not stopped.eligible and stopped.reason == "TERMINAL_STOP_LATCHED"
+    assert stopped.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_rejects_expired_market_before_fresh_reads(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    scope.session._now = lambda: scope.bootstrap.end_epoch
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible and result.reason == "MARKET_EXPIRED"
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["incomplete_close", "unresolved_owner"])
+async def test_post_cycle_next_action_rejects_partial_close_or_unresolved_owner(
+    placement_scope, blocked_network, mutation,
+):
+    scope = placement_scope
+    completion, _gateway, _client = await _complete_cycle_with_confirmed_fill(
+        scope, size=1.25,
+    )
+    if mutation == "incomplete_close":
+        close = replace(completion.close_result, barrier_complete=False)
+        scope.session._initial_cycle_result = replace(completion, close_result=close)
+    else:
+        scope.session.placement_owner._current = replace(
+            scope.session.placement_owner.current, unresolved=True,
+        )
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert result.reason in {
+        "COMPLETED_CYCLE_OWNER_MISMATCH", "COMPLETED_CYCLE_CLOSE_UNRELIABLE",
+    }
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_rejects_processor_change_during_account_read(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    completion, account_gateway, _client = await _complete_cycle_with_confirmed_fill(
+        scope, size=1.25,
+    )
+    injected = False
+
+    def add_late_confirmed_fill():
+        nonlocal injected
+        if injected:
+            return
+        injected = True
+        _send_matched_then_confirmed(
+            scope, "yes-order", receipt_ns=time.monotonic_ns(),
+            trade_id="late-after-close", size=.25, price=.55,
+        )
+
+    account_gateway.positions_hook = add_late_confirmed_fill
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert result.reason in {"STALE_CLOSE_EVIDENCE", "SELECTED_POSITION_INVENTORY_MISMATCH"}
+    assert result.attempt_id == completion.attempt_id
+    assert scope.session.initial_cycle_completion_result is completion
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("stale", "STALE_ACCOUNT_EVIDENCE"),
+        ("future", "INVALID_READ_TIMESTAMPS"),
+        ("malformed_timestamp", "INVALID_READ_TIMESTAMPS"),
+        ("malformed_position", "INVALID_SELECTED_POSITION"),
+        ("contradictory_position", "SELECTED_POSITION_INVENTORY_MISMATCH"),
+        ("malformed_open_order", "INVALID_ACCOUNT_ORDER"),
+        ("resurrected_closed_order", "CLOSED_RUN_ORDER_REAPPEARED"),
+    ],
+)
+async def test_post_cycle_next_action_rejects_malformed_or_stale_account_evidence(
+    placement_scope, blocked_network, monkeypatch, mutation, expected_reason,
+):
+    scope = placement_scope
+    completion, _gateway, _client = await _complete_cycle_with_confirmed_fill(
+        scope, size=1.25,
+    )
+    import polymaker.rdp_runtime as runtime
+
+    original_capture = runtime._capture_account_with_gateway
+
+    async def mutated_capture(*args, **kwargs):
+        account = await original_capture(*args, **kwargs)
+        if mutation == "stale":
+            return replace(
+                account, orders_receipt_ts=time.time() - 100,
+                positions_receipt_ts=time.time() - 100,
+                collateral_receipt_ts=time.time() - 100,
+            )
+        if mutation == "future":
+            return replace(
+                account, orders_receipt_ts=time.time() + 10,
+                positions_receipt_ts=time.time() + 10,
+                collateral_receipt_ts=time.time() + 10,
+            )
+        if mutation == "malformed_timestamp":
+            return replace(account, collateral_receipt_ts=float("nan"))
+        if mutation == "malformed_position":
+            positions = (replace(account.selected_positions[0], quantity=Decimal("-1")),
+                         account.selected_positions[1])
+            return replace(account, selected_positions=positions)
+        if mutation == "contradictory_position":
+            positions = (replace(account.selected_positions[0], quantity=Decimal("2")),
+                         account.selected_positions[1])
+            return replace(account, selected_positions=positions)
+        if mutation == "malformed_open_order":
+            order = RDPOrderEvidence(
+                "foreign-buy", "foreign-token", "BUY", Decimal("2"), Decimal("1"),
+            )
+            return replace(account, all_open_orders=(order,), total_open_order_count=1)
+        if mutation == "resurrected_closed_order":
+            order = RDPOrderEvidence(
+                "yes-order", "yes-token", "BUY", Decimal(".39"), Decimal("1"),
+            )
+            return replace(
+                account, all_open_orders=(order,), selected_open_orders=(order,),
+                total_open_order_count=1,
+            )
+        raise AssertionError(mutation)
+
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", mutated_capture)
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert expected_reason in (result.reason or "")
+    assert result.attempt_id == completion.attempt_id
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("unrelated_owned", "UNRELATED_OR_MUTATED_LOCAL_SCOPE"),
+        ("registry", "PLACEMENT_REGISTRY_MISMATCH"),
+        ("pending", "PENDING_OR_QUARANTINED_CAPTURE"),
+        ("quarantine", "PENDING_OR_QUARANTINED_CAPTURE"),
+        ("failed_fill", "PENDING_OR_QUARANTINED_CAPTURE"),
+    ],
+)
+async def test_post_cycle_next_action_rejects_local_scope_and_fill_anomalies(
+    placement_scope, blocked_network, mutation, expected_reason,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    processor = scope.processor
+    if mutation == "unrelated_owned":
+        processor._owned.add("foreign-local-order")
+    elif mutation == "registry":
+        scope.store.register_owned_order(
+            "yes-order", scope.market.condition_id, "yes-token", Side.BUY,
+            5, .40, "rdp_initial",
+        )
+    elif mutation == "pending":
+        processor.arm_pending("yes-token", Side.BUY)
+    elif mutation == "quarantine":
+        processor.quarantined_orders.add("yes-order")
+    elif mutation == "failed_fill":
+        _send_window_trade(
+            scope, "yes-order", status=TradeState.FAILED,
+            trade_id="post-close-failed", size=.25, price=.55,
+        )
+
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible and result.reason == expected_reason
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_subtracts_foreign_buy_commitment_from_current_cash(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _completion, account_gateway, _client = await _complete_cycle_with_confirmed_fill(
+        scope, size=1.25, cash=11, allowance=11,
+    )
+    account_gateway.open_orders_result = [ExactOpenOrder(
+        "foreign-buy", "foreign-token", Side.BUY, Decimal(".10"), Decimal("10"),
+    )]
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible and result.reason == "INSUFFICIENT_CURRENT_CASH"
+    assert result.account_buy_commitment == Decimal("1.00")
+    assert result.observed_cash_backing == Decimal("10.00")
+    assert result.observed_allowance_backing == Decimal("10.00")
+    assert result.capital_projection.snapshot.inventory_cost == Decimal(".6875")
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("feed_generation", "INPUT_GENERATION_CHANGED"),
+        ("user_generation", "INPUT_GENERATION_CHANGED"),
+        ("backlog", "PUBLIC_INPUT_BACKLOG"),
+        ("tick", "TICK_METADATA_MISMATCH"),
+    ],
+)
+async def test_post_cycle_next_action_rejects_feed_mutation_during_account_read(
+    placement_scope, blocked_network, mutation, expected_reason,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    service = scope.session.public_session.service
+    gateway = scope.session.user_session.gateway
+
+    def mutate_after_positions():
+        if mutation == "feed_generation":
+            service.connection_generation += 1
+        elif mutation == "user_generation":
+            scope.session.user_session.observation.user_channel.connection_generation += 1
+        elif mutation == "backlog":
+            service.metrics.update(received=service.metrics["received"] + 1)
+        elif mutation == "tick":
+            service.book("yes-token").set_tick_size(.02)
+
+    gateway.positions_hook = mutate_after_positions
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert expected_reason in (result.reason or "")
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_rejects_stale_books_after_account_read(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    gateway = scope.session.user_session.gateway
+    service = scope.session.public_session.service
+
+    def stale_books():
+        for token_id in ("yes-token", "no-token"):
+            service.book(token_id).local_ts = time.time() - 100
+
+    gateway.positions_hook = stale_books
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert "STALE" in (result.reason or "")
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_cancellation_drains_read_and_teardown_rejects(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    started, release = asyncio.Event(), asyncio.Event()
+    import polymaker.rdp_runtime as runtime
+
+    original_status = runtime.read_rdp_market_status
+
+    async def blocked_status(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await original_status(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", blocked_status)
+    operation = asyncio.create_task(scope.session.post_cycle_next_action_admission())
+    await asyncio.wait_for(started.wait(), 2)
+    operation.cancel()
+    operation.cancel()
+    await asyncio.sleep(0)
+    assert not operation.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await operation
+    assert scope.session._next_action_task is None
+    assert scope.session.next_action_admission_result is not None
+
+    # The retained session cannot publish an eligible result after teardown.
+    started.clear()
+    release.clear()
+    operation = asyncio.create_task(scope.session.post_cycle_next_action_admission())
+    await asyncio.wait_for(started.wait(), 2)
+    shutdown = asyncio.create_task(scope.session.aclose())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    release.set()
+    await shutdown
+    result = await operation
+    assert not result.eligible and result.reason == "SESSION_CLOSED"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_post_cycle_next_action_serializes_conflicting_admissions_and_initial_read(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    started, release = asyncio.Event(), asyncio.Event()
+    import polymaker.rdp_runtime as runtime
+
+    original_status = runtime.read_rdp_market_status
+
+    async def blocked_status(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await original_status(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", blocked_status)
+    first = asyncio.create_task(scope.session.post_cycle_next_action_admission())
+    await asyncio.wait_for(started.wait(), 2)
+    concurrent = await scope.session.post_cycle_next_action_admission()
+    assert not concurrent.eligible
+    assert concurrent.reason == "NEXT_ACTION_ADMISSION_IN_PROGRESS"
+    initial = await scope.session.initial_normal_admission()
+    assert not initial.eligible
+    assert initial.reason == "NEXT_ACTION_ADMISSION_IN_PROGRESS"
+    release.set()
+    result = await first
+    assert result.eligible
+    assert scope.session._next_action_task is None
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("stale", "MARKET_STATUS_STALE"),
+        ("future", "MARKET_STATUS_RECEIPT_IN_FUTURE"),
+        ("closed", "CURRENT_MARKET_TRADABILITY"),
+        ("wrong_market", "MARKET_STATUS_IDENTITY_MISMATCH"),
+    ],
+)
+async def test_post_cycle_next_action_rejects_status_evidence_during_status_read(
+    placement_scope, blocked_network, monkeypatch, mutation, expected_reason,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    import polymaker.rdp_runtime as runtime
+
+    original_status = runtime.read_rdp_market_status
+
+    async def mutated_status(*args, **kwargs):
+        evidence = await original_status(*args, **kwargs)
+        if mutation == "stale":
+            return replace(evidence, receipt_ts=time.time() - 100)
+        if mutation == "future":
+            return replace(evidence, receipt_ts=time.time() + 10)
+        if mutation == "closed":
+            return replace(evidence, accepting_orders=False, closed=True)
+        if mutation == "wrong_market":
+            return replace(evidence, condition_id="other-condition")
+        raise AssertionError(mutation)
+
+    monkeypatch.setattr(runtime, "read_rdp_market_status", mutated_status)
+    result = await scope.session.post_cycle_next_action_admission()
+    assert not result.eligible
+    assert expected_reason in (result.reason or "")
+    assert result.execution_authorized is False
     assert blocked_network == []

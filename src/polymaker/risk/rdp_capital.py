@@ -87,6 +87,20 @@ class RDPInitialBackingResult:
     selected_state_empty: bool
 
 
+@dataclass(frozen=True, slots=True)
+class RDPCurrentBackingResult:
+    """Physical cash/allowance support for a factual post-cycle candidate."""
+
+    eligible: bool
+    reason: str | None
+    account_buy_commitment: Decimal | None
+    observed_cash_backing: Decimal | None
+    observed_allowance_backing: Decimal | None
+    required_backing: Decimal
+    read_age_s: float | None
+    selected_inventory_matches: bool
+
+
 def evaluate_initial_rdp_backing(
     bootstrap: object,
     account: object,
@@ -224,6 +238,137 @@ def evaluate_initial_rdp_backing(
             allowance_backing, read_age_s, True)
     return _initial_backing_result(
         True, None, commitment, cash_backing, allowance_backing, read_age_s, True)
+
+
+def evaluate_current_rdp_backing(
+    bootstrap: object,
+    account: object,
+    projection: RDPCapitalProjection,
+    mode: RDPMode | str,
+    candidate_notional: Decimal,
+    run_order_ids: tuple[str, ...],
+    *,
+    now: float,
+    max_age_s: float,
+) -> RDPCurrentBackingResult:
+    """Check physical account support without replacing model inventory/cost.
+
+    The initial evaluator remains the single validator for account scope,
+    spender identity, timestamps, collateral, selected positions and exact
+    account-order commitments. Its empty-start rejection is expected here;
+    selected positions are checked against confirmed processor inventory below.
+    """
+    parsed_mode = _mode(mode)
+    notional = _decimal(candidate_notional)
+    if parsed_mode is None or notional is None or notional < _ZERO:
+        return _current_backing_failure("INVALID_CURRENT_BACKING_INPUT")
+    if (not isinstance(projection, RDPCapitalProjection) or not projection.certified
+            or projection.snapshot is None):
+        return _current_backing_failure("UNCERTIFIED_CAPITAL")
+    if (not isinstance(run_order_ids, tuple)
+            or any(not isinstance(order_id, str) or not order_id for order_id in run_order_ids)
+            or len(set(run_order_ids)) != len(run_order_ids)):
+        return _current_backing_failure("INVALID_RUN_SCOPE")
+    if projection.snapshot.run_order_ids != tuple(sorted(run_order_ids)):
+        return _current_backing_failure("RUN_SCOPE_MISMATCH")
+
+    initial = evaluate_initial_rdp_backing(
+        bootstrap, account, now=now, max_age_s=max_age_s,
+    )
+    accepted_empty_reasons = {
+        None, "SELECTED_STATE_NOT_EMPTY", "INSUFFICIENT_CASH_BACKING",
+        "INSUFFICIENT_ALLOWANCE_BACKING",
+    }
+    if initial.reason not in accepted_empty_reasons:
+        return _current_backing_failure(
+            initial.reason or "CURRENT_ACCOUNT_EVIDENCE_REJECTED",
+            read_age_s=initial.read_age_s,
+        )
+    if (initial.account_buy_commitment is None
+            or initial.observed_cash_backing is None
+            or initial.observed_allowance_backing is None
+            or initial.read_age_s is None):
+        return _current_backing_failure("INCOMPLETE_CURRENT_ACCOUNT_EVIDENCE")
+
+    inventory = projection.snapshot.inventory
+    positions = getattr(account, "selected_positions", None)
+    token_quantities: dict[str, Decimal] = {}
+    try:
+        for position in positions:
+            token_id = getattr(position, "token_id", None)
+            quantity = _decimal(getattr(position, "quantity", None))
+            if (not isinstance(token_id, str) or token_id in token_quantities
+                    or quantity is None or quantity < _ZERO):
+                return _current_backing_failure(
+                    "INVALID_SELECTED_POSITION", initial.read_age_s,
+                )
+            token_quantities[token_id] = quantity
+        expected = {
+            inventory.yes_token_id: _decimal(inventory.qy),
+            inventory.no_token_id: _decimal(inventory.qn),
+        }
+        if (set(token_quantities) != set(expected)
+                or any(value is None for value in expected.values())):
+            return _current_backing_failure(
+                "INVALID_SELECTED_POSITION_SCOPE", initial.read_age_s,
+            )
+        # The existing processor derives quantities from float-based user
+        # events; allow one micro-share of serialization noise when matching
+        # those confirmed quantities to exact Decimal account reads.
+        tolerance = Decimal("0.000001")
+        if any(abs(token_quantities[token] - expected[token]) > tolerance
+               for token in expected):
+            return _current_backing_failure(
+                "SELECTED_POSITION_INVENTORY_MISMATCH", initial.read_age_s,
+            )
+    except (DecimalException, TypeError, ValueError, OverflowError):
+        return _current_backing_failure("INVALID_SELECTED_POSITION", initial.read_age_s)
+
+    all_orders = getattr(account, "all_open_orders", None)
+    if not isinstance(all_orders, tuple):
+        return _current_backing_failure("INCOMPLETE_ACCOUNT_EVIDENCE", initial.read_age_s)
+    for order in all_orders:
+        order_id = getattr(order, "order_id", None)
+        if order_id in run_order_ids:
+            return _current_backing_failure(
+                "CLOSED_RUN_ORDER_REAPPEARED", initial.read_age_s,
+            )
+
+    reserve = NORMAL_REPAIR_RESERVE if parsed_mode is RDPMode.NORMAL else _ZERO
+    try:
+        with localcontext() as context:
+            context.prec = 64
+            required = notional + reserve
+    except DecimalException:
+        return _current_backing_failure("INVALID_BACKING_ARITHMETIC", initial.read_age_s)
+    if initial.observed_cash_backing < required:
+        return _current_backing_result(
+            False, "INSUFFICIENT_CURRENT_CASH", initial, required,
+        )
+    if initial.observed_allowance_backing < required:
+        return _current_backing_result(
+            False, "INSUFFICIENT_CURRENT_ALLOWANCE", initial, required,
+        )
+    return _current_backing_result(True, None, initial, required)
+
+
+def _current_backing_result(
+    eligible: bool, reason: str | None, initial: RDPInitialBackingResult,
+    required: Decimal,
+) -> RDPCurrentBackingResult:
+    return RDPCurrentBackingResult(
+        eligible, reason, initial.account_buy_commitment,
+        initial.observed_cash_backing, initial.observed_allowance_backing,
+        required, initial.read_age_s, True,
+    )
+
+
+def _current_backing_failure(
+    reason: str, read_age_s: float | None = None,
+) -> RDPCurrentBackingResult:
+    return RDPCurrentBackingResult(
+        False, reason, None, None, None, _ZERO, read_age_s, False,
+    )
 
 
 def _finite_timestamp_decimal(value: object) -> Decimal | None:

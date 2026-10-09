@@ -46,15 +46,21 @@ from polymaker.rdp_userstream import start_rdp_user_channel_session
 from polymaker.risk.rdp_capital import (
     RDPCapitalAdmission,
     RDPCapitalProjection,
+    RDPCurrentBackingResult,
     RDPInitialBackingResult,
     RDPMode,
+    evaluate_current_rdp_backing,
     evaluate_initial_rdp_backing,
     evaluate_rdp_capital_gate,
     project_rdp_capital,
 )
 from polymaker.strategy.rdp_accounting import snapshot_inventory
 from polymaker.strategy.rdp_book_filter import RDPBookFilterResult
-from polymaker.strategy.rdp_quotes import RDPQuoteDecision, build_normal_quotes
+from polymaker.strategy.rdp_quotes import (
+    RDPQuoteDecision,
+    build_normal_quotes,
+    build_rebalance_quote,
+)
 
 log = get_logger("rdp.runtime")
 
@@ -101,6 +107,40 @@ class RDPInitialNormalAdmission:
     minimum_sizes: tuple[tuple[str, float], ...]
     outstanding_execution_gates: tuple[str, ...]
     market_status: RDPMarketStatusEvidence | None = None
+    execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RDPNextActionAdmission:
+    """Factual post-cycle candidate evidence; never grants execution authority."""
+
+    slug: str
+    condition_id: str
+    attempt_id: int
+    run_order_ids: tuple[str, ...]
+    closed_order_ids: tuple[str, ...]
+    resting_order_ids: tuple[str, ...]
+    eligible: bool
+    reason: str | None
+    mode: RDPMode | None
+    captured_at: float | None
+    market_status: RDPMarketStatusEvidence | None
+    account_receipt_times: tuple[float, float, float] | None
+    account_read_age_s: float | None
+    account_buy_commitment: Decimal | None
+    observed_cash_backing: Decimal | None
+    observed_allowance_backing: Decimal | None
+    public_generation: int
+    user_generation: int
+    book_ages: tuple[tuple[str, float | None], ...]
+    book_filter: RDPBookFilterResult | None
+    token_ticks: tuple[tuple[str, float], ...]
+    minimum_sizes: tuple[tuple[str, float], ...]
+    capital_projection: RDPCapitalProjection | None
+    candidate: RDPQuoteDecision | None
+    capital_admission: RDPCapitalAdmission | None
+    current_backing: RDPCurrentBackingResult | None
+    outstanding_execution_gates: tuple[str, ...]
     execution_authorized: bool = field(default=False, init=False)
 
 
@@ -469,6 +509,9 @@ class RDPInputSession:
         self._initial_cycle_interrupt_reason: str | None = None
         self._initial_cycle_wakeup = asyncio.Event()
         self._initial_cycle_delegate_tasks: set[asyncio.Task[Any]] = set()
+        self._next_action_active = False
+        self._next_action_task: asyncio.Task[RDPNextActionAdmission] | None = None
+        self._next_action_result: RDPNextActionAdmission | None = None
         self._terminal_stop_latched = False
         self._terminal_stop_cause: str | None = None
         self._terminal_failure_task: asyncio.Task[RDPTerminalFailureResult] | None = None
@@ -680,6 +723,8 @@ class RDPInputSession:
         task = asyncio.current_task()
         if self._closed:
             return rejected("SESSION_CLOSED")
+        if self._next_action_active:
+            return rejected("NEXT_ACTION_ADMISSION_IN_PROGRESS")
         if self._initial_submission_conflicts_with_current_task():
             return rejected("INITIAL_SUBMISSION_IN_PROGRESS")
         if self._admission_active:
@@ -963,6 +1008,459 @@ class RDPInputSession:
             self._admission_task = None
             self._admission_active = False
 
+    async def post_cycle_next_action_admission(self) -> RDPNextActionAdmission:
+        """Capture one fresh post-cycle candidate without granting send authority."""
+        if self._next_action_active:
+            return self._next_action_rejected(
+                "NEXT_ACTION_ADMISSION_IN_PROGRESS", retain=False,
+            )
+        self._next_action_active = True
+        task = asyncio.create_task(
+            self._run_post_cycle_next_action_admission(),
+            name="rdp-post-cycle-next-action-admission",
+        )
+        self._next_action_task = task
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await _drain_read_task(task)
+            raise
+        finally:
+            if task.done() and self._next_action_task is task:
+                self._next_action_task = None
+                self._next_action_active = False
+
+    async def _run_post_cycle_next_action_admission(self) -> RDPNextActionAdmission:
+        market = self.bootstrap.market
+        completion = self._initial_cycle_result
+        attempt = self.placement_owner.current
+        run_ids = tuple(attempt.acknowledged_order_ids) if attempt is not None else ()
+        status: RDPMarketStatusEvidence | None = None
+        account = None
+        book_ages: tuple[tuple[str, float | None], ...] = ()
+        filter_result: RDPBookFilterResult | None = None
+        ticks: tuple[tuple[str, float], ...] = ()
+        minimums: tuple[tuple[str, float], ...] = ()
+        projection: RDPCapitalProjection | None = None
+        candidate: RDPQuoteDecision | None = None
+        capital: RDPCapitalAdmission | None = None
+        backing: RDPCurrentBackingResult | None = None
+        mode: RDPMode | None = None
+        captured_at: float | None = None
+
+        def rejected(reason: str) -> RDPNextActionAdmission:
+            return self._next_action_rejected(
+                reason, attempt=attempt, run_order_ids=run_ids,
+                closed_order_ids=(completion.close_result.closed_order_ids
+                                  if completion is not None else ()),
+                resting_order_ids=(projection.snapshot.resting_order_ids
+                                   if projection is not None and projection.snapshot is not None
+                                   else ()), mode=mode,
+                captured_at=captured_at, market_status=status, account=account,
+                book_ages=book_ages, book_filter=filter_result,
+                token_ticks=ticks, minimum_sizes=minimums,
+                capital_projection=projection, candidate=candidate,
+                capital_admission=capital, current_backing=backing,
+            )
+
+        try:
+            failure, registry = self._post_cycle_scope_failure(completion, attempt)
+            if failure is not None or registry is None:
+                return rejected(failure or "POST_CYCLE_SCOPE_UNAVAILABLE")
+
+            status_task = asyncio.create_task(
+                read_rdp_market_status(self.bootstrap, self._gamma_origin, now=self._now),
+                name="rdp-next-action-market-status-read",
+            )
+            self._market_status_read_task = status_task
+            try:
+                status = await asyncio.shield(status_task)
+            except asyncio.CancelledError:
+                await _drain_read_task(status_task)
+                raise
+            except RDPBootstrapError as exc:
+                return rejected(exc.category)
+            except Exception as exc:  # noqa: BLE001 - sanitized read category
+                return rejected(f"MARKET_STATUS_READ_FAILED:{type(exc).__name__}")
+            finally:
+                if status_task.done() and self._market_status_read_task is status_task:
+                    self._market_status_read_task = None
+
+            failure, current_registry = self._post_cycle_scope_failure(completion, attempt)
+            if failure is not None or current_registry != registry:
+                return rejected(failure or "POST_CYCLE_REGISTRY_CHANGED")
+
+            gateway = getattr(self.user_session, "gateway", None)
+            account_owner = self.observation.account
+            signer = getattr(account_owner, "signer", None)
+            funder = getattr(account_owner, "funder", None)
+            if gateway is None:
+                return rejected("ACCOUNT_GATEWAY_UNAVAILABLE")
+            if (not isinstance(signer, str) or not signer.strip()
+                    or not isinstance(funder, str) or not funder.strip()):
+                return rejected("ACCOUNT_IDENTITY_UNAVAILABLE")
+            account_task = asyncio.create_task(
+                _capture_account_with_gateway(
+                    self.bootstrap, gateway, signer, funder, now=self._now,
+                ),
+                name="rdp-next-action-account-read",
+            )
+            self._account_read_task = account_task
+            try:
+                account = await asyncio.shield(account_task)
+            except asyncio.CancelledError:
+                await _drain_read_task(account_task)
+                raise
+            except RDPAccountError as exc:
+                return rejected(exc.category)
+            except Exception as exc:  # noqa: BLE001 - sanitized read category
+                return rejected(f"ACCOUNT_READ_FAILED:{type(exc).__name__}")
+            finally:
+                if account_task.done() and self._account_read_task is account_task:
+                    self._account_read_task = None
+
+            # No awaits follow: refresh every input and owner invariant in one
+            # synchronous capture before projecting the current processor.
+            failure, current_registry = self._post_cycle_scope_failure(completion, attempt)
+            if failure is not None or current_registry != registry:
+                return rejected(failure or "POST_CYCLE_REGISTRY_CHANGED")
+            try:
+                captured_at = self._now()
+            except Exception as exc:  # noqa: BLE001
+                return rejected(f"CAPTURE_CLOCK_FAILED:{type(exc).__name__}")
+            if (isinstance(captured_at, bool)
+                    or not isinstance(captured_at, (int, float))
+                    or not math.isfinite(captured_at)):
+                return rejected("INVALID_CAPTURE_TIME")
+            captured_at = float(captured_at)
+            if captured_at >= self.bootstrap.end_epoch:
+                return rejected("MARKET_EXPIRED")
+            try:
+                health_failure = self._health_failure()
+            except Exception as exc:  # noqa: BLE001
+                return rejected(f"INPUT_HEALTH_FAILED:{type(exc).__name__}")
+            if health_failure is not None:
+                return rejected(health_failure)
+            service = self.public_session.service
+            if (service.connection_generation != self.public_generation
+                    or self.user_session.observation.user_channel.connection_generation
+                    != self.user_generation):
+                return rejected("INPUT_GENERATION_CHANGED")
+            if _has_public_input_backlog(service.metrics):
+                return rejected("PUBLIC_INPUT_BACKLOG")
+
+            status, status_failure = self._evaluate_market_status_freshness(
+                status, at=captured_at,
+            )
+            if status_failure is not None:
+                return rejected(status_failure)
+            status_failure = self._prefill_status_identity_failure(status)
+            if status_failure is not None:
+                return rejected(status_failure)
+
+            token_ids = (market.yes.token_id, market.no.token_id)
+            books = tuple(service.book(token) for token in token_ids)
+            if any(book is None for book in books):
+                return rejected("BOOK_UNAVAILABLE")
+            yes_book, no_book = books
+            if any(book.snapshot_generation != self.public_generation
+                   for book in (yes_book, no_book)):
+                return rejected("BOOK_GENERATION_CHANGED")
+            age_rows = []
+            for token, book in zip(token_ids, books, strict=True):
+                age, age_failure = _freshness_age(
+                    book.local_ts, captured_at, self._market_data_max_age_s,
+                    "MARKET_DATA",
+                )
+                age_rows.append((token, age))
+                if age_failure is not None:
+                    book_ages = tuple(age_rows)
+                    return rejected(age_failure)
+            book_ages = tuple(age_rows)
+
+            metadata = _validated_token_metadata(self.bootstrap)
+            if metadata is None:
+                return rejected("INVALID_TOKEN_METADATA")
+            ticks = tuple((token, book.tick_size)
+                          for token, book in zip(token_ids, books, strict=True))
+            minimums = tuple((token, metadata[token][1]) for token in token_ids)
+            if any(not _same_decimal(book.tick_size, metadata[token][0])
+                   for token, book in zip(token_ids, books, strict=True)):
+                return rejected("TICK_METADATA_MISMATCH")
+            if any(size > 5 for _token, size in minimums):
+                return rejected("CLOB_MINIMUM_EXCEEDS_FROZEN_CLIP")
+            filter_result = self.book_filter_result()
+            if filter_result.generation != self.public_generation:
+                return rejected("BOOK_FILTER_GENERATION_MISMATCH")
+
+            decision_market = replace(
+                market, min_order_size=max(size for _token, size in minimums),
+            )
+            close = completion.close_result
+            projection = project_rdp_capital(
+                decision_market, self.processor, set(run_ids), [],
+                market_state_reliable=True, order_state_reliable=True,
+                close_evidence=close.barrier,
+            )
+            if not projection.certified or projection.snapshot is None:
+                return rejected(projection.reason or "CAPITAL_PROJECTION_REJECTED")
+            inventory = projection.snapshot.inventory
+            delta = Decimal(str(inventory.delta))
+            mode = RDPMode.NORMAL if abs(delta) < Decimal("5") else RDPMode.REBALANCE
+            if close.next_mode is not mode:
+                return rejected("CLOSE_MODE_INVENTORY_MISMATCH")
+
+            if mode is RDPMode.NORMAL:
+                if not filter_result.ready:
+                    return rejected(_filter_rejection_reason(filter_result))
+                if filter_result.rejected:
+                    return rejected("BOOK_FILTER_REJECTED")
+                candidate = build_normal_quotes(
+                    decision_market, inventory, yes_book.view(), no_book.view(),
+                    yes_book.tick_size, no_book.tick_size,
+                )
+            else:
+                candidate = build_rebalance_quote(
+                    decision_market, inventory, yes_book.view(), no_book.view(),
+                    yes_book.tick_size, no_book.tick_size,
+                )
+            if candidate.reason is not None:
+                return rejected(candidate.reason)
+            capital = evaluate_rdp_capital_gate(mode, candidate, projection)
+            if not capital.admitted or capital.new_notional is None:
+                return rejected(capital.reason or "CAPITAL_GATE_REJECTED")
+            backing = evaluate_current_rdp_backing(
+                self.bootstrap, account, projection, mode, capital.new_notional,
+                run_ids, now=captured_at, max_age_s=self._account_max_age_s,
+            )
+            if not backing.eligible:
+                return rejected(backing.reason or "CURRENT_ACCOUNT_BACKING_REJECTED")
+
+            failure, current_registry = self._post_cycle_scope_failure(completion, attempt)
+            if failure is not None or current_registry != registry:
+                return rejected(failure or "POST_CYCLE_REGISTRY_CHANGED")
+            # Recheck time, status, books, user/public health and backlog after
+            # all awaits. The result remains factual and leaves send gates open.
+            final_now = self._now()
+            if (isinstance(final_now, bool) or not isinstance(final_now, (int, float))
+                    or not math.isfinite(final_now) or final_now >= self.bootstrap.end_epoch):
+                return rejected("MARKET_EXPIRED")
+            _fresh_status, status_failure = self._evaluate_market_status_freshness(
+                status, at=float(final_now),
+            )
+            if status_failure is not None:
+                return rejected(status_failure)
+            if (_has_public_input_backlog(service.metrics)
+                    or service.connection_generation != self.public_generation
+                    or self.user_session.observation.user_channel.connection_generation
+                    != self.user_generation):
+                return rejected("INPUT_GENERATION_OR_BACKLOG_CHANGED")
+            final_ages = []
+            for token, book in zip(token_ids, books, strict=True):
+                current_book = service.book(token)
+                if current_book is not book or book.snapshot_generation != self.public_generation:
+                    return rejected("BOOK_GENERATION_CHANGED")
+                age, age_failure = _freshness_age(
+                    book.local_ts, float(final_now), self._market_data_max_age_s,
+                    "MARKET_DATA",
+                )
+                final_ages.append((token, age))
+                if age_failure is not None:
+                    book_ages = tuple(final_ages)
+                    return rejected(age_failure)
+            book_ages = tuple(final_ages)
+            backing = evaluate_current_rdp_backing(
+                self.bootstrap, account, projection, mode, capital.new_notional,
+                run_ids, now=float(final_now), max_age_s=self._account_max_age_s,
+            )
+            if not backing.eligible:
+                return rejected(backing.reason or "CURRENT_ACCOUNT_BACKING_REJECTED")
+
+            result = RDPNextActionAdmission(
+                market.slug, market.condition_id, attempt.attempt_id, run_ids,
+                close.closed_order_ids, projection.snapshot.resting_order_ids,
+                True, None, mode, float(final_now), status,
+                _account_receipt_times(account), backing.read_age_s,
+                backing.account_buy_commitment, backing.observed_cash_backing,
+                backing.observed_allowance_backing, self.public_generation,
+                self.user_generation, book_ages, filter_result, ticks, minimums,
+                projection, candidate, capital, backing,
+                ("OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
+                 "HUMAN_LIVE_AUTHORIZATION"),
+            )
+            self._next_action_result = result
+            self._log_next_action_result(result)
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - only sanitized categories escape
+            return rejected(f"NEXT_ACTION_ADMISSION_FAILED:{type(exc).__name__}")
+
+    def _post_cycle_scope_failure(
+        self, completion: RDPInitialCycleCompletion | None,
+        expected_attempt: RDPPlacementAttempt | None,
+    ) -> tuple[str | None, tuple[tuple[Any, ...], ...] | None]:
+        if self._closed:
+            return "SESSION_CLOSED", None
+        if self._terminal_stop_latched:
+            return "TERMINAL_STOP_LATCHED", None
+        if (self._admission_active or self._initial_submission_conflicts_with_current_task()
+                or (self._initial_cycle_task is not None
+                    and not self._initial_cycle_task.done())
+                or (self._placement_close_task is not None
+                    and not self._placement_close_task.done())
+                or (self._fill_window_task is not None
+                    and not self._fill_window_task.done())
+                or (self._prefill_task is not None and not self._prefill_task.done())):
+            return "PLACEMENT_COORDINATION_IN_PROGRESS", None
+        if self._next_action_active and asyncio.current_task() is not self._next_action_task:
+            return "NEXT_ACTION_ADMISSION_IN_PROGRESS", None
+        if completion is None or completion is not self._initial_cycle_result:
+            return "COMPLETED_CYCLE_EVIDENCE_UNAVAILABLE", None
+        attempt = self.placement_owner.current
+        if (expected_attempt is None or attempt is not expected_attempt
+                or completion.attempt_id != attempt.attempt_id
+                or completion.slug != self.bootstrap.market.slug
+                or completion.condition_id != self.bootstrap.market.condition_id
+                or completion.acknowledged_order_ids != attempt.acknowledged_order_ids
+                or attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id
+                or attempt.outcome != "COMPLETE" or attempt.unresolved
+                or attempt.replacement_blocked or attempt.execution_authorized):
+            return "COMPLETED_CYCLE_OWNER_MISMATCH", None
+        close = completion.close_result
+        barrier = close.barrier
+        if (close.attempt_id != attempt.attempt_id
+                or close.slug != attempt.slug or close.condition_id != attempt.condition_id
+                or close.owned_order_ids != attempt.acknowledged_order_ids
+                or not close.barrier_complete or close.placement_unresolved
+                or close.replacement_blocked or close.next_mode is None
+                or close.capital is None or not close.capital.certified
+                or close.capital.snapshot is None
+                or close.capital.snapshot.run_order_ids != tuple(sorted(attempt.acknowledged_order_ids))
+                or barrier is None or barrier.complete is not True):
+            return "COMPLETED_CYCLE_CLOSE_UNRELIABLE", None
+        if self._now() >= self.bootstrap.end_epoch:
+            return "MARKET_EXPIRED", None
+        try:
+            health_failure = self._health_failure()
+        except Exception as exc:  # noqa: BLE001
+            return f"INPUT_HEALTH_FAILED:{type(exc).__name__}", None
+        if health_failure is not None:
+            return health_failure, None
+        if (self.public_session.service.connection_generation != self.public_generation
+                or self.user_session.observation.user_channel.connection_generation
+                != self.user_generation):
+            return "INPUT_GENERATION_CHANGED", None
+        if _has_public_input_backlog(self.public_session.service.metrics):
+            return "PUBLIC_INPUT_BACKLOG", None
+        run_ids = tuple(attempt.acknowledged_order_ids)
+        try:
+            processor_owned = set(self.processor._owned)
+            store_owned = tuple(self.processor._store.owned_orders())
+            store_ids = {str(row["order_id"]) for row in store_owned}
+            if processor_owned != set(run_ids) or store_ids != set(run_ids):
+                return "UNRELATED_OR_MUTATED_LOCAL_SCOPE", None
+            if (self.processor._pending or self.processor._pending_events
+                    or self.processor._pending_malformed_order_ids
+                    or self.processor._pending_overflow
+                    or self.processor.quarantined_orders):
+                return "PENDING_OR_QUARANTINED_CAPTURE", None
+            if any(order_id not in set(run_ids)
+                   for _trade_id, order_id in self.processor.fill_records):
+                return "UNRELATED_LOCAL_FILL_SCOPE", None
+            if any(order_id not in set(run_ids)
+                   for _trade_id, order_id in self.processor.applied_fill_keys):
+                return "UNRELATED_LOCAL_FILL_SCOPE", None
+        except Exception as exc:  # noqa: BLE001
+            return f"LOCAL_SCOPE_UNAVAILABLE:{type(exc).__name__}", None
+        registry = _placement_registry_snapshot(self.processor, self.bootstrap, attempt)
+        if registry is None:
+            return "PLACEMENT_REGISTRY_MISMATCH", None
+        return None, registry
+
+    def _next_action_rejected(
+        self, reason: str, *, attempt: RDPPlacementAttempt | None = None,
+        run_order_ids: tuple[str, ...] = (), closed_order_ids: tuple[str, ...] = (),
+        resting_order_ids: tuple[str, ...] = (), mode: RDPMode | None = None,
+        captured_at: float | None = None, market_status=None, account=None,
+        book_ages=(), book_filter=None, token_ticks=(), minimum_sizes=(),
+        capital_projection=None, candidate=None, capital_admission=None,
+        current_backing=None, retain: bool = True,
+    ) -> RDPNextActionAdmission:
+        result = RDPNextActionAdmission(
+            self.bootstrap.market.slug, self.bootstrap.market.condition_id,
+            attempt.attempt_id if attempt is not None else 0,
+            tuple(run_order_ids), tuple(closed_order_ids), tuple(resting_order_ids),
+            False, reason, mode, captured_at, market_status,
+            _account_receipt_times(account) if account is not None else None,
+            current_backing.read_age_s if current_backing is not None else None,
+            current_backing.account_buy_commitment if current_backing is not None else None,
+            current_backing.observed_cash_backing if current_backing is not None else None,
+            current_backing.observed_allowance_backing if current_backing is not None else None,
+            self.public_generation, self.user_generation, tuple(book_ages),
+            book_filter, tuple(token_ticks), tuple(minimum_sizes), capital_projection,
+            candidate, capital_admission, current_backing,
+            ("OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
+             "HUMAN_LIVE_AUTHORIZATION"),
+        )
+        if retain:
+            self._next_action_result = result
+        self._log_next_action_result(result)
+        return result
+
+    @property
+    def next_action_admission_result(self) -> RDPNextActionAdmission | None:
+        return self._next_action_result
+
+    @staticmethod
+    def _log_next_action_result(result: RDPNextActionAdmission) -> None:
+        snapshot = (result.capital_projection.snapshot
+                    if result.capital_projection is not None
+                    and result.capital_projection.certified else None)
+        inventory = snapshot.inventory if snapshot is not None else None
+        log.info(
+            "rdp_post_cycle_next_action_admission",
+            result="SUCCESS" if result.eligible else "REJECTED",
+            reason=result.reason, slug=result.slug, condition_id=result.condition_id,
+            attempt_id=result.attempt_id, run_order_ids=result.run_order_ids,
+            closed_order_ids=result.closed_order_ids,
+            resting_order_ids=result.resting_order_ids,
+            candidate_quotes=(tuple((quote.token_id, quote.price, quote.size)
+                                    for quote in result.candidate.quotes)
+                              if result.candidate is not None else ()),
+            mode=result.mode.value if result.mode is not None else None,
+            captured_at=result.captured_at,
+            qy=inventory.qy if inventory is not None else None,
+            qn=inventory.qn if inventory is not None else None,
+            delta=inventory.delta if inventory is not None else None,
+            inventory_cost=snapshot.inventory_cost if snapshot is not None else None,
+            reserved_cash=snapshot.reserved_cash if snapshot is not None else None,
+            free_cash=snapshot.free_cash if snapshot is not None else None,
+            candidate_notional=(result.capital_admission.new_notional
+                                if result.capital_admission is not None else None),
+            account_buy_commitment=result.account_buy_commitment,
+            observed_cash_backing=result.observed_cash_backing,
+            observed_allowance_backing=result.observed_allowance_backing,
+            account_receipt_times=result.account_receipt_times,
+            account_read_age_s=result.account_read_age_s,
+            market_status_age_s=(result.market_status.age_s
+                                 if result.market_status is not None else None),
+            public_generation=result.public_generation,
+            user_generation=result.user_generation, book_ages=result.book_ages,
+            token_ticks=result.token_ticks, minimum_sizes=result.minimum_sizes,
+            book_filter_ready=(result.book_filter.ready
+                               if result.book_filter is not None else None),
+            book_filter_rejected=(result.book_filter.rejected
+                                  if result.book_filter is not None else None),
+            capital_reason=(result.capital_projection.reason
+                            if result.capital_projection is not None else None),
+            capital_gate_reason=(result.capital_admission.reason
+                                 if result.capital_admission is not None else None),
+            outstanding_execution_gates=result.outstanding_execution_gates,
+            execution_authorized=False,
+        )
+
     def _evaluate_market_status_freshness(
         self,
         evidence: RDPMarketStatusEvidence,
@@ -1021,6 +1519,9 @@ class RDPInputSession:
     def _admission_precondition_failure(self) -> str | None:
         if self._closed:
             return "SESSION_CLOSED"
+        if (self._next_action_active
+                and asyncio.current_task() is not self._next_action_task):
+            return "NEXT_ACTION_ADMISSION_IN_PROGRESS"
         if self._terminal_stop_latched:
             return "TERMINAL_STOP_LATCHED"
         if self._now() >= self.bootstrap.end_epoch:
@@ -1040,15 +1541,15 @@ class RDPInputSession:
 
     def _initial_submission_conflicts_with_current_task(self) -> bool:
         """Keep the submission task as the sole owner of its pending attempt."""
-        task = self._initial_submission_task
-        if task is None or task.done():
-            return False
         try:
             current = asyncio.current_task()
         except RuntimeError:
             current = None
-        return (current is not task
-                and current not in self._terminal_delegate_tasks)
+        task = self._initial_submission_task
+        if (task is not None and not task.done() and current is not task
+                and current not in self._terminal_delegate_tasks):
+            return True
+        return bool(self._next_action_active and current is not self._next_action_task)
 
     def arm_initial_normal_placement(
         self, admission: RDPInitialNormalAdmission,
@@ -1331,6 +1832,12 @@ class RDPInputSession:
         order_budget_s: object = None, close_budget_s: object = None,
     ) -> RDPInitialSubmissionResult:
         """Own at most one explicitly authorized initial NORMAL fake/live-capable call."""
+        if self._next_action_active:
+            return RDPInitialSubmissionResult(
+                "DENIED", "NEXT_ACTION_ADMISSION_IN_PROGRESS", authorization is True,
+                False, None, None, None, None, self.placement_owner.current,
+                (), None, None,
+            )
         if self._initial_submission_invoked:
             return self._initial_submission_result or RDPInitialSubmissionResult(
                 "DENIED", "INITIAL_SUBMISSION_ALREADY_USED", authorization is True,
@@ -2057,6 +2564,8 @@ class RDPInputSession:
             return result("EXECUTION_GATES_MISSING")
         if self._admission_active:
             return result("INITIAL_ADMISSION_IN_PROGRESS")
+        if self._next_action_active:
+            return result("NEXT_ACTION_ADMISSION_IN_PROGRESS")
         expected_pending = {(quote.token_id, quote.side) for quote in attempt.quotes}
         if not _initial_processor_is_clean_armed_capture(self.processor, expected_pending):
             return result("PREACK_CAPTURE_NOT_CLEAN")
@@ -4161,6 +4670,10 @@ class RDPInputSession:
             self._fill_window_cancel_requested = "SESSION_TEARDOWN"
             self._fill_window_wakeup.set()
             interrupted = await _drain_read_task(cycle) or interrupted
+        next_action = self._next_action_task
+        if (next_action is not None and next_action is not asyncio.current_task()
+                and not next_action.done()):
+            interrupted = await _drain_read_task(next_action) or interrupted
         terminal = self._terminal_failure_task
         if (terminal is not None and terminal is not asyncio.current_task()
                 and not terminal.done()):

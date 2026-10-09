@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import FrozenInstanceError, asdict
+from dataclasses import FrozenInstanceError, asdict, replace
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -15,6 +15,7 @@ from polymaker.risk.rdp_capital import (
     CAPITAL,
     NORMAL_REPAIR_RESERVE,
     RDPMode,
+    evaluate_current_rdp_backing,
     evaluate_initial_rdp_backing,
     evaluate_rdp_capital_gate,
     project_rdp_capital,
@@ -847,3 +848,109 @@ def test_initial_backing_result_is_immutable_and_does_not_change_capital_project
     assert empty_projection.snapshot.capital == CAPITAL
     admission = evaluate_rdp_capital_gate(RDPMode.NORMAL, normal_candidate(), empty_projection)
     assert admission.admitted and admission.protected_amount == NORMAL_REPAIR_RESERVE
+
+
+def test_current_backing_uses_confirmed_position_and_low_current_cash_without_resetting_model():
+    bootstrap, account = account_capture(
+        balance=Decimal("11"), allowance=Decimal("9"),
+        positions=(
+            SimpleNamespace(outcome="Yes", token_id="yes", quantity=Decimal("1"),
+                            average_price=Decimal(".4")),
+            SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("0"),
+                            average_price=Decimal("0")),
+        ),
+    )
+    projection = projection_for_current_backing(qy=1, qn=0, cost=.4)
+    result = evaluate_current_rdp_backing(
+        bootstrap, account, projection, RDPMode.NORMAL, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    assert result.eligible and result.selected_inventory_matches
+    assert result.observed_cash_backing == Decimal("11")
+    assert result.observed_allowance_backing == Decimal("9")
+    assert result.required_backing == Decimal("7.00")
+    assert projection.snapshot.inventory_cost == Decimal("0.4")
+    assert projection.snapshot.free_cash == Decimal("29.6")
+
+
+def test_current_backing_subtracts_foreign_buy_commitments_once_and_reserve_is_mode_specific():
+    foreign_buy = order_evidence("foreign-buy", token_id="foreign", price="0.5", remaining="8")
+    bootstrap, account = account_capture(
+        balance=Decimal("6"), allowance=Decimal("6"), orders=(foreign_buy,),
+        positions=(
+            SimpleNamespace(outcome="Yes", token_id="yes", quantity=Decimal("1"),
+                            average_price=Decimal(".4")),
+            SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("0"),
+                            average_price=Decimal("0")),
+        ),
+    )
+    projected = projection_for_current_backing(qy=1, qn=0, cost=.4)
+    normal = evaluate_current_rdp_backing(
+        bootstrap, account, projected, RDPMode.NORMAL, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    rebalance = evaluate_current_rdp_backing(
+        bootstrap, account, projected, RDPMode.REBALANCE, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    assert normal.reason == "INSUFFICIENT_CURRENT_CASH"
+    assert normal.account_buy_commitment == Decimal("4.0")
+    assert normal.observed_cash_backing == normal.observed_allowance_backing == Decimal("2.0")
+    assert rebalance.eligible and rebalance.reason is None
+    assert rebalance.required_backing == Decimal("2")
+
+
+def test_current_backing_checks_cash_and_allowance_boundaries_independently():
+    positions = (
+        SimpleNamespace(outcome="Yes", token_id="yes", quantity=Decimal("1"),
+                        average_price=Decimal(".4")),
+        SimpleNamespace(outcome="No", token_id="no", quantity=Decimal("0"),
+                        average_price=Decimal("0")),
+    )
+    projected = projection_for_current_backing(qy=1, qn=0, cost=.4)
+    bootstrap, account = account_capture(
+        balance=Decimal("8"), allowance=Decimal("7.000001"), positions=positions,
+    )
+    exact_cash = evaluate_current_rdp_backing(
+        bootstrap, account, projected, RDPMode.NORMAL, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    assert exact_cash.eligible and exact_cash.required_backing == Decimal("7.00")
+
+    bootstrap, account = account_capture(
+        balance=Decimal("6.999999"), allowance=Decimal("8"), positions=positions,
+    )
+    low_cash = evaluate_current_rdp_backing(
+        bootstrap, account, projected, RDPMode.NORMAL, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    assert low_cash.reason == "INSUFFICIENT_CURRENT_CASH"
+
+    bootstrap, account = account_capture(
+        balance=Decimal("8"), allowance=Decimal("6.999999"), positions=positions,
+    )
+    low_allowance = evaluate_current_rdp_backing(
+        bootstrap, account, projected, RDPMode.NORMAL, Decimal("2"), (),
+        now=1000, max_age_s=15,
+    )
+    assert low_allowance.reason == "INSUFFICIENT_CURRENT_ALLOWANCE"
+
+
+def projection_for_current_backing(*, qy: float, qn: float, cost: float):
+    from polymaker.risk.rdp_capital import RDPCapitalProjection, RDPCapitalSnapshot
+
+    m = market()
+    store = StateStore(":memory:")
+    try:
+        inventory = replace(
+            snapshot_inventory(m, UserEventProcessor(store), set()),
+            qy=qy, qn=qn, delta=qy - qn, inventory_exposure=abs(qy - qn),
+            inventory_cost=cost, c_total=cost, cy=cost, cn=0,
+        )
+    finally:
+        store.close()
+    snapshot = RDPCapitalSnapshot(
+        CAPITAL, Decimal(str(cost)), Decimal("0"), CAPITAL - Decimal(str(cost)),
+        inventory, (), (),
+    )
+    return RDPCapitalProjection(snapshot, None)
