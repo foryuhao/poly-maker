@@ -180,3 +180,5 @@ ITER-0025 reviewed implementation b0de5de89d23441b2fe6f7531ab092874678db24 was p
 ITER-0026 Architect01 is approved: connect failed/partial/unknown initial submission and unreliable cycle evidence to latched no-new-risk handling, registered-only scoped cleanup and honest unresolved STOP. No acknowledgment/observed-ID adoption, shared-core or live action authorized. DG-006 remains OPEN until full closure is independently verified.
 
 ITER-0026 Worker dispatch is blocked by repeated collaboration `agent thread limit reached` errors, not a strategy decision. See 02_DISPATCH_BLOCKER.md. No ITER-0026 source/test implementation began. Existing human resume authority persists; next action is configured Worker under frozen Architect01 when dispatch recovers.
+
+Latest explicit continuation was rechecked against HEAD/remote b25710f3bc20ed3d7516fe98040cbf6ffb9e9437. Three new configured Worker dispatch attempts still returned `agent thread limit reached`; no implementation turn started. See ITER-0026/03_DISPATCH_RECOVERY_ATTEMPT.md. Existing implementation authority remains granted; current stage remains WORKER_DISPATCH_BLOCKED.
