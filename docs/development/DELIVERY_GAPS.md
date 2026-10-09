@@ -10,7 +10,7 @@ Branch: rdp-phase0-dev.
 Latest reviewed implementation: ITER-0026, CODE_READY, final Reviewer12 PASS; final archive verification is recorded in ITER-0026/13_ARCHIVE_RECEIPT.md after push.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
-Implementation resume authorization: GRANTED by explicit human resume; this session completed only the requested ITER-0026 scope.
+Implementation resume authorization: GRANTED by explicit human resume for automatic required serial iterations and repairs until MICRO_LIVE_READY. No real-money/main merge/strategy-semantic change is authorized.
 
 This register covers the required initial delivery: one explicitly selected BTC 5-minute market inside poly-maker. It does not schedule implementation iterations or design a new platform.
 
@@ -283,10 +283,10 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is archived and DG-001 CLOSED. ITER-0026 final Reviewer12 PASS closes DG-006 for the implemented runtime; final receipt records archival. DG-002–DG-005 and DG-007–DG-012 remain OPEN.
 
 Development Status: IN_PROGRESS.
-Current Iteration: ITER-0026.
-Current Stage: ARCHIVED.
+Current Iteration: ITER-0027.
+Current Stage: ARCHITECT.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-This session completes ITER-0026 only. No next implementation iteration has been started. Any future authorized continuation must inspect the actual repository and remaining required behavior before serial Architect → Worker → Reviewer. No real orders/cancels, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 Architect must inspect actual implementation and choose one minimal OPEN Gap behavior. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
