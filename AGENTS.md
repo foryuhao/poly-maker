@@ -229,6 +229,22 @@ Do not fix it in the current iteration.
 
 Real market evidence outranks model intuition.
 
+## Delivery Convergence
+
+Use docs/development/DELIVERY_GAPS.md as the finite register of missing single-market delivery behavior. It records requirements and closure evidence; it cannot change the Frozen SOP or approved human decisions.
+
+Each implementation iteration must identify exactly one delivery behavior and its stable Gap ID. State the observable start condition, end condition, existing components reused and concrete acceptance evidence. New components or internal interfaces require a current necessity that existing code cannot satisfy by a smaller compatible change. New external runtime interfaces remain subject to §6 and human architecture approval.
+
+Classify findings against existing requirements. A safety defect or defect blocking a required delivery behavior must be fixed within authorized scope or returned to Architect; it cannot be deferred merely to achieve convergence. Findings unrelated to required behavior are deferred without implementation. Genuine missing strategy authority still requires the existing human escalation procedure.
+
+Reviewer PASS must identify either the delivery acceptance condition closed or a justified partial prerequisite. A partial prerequisite must name the still-open acceptance condition, explain why the prerequisite is necessary now, and leave the Gap ID OPEN. Helper completion alone is not delivery completion. Maintain Gap IDs rather than growing a speculative roadmap.
+
+Retain serial Architect → Worker → Reviewer, independent actual-diff review, fail-closed safety, appropriate tests, immutable artifacts and Git archival. Documentation/report revisions alone do not require rerunning unchanged production tests; verify documents and protected-file state instead. Code, test, configuration or unresolved runtime concerns require appropriate implementation checks under §23.
+
+CONVERGENCE-0001 is document-only. Its approval does not authorize implementation. After its archival remain PAUSED_FOR_DEVELOPMENT_CONVERGENCE, with no new implementation iteration or Worker dispatch, until an explicit human resume instruction. After resume, recheck the actual repository and draft applicability before assigning the next iteration.
+
+At MICRO_LIVE_READY, stop development under §37. Do not continue optional refactoring or add features.
+
 ---
 
 # 6. External Interface Rule
