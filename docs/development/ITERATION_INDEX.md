@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Latest archived implementation HEAD:
 
-`b0de5de89d23441b2fe6f7531ab092874678db24`
+`ddb0036e030d9c1e41e03fc6111cdc6e595b6306`
 
 IM preservation state:
 
@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0026`
 
-Current Stage: `ARCHIVE_PENDING`
+Current Stage: `ARCHIVED`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | PENDING | NOT_RUN | KEEP |
+| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -104,7 +104,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ITER-0026 final independent Reviewer12 PASS verifies full DG-006 closure for the current runtime. Failed/partial/unknown submission, interrupted COMPLETE and unreliable owner/cycle evidence latch STOP; only proven registered scope receives existing cleanup. Unknown exposure stays explicit, and terminal actions cannot certify capital or release replacement.
 
-B1/B2/M1/M2 are closed through three immutable repair rounds. Worker and independent Reviewer final full suite: 1648 passed, 2 skipped; independent failure/provenance probes: 34 passed, zero network attempts. See ITER-0026/RESULT.md and 12_REVIEWER_REREVIEW_03.md. DG-001 and DG-006 CLOSED; other gaps OPEN. Final archive/remote verification is pending. No next iteration started; this session's scope is ITER-0026 only.
+B1/B2/M1/M2 are closed through three immutable repair rounds. Worker and independent Reviewer final full suite: 1648 passed, 2 skipped; independent failure/provenance probes: 34 passed, zero network attempts. See ITER-0026/RESULT.md and 12_REVIEWER_REREVIEW_03.md. DG-001 and DG-006 CLOSED; other gaps OPEN. Reviewed implementation ddb0036e030d9c1e41e03fc6111cdc6e595b6306 is pushed and exactly remotely verified; see ITER-0026/13_ARCHIVE_RECEIPT.md. No next iteration started; this session's scope is ITER-0026 only.
 
 ---
 

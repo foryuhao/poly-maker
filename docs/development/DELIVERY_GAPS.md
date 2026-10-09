@@ -10,7 +10,7 @@ Branch: rdp-phase0-dev.
 Latest reviewed implementation: ITER-0026, CODE_READY, final Reviewer12 PASS; final archive verification is recorded in ITER-0026/13_ARCHIVE_RECEIPT.md after push.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
-Implementation resume authorization: GRANTED by explicit human resume; normal requirement-linked serial iterations continue automatically.
+Implementation resume authorization: GRANTED by explicit human resume; this session completed only the requested ITER-0026 scope.
 
 This register covers the required initial delivery: one explicitly selected BTC 5-minute market inside poly-maker. It does not schedule implementation iterations or design a new platform.
 
@@ -284,7 +284,7 @@ CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is ar
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0026.
-Current Stage: ARCHIVE_PENDING.
+Current Stage: ARCHIVED.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
