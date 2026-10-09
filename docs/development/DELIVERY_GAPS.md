@@ -284,9 +284,9 @@ CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is ar
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0027.
-Current Stage: ARCHITECT.
+Current Stage: WORKER.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 Architect must inspect actual implementation and choose one minimal OPEN Gap behavior. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 frozen Architect01 targets the necessary integrated post-cycle factual admission prerequisite under DG-002. DG-002 stays OPEN pending actual successive-order consumption. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.

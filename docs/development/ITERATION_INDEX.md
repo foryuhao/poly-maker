@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0027`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0027 | Next required delivery behavior: Architect selection pending | IN_PROGRESS | NOT_STARTED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0027 | DG-002 prerequisite: current post-cycle next-action admission | APPROVED | PENDING | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -103,7 +103,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0027 Architect is selecting one minimal OPEN Gap behavior from actual implementation and tests.
+Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0027 frozen Architect01 approves current post-cycle next-action factual admission with retained inventory/cost and fresh account backing. This is a necessary DG-002 prerequisite; DG-002 stays OPEN until actual successive sends consume it. Worker implementation is next.
 
 ITER-0026 is fully archived; final Reviewer12 PASS matches current implementation hashes and actual remote e4ab1532043f47af9e416e9e8ef632440bb8608a. DG-001 and DG-006 CLOSED; other gaps OPEN. No ITER-0025/0026 reimplementation. See ITER-0027/00_INITIALIZATION.md for startup evidence and current authorization.
 
