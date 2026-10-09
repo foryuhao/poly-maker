@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0026`
 
-Current Stage: `WORKER_DISPATCH_BLOCKED`
+Current Stage: `WORKER_IN_PROGRESS`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | DISPATCH_BLOCKED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IN_PROGRESS | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
