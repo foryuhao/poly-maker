@@ -224,14 +224,19 @@ class FakeAccountReadGateway:
 
 
 class FakeBatchClient:
-    def __init__(self, response=None, *, post_error=None):
+    def __init__(self, response=None, *, post_error=None, on_create=None):
         self.response = response
         self.post_error = post_error
+        self.on_create = on_create
         self.created = []
+        self.create_threads = []
         self.posts = []
 
     def create_order(self, args, **kwargs):
         self.created.append((args, kwargs))
+        self.create_threads.append(threading.get_ident())
+        if self.on_create is not None:
+            self.on_create()
         return {"fake_signature": len(self.created)}
 
     def post_orders(self, args, *, post_only):
@@ -2984,6 +2989,811 @@ async def test_real_initial_admission_arms_same_session_and_resolves_strict_gate
                for order_id in result.acknowledged_order_ids)
     assert len(client.posts) == 1 and client.posts[0][1] is True
     assert service.connection_generation == admission.public_generation == 3
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_revalidation_accepts_exact_session_admission_and_clean_arm(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _service, _account_gateway = _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert result.factual_valid and result.reason is None
+    assert result.captured_at is not None
+    assert result.market_status is not None and result.market_status.age_s is not None
+    assert result.account_read_age_s is not None and result.account_read_age_s >= 0
+    assert {token for token, _age in result.book_ages} == {"yes-token", "no-token"}
+    assert result.book_filter is not None and result.book_filter.ready
+    assert result.candidate is not None and result.candidate.reason is None
+    assert result.candidate.quotes == attempt.quotes == admission.candidate.quotes
+    assert result.token_ticks == admission.token_ticks
+    assert result.minimum_sizes == admission.minimum_sizes
+    assert result.capital_projection is not None and result.capital_projection.certified
+    assert result.capital_admission is not None and result.capital_admission.admitted
+    assert result.capital_admission.protected_amount == Decimal("5")
+    assert "HUMAN_LIVE_AUTHORIZATION" in result.outstanding_execution_gates
+    assert result.execution_authorized is False
+    assert scope.session.initial_intent_validation_results == (result,)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidate_while_signing", [False, True])
+async def test_real_gateway_guard_revalidates_on_loop_before_and_after_signing(
+    placement_scope, blocked_network, invalidate_while_signing,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    loop = asyncio.get_running_loop()
+    caller_threads = []
+    capture_threads = []
+    original_revalidate = scope.session.revalidate_initial_normal_intent
+    original_capture = scope.session._capture_initial_normal_intent
+
+    def record_callback_thread(current_admission, current_attempt):
+        caller_threads.append(threading.get_ident())
+        return original_revalidate(current_admission, current_attempt)
+
+    def record_capture_thread(current_admission, current_attempt):
+        capture_threads.append(threading.get_ident())
+        return original_capture(current_admission, current_attempt)
+
+    scope.session.revalidate_initial_normal_intent = record_callback_thread
+    scope.session._capture_initial_normal_intent = record_capture_thread
+    changed = False
+
+    def mutate_after_first_signature():
+        nonlocal changed
+        if not invalidate_while_signing or changed:
+            return
+        changed = True
+        book = scope.session.public_session.service.book("yes-token")
+        assert book is not None
+        book.bids.clear()
+        book.bids[.57] = 10
+        book.asks.clear()
+        book.asks[.60] = 10
+
+    fake_client = FakeBatchClient(_accepted_rows(), on_create=lambda: (
+        loop.call_soon_threadsafe(mutate_after_first_signature)
+    ))
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = fake_client
+    try:
+        placed = await gateway.place(
+            list(admission.candidate.quotes), scope.market,
+            submit_guard=scope.session.initial_normal_submit_guard(admission, attempt),
+            force_post_only=True, strict_placement=True,
+            allow_two_order_rdp_pair=True,
+            token_ticks=dict(admission.token_ticks),
+        )
+    finally:
+        await gateway.aclose()
+
+    loop_thread = threading.get_ident()
+    assert caller_threads == [loop_thread, fake_client.create_threads[0]]
+    assert caller_threads[1] != loop_thread
+    assert capture_threads == [loop_thread, loop_thread]
+    assert len(fake_client.created) == 2
+    assert [kwargs["options"].tick_size for _args, kwargs in fake_client.created] == [
+        "0.01", "0.01",
+    ]
+    if invalidate_while_signing:
+        assert changed and placed == [] and fake_client.posts == []
+        assert [item.reason for item in scope.session.initial_intent_validation_results] == [
+            None, "INTENT_ECONOMICS_OR_SIGNING_TICK_CHANGED",
+        ]
+    else:
+        assert len(placed) == 2 and len(fake_client.posts) == 1
+        assert fake_client.posts[0][1] is True
+        assert all(item.factual_valid for item in scope.session.initial_intent_validation_results)
+    assert all(item.execution_authorized is False
+               for item in scope.session.initial_intent_validation_results)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["copied-admission", "copied-attempt", "pending-buffer"])
+async def test_initial_intent_revalidation_rejects_unprovenanced_or_changed_arm(
+    placement_scope, blocked_network, mutation,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    if mutation == "copied-admission":
+        candidate_admission = replace(admission)
+        candidate_attempt = attempt
+        expected = "ADMISSION_PROVENANCE_MISMATCH"
+    elif mutation == "copied-attempt":
+        changed_quote = replace(attempt.quotes[0], price=attempt.quotes[0].price + .01)
+        candidate_admission = admission
+        candidate_attempt = replace(attempt, quotes=(changed_quote, attempt.quotes[1]))
+        expected = "ARMED_ATTEMPT_PROVENANCE_MISMATCH"
+    else:
+        scope.processor._pending_events.append((object(), None, None, None))
+        candidate_admission = admission
+        candidate_attempt = attempt
+        expected = "PREACK_CAPTURE_NOT_CLEAN"
+
+    result = scope.session.revalidate_initial_normal_intent(
+        candidate_admission, candidate_attempt,
+    )
+
+    assert not result.factual_valid and result.reason == expected
+    assert result.execution_authorized is False
+    assert scope.owner.blocks_initial_admission
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_revalidation_rejects_foreign_session_admission(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    original_attempt = scope.session.arm_initial_normal_placement(admission)
+    foreign_store = StateStore(":memory:")
+    foreign_processor = UserEventProcessor(foreign_store, retain_confirmed_receipts=True)
+    foreign_user = SimpleNamespace(
+        observation=scope.session.user_session.observation,
+        processor=foreign_processor, store=foreign_store,
+        gateway=scope.session.user_session.gateway,
+        failure_category=lambda _generation: None,
+        aclose=_async_noop,
+    )
+    foreign_session = RDPInputSession(
+        scope.bootstrap, public_session=scope.session.public_session,
+        user_session=foreign_user, feed=scope.session.feed,
+        backing=scope.session.backing, now=scope.session._now,
+        sleep=scope.session._sleep, poll_interval_s=scope.session._poll_interval_s,
+        started_at=scope.session.started_at,
+        fill_window_s=scope.session._fill_window_s,
+        monotonic_ns=scope.session._monotonic_ns,
+    )
+    foreign_attempt = foreign_session.arm_initial_normal_placement(admission)
+
+    result = scope.session.revalidate_initial_normal_intent(
+        admission, foreign_attempt,
+    )
+
+    assert not result.factual_valid and result.reason == "ARMED_ATTEMPT_PROVENANCE_MISMATCH"
+    assert admission is scope.session._issued_initial_admission
+    assert scope.session.placement_owner.current is original_attempt
+    assert foreign_session.placement_owner.current is foreign_attempt
+    await foreign_session.aclose()
+    foreign_store.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["yes-token", "no-token"])
+async def test_initial_intent_revalidation_rejects_current_quote_change_for_either_token(
+    placement_scope, blocked_network, token,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    book = scope.session.public_session.service.book(token)
+    assert book is not None
+    current = book.best_bid()
+    ask = book.best_ask()
+    assert current is not None and ask is not None
+    book.bids.clear()
+    book.bids[round(current.price + .01, 2)] = current.size
+    book.asks.clear()
+    book.asks[ask.price] = ask.size
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid
+    assert result.reason in {
+        "PRICE_GATE", "INTENT_ECONOMICS_OR_SIGNING_TICK_CHANGED",
+    }
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["yes-token", "no-token"])
+async def test_initial_intent_revalidation_rejects_tick_or_minimum_metadata_change(
+    placement_scope, blocked_network, token,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    changed = tuple(
+        replace(item, min_order_size=6)
+        if item.token_id == token else item
+        for item in scope.bootstrap.token_metadata
+    )
+    object.__setattr__(scope.bootstrap, "token_metadata", changed)
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid
+    assert result.reason == "TOKEN_METADATA_CHANGED"
+    assert result.minimum_sizes and dict(result.minimum_sizes)[token] == 6
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "buffered", ["matched", "confirmed", "malformed-id", "overflow", "quarantine", "foreign-store"],
+)
+async def test_initial_intent_revalidation_rejects_unexpected_local_economic_scope(
+    placement_scope, blocked_network, buffered,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    if buffered in {"matched", "confirmed"}:
+        event = TradeEvent(
+            "yes-token", Side.BUY, .55, 1, f"buffered-{buffered}",
+            TradeState.MATCHED if buffered == "matched" else TradeState.CONFIRMED,
+            time.time(), "yes-order", scope.market.condition_id,
+        )
+        scope.processor.on_trade(
+            event, scope.market.condition_id,
+            received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=time.monotonic_ns(), connection_generation=4,
+        )
+    elif buffered == "malformed-id":
+        scope.processor._pending_malformed_order_ids.add("yes-order")
+    elif buffered == "overflow":
+        scope.processor._pending_limit = 0
+        event = TradeEvent(
+            "yes-token", Side.BUY, .55, 1, "overflow-intent", TradeState.MATCHED,
+            time.time(), "yes-order", scope.market.condition_id,
+        )
+        scope.processor.on_trade(event, scope.market.condition_id)
+    elif buffered == "quarantine":
+        scope.processor.quarantined_orders.add("yes-order")
+    else:
+        scope.store.register_owned_order(
+            "foreign-local", "other-condition", "foreign-token", Side.BUY, 1, .2, "other",
+        )
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid and result.reason == "PREACK_CAPTURE_NOT_CLEAN"
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    "public-generation", "user-generation", "public-health", "backlog", "expired", "closed",
+])
+async def test_initial_intent_revalidation_fails_closed_on_session_state_change(
+    placement_scope, blocked_network, failure,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    if failure == "public-generation":
+        scope.session.public_session.service.connection_generation += 1
+        reason = "INPUT_GENERATION_CHANGED"
+    elif failure == "user-generation":
+        scope.session.user_session.observation.user_channel.connection_generation += 1
+        reason = "INPUT_GENERATION_CHANGED"
+    elif failure == "public-health":
+        scope.session.public_session.failure_category = lambda _generation: "FEED_UNHEALTHY"
+        reason = "FEED_UNHEALTHY"
+    elif failure == "backlog":
+        scope.session.public_session.service.metrics["received"] += 1
+        reason = "PUBLIC_INPUT_BACKLOG"
+    elif failure == "expired":
+        now = scope.session._now()
+        scope.session.bootstrap = replace(scope.session.bootstrap, end_epoch=now)
+        scope.session.placement_owner._bootstrap = scope.session.bootstrap
+        reason = "MARKET_EXPIRED"
+    else:
+        scope.session._closed = True
+        reason = "SESSION_CLOSED"
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid and result.reason == reason
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence", "age", "expected"),
+    [
+        ("status", 9.999, None), ("status", 10.0, "MARKET_STATUS_STALE"),
+        ("account", 9.999, None), ("account", 10.0, None),
+        ("account", 10.001, "STALE_ACCOUNT_EVIDENCE"),
+        ("yes-book", 4.999, None), ("yes-book", 5.0, "MARKET_DATA_STALE"),
+        ("no-book", 4.999, None), ("no-book", 5.0, "MARKET_DATA_STALE"),
+    ],
+)
+async def test_initial_intent_revalidation_uses_exact_current_freshness_boundaries(
+    placement_scope, blocked_network, evidence, age, expected,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+
+    captured_at = scope.session._now() + 1
+    scope.session._now = lambda: captured_at
+    scope.session._account_max_age_s = 10
+    scope.session._market_data_max_age_s = 5
+    if evidence == "status":
+        status = admission.market_status
+        assert status is not None
+        object.__setattr__(status, "receipt_ts", captured_at - age)
+    elif evidence == "account":
+        account = scope.session._issued_initial_account
+        assert account is not None
+        for field in (
+            "orders_receipt_ts", "positions_receipt_ts", "collateral_receipt_ts",
+        ):
+            object.__setattr__(account, field, captured_at - age)
+        object.__setattr__(admission, "account_receipt_times", (captured_at - age,) * 3)
+    else:
+        token_id = "yes-token" if evidence == "yes-book" else "no-token"
+        book = scope.session.public_session.service.book(token_id)
+        assert book is not None
+        book.local_ts = captured_at - age
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    if expected is None:
+        assert result.factual_valid and result.reason is None
+    else:
+        assert not result.factual_valid and result.reason == expected
+    assert result.captured_at == captured_at
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["future", "nan"])
+async def test_initial_intent_revalidation_rejects_invalid_current_status_receipt(
+    placement_scope, blocked_network, invalid,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    status = admission.market_status
+    assert status is not None
+    now = scope.session._now()
+    object.__setattr__(status, "receipt_ts", now + 1 if invalid == "future" else float("nan"))
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid
+    assert result.reason == (
+        "MARKET_STATUS_RECEIPT_IN_FUTURE" if invalid == "future"
+        else "INVALID_MARKET_STATUS_RECEIPT"
+    )
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence", "invalid", "expected"),
+    [
+        ("account", "future", "INVALID_READ_TIMESTAMPS"),
+        ("account", "nan", "INVALID_READ_TIMESTAMPS"),
+        ("yes-book", "future", "MARKET_DATA_RECEIPT_IN_FUTURE"),
+        ("yes-book", "nan", "INVALID_MARKET_DATA_RECEIPT"),
+        ("no-book", "future", "MARKET_DATA_RECEIPT_IN_FUTURE"),
+        ("no-book", "nan", "INVALID_MARKET_DATA_RECEIPT"),
+    ],
+)
+async def test_initial_intent_revalidation_rejects_invalid_account_or_book_receipts(
+    placement_scope, blocked_network, evidence, invalid, expected,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    captured_at = scope.session._now()
+    invalid_receipt = captured_at + 1 if invalid == "future" else float("nan")
+    if evidence == "account":
+        account = scope.session._issued_initial_account
+        assert account is not None
+        for field in (
+            "orders_receipt_ts", "positions_receipt_ts", "collateral_receipt_ts",
+        ):
+            object.__setattr__(account, field, invalid_receipt)
+        object.__setattr__(
+            admission, "account_receipt_times",
+            None if invalid == "nan" else (invalid_receipt,) * 3,
+        )
+    else:
+        token_id = evidence.removesuffix("-book") + "-token"
+        book = scope.session.public_session.service.book(token_id)
+        assert book is not None
+        book.local_ts = invalid_receipt
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid and result.reason == expected
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backing", ["cash", "allowance"])
+async def test_initial_intent_revalidation_rechecks_current_cash_and_allowance(
+    placement_scope, blocked_network, backing,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    account = scope.session._issued_initial_account
+    assert account is not None
+    object.__setattr__(account, "balance_usd" if backing == "cash" else "allowance_usd", Decimal("29"))
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid
+    assert result.reason == (
+        "INSUFFICIENT_CASH_BACKING" if backing == "cash"
+        else "INSUFFICIENT_ALLOWANCE_BACKING"
+    )
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filter_state", ["rejected", "unready"])
+async def test_initial_intent_revalidation_requires_ready_accepted_book_filter(
+    placement_scope, blocked_network, filter_state,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    book_filter = admission.book_filter
+    assert book_filter is not None
+    changed_filter = replace(
+        book_filter,
+        ready=filter_state != "unready",
+        rejected=filter_state == "rejected",
+        reasons=("INACTIVE_YES",) if filter_state == "rejected" else ("BOOK_FILTER_UNREADY",),
+    )
+    scope.session.book_filter_result = lambda: changed_filter
+
+    result = scope.session.revalidate_initial_normal_intent(admission, attempt)
+
+    assert not result.factual_valid
+    assert result.reason == (
+        "BOOK_FILTER_REJECTED" if filter_state == "rejected" else "BOOK_FILTER_UNREADY"
+    )
+    assert result.book_filter is changed_filter
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_bridge_times_out_without_evaluating_queued_mutable_state(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    scope.session._account_max_age_s = .05
+    loop = asyncio.get_running_loop()
+    original_call_soon_threadsafe = loop.call_soon_threadsafe
+    bridge_queued = threading.Event()
+    queued_callbacks = []
+
+    def observe_bridge_queue(callback, *args):
+        if getattr(callback, "__name__", "") == "capture_on_owner_loop":
+            queued_callbacks.append((callback, args))
+            bridge_queued.set()
+            return None
+        return original_call_soon_threadsafe(callback, *args)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", observe_bridge_queue)
+    captures = []
+
+    def unexpected_capture(*_args):
+        captures.append("capture")
+        raise AssertionError("abandoned bridge must not capture mutable state")
+
+    scope.session._capture_initial_normal_intent = unexpected_capture
+    outcome = []
+    validation_finished = threading.Event()
+    validation_thread = threading.Thread(
+        target=lambda: (
+            outcome.append(scope.session.revalidate_initial_normal_intent(admission, attempt)),
+            validation_finished.set(),
+        ),
+    )
+    validation_thread.start()
+    assert await asyncio.to_thread(bridge_queued.wait, 1)
+    assert validation_finished.wait(.5)
+    validation_thread.join()
+    result = outcome[0]
+    assert not result.factual_valid and result.reason == "VALIDATION_BRIDGE_TIMEOUT"
+    assert captures == []
+    queued_callbacks[0][0](*queued_callbacks[0][1])
+    assert captures == []
+    assert not scope.session._intent_bridge_requests
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_bridge_teardown_abandons_queued_callback(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    loop = asyncio.get_running_loop()
+    original_call_soon_threadsafe = loop.call_soon_threadsafe
+    queued_callbacks = []
+    bridge_queued = threading.Event()
+
+    def hold_bridge_callback(callback, *args):
+        if getattr(callback, "__name__", "") == "capture_on_owner_loop":
+            queued_callbacks.append((callback, args))
+            bridge_queued.set()
+            return None
+        return original_call_soon_threadsafe(callback, *args)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", hold_bridge_callback)
+    captures = []
+    scope.session._capture_initial_normal_intent = lambda *_args: captures.append("capture")
+    validation_task = asyncio.create_task(asyncio.to_thread(
+        scope.session.revalidate_initial_normal_intent, admission, attempt,
+    ))
+    assert await asyncio.to_thread(bridge_queued.wait, 1)
+    await scope.session.aclose()
+    result = await validation_task
+    assert not result.factual_valid and result.reason == "SESSION_CLOSED"
+    assert queued_callbacks
+    queued_callbacks[0][0](*queued_callbacks[0][1])
+    assert captures == []
+    assert not scope.session._intent_bridge_requests
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_bridge_rejects_callback_delivered_after_wait_expiry(
+    placement_scope, blocked_network, monkeypatch,
+):
+    import polymaker.rdp_runtime as runtime
+
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    scope.session._account_max_age_s = .05
+    loop = asyncio.get_running_loop()
+    original_call_soon_threadsafe = loop.call_soon_threadsafe
+    queued_callbacks = []
+    bridge_queued = threading.Event()
+    wait_expired = threading.Event()
+    resume_worker = threading.Event()
+
+    def hold_bridge_callback(callback, *args):
+        if getattr(callback, "__name__", "") == "capture_on_owner_loop":
+            queued_callbacks.append((callback, args))
+            bridge_queued.set()
+            return None
+        return original_call_soon_threadsafe(callback, *args)
+
+    base_request = runtime._IntentBridgeRequest
+
+    class InterleavedWait(threading.Event):
+        def wait(self, timeout=None):
+            completed = super().wait(timeout)
+            if timeout is not None and not completed:
+                wait_expired.set()
+                assert resume_worker.wait(1)
+            return completed
+
+    def request_with_interleaved_wait(admission_arg, attempt_arg, deadline):
+        request = base_request(admission_arg, attempt_arg, deadline)
+        request.completed = InterleavedWait()
+        return request
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", hold_bridge_callback)
+    monkeypatch.setattr(runtime, "_IntentBridgeRequest", request_with_interleaved_wait)
+    captures = []
+    scope.session._capture_initial_normal_intent = lambda *_args: captures.append("capture")
+    outcome = []
+    worker_done = threading.Event()
+
+    def run_validation():
+        outcome.append(scope.session.revalidate_initial_normal_intent(admission, attempt))
+        worker_done.set()
+
+    worker = threading.Thread(target=run_validation)
+    worker.start()
+    assert await asyncio.to_thread(bridge_queued.wait, 1)
+    assert await asyncio.to_thread(wait_expired.wait, 1)
+    assert queued_callbacks
+    queued_callbacks[0][0](*queued_callbacks[0][1])
+    resume_worker.set()
+    assert await asyncio.to_thread(worker_done.wait, 1)
+    worker.join()
+
+    result = outcome[0]
+    assert not result.factual_valid and result.reason == "VALIDATION_BRIDGE_TIMEOUT"
+    assert captures == []
+    assert all(not item.factual_valid
+               for item in scope.session.initial_intent_validation_results)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_bridge_does_not_publish_late_capture_result(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    valid_capture = scope.session._capture_initial_normal_intent(admission, attempt)
+    assert valid_capture.factual_valid
+    scope.session._account_max_age_s = .05
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    validation_finished = threading.Event()
+    outcome = []
+
+    def delayed_positive_capture(*_args):
+        capture_started.set()
+        assert release_capture.wait(1)
+        return valid_capture
+
+    scope.session._capture_initial_normal_intent = delayed_positive_capture
+
+    def validate_from_worker():
+        outcome.append(scope.session.revalidate_initial_normal_intent(admission, attempt))
+        validation_finished.set()
+
+    worker = threading.Thread(target=validate_from_worker)
+
+    def release_only_after_timeout():
+        assert capture_started.wait(1)
+        assert validation_finished.wait(1)
+        release_capture.set()
+
+    controller = threading.Thread(target=release_only_after_timeout)
+    controller.start()
+    worker.start()
+    assert await asyncio.to_thread(validation_finished.wait, 1)
+    assert await asyncio.to_thread(capture_started.wait, 1)
+    worker.join()
+    controller.join()
+
+    result = outcome[0]
+    assert not result.factual_valid and result.reason == "VALIDATION_BRIDGE_TIMEOUT"
+    assert scope.session.initial_intent_validation_results == (result,)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_real_gateway_bridge_timeout_denies_final_guard_without_post(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    scope.session._account_max_age_s = .05
+    loop = asyncio.get_running_loop()
+    original_call_soon_threadsafe = loop.call_soon_threadsafe
+    queued_callbacks = []
+    bridge_queued = threading.Event()
+
+    def hold_bridge_callback(callback, *args):
+        if getattr(callback, "__name__", "") == "capture_on_owner_loop":
+            queued_callbacks.append((callback, args))
+            bridge_queued.set()
+            return None
+        return original_call_soon_threadsafe(callback, *args)
+
+    monkeypatch.setattr(loop, "call_soon_threadsafe", hold_bridge_callback)
+    fake_client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = fake_client
+    try:
+        placed = await gateway.place(
+            list(admission.candidate.quotes), scope.market,
+            submit_guard=scope.session.initial_normal_submit_guard(admission, attempt),
+            force_post_only=True, strict_placement=True,
+            allow_two_order_rdp_pair=True,
+            token_ticks=dict(admission.token_ticks),
+        )
+    finally:
+        await gateway.aclose()
+
+    assert bridge_queued.is_set() and queued_callbacks
+    assert placed == [] and fake_client.posts == []
+    assert len(fake_client.created) == 2
+    assert [item.reason for item in scope.session.initial_intent_validation_results] == [
+        None, "VALIDATION_BRIDGE_TIMEOUT",
+    ]
+    queued_callbacks[0][0](*queued_callbacks[0][1])
+    assert [item.reason for item in scope.session.initial_intent_validation_results] == [
+        None, "VALIDATION_BRIDGE_TIMEOUT",
+    ]
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_initial_intent_bridge_rejects_closed_owner_loop(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+    scope.session._intent_loop = closed_loop
+    scope.session._intent_loop_thread_id = threading.get_ident() + 1
+
+    result = await asyncio.to_thread(
+        scope.session.revalidate_initial_normal_intent, admission, attempt,
+    )
+
+    assert not result.factual_valid and result.reason == "VALIDATION_LOOP_UNAVAILABLE"
+    assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_real_gateway_first_guard_denial_prevents_signing_and_post(
+    placement_scope, blocked_network,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    attempt = scope.session.arm_initial_normal_placement(admission)
+    book = scope.session.public_session.service.book("yes-token")
+    assert book is not None
+    book.bids.clear()
+    book.bids[.80] = 10
+    book.asks.clear()
+    book.asks[.82] = 10
+    fake_client = FakeBatchClient(_accepted_rows())
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = fake_client
+    try:
+        placed = await gateway.place(
+            list(admission.candidate.quotes), scope.market,
+            submit_guard=scope.session.initial_normal_submit_guard(admission, attempt),
+            force_post_only=True, strict_placement=True,
+            allow_two_order_rdp_pair=True,
+            token_ticks=dict(admission.token_ticks),
+        )
+    finally:
+        await gateway.aclose()
+
+    assert placed == [] and fake_client.created == [] and fake_client.posts == []
+    assert [item.reason for item in scope.session.initial_intent_validation_results] == [
+        "PRICE_GATE",
+    ]
+    assert blocked_network == []
 
 
 @pytest.mark.asyncio

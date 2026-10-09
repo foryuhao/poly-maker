@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import math
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -97,6 +98,43 @@ class RDPInitialNormalAdmission:
     outstanding_execution_gates: tuple[str, ...]
     market_status: RDPMarketStatusEvidence | None = None
     execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RDPInitialIntentValidation:
+    """One coherent factual revalidation; it never grants execution authority."""
+
+    factual_valid: bool
+    reason: str | None
+    captured_at: float | None
+    slug: str
+    condition_id: str
+    attempt_id: int
+    public_generation: int
+    user_generation: int
+    market_status: RDPMarketStatusEvidence | None
+    account_receipt_times: tuple[float, float, float] | None
+    account_read_age_s: float | None
+    book_ages: tuple[tuple[str, float | None], ...]
+    book_filter: RDPBookFilterResult | None
+    candidate: RDPQuoteDecision | None
+    token_ticks: tuple[tuple[str, float], ...]
+    minimum_sizes: tuple[tuple[str, float], ...]
+    capital_projection: RDPCapitalProjection | None
+    capital_admission: RDPCapitalAdmission | None
+    outstanding_execution_gates: tuple[str, ...]
+    execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(eq=False, slots=True)
+class _IntentBridgeRequest:
+    admission: Any
+    attempt: Any
+    deadline_monotonic: float
+    abandoned: bool = False
+    validation: RDPInitialIntentValidation | None = None
+    completed: threading.Event = field(default_factory=threading.Event)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +273,16 @@ class RDPInputSession:
         self._closed = False
         self._admission_active = False
         self._admission_task: asyncio.Task[Any] | None = None
+        self._intent_loop: asyncio.AbstractEventLoop | None = None
+        self._intent_loop_thread_id: int | None = None
+        self._issued_initial_admission: RDPInitialNormalAdmission | None = None
+        self._issued_initial_account: Any | None = None
+        self._armed_intent_admission: RDPInitialNormalAdmission | None = None
+        self._armed_intent_attempt: RDPPlacementAttempt | None = None
+        self._intent_validation_results: list[RDPInitialIntentValidation] = []
+        self._intent_result_lock = threading.Lock()
+        self._intent_bridge_requests: set[_IntentBridgeRequest] = set()
+        self._intent_bridge_lock = threading.Lock()
         self._account_read_task: asyncio.Task[Any] | None = None
         self._market_status_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
@@ -459,6 +507,13 @@ class RDPInputSession:
             return rejected("SESSION_CLOSED")
         if self._admission_active:
             return rejected("INITIAL_ADMISSION_IN_PROGRESS")
+        loop = asyncio.get_running_loop()
+        if self._intent_loop is not None and self._intent_loop is not loop:
+            return rejected("SESSION_LOOP_CHANGED")
+        self._intent_loop = loop
+        self._intent_loop_thread_id = threading.get_ident()
+        self._issued_initial_admission = None
+        self._issued_initial_account = None
         self._admission_active = True
         self._admission_task = task
         try:
@@ -700,7 +755,7 @@ class RDPInputSession:
                     capital_admission=capital, candidate=candidate,
                     token_ticks=ticks, minimum_sizes=minimums,
                 )
-            return RDPInitialNormalAdmission(
+            admission = RDPInitialNormalAdmission(
                 slug=self.bootstrap.market.slug,
                 condition_id=self.bootstrap.market.condition_id,
                 eligible=True,
@@ -722,6 +777,9 @@ class RDPInputSession:
                     "HUMAN_LIVE_AUTHORIZATION",
                 ),
             )
+            self._issued_initial_admission = admission
+            self._issued_initial_account = current_account
+            return admission
         finally:
             self._account_read_task = None
             self._market_status_read_task = None
@@ -816,7 +874,7 @@ class RDPInputSession:
         failure = self._admission_precondition_failure()
         if failure is not None:
             raise RDPPlacementError(failure)
-        return self.placement_owner.arm(
+        attempt = self.placement_owner.arm(
             admission,
             current_public_generation=self.public_session.service.connection_generation,
             current_user_generation=(
@@ -824,12 +882,483 @@ class RDPInputSession:
             session_healthy=self._health_failure() is None,
             now=self._now(),
         )
+        self._armed_intent_admission = admission
+        self._armed_intent_attempt = attempt
+        return attempt
 
     def resolve_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, outcome: Any,
     ) -> RDPPlacementAttempt:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
         return self.placement_owner.resolve(attempt, outcome)
+
+    @property
+    def initial_intent_validation_results(self) -> tuple[RDPInitialIntentValidation, ...]:
+        with self._intent_result_lock:
+            return tuple(self._intent_validation_results)
+
+    def initial_normal_submit_guard(
+        self, admission: RDPInitialNormalAdmission, attempt: RDPPlacementAttempt,
+    ) -> Callable[[], bool]:
+        """Build the factual callback for the existing gateway guard points."""
+        def guard() -> bool:
+            return self.revalidate_initial_normal_intent(admission, attempt).factual_valid
+        return guard
+
+    def revalidate_initial_normal_intent(
+        self, admission: RDPInitialNormalAdmission, attempt: RDPPlacementAttempt,
+    ) -> RDPInitialIntentValidation:
+        """Capture current intent validity on the owning loop from either gateway thread."""
+        loop = self._intent_loop
+        if loop is None or self._intent_loop_thread_id is None:
+            return self._retain_intent_validation(
+                self._intent_validation_failure(admission, attempt, "VALIDATION_LOOP_UNAVAILABLE"),
+            )
+        if threading.get_ident() == self._intent_loop_thread_id:
+            if loop.is_closed() or not loop.is_running():
+                result = self._intent_validation_failure(
+                    admission, attempt, "VALIDATION_LOOP_UNAVAILABLE",
+                )
+            else:
+                try:
+                    result = self._capture_initial_normal_intent(admission, attempt)
+                except Exception as exc:  # noqa: BLE001 - categorical fail closed
+                    result = self._intent_validation_failure(
+                        admission, attempt, f"VALIDATION_FAILED:{type(exc).__name__}",
+                    )
+            return self._retain_intent_validation(result)
+
+        if loop.is_closed() or not loop.is_running():
+            return self._retain_intent_validation(
+                self._intent_validation_failure(admission, attempt, "VALIDATION_LOOP_UNAVAILABLE"),
+            )
+        timeout_s = min(
+            self._account_max_age_s, self._market_status_max_age_s,
+            self._market_data_max_age_s,
+        )
+        if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float))
+                or not math.isfinite(timeout_s) or timeout_s <= 0):
+            return self._retain_intent_validation(
+                self._intent_validation_failure(admission, attempt, "VALIDATION_BRIDGE_TIMEOUT"),
+            )
+        request = _IntentBridgeRequest(
+            admission, attempt, time.monotonic() + float(timeout_s),
+        )
+        with self._intent_bridge_lock:
+            self._intent_bridge_requests.add(request)
+
+        def capture_on_owner_loop() -> None:
+            try:
+                with request.lock:
+                    if request.abandoned or self._closed:
+                        return
+                    if time.monotonic() >= request.deadline_monotonic:
+                        request.abandoned = True
+                        result = self._intent_validation_failure(
+                            admission, attempt, "VALIDATION_BRIDGE_TIMEOUT",
+                        )
+                        request.validation = result
+                        expired_before_capture = True
+                    else:
+                        expired_before_capture = False
+                if expired_before_capture:
+                    self._retain_intent_validation(result)
+                    return
+                try:
+                    result = self._capture_initial_normal_intent(admission, attempt)
+                except Exception as exc:  # noqa: BLE001 - categorical fail closed
+                    result = self._intent_validation_failure(
+                        admission, attempt, f"VALIDATION_FAILED:{type(exc).__name__}",
+                    )
+                with request.lock:
+                    if request.abandoned:
+                        return
+                    if time.monotonic() >= request.deadline_monotonic:
+                        request.abandoned = True
+                        result = self._intent_validation_failure(
+                            admission, attempt, "VALIDATION_BRIDGE_TIMEOUT",
+                        )
+                    request.validation = result
+                self._retain_intent_validation(result)
+            finally:
+                request.completed.set()
+                with self._intent_bridge_lock:
+                    self._intent_bridge_requests.discard(request)
+
+        try:
+            loop.call_soon_threadsafe(capture_on_owner_loop)
+        except RuntimeError:
+            with self._intent_bridge_lock:
+                self._intent_bridge_requests.discard(request)
+            return self._retain_intent_validation(
+                self._intent_validation_failure(admission, attempt, "VALIDATION_LOOP_UNAVAILABLE"),
+            )
+
+        if not request.completed.wait(timeout_s):
+            with request.lock:
+                request.abandoned = True
+                result = self._intent_validation_failure(
+                    admission, attempt, "VALIDATION_BRIDGE_TIMEOUT",
+                )
+                request.validation = result
+                request.completed.set()
+            result = self._retain_intent_validation(
+                result,
+            )
+            return result
+        if request.validation is not None:
+            return request.validation
+        return self._retain_intent_validation(
+            self._intent_validation_failure(admission, attempt, "VALIDATION_BRIDGE_CANCELLED"),
+        )
+
+    def _intent_validation_failure(
+        self, admission: Any, attempt: Any, reason: str,
+    ) -> RDPInitialIntentValidation:
+        known_admission = (admission if isinstance(admission, RDPInitialNormalAdmission)
+                           else None)
+        known_attempt = attempt if isinstance(attempt, RDPPlacementAttempt) else None
+        return RDPInitialIntentValidation(
+            False, reason, None,
+            getattr(known_admission, "slug", self.bootstrap.market.slug),
+            getattr(known_admission, "condition_id", self.bootstrap.market.condition_id),
+            getattr(known_attempt, "attempt_id", 0),
+            getattr(known_attempt, "public_generation", self.public_generation),
+            getattr(known_attempt, "user_generation", self.user_generation),
+            None, None, None, (), None, None, (), (), None, None,
+            ("FINAL_SUBMIT_REVALIDATION", "HUMAN_LIVE_AUTHORIZATION"),
+        )
+
+    def _retain_intent_validation(
+        self, result: RDPInitialIntentValidation,
+    ) -> RDPInitialIntentValidation:
+        with self._intent_result_lock:
+            self._intent_validation_results.append(result)
+        log.info(
+            "rdp_initial_intent_revalidation",
+            factual_valid=result.factual_valid, reason=result.reason,
+            captured_at=result.captured_at, slug=result.slug,
+            condition_id=result.condition_id, attempt_id=result.attempt_id,
+            public_generation=result.public_generation,
+            user_generation=result.user_generation,
+            market_status_age_s=(result.market_status.age_s
+                                 if result.market_status is not None else None),
+            account_read_age_s=result.account_read_age_s,
+            book_ages=result.book_ages,
+            token_ticks=result.token_ticks, minimum_sizes=result.minimum_sizes,
+            candidate_reason=(result.candidate.reason
+                              if result.candidate is not None else None),
+            capital_reason=(result.capital_projection.reason
+                            if result.capital_projection is not None else None),
+            capital_gate_reason=(result.capital_admission.reason
+                                 if result.capital_admission is not None else None),
+            outstanding_execution_gates=result.outstanding_execution_gates,
+            execution_authorized=False,
+        )
+        return result
+
+    def _abandon_intent_bridges(self, reason: str) -> None:
+        with self._intent_bridge_lock:
+            requests = tuple(self._intent_bridge_requests)
+        for request in requests:
+            if request.abandoned:
+                continue
+            request.abandoned = True
+            request.validation = self._retain_intent_validation(
+                self._intent_validation_failure(request.admission, request.attempt, reason),
+            )
+            request.completed.set()
+
+    def _capture_initial_normal_intent(
+        self, admission: RDPInitialNormalAdmission,
+        attempt: RDPPlacementAttempt,
+    ) -> RDPInitialIntentValidation:
+        market = self.bootstrap.market
+        empty_gates = ("FINAL_SUBMIT_REVALIDATION", "HUMAN_LIVE_AUTHORIZATION")
+
+        def result(
+            reason: str | None, *, captured_at: float | None = None,
+            market_status: RDPMarketStatusEvidence | None = None,
+            account_receipt_times: tuple[float, float, float] | None = None,
+            account_age: float | None = None,
+            book_ages: tuple[tuple[str, float | None], ...] = (),
+            book_filter: RDPBookFilterResult | None = None,
+            candidate: RDPQuoteDecision | None = None,
+            token_ticks: tuple[tuple[str, float], ...] = (),
+            minimum_sizes: tuple[tuple[str, float], ...] = (),
+            projection: RDPCapitalProjection | None = None,
+            capital_admission: RDPCapitalAdmission | None = None,
+        ) -> RDPInitialIntentValidation:
+            return RDPInitialIntentValidation(
+                reason is None, reason, captured_at,
+                getattr(admission, "slug", market.slug),
+                getattr(admission, "condition_id", market.condition_id),
+                getattr(attempt, "attempt_id", 0),
+                getattr(attempt, "public_generation", self.public_generation),
+                getattr(attempt, "user_generation", self.user_generation),
+                market_status, account_receipt_times, account_age, book_ages,
+                book_filter, candidate, token_ticks, minimum_sizes,
+                projection, capital_admission, empty_gates,
+            )
+
+        if (not isinstance(admission, RDPInitialNormalAdmission)
+                or admission is not self._issued_initial_admission
+                or admission is not self._armed_intent_admission
+                or admission.eligible is not True or admission.reason is not None
+                or admission.execution_authorized is not False):
+            return result("ADMISSION_PROVENANCE_MISMATCH")
+        if (not isinstance(attempt, RDPPlacementAttempt)
+                or attempt is not self._armed_intent_attempt
+                or attempt is not self.placement_owner.current
+                or attempt.outcome != "ARMED"
+                or attempt.replacement_blocked is not True
+                or attempt.unresolved is not True
+                or attempt.execution_authorized is not False):
+            return result("ARMED_ATTEMPT_PROVENANCE_MISMATCH")
+        if (admission.slug != market.slug or admission.condition_id != market.condition_id
+                or attempt.slug != admission.slug
+                or attempt.condition_id != admission.condition_id
+                or attempt.public_generation != admission.public_generation
+                or attempt.user_generation != admission.user_generation
+                or admission.public_generation != self.public_generation
+                or admission.user_generation != self.user_generation
+                or not isinstance(admission.candidate, RDPQuoteDecision)
+                or admission.candidate.reason is not None
+                or tuple(attempt.quotes) != tuple(admission.candidate.quotes)
+                or len(attempt.quotes) != 2):
+            return result("INTENT_SCOPE_OR_ECONOMICS_MISMATCH")
+        if ("FINAL_SUBMIT_REVALIDATION" not in admission.outstanding_execution_gates
+                or "HUMAN_LIVE_AUTHORIZATION" not in admission.outstanding_execution_gates):
+            return result("EXECUTION_GATES_MISSING")
+        if self._admission_active:
+            return result("INITIAL_ADMISSION_IN_PROGRESS")
+        expected_pending = {(quote.token_id, quote.side) for quote in attempt.quotes}
+        if not _initial_processor_is_clean_armed_capture(self.processor, expected_pending):
+            return result("PREACK_CAPTURE_NOT_CLEAN")
+
+        try:
+            captured_at = self._now()
+        except Exception as exc:  # noqa: BLE001 - categorized, no exception text
+            return result(f"CAPTURE_CLOCK_FAILED:{type(exc).__name__}")
+        if (isinstance(captured_at, bool)
+                or not isinstance(captured_at, (int, float))
+                or not math.isfinite(captured_at)):
+            return result("INVALID_CAPTURE_TIME")
+        captured_at = float(captured_at)
+        if self._closed:
+            return result("SESSION_CLOSED", captured_at=captured_at)
+        if captured_at >= self.bootstrap.end_epoch:
+            return result("MARKET_EXPIRED", captured_at=captured_at)
+        try:
+            health_failure = self._health_failure()
+        except Exception as exc:  # noqa: BLE001 - categorical, no exception text
+            return result(f"INPUT_HEALTH_FAILED:{type(exc).__name__}", captured_at=captured_at)
+        if health_failure is not None:
+            return result(health_failure, captured_at=captured_at)
+        service = self.public_session.service
+        if (service.connection_generation != self.public_generation
+                or self.user_session.observation.user_channel.connection_generation
+                != self.user_generation):
+            return result("INPUT_GENERATION_CHANGED", captured_at=captured_at)
+        if _has_public_input_backlog(service.metrics):
+            return result("PUBLIC_INPUT_BACKLOG", captured_at=captured_at)
+
+        status = admission.market_status
+        if not isinstance(status, RDPMarketStatusEvidence):
+            return result("MARKET_STATUS_EVIDENCE_UNAVAILABLE", captured_at=captured_at)
+        evaluated_status, status_failure = self._evaluate_market_status_freshness(
+            status, at=captured_at,
+        )
+        if status_failure is not None:
+            return result(
+                status_failure, captured_at=captured_at, market_status=evaluated_status,
+            )
+        status_identity_failure = self._prefill_status_identity_failure(evaluated_status)
+        if status_identity_failure is not None:
+            return result(
+                status_identity_failure, captured_at=captured_at,
+                market_status=evaluated_status,
+            )
+
+        account = self._issued_initial_account
+        if account is None or admission.account_receipt_times != _account_receipt_times(account):
+            return result(
+                "ACCOUNT_PROVENANCE_MISMATCH", captured_at=captured_at,
+                market_status=evaluated_status,
+            )
+        try:
+            backing = evaluate_initial_rdp_backing(
+                self.bootstrap, account, now=captured_at,
+                max_age_s=self._account_max_age_s,
+            )
+        except Exception as exc:  # noqa: BLE001 - categorical, no account payload
+            return result(
+                f"ACCOUNT_BACKING_FAILED:{type(exc).__name__}",
+                captured_at=captured_at, market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+            )
+        if not backing.eligible or not backing.selected_state_empty:
+            return result(
+                backing.reason or "ACCOUNT_BACKING_REJECTED", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s,
+            )
+
+        tokens = (market.yes.token_id, market.no.token_id)
+        books = tuple(service.book(token) for token in tokens)
+        if any(book is None for book in books):
+            return result(
+                "BOOK_UNAVAILABLE", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s,
+            )
+        typed_books = (books[0], books[1])
+        if any(book.snapshot_generation != self.public_generation for book in typed_books):
+            return result(
+                "BOOK_GENERATION_CHANGED", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s,
+            )
+        book_ages_list: list[tuple[str, float | None]] = []
+        for token, book in zip(tokens, typed_books, strict=True):
+            age, age_failure = _freshness_age(
+                book.local_ts, captured_at, self._market_data_max_age_s, "MARKET_DATA",
+            )
+            book_ages_list.append((token, age))
+            if age_failure is not None:
+                return result(
+                    age_failure, captured_at=captured_at,
+                    market_status=evaluated_status,
+                    account_receipt_times=admission.account_receipt_times,
+                    account_age=backing.read_age_s,
+                    book_ages=tuple(book_ages_list),
+                )
+        book_ages = tuple(book_ages_list)
+        filter_result = self.book_filter_result()
+        if not filter_result.ready:
+            return result(
+                _filter_rejection_reason(filter_result), captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result,
+            )
+        if filter_result.rejected:
+            return result(
+                "BOOK_FILTER_REJECTED", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result,
+            )
+
+        metadata = _validated_token_metadata(self.bootstrap)
+        if metadata is None:
+            return result(
+                "INVALID_TOKEN_METADATA", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result,
+            )
+        ticks = tuple((token, book.tick_size) for token, book in zip(tokens, typed_books, strict=True))
+        minimums = tuple((token, metadata[token][1]) for token in tokens)
+        metadata_ticks = tuple((token, metadata[token][0]) for token in tokens)
+        if any(not _same_decimal(book.tick_size, metadata[token][0])
+               for token, book in zip(tokens, typed_books, strict=True)):
+            return result(
+                "TICK_METADATA_MISMATCH", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, token_ticks=ticks,
+                minimum_sizes=minimums,
+            )
+        if (len(admission.token_ticks) != 2 or len(admission.minimum_sizes) != 2
+                or any(not _same_decimal(left[1], right[1])
+                       for left, right in zip(ticks, admission.token_ticks, strict=True))
+                or any(left[0] != right[0] or not _same_decimal(left[1], right[1])
+                       for left, right in zip(minimums, admission.minimum_sizes, strict=True))):
+            return result(
+                "TOKEN_METADATA_CHANGED", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, token_ticks=ticks,
+                minimum_sizes=minimums,
+            )
+        if any(size > 5 for _token, size in minimums):
+            return result(
+                "CLOB_MINIMUM_EXCEEDS_FROZEN_CLIP", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, token_ticks=ticks,
+                minimum_sizes=minimums,
+            )
+
+        decision_market = replace(market, min_order_size=max(size for _, size in minimums))
+        projection = project_rdp_capital(
+            decision_market, self.processor, set(), [],
+            market_state_reliable=True, order_state_reliable=True,
+        )
+        if not projection.certified or projection.snapshot is None:
+            return result(
+                projection.reason or "CAPITAL_PROJECTION_REJECTED",
+                captured_at=captured_at, market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, token_ticks=ticks,
+                minimum_sizes=minimums, projection=projection,
+            )
+        candidate = build_normal_quotes(
+            decision_market, projection.snapshot.inventory,
+            typed_books[0].view(), typed_books[1].view(),
+            typed_books[0].tick_size, typed_books[1].tick_size,
+        )
+        if candidate.reason is not None:
+            return result(
+                candidate.reason, captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, candidate=candidate, token_ticks=ticks,
+                minimum_sizes=minimums, projection=projection,
+            )
+        capital_admission = evaluate_rdp_capital_gate(RDPMode.NORMAL, candidate, projection)
+        if not capital_admission.admitted:
+            return result(
+                capital_admission.reason or "CAPITAL_GATE_REJECTED",
+                captured_at=captured_at, market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, candidate=candidate, token_ticks=ticks,
+                minimum_sizes=minimums, projection=projection,
+                capital_admission=capital_admission,
+            )
+        if (not _same_quote_intent(candidate.quotes, admission.candidate.quotes)
+                or not _same_quote_intent(candidate.quotes, attempt.quotes)
+                or metadata_ticks != admission.token_ticks):
+            return result(
+                "INTENT_ECONOMICS_OR_SIGNING_TICK_CHANGED", captured_at=captured_at,
+                market_status=evaluated_status,
+                account_receipt_times=admission.account_receipt_times,
+                account_age=backing.read_age_s, book_ages=book_ages,
+                book_filter=filter_result, candidate=candidate, token_ticks=ticks,
+                minimum_sizes=minimums, projection=projection,
+                capital_admission=capital_admission,
+            )
+        return result(
+            None, captured_at=captured_at, market_status=evaluated_status,
+            account_receipt_times=admission.account_receipt_times,
+            account_age=backing.read_age_s, book_ages=book_ages,
+            book_filter=filter_result, candidate=candidate, token_ticks=ticks,
+            minimum_sizes=minimums, projection=projection,
+            capital_admission=capital_admission,
+        )
 
     async def complete_initial_normal_cycle(
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
@@ -2589,6 +3118,7 @@ class RDPInputSession:
         if self._closed:
             return
         self._closed = True
+        self._abandon_intent_bridges("SESSION_CLOSED")
         interrupted = False
         cycle = self._initial_cycle_task
         if (cycle is not None and cycle is not asyncio.current_task()
@@ -2689,6 +3219,47 @@ def _initial_processor_is_empty(processor: Any) -> bool:
             return False
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return False
+    return True
+
+
+def _initial_processor_is_clean_armed_capture(
+    processor: Any, expected_pending: set[tuple[str, Side]],
+) -> bool:
+    """Allow only the exact two-key pre-ack capture created by this attempt."""
+    try:
+        if (not expected_pending or processor._pending != expected_pending
+                or processor._pending_remaining != len(expected_pending)
+                or processor._pending_events
+                or processor._pending_malformed_order_ids
+                or processor._pending_overflow
+                or processor._owned or processor.fill_records
+                or processor.applied_fill_keys or processor.quarantined_fill_keys
+                or processor.quarantined_orders):
+            return False
+        store = processor._store
+        if store.owned_orders() or getattr(store, "orders", None):
+            return False
+        if callable(getattr(store, "open_orders", None)) and store.open_orders():
+            return False
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _same_quote_intent(left: Any, right: Any) -> bool:
+    if not isinstance(left, tuple) or not isinstance(right, tuple) or len(left) != len(right):
+        return False
+    by_token = {getattr(quote, "token_id", None): quote for quote in right}
+    if len(by_token) != len(right):
+        return False
+    for quote in left:
+        other = by_token.get(getattr(quote, "token_id", None))
+        if (other is None or getattr(quote, "side", None) is not getattr(other, "side", None)
+                or not _same_decimal(getattr(quote, "price", None),
+                                     getattr(other, "price", None))
+                or not _same_decimal(getattr(quote, "size", None),
+                                     getattr(other, "size", None))):
+            return False
     return True
 
 
