@@ -160,6 +160,23 @@ class RDPFillWindowCompletion:
     execution_authorized: bool = field(default=False, init=False)
 
 
+@dataclass(frozen=True, slots=True)
+class RDPInitialCycleCompletion:
+    """Retained evidence from one explicitly activated initial NORMAL cycle."""
+
+    attempt_id: int
+    slug: str
+    condition_id: str
+    acknowledged_order_ids: tuple[str, ...]
+    trigger: str
+    last_prefill_decision: RDPInitialPreFillDecision | None
+    fill_window_completion: RDPFillWindowCompletion | None
+    close_result: RDPInitialPlacementClose
+    started_at: float
+    completed_at: float
+    execution_authorized: bool = field(default=False, init=False)
+
+
 class RDPInputSession:
     """Retain one public service and one authenticated user/account owner."""
 
@@ -228,6 +245,12 @@ class RDPInputSession:
         self._fill_window_result: RDPFillWindowCompletion | None = None
         self._fill_window_cancel_requested: str | None = None
         self._fill_window_wakeup = asyncio.Event()
+        self._initial_cycle_task: asyncio.Task[RDPInitialCycleCompletion] | None = None
+        self._initial_cycle_result: RDPInitialCycleCompletion | None = None
+        self._initial_cycle_identity: tuple[Any, ...] | None = None
+        self._initial_cycle_interrupt_reason: str | None = None
+        self._initial_cycle_wakeup = asyncio.Event()
+        self._initial_cycle_delegate_tasks: set[asyncio.Task[Any]] = set()
         self.placement_owner = RDPPlacementOwner(
             bootstrap, self.processor,
             getattr(self.user_session, "store", getattr(self.processor, "_store", None)),
@@ -808,10 +831,426 @@ class RDPInputSession:
         """Resolve typed acknowledgment evidence into retained processor ownership."""
         return self.placement_owner.resolve(attempt, outcome)
 
+    async def complete_initial_normal_cycle(
+        self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
+    ) -> RDPInitialCycleCompletion:
+        """Explicitly own one acknowledged initial pair through its close proof."""
+        budget_s = _positive_finite_seconds(close_budget_s, "close budget")
+        if self._initial_cycle_result is not None:
+            current = self.placement_owner.current
+            requested_identity = _initial_cycle_scope_identity(attempt)
+            if (requested_identity == self._initial_cycle_identity
+                    and current is not None
+                    and _initial_cycle_scope_identity(current) == self._initial_cycle_identity):
+                return self._initial_cycle_result
+            raise RDPPlacementError("INITIAL_CYCLE_ALREADY_USED")
+        active = self._initial_cycle_task
+        if active is not None and not active.done():
+            raise RDPPlacementError("INITIAL_CYCLE_IN_PROGRESS")
+        current = self.placement_owner.current
+        if (self._closed or current is None or attempt is not current
+                or attempt.slug != self.bootstrap.market.slug
+                or attempt.condition_id != self.bootstrap.market.condition_id
+                or not _is_complete_initial_pair(self.bootstrap, attempt)
+                or attempt.outcome != "COMPLETE"
+                or not attempt.replacement_blocked or attempt.execution_authorized):
+            raise RDPPlacementError("INITIAL_CYCLE_ATTEMPT_SCOPE_INVALID")
+        if (self._admission_active
+                or (self._prefill_task is not None and not self._prefill_task.done())
+                or (self._fill_window_task is not None and not self._fill_window_task.done())
+                or (self._placement_close_task is not None
+                    and not self._placement_close_task.done())):
+            raise RDPPlacementError("INITIAL_CYCLE_COORDINATION_IN_PROGRESS")
+        if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) is None:
+            raise RDPPlacementError("INITIAL_CYCLE_REGISTRY_MISMATCH")
+
+        self._initial_cycle_identity = _initial_cycle_scope_identity(attempt)
+        self._initial_cycle_interrupt_reason = None
+        self._initial_cycle_wakeup.clear()
+        task = asyncio.create_task(
+            self._run_initial_normal_cycle(attempt, budget_s),
+            name="rdp-initial-normal-cycle",
+        )
+        self._initial_cycle_task = task
+        log.info(
+            "rdp_initial_cycle_started", attempt_id=attempt.attempt_id,
+            condition_id=attempt.condition_id,
+            acknowledged_order_ids=attempt.acknowledged_order_ids,
+            close_budget_s=budget_s, execution_authorized=False,
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._initial_cycle_interrupt_reason = "CALLER_CANCELLED"
+            self._initial_cycle_wakeup.set()
+            self._fill_window_wakeup.set()
+            if self._fill_window_task is not None and not self._fill_window_task.done():
+                self._fill_window_cancel_requested = "CALLER_CANCELLED"
+            await _drain_read_task(task)
+            raise
+
+    def _initial_cycle_call_allowed(self) -> bool:
+        task = self._initial_cycle_task
+        if task is None or task.done():
+            return True
+        current = asyncio.current_task()
+        return current is task or current in self._initial_cycle_delegate_tasks
+
+    def _register_initial_cycle_delegate(self, task: asyncio.Task[Any]) -> None:
+        if (self._initial_cycle_task is not None
+                and not self._initial_cycle_task.done()):
+            self._initial_cycle_delegate_tasks.add(task)
+
+    async def _run_initial_normal_cycle(
+        self, attempt: RDPPlacementAttempt, close_budget_s: float,
+    ) -> RDPInitialCycleCompletion:
+        try:
+            started_at = self._now()
+        except Exception:  # noqa: BLE001 - startup evidence remains categorical
+            started_at = self.started_at
+        last_decision: RDPInitialPreFillDecision | None = None
+        fill_completion: RDPFillWindowCompletion | None = None
+        trigger: str | None = None
+        healthy_close = False
+
+        while trigger is None:
+            if self._initial_cycle_interrupt_reason is not None:
+                trigger = self._initial_cycle_interrupt_reason
+                break
+            failure = self._initial_cycle_failure(attempt)
+            if failure is not None:
+                trigger = failure
+                break
+            try:
+                last_decision = await self.evaluate_initial_prefill(attempt)
+            except asyncio.CancelledError:
+                # The public caller only cancels the owner; an unexpected
+                # nested cancellation is treated as an unsafe interruption.
+                trigger = self._initial_cycle_interrupt_reason or "PREFILL_CANCELLED"
+                break
+            except Exception as exc:  # noqa: BLE001 - retain categorical evidence only
+                trigger = f"PREFILL_EVALUATION_FAILED:{type(exc).__name__}"
+                break
+
+            failure = self._initial_cycle_failure(attempt)
+            if self._initial_cycle_interrupt_reason is not None:
+                trigger = self._initial_cycle_interrupt_reason
+                break
+            if failure is not None:
+                trigger = failure
+                break
+
+            window = self.initial_fill_window()
+            if not window.reliable:
+                trigger = f"WINDOW_UNRELIABLE:{window.reason or 'UNSPECIFIED'}"
+                break
+            if last_decision.action == "FILL_WINDOW":
+                if not window.started or last_decision.fill_window is None:
+                    trigger = "FILL_WINDOW_EVIDENCE_MISSING"
+                    break
+                try:
+                    fill_completion = await self.complete_initial_fill_window(
+                        attempt, close_budget_s=close_budget_s,
+                    )
+                    trigger = fill_completion.trigger
+                except asyncio.CancelledError:
+                    trigger = self._initial_cycle_interrupt_reason or "FILL_WINDOW_CANCELLED"
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    trigger = f"FILL_WINDOW_FAILED:{type(exc).__name__}"
+                    break
+                break
+
+            if last_decision.action == "CLOSE":
+                healthy_close = self._initial_cycle_healthy_invalidation(last_decision)
+                trigger = last_decision.reason
+                if window.started and healthy_close:
+                    # Healthy confirmation racing ordinary quote invalidation
+                    # takes the existing original-receipt window path.
+                    try:
+                        fill_completion = await self.complete_initial_fill_window(
+                            attempt, close_budget_s=close_budget_s,
+                        )
+                        trigger = fill_completion.trigger
+                        healthy_close = False
+                    except Exception as exc:  # noqa: BLE001
+                        trigger = f"FILL_WINDOW_FAILED:{type(exc).__name__}"
+                        healthy_close = False
+                break
+            if window.started:
+                # A confirmation may be accepted after the successful REST
+                # evaluation's final fill check but before this owner resumes.
+                # The fresh reliable window above is authoritative; retain its
+                # original receipt deadline instead of closing the pair early.
+                if last_decision.action == "REST":
+                    try:
+                        fill_completion = await self.complete_initial_fill_window(
+                            attempt, close_budget_s=close_budget_s,
+                        )
+                        trigger = fill_completion.trigger
+                    except asyncio.CancelledError:
+                        trigger = self._initial_cycle_interrupt_reason or "FILL_WINDOW_CANCELLED"
+                    except Exception as exc:  # noqa: BLE001
+                        trigger = f"FILL_WINDOW_FAILED:{type(exc).__name__}"
+                    break
+                trigger = "UNEXPECTED_FILL_WINDOW_WITHOUT_HANDOFF"
+                break
+            if last_decision.action != "REST":
+                trigger = "INVALID_PREFILL_ACTION"
+                break
+
+            remaining = self.bootstrap.end_epoch - self._now()
+            if remaining <= 0:
+                trigger = "MARKET_END"
+                break
+            wait_s = min(self._poll_interval_s, remaining)
+            if not math.isfinite(wait_s) or wait_s <= 0:
+                trigger = "INVALID_REST_POLL_INTERVAL"
+                break
+            try:
+                wait_failure = await self._wait_for_event_wakeup(
+                    self._initial_cycle_wakeup, wait_s,
+                )
+            except asyncio.CancelledError:
+                trigger = self._initial_cycle_interrupt_reason or "REST_WAIT_CANCELLED"
+                break
+            if wait_failure is not None:
+                trigger = wait_failure
+                break
+
+        # A confirmation can arrive after the last REST result but before its
+        # ordinary invalidation is acted on. Re-evaluate only accepted local
+        # evidence and reliability; genuine read/system failures stay primary.
+        if (trigger is not None and healthy_close
+                and self._initial_cycle_interrupt_reason is None):
+            failure = self._initial_cycle_failure(attempt)
+            try:
+                latest_window = self.initial_fill_window()
+            except Exception:
+                latest_window = None
+            if failure is None and latest_window is not None and latest_window.reliable \
+                    and latest_window.started:
+                try:
+                    fill_completion = await self.complete_initial_fill_window(
+                        attempt, close_budget_s=close_budget_s,
+                    )
+                    trigger = fill_completion.trigger
+                    healthy_close = False
+                except Exception as exc:  # noqa: BLE001
+                    trigger = f"FILL_WINDOW_FAILED:{type(exc).__name__}"
+                    healthy_close = False
+
+        if trigger is None:
+            trigger = "INITIAL_CYCLE_STOPPED"
+        interruption = self._initial_cycle_interrupt_reason
+        if interruption is not None:
+            trigger = interruption
+            healthy_close = False
+        try:
+            close_result = (fill_completion.close_result if fill_completion is not None
+                            else await self.close_initial_normal_placement(
+                                attempt,
+                                deadline=(asyncio.get_running_loop().time() + close_budget_s),
+                                _window_continuation_safe=healthy_close,
+                            ))
+        except asyncio.CancelledError:
+            # The owner remains responsible for closure. This is only expected
+            # during teardown and must never escape as an unowned task failure.
+            close_result = self._placement_close_result(
+                attempt, None, None, reason="INITIAL_CYCLE_CLOSE_INTERRUPTED",
+                barrier_complete=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - sanitized retained failure
+            close_result = self._placement_close_result(
+                attempt, None, None,
+                reason=f"INITIAL_CYCLE_CLOSE_FAILED:{type(exc).__name__}",
+                barrier_complete=False,
+            )
+
+        if self._initial_cycle_interrupt_reason is not None:
+            trigger = self._initial_cycle_interrupt_reason
+
+        try:
+            completed_at = self._now()
+        except Exception:  # noqa: BLE001
+            completed_at = started_at
+        result = RDPInitialCycleCompletion(
+            attempt.attempt_id, attempt.slug, attempt.condition_id,
+            attempt.acknowledged_order_ids, trigger, last_decision,
+            fill_completion, close_result, started_at, completed_at,
+        )
+        self._initial_cycle_result = result
+        log.info(
+            "rdp_initial_cycle_finished", attempt_id=attempt.attempt_id,
+            condition_id=attempt.condition_id,
+            acknowledged_order_ids=attempt.acknowledged_order_ids,
+            trigger=trigger,
+            last_prefill_action=(last_decision.action if last_decision else None),
+            last_prefill_reason=(last_decision.reason if last_decision else None),
+            window_deadline_monotonic_ns=(
+                fill_completion.window_deadline_monotonic_ns
+                if fill_completion is not None else None
+            ),
+            barrier_complete=close_result.barrier_complete,
+            capital_certified=(close_result.capital.certified
+                               if close_result.capital else False),
+            replacement_blocked=close_result.replacement_blocked,
+            next_mode=(close_result.next_mode.value if close_result.next_mode else None),
+            execution_authorized=False,
+        )
+        return result
+
+    def _initial_cycle_failure(self, attempt: RDPPlacementAttempt) -> str | None:
+        try:
+            scope_failure, registry = self._prefill_scope_failure(attempt)
+            if scope_failure is not None or registry is None:
+                return scope_failure or "OWNERSHIP_SCOPE_CONTRADICTION"
+            return self._prefill_system_failure(attempt, registry)
+        except Exception as exc:  # noqa: BLE001 - damaged identity is unsafe
+            return f"INPUT_SCOPE_FAILED:{type(exc).__name__}"
+
+    def _initial_cycle_healthy_invalidation(
+        self, decision: RDPInitialPreFillDecision,
+    ) -> bool:
+        if (decision.action != "CLOSE" or decision.captured_at is None
+                or decision.market_status is None or decision.order_receipt_ts is None
+                or decision.order_age_s is None):
+            return False
+        try:
+            captured_at = self._now()
+            if (isinstance(captured_at, bool)
+                    or not isinstance(captured_at, (int, float))
+                    or not math.isfinite(captured_at)):
+                return False
+            status, status_failure = self._evaluate_market_status_freshness(
+                decision.market_status, at=captured_at,
+            )
+            if (status_failure is not None or self._prefill_status_identity_failure(status)
+                    is not None):
+                return False
+            conservative_age = (Decimal(str(decision.order_age_s))
+                                + Decimal(str(captured_at))
+                                - Decimal(str(decision.captured_at)))
+            if (not conservative_age.is_finite() or conservative_age < 0
+                    or conservative_age >= Decimal(str(self._account_max_age_s))):
+                return False
+            if _has_public_input_backlog(self.public_session.service.metrics):
+                return False
+            for token in (self.bootstrap.market.yes.token_id,
+                          self.bootstrap.market.no.token_id):
+                book = self.public_session.service.book(token)
+                if book is None or book.snapshot_generation != self.public_generation:
+                    return False
+                _age, age_failure = _freshness_age(
+                    book.local_ts, captured_at, self._market_data_max_age_s,
+                    "MARKET_DATA",
+                )
+                if age_failure is not None:
+                    return False
+            current = self.placement_owner.current
+            if (current is None or _placement_registry_snapshot(
+                    self.processor, self.bootstrap, current) is None):
+                return False
+        except Exception:
+            return False
+        candidate = decision.current_candidate
+        if decision.reason == "QUOTE_PRICE_CHANGED":
+            return (
+                isinstance(candidate, RDPQuoteDecision)
+                and candidate.reason is None
+                and len(candidate.quotes) == 2
+                and {quote.token_id for quote in candidate.quotes} == {
+                    self.bootstrap.market.yes.token_id,
+                    self.bootstrap.market.no.token_id,
+                }
+            )
+        if decision.reason == "PRICE_GATE":
+            return (
+                isinstance(candidate, RDPQuoteDecision)
+                and candidate.reason == "PRICE_GATE"
+                and not candidate.quotes
+            )
+        book_filter = decision.book_filter
+        if (isinstance(book_filter, RDPBookFilterResult)
+                and book_filter.ready is True and book_filter.rejected is True):
+            authorized_rejections = {
+                "INACTIVE_YES", "INACTIVE_NO", "DEPTH_EXTREME",
+                "FAST_MOVE_YES", "FAST_MOVE_NO",
+            }
+            if (not book_filter.reasons
+                    or not set(book_filter.reasons) <= authorized_rejections
+                    or decision.reason != _filter_rejection_reason(book_filter)):
+                return False
+            sides = {side.token_id: side for side in book_filter.sides}
+            for reason in book_filter.reasons:
+                if reason == "INACTIVE_YES" and not (
+                    book_filter.inactive is True
+                    and sides.get(self.bootstrap.market.yes.token_id) is not None
+                    and sides[self.bootstrap.market.yes.token_id].inactive is True
+                ):
+                    return False
+                if reason == "INACTIVE_NO" and not (
+                    book_filter.inactive is True
+                    and sides.get(self.bootstrap.market.no.token_id) is not None
+                    and sides[self.bootstrap.market.no.token_id].inactive is True
+                ):
+                    return False
+                if reason == "DEPTH_EXTREME" and book_filter.depth_extreme is not True:
+                    return False
+                if reason == "FAST_MOVE_YES" and not (
+                    book_filter.fast_move is True
+                    and sides.get(self.bootstrap.market.yes.token_id) is not None
+                    and sides[self.bootstrap.market.yes.token_id].fast_move is True
+                ):
+                    return False
+                if reason == "FAST_MOVE_NO" and not (
+                    book_filter.fast_move is True
+                    and sides.get(self.bootstrap.market.no.token_id) is not None
+                    and sides[self.bootstrap.market.no.token_id].fast_move is True
+                ):
+                    return False
+            return True
+        return False
+
+    async def _wait_for_event_wakeup(
+        self, wakeup: asyncio.Event, timeout_s: float,
+    ) -> str | None:
+        sleeper: asyncio.Future[Any] | None = None
+        wake: asyncio.Task[bool] | None = None
+        failure: str | None = None
+        try:
+            try:
+                sleeper = asyncio.ensure_future(self._sleep(timeout_s))
+                wake = asyncio.create_task(wakeup.wait())
+            except Exception as exc:  # noqa: BLE001
+                failure = f"CYCLE_WAIT_FAILED:{type(exc).__name__}"
+            if sleeper is not None and wake is not None:
+                await asyncio.wait({sleeper, wake}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            tasks = [task for task in (sleeper, wake) if task is not None]
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            for task in tasks:
+                if not task.done() or task.cancelled():
+                    continue
+                try:
+                    task.result()
+                except Exception as exc:  # noqa: BLE001
+                    if task is sleeper and failure is None:
+                        failure = f"CYCLE_WAIT_FAILED:{type(exc).__name__}"
+        return failure
+
     async def evaluate_initial_prefill(
         self, attempt: RDPPlacementAttempt,
     ) -> RDPInitialPreFillDecision:
         """Evaluate the retained acknowledged pair without taking an order action."""
+        if not self._initial_cycle_call_allowed():
+            return self._prefill_decision(
+                "CLOSE", "INITIAL_CYCLE_COORDINATION_IN_PROGRESS", attempt,
+            )
         active = self._prefill_task
         if active is not None and not active.done():
             return self._prefill_decision("CLOSE", "PREFILL_EVALUATION_IN_PROGRESS", attempt)
@@ -825,6 +1264,7 @@ class RDPInputSession:
             name="rdp-initial-prefill-evaluation",
         )
         self._prefill_task = task
+        self._register_initial_cycle_delegate(task)
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -834,6 +1274,7 @@ class RDPInputSession:
             if task.done() and self._prefill_task is task:
                 self._prefill_task = None
                 self._prefill_order_read_started_at = None
+            self._initial_cycle_delegate_tasks.discard(task)
 
     def _prefill_decision(
         self, action: str, reason: str, attempt: Any, *,
@@ -1664,10 +2105,17 @@ class RDPInputSession:
         """Return the last completed explicitly activated FillWindow action."""
         return self._fill_window_result
 
+    @property
+    def initial_cycle_completion_result(self) -> RDPInitialCycleCompletion | None:
+        """Return the cached result of the one explicitly owned initial cycle."""
+        return self._initial_cycle_result
+
     async def complete_initial_fill_window(
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPFillWindowCompletion:
         """Wait for the retained window, then run its existing scoped close once."""
+        if not self._initial_cycle_call_allowed():
+            raise RDPPlacementError("INITIAL_CYCLE_COORDINATION_IN_PROGRESS")
         budget_s = _positive_finite_seconds(close_budget_s, "close budget")
         if self._prefill_task is not None and not self._prefill_task.done():
             raise RDPPlacementError("PREFILL_EVALUATION_IN_PROGRESS")
@@ -1707,6 +2155,7 @@ class RDPInputSession:
             name="rdp-initial-fill-window-completion",
         )
         self._fill_window_task = task
+        self._register_initial_cycle_delegate(task)
         log.info(
             "rdp_fill_window_completion_started", condition_id=attempt.condition_id,
             attempt_id=attempt.attempt_id,
@@ -1721,6 +2170,8 @@ class RDPInputSession:
             self._fill_window_wakeup.set()
             await _drain_read_task(task)
             raise
+        finally:
+            self._initial_cycle_delegate_tasks.discard(task)
 
     async def _run_initial_fill_window_completion(
         self, attempt: RDPPlacementAttempt,
@@ -1866,6 +2317,8 @@ class RDPInputSession:
         _window_continuation_safe: bool = True,
     ) -> RDPInitialPlacementClose:
         """Explicitly close this attempt's known owned IDs through the existing barrier."""
+        if not self._initial_cycle_call_allowed():
+            raise RDPPlacementError("INITIAL_CYCLE_COORDINATION_IN_PROGRESS")
         current = self.placement_owner.current
         if (current is None or attempt is not current
                 or attempt.slug != self.bootstrap.market.slug
@@ -1909,6 +2362,7 @@ class RDPInputSession:
             name="rdp-initial-placement-close",
         )
         self._placement_close_task = task
+        self._register_initial_cycle_delegate(task)
         try:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
@@ -1916,6 +2370,7 @@ class RDPInputSession:
             await _drain_read_task(task)
             raise
         finally:
+            self._initial_cycle_delegate_tasks.discard(task)
             if self._placement_close_task is task:
                 self._placement_close_task = None
 
@@ -1960,6 +2415,9 @@ class RDPInputSession:
         reason = barrier.reason
         full_pair = _is_complete_initial_pair(self.bootstrap, attempt)
         state_reliable, health_reason = self._close_state_reliable()
+        if self._initial_cycle_interrupt_reason is not None:
+            state_reliable = False
+            health_reason = health_reason or self._initial_cycle_interrupt_reason
         if not continuation_safe:
             # Risk closure/reconciliation still runs and records known inventory,
             # but an interrupted or unreliable FillWindow cannot certify the next
@@ -1990,6 +2448,14 @@ class RDPInputSession:
             reason = "PLACEMENT_OUTCOME_UNRESOLVED"
         elif barrier.complete and not state_reliable:
             reason = health_reason or "CLOSE_STATE_UNRELIABLE"
+
+        # Interruption is checked again immediately before evidence can release
+        # replacement ownership. There is no await between this gate and record.
+        if self._initial_cycle_interrupt_reason is not None:
+            capital = None
+            next_mode = None
+            state_reliable = False
+            reason = self._initial_cycle_interrupt_reason
 
         try:
             updated = self.placement_owner.record_close(attempt, barrier, capital)
@@ -2124,6 +2590,14 @@ class RDPInputSession:
             return
         self._closed = True
         interrupted = False
+        cycle = self._initial_cycle_task
+        if (cycle is not None and cycle is not asyncio.current_task()
+                and not cycle.done()):
+            self._initial_cycle_interrupt_reason = "SESSION_TEARDOWN"
+            self._initial_cycle_wakeup.set()
+            self._fill_window_cancel_requested = "SESSION_TEARDOWN"
+            self._fill_window_wakeup.set()
+            interrupted = await _drain_read_task(cycle)
         prefill = self._prefill_task
         if (prefill is not None and prefill is not asyncio.current_task()
                 and not prefill.done()):
@@ -2279,6 +2753,15 @@ def _filter_rejection_reason(result: RDPBookFilterResult) -> str:
     if result.reasons:
         return result.reasons[0]
     return "BOOK_FILTER_REJECTED"
+
+
+def _initial_cycle_scope_identity(attempt: RDPPlacementAttempt) -> tuple[Any, ...]:
+    """Stable attempt, acknowledged-scope and registered-quote identity."""
+    return (
+        attempt.attempt_id, attempt.slug, attempt.condition_id,
+        tuple(attempt.acknowledged_order_ids), tuple(attempt.quotes),
+        attempt.public_generation, attempt.user_generation,
+    )
 
 
 class _StrictCloseGateway:
