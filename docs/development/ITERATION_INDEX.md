@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Current verified development HEAD:
 
-`0491c17d1b0c46f3f3200e1a776fcb05799605f3`
+`f71ce2bc3a069d44ea158596a451d892276669f7`
 
 IM preservation state:
 
@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0023`
+Current Iteration: `ITER-0024`
 
-Current Stage: `ARCHIVE`
+Current Stage: `ARCHITECT`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0024 | Next smallest missing single-market prerequisite | IN_PROGRESS | PENDING | PENDING | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0022 | Initial acknowledged-pair pre-fill validity decision | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0021 | Fresh exact-market NORMAL tradability admission | APPROVED_REVISION | IMPLEMENTED_REVISION | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0020 | Started initial FillWindow scoped-close coordinator | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -99,7 +100,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0023 Reviewer06 PASS closes both findings on verified source hashes. Worker finalfull1533/2; independent affected913 and race/classification probes passed, zero network attempts. Archive pending; project IN_PROGRESS with real-money authority NOT_GRANTED.
+ITER-0023 independently reviewed and remotely archived. ITER-0024 Architect chooses one smallest missing integrated single-market prerequisite from actual code. Project IN_PROGRESS; real-money authorization NOT_GRANTED.
 
 ---
 
