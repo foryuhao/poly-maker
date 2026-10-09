@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0026`
 
-Current Stage: `WORKER_FIX`
+Current Stage: `ARCHIVE_PENDING`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | FIX_PENDING | RETURN_TO_WORKER | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | PENDING | NOT_RUN | KEEP |
 | ITER-0025 | DG-001: authorized initial NORMAL submission | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0024 | Coherent final initial NORMAL intent revalidation | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
 | ITER-0023 | Acknowledged initial NORMAL cycle completion owner | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | PENDING |
@@ -102,7 +102,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0025 Worker02 delivered DG-001 guarded submission to typed retained ownership; final full1615/2, zero network attempts reported. Independent actual-diff/closure review pending. DG-001 remains OPEN; bounded default-off gateway change requires legacy/FL review. Other gaps OPEN; no real-money or main merge authorization.
+ITER-0026 final independent Reviewer12 PASS verifies full DG-006 closure for the current runtime. Failed/partial/unknown submission, interrupted COMPLETE and unreliable owner/cycle evidence latch STOP; only proven registered scope receives existing cleanup. Unknown exposure stays explicit, and terminal actions cannot certify capital or release replacement.
+
+B1/B2/M1/M2 are closed through three immutable repair rounds. Worker and independent Reviewer final full suite: 1648 passed, 2 skipped; independent failure/provenance probes: 34 passed, zero network attempts. See ITER-0026/RESULT.md and 12_REVIEWER_REREVIEW_03.md. DG-001 and DG-006 CLOSED; other gaps OPEN. Final archive/remote verification is pending. No next iteration started; this session's scope is ITER-0026 only.
 
 ---
 
@@ -168,17 +170,3 @@ Detailed evidence belongs in:
 `docs/development/ITER-XXXX/`
 
 and Git history.
-
-ITER-0025 independent Reviewer04 returned RETURN_TO_WORKER: preserve actual typed Gateway evidence across resolver errors and enforce the absolute deadline after delayed guard publication. DG-001 remains OPEN. Worker repair is authorized within Architect01; no human decision or real-money authority is required.
-
-Worker05 repair reports 12 targeted, 780 affected, and 1625 passed / 2 skipped full-suite checks, with zero network attempts. Reviewer re-review of the exact repaired tree is pending; DG-001 remains OPEN.
-
-ITER-0025 final Reviewer06 PASS verifies DG-001 complete closure. DG-001 is CLOSED; DG-002–DG-012 remain OPEN. Final full suite 1625 passed / 2 skipped; independent 40-test matrix and original failure probes pass. Archival and remote verification precede the next required behavior.
-
-ITER-0025 reviewed implementation b0de5de89d23441b2fe6f7531ab092874678db24 was pushed and remotely verified; see 07_ARCHIVE_RECEIPT.md. ITER-0026 is initialized for Architect selection. Human resume authorizes automatic continuation; real-money and main merge remain denied.
-
-ITER-0026 Architect01 is approved: connect failed/partial/unknown initial submission and unreliable cycle evidence to latched no-new-risk handling, registered-only scoped cleanup and honest unresolved STOP. No acknowledgment/observed-ID adoption, shared-core or live action authorized. DG-006 remains OPEN until full closure is independently verified.
-
-ITER-0026 Worker dispatch is blocked by repeated collaboration `agent thread limit reached` errors, not a strategy decision. See 02_DISPATCH_BLOCKER.md. No ITER-0026 source/test implementation began. Existing human resume authority persists; next action is configured Worker under frozen Architect01 when dispatch recovers.
-
-Latest explicit continuation was rechecked against HEAD/remote b25710f3bc20ed3d7516fe98040cbf6ffb9e9437. Three new configured Worker dispatch attempts still returned `agent thread limit reached`; no implementation turn started. See ITER-0026/03_DISPATCH_RECOVERY_ATTEMPT.md. Existing implementation authority remains granted; current stage remains WORKER_DISPATCH_BLOCKED.

@@ -1608,6 +1608,11 @@ class RDPInputSession:
     ) -> bool:
         if not result.authorization_granted:
             return False
+        # The wrapper outcome describes the SDK/gateway response. A matching
+        # current owner can independently retain an unresolved capture anomaly,
+        # including when the wrapper classified the completed response EMPTY.
+        if self._matching_unresolved_submission_owner(result) is not None:
+            return True
         if result.outcome in {"PARTIAL", "UNKNOWN", "RESOLUTION_ERROR"}:
             return True
         # A fully acknowledged pair is still unsafe when the caller, deadline,
@@ -1615,16 +1620,15 @@ class RDPInputSession:
         # result, but connect its actual interruption evidence to terminal close.
         if result.post_started and result.interruption_reason is not None:
             return True
-        if result.outcome not in {"NO_SEND", "FAILURE_PRE_POST"}:
-            return False
+        return False
 
-        # A no-POST wrapper result says this attempt did not send. It does not
-        # make a separately retained unresolved placement capture reliable.
-        # Require the exact current owner snapshot so stale/fabricated caller
-        # evidence cannot trigger the terminal path.
+    def _matching_unresolved_submission_owner(
+        self, result: RDPInitialSubmissionResult,
+    ) -> RDPPlacementAttempt | None:
+        """Return only exact, current owner evidence for this submission."""
         resolved = result.resolved_attempt
         current = self.placement_owner.current
-        return bool(
+        if not (
             result.attempt is not None and resolved is current
             and resolved is not None
             and resolved.attempt_id == result.attempt.attempt_id
@@ -1632,16 +1636,16 @@ class RDPInputSession:
             and resolved.condition_id == self.bootstrap.market.condition_id
             and resolved.outcome in {"PARTIAL", "UNKNOWN"}
             and resolved.unresolved and resolved.replacement_blocked
-        )
+        ):
+            return None
+        return resolved
 
-    @staticmethod
-    def _submission_terminal_cause(result: RDPInitialSubmissionResult) -> str:
+    def _submission_terminal_cause(self, result: RDPInitialSubmissionResult) -> str:
         if result.interruption_reason is not None:
             return result.interruption_reason
-        if result.outcome in {"NO_SEND", "FAILURE_PRE_POST"}:
-            resolved = result.resolved_attempt
-            if resolved is not None and resolved.unresolved:
-                return resolved.reason or "UNRESOLVED_PLACEMENT_CAPTURE"
+        resolved = self._matching_unresolved_submission_owner(result)
+        if resolved is not None:
+            return resolved.reason or "UNRESOLVED_PLACEMENT_CAPTURE"
         return result.outcome
 
     @property

@@ -5675,6 +5675,87 @@ async def test_clean_authoritative_empty_submission_has_no_terminal_cleanup(
 
 
 @pytest.mark.asyncio
+async def test_authoritative_empty_with_unresolved_capture_latches_terminal_without_retry_or_cancel(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    client = FakeBatchClient([])
+
+    def post_orders(*_args, **_kwargs):
+        client.posts.append("POST")
+        event = TradeEvent(
+            "yes-token", Side.BUY, .55, 1, "unmatched-during-post",
+            TradeState.MATCHED, time.time(), "unattributed-order",
+            scope.market.condition_id,
+        )
+        scope.processor.on_trade(
+            event, scope.market.condition_id,
+            received_at_us=1_800_000_000_000_000,
+            received_monotonic_ns=2_000_000_000_000,
+            connection_generation=4,
+        )
+        return [{"success": False}, {"success": False}]
+
+    client.post_orders = post_orders
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    scope.session.user_session.gateway = gateway
+    original_resolve = scope.owner.resolve
+    resolve_calls = []
+
+    def counted_resolve(attempt, outcome):
+        resolve_calls.append(outcome)
+        return original_resolve(attempt, outcome)
+
+    monkeypatch.setattr(scope.owner, "resolve", counted_resolve)
+    try:
+        result = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        owner = result.resolved_attempt
+        terminal = scope.session.terminal_failure_result
+        assert result.outcome == "EMPTY" and result.post_started
+        assert result.reason == "AUTHORITATIVE_EMPTY_RESPONSE"
+        assert result.gateway_evidence is not None
+        assert result.gateway_evidence.result_type == "EMPTY"
+        assert result.gateway_evidence.post_attempted
+        assert owner is scope.owner.current
+        assert owner.outcome == "UNKNOWN" and owner.unresolved
+        assert owner.replacement_blocked
+        assert owner.reason == "PENDING_CAPTURE_ANOMALY"
+        assert "UNMATCHED_CANDIDATE_TRADE:unmatched-during-post" in (
+            owner.pending_anomalies
+        )
+        assert len(resolve_calls) == 1
+        assert terminal is not None and terminal.source_submission is result
+        assert terminal.cause == "PENDING_CAPTURE_ANOMALY"
+        assert terminal.source_submission.gateway_evidence is result.gateway_evidence
+        assert terminal.registered_order_ids == ()
+        assert terminal.unregistered_acknowledgment_ids == ()
+        assert terminal.closed_order_ids == ()
+        assert terminal.cleanup.barrier is None
+        assert terminal.unresolved_exposure and terminal.human_attention_required
+        assert scope.session._terminal_stop_latched
+        assert scope.owner.blocks_initial_admission
+        assert len(client.posts) == 1
+        assert scope.processor.owned_record("unattributed-order") is None
+
+        cached = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        assert cached is result
+        assert scope.session.terminal_failure_result is terminal
+        assert len(resolve_calls) == 1 and len(client.posts) == 1
+    finally:
+        await gateway.aclose()
+        await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
 async def test_terminal_stop_rejects_public_close_and_fill_window_reentry(
     placement_scope, blocked_network, monkeypatch,
 ):

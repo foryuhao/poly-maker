@@ -7,7 +7,7 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest reviewed implementation: ITER-0025, CODE_READY, final Reviewer06 PASS; remote archival verification is recorded in its archive receipt.
+Latest reviewed implementation: ITER-0026, CODE_READY, final Reviewer12 PASS; final archive verification is recorded in ITER-0026/13_ARCHIVE_RECEIPT.md after push.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
 Implementation resume authorization: GRANTED by explicit human resume; normal requirement-linked serial iterations continue automatically.
@@ -131,7 +131,7 @@ Timing authority: Frozen §26 supplies the safety condition, not a numeric strat
 
 ### DG-006 — Partial/Unknown Placement and Unreliable-State Termination
 
-Status: OPEN.
+Status: CLOSED.
 
 Sources: Frozen §§18, 21, 26–27; delivery partial-fill, order-state, reconciliation and fail-closed requirements.
 
@@ -142,6 +142,8 @@ Missing behavior: The integrated runtime must withhold replacement/new risk, clo
 Closure: Integrated failed POST, ambiguous/partial acknowledgment, unknown zero-ID, pending/FAILED/quarantined fills and unreliable reads never cause a retry POST, invented inventory, false capital release or foreign-order cancellation. Known attributed legs receive scoped cleanup; unprovable state stays blocked and explicitly reported.
 
 Automatic heuristic adoption or rediscovery of unknown IDs is not required. Safe failure handling is required and cannot be deferred.
+
+Closure evidence: ITER-0026/01_ARCHITECT.md, Worker05 and Fix07/09/11, immutable Reviewer06/08/10 findings and final 12_REVIEWER_REREVIEW_03.md PASS. Full current-runtime failure handling is independently verified: latched STOP before cleanup, registered-only matching subset cleanup, separate unregistered/observed evidence, honest unresolved exposure and scoped inventory, no retry/adoption/capital certification/replacement release, cached cleanup and executor drain. Complete-ack interruption and NO_SEND/FAILURE_PRE_POST/EMPTY with independently unreliable capture are covered. Final independent full suite 1648 passed / 2 skipped, 34 acceptance/provenance probes passed, zero network attempts. Earlier Evidence/Missing behavior describe the convergence baseline and are superseded by this closure. Other runtime loops, market termination and CLI remain separate requirements.
 
 ### DG-007 — Safe End of the Selected Market
 
@@ -278,15 +280,13 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 ## Resume and Current Action
 
-CONVERGENCE-0001 remains immutable reviewed historical evidence. Human explicitly approved it and resumed development from27908548acbf595e4abdc7282252185d4163e267. The archived next contract remains a DRAFT; Architect must recheck actual code and freeze ITER-0025 before Worker.
-
-Current target: DG-001 authorized initial NORMAL submission. AllDG-001–DG-012 currently OPEN. No gap closes automatically from an iterationPASS; only reviewed full closure or explicit still-open prerequisite evidence updates this register.
+CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is archived and DG-001 CLOSED. ITER-0026 final Reviewer12 PASS closes DG-006 for the implemented runtime; final receipt records archival. DG-002–DG-005 and DG-007–DG-012 remain OPEN.
 
 Development Status: IN_PROGRESS.
-Current Iteration: ITER-0025.
-Current Stage: ARCHITECT.
+Current Iteration: ITER-0026.
+Current Stage: ARCHIVE_PENDING.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Serial Architect→Worker→Reviewer and automatic repairs/next minimalrequirement-linked iterations are authorized after formal contract approval. Stop only for genuine reservedhuman decision or independently reviewedMICRO_LIVE_READY. No real orders/cancels, strategyextensions, optionalsafetyrelaxation or optionalfeatures.
+This session completes ITER-0026 only. No next implementation iteration has been started. Any future authorized continuation must inspect the actual repository and remaining required behavior before serial Architect → Worker → Reviewer. No real orders/cancels, strategy extensions or safety relaxation are authorized.
