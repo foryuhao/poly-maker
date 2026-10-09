@@ -5429,6 +5429,200 @@ async def test_terminal_resolver_failure_preserves_acknowledgment_without_adopti
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["caller-cancel", "teardown"])
+async def test_complete_ack_interruption_latches_and_closes_registered_pair(
+    placement_scope, blocked_network, interruption,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
+    started, release = threading.Event(), threading.Event()
+    client.posts = []
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+
+    def post_orders(*_args, **_kwargs):
+        client.posts.append("POST")
+        started.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("fake complete acknowledgment was not released")
+        return _accepted_rows()
+
+    client.post_orders = post_orders
+    submission_task = asyncio.create_task(scope.session.submit_initial_normal(
+        admission, authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    teardown_task = None
+    try:
+        assert await asyncio.wait_for(
+            asyncio.to_thread(started.wait, 2), timeout=3,
+        )
+        if interruption == "caller-cancel":
+            submission_task.cancel()
+            await asyncio.sleep(0)
+            assert not submission_task.done()
+        else:
+            teardown_task = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not teardown_task.done()
+        release.set()
+        if teardown_task is not None:
+            await teardown_task
+            result = await submission_task
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await submission_task
+            result = scope.session._initial_submission_result
+
+        terminal = scope.session.terminal_failure_result
+        assert result is not None
+        assert result.outcome == "COMPLETE"
+        assert result.interruption_reason == (
+            "CALLER_CANCELLED" if interruption == "caller-cancel"
+            else "SESSION_TEARDOWN"
+        )
+        assert terminal is not None and terminal.source_submission is result
+        assert terminal.registered_order_ids == ("no-order", "yes-order")
+        assert terminal.closed_order_ids == ("no-order", "yes-order")
+        assert terminal.registered_reconciliation_complete
+        assert terminal.human_attention_required
+        assert scope.session._terminal_stop_latched
+        assert client.cancel_calls == [("no-order", "yes-order")]
+        assert client.posts == ["POST"]
+    finally:
+        release.set()
+        if not submission_task.done():
+            await submission_task
+        if teardown_task is not None and not teardown_task.done():
+            await teardown_task
+        await gateway.aclose()
+        if not scope.session._closed:
+            await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("successful_registrations", [0, 1])
+async def test_terminal_registration_evidence_matches_actual_registry_per_id(
+    placement_scope, blocked_network, monkeypatch, successful_registrations,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    gateway, client = _close_gateway(scope, admission.candidate.quotes)
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.posts = []
+
+    def post_orders(*_args, **_kwargs):
+        client.posts.append("POST")
+        return _accepted_rows()
+
+    client.post_orders = post_orders
+    gateway._derive_only = True
+    original_register = scope.processor.register_order
+    registrations = 0
+
+    def fail_after_allowed_registrations(*args, **kwargs):
+        nonlocal registrations
+        if registrations >= successful_registrations:
+            raise RuntimeError("synthetic registration failure")
+        registrations += 1
+        return original_register(*args, **kwargs)
+
+    monkeypatch.setattr(scope.processor, "register_order", fail_after_allowed_registrations)
+    try:
+        submission = await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        assert submission.outcome == "UNKNOWN"
+        assert terminal is not None and terminal.unresolved_exposure
+        actual_registered = tuple(sorted(
+            order_id for order_id in ("yes-order", "no-order")
+            if scope.processor.owned_record(order_id) is not None
+        ))
+        assert terminal.registered_order_ids == actual_registered
+        assert set(terminal.unregistered_acknowledgment_ids) == (
+            {"yes-order", "no-order"} - set(actual_registered)
+        )
+        assert terminal.registered_reconciliation_complete is False
+        assert terminal.cleanup.next_mode is None
+        assert terminal.cleanup.replacement_blocked
+        if actual_registered:
+            assert client.cancel_calls == [actual_registered]
+            assert set(terminal.closed_order_ids) <= set(actual_registered)
+            for order_id in set(("yes-order", "no-order")) - set(actual_registered):
+                assert client.rows[order_id]["status"] == "LIVE"
+        else:
+            assert client.cancel_calls == []
+            assert terminal.closed_order_ids == ()
+        assert client.posts == ["POST"]
+    finally:
+        await gateway.aclose()
+        await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_terminal_stop_rejects_public_close_and_fill_window_reentry(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    _prepare_real_admission(scope)
+    admission = await scope.session.initial_normal_admission()
+    gateway, client = _close_gateway(scope, admission.candidate.quotes)
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
+    client.posts = []
+
+    def post_orders(*_args, **_kwargs):
+        client.posts.append("POST")
+        return _accepted_rows()
+
+    client.post_orders = post_orders
+    gateway._derive_only = True
+    original_resolve = scope.owner.resolve
+
+    def resolve_then_raise(attempt, outcome):
+        original_resolve(attempt, outcome)
+        raise RuntimeError("synthetic resolver continuation failure")
+
+    monkeypatch.setattr(scope.owner, "resolve", resolve_then_raise)
+    try:
+        await scope.session.submit_initial_normal(
+            admission, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        terminal = scope.session.terminal_failure_result
+        current = scope.owner.current
+        assert terminal is not None and scope.session._terminal_stop_latched
+        assert terminal.cleanup.replacement_blocked and terminal.cleanup.next_mode is None
+        assert current is not None and current.replacement_blocked
+        before = (
+            client.open_count, client.get_order_count, client.get_trades_count,
+            tuple(client.cancel_calls),
+        )
+        with pytest.raises(RDPPlacementError, match="TERMINAL_STOP_LATCHED"):
+            await scope.session.close_initial_normal_placement(
+                current, deadline=asyncio.get_running_loop().time() + 2,
+            )
+        with pytest.raises(RDPPlacementError, match="TERMINAL_STOP_LATCHED"):
+            await scope.session.complete_initial_fill_window(current, close_budget_s=2)
+        after = (
+            client.open_count, client.get_order_count, client.get_trades_count,
+            tuple(client.cancel_calls),
+        )
+        assert after == before
+        assert scope.session.terminal_failure_result is terminal
+        assert scope.owner.current is current and current.replacement_blocked
+        assert terminal.cleanup.capital is None or not terminal.cleanup.capital.certified
+        assert terminal.cleanup.next_mode is None
+        assert client.posts == ["POST"]
+    finally:
+        await gateway.aclose()
+        await scope.session.aclose()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sdk_method", ["open_orders", "cancel", "get_order", "get_trades"])
 @pytest.mark.parametrize("interruption", ["caller-cancel", "teardown"])
 async def test_terminal_cleanup_drains_blocked_sdk_operation_before_release(
@@ -5605,12 +5799,10 @@ async def test_submission_interruption_drains_real_gateway_post_before_return(
             raise RuntimeError("fake post release timeout")
         return _accepted_rows()
 
-    client = FakeBatchClient(_accepted_rows())
+    gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
+    client.posts = []
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
     client.post_orders = block_post
-    gateway = ExecutionGateway(Config(), paper=False)
-    gateway._client = client
-    gateway._derive_only = True
-    scope.session.user_session.gateway = gateway
     submission = asyncio.create_task(scope.session.submit_initial_normal(
         admission, authorization=True, order_budget_s=2, close_budget_s=2,
     ))
@@ -5668,7 +5860,11 @@ async def test_submission_interruption_drains_real_gateway_post_before_return(
         assert result is not None and result.outcome == "COMPLETE"
         assert result.interruption_reason == (
             "CALLER_CANCELLED" if interruption == "caller-cancel" else "SESSION_TEARDOWN")
-        assert scope.owner.current is result.resolved_attempt
+        assert result.resolved_attempt.outcome == "COMPLETE"
+        terminal = scope.session.terminal_failure_result
+        assert terminal is not None and terminal.source_submission is result
+        assert terminal.cleanup.replacement_blocked and terminal.cleanup.next_mode is None
+        assert client.cancel_calls == [("no-order", "yes-order")]
         assert result.resolved_attempt.outcome == "COMPLETE"
     finally:
         release.set()
@@ -5855,7 +6051,9 @@ async def test_submission_deadline_after_post_started_drains_actual_gateway_outc
     admission = await scope.session.initial_normal_admission()
     started = threading.Event()
     release = threading.Event()
-    client = FakeBatchClient(response)
+    gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
+    client.posts = []
+    client.create_order = lambda *_args, **_kwargs: {"fake_signature": "signed"}
 
     def blocked_post(args, *, post_only):
         assert post_only is True and len(args) == 2
@@ -5865,10 +6063,6 @@ async def test_submission_deadline_after_post_started_drains_actual_gateway_outc
         return response
 
     client.post_orders = blocked_post
-    gateway = ExecutionGateway(Config(), paper=False)
-    gateway._client = client
-    gateway._derive_only = True
-    scope.session.user_session.gateway = gateway
     submission = asyncio.create_task(scope.session.submit_initial_normal(
         admission, authorization=True, order_budget_s=.08, close_budget_s=2,
     ))
@@ -5883,10 +6077,10 @@ async def test_submission_deadline_after_post_started_drains_actual_gateway_outc
         await gateway.aclose()
     assert result.outcome == expected and result.post_started
     assert result.interruption_reason == "ORDER_OPERATION_DEADLINE"
-    if expected == "PARTIAL":
-        assert result.resolved_attempt is not scope.owner.current
-    else:
-        assert result.resolved_attempt is scope.owner.current
+    assert result.resolved_attempt.outcome in {"COMPLETE", "PARTIAL", "UNKNOWN"}
+    terminal = scope.session.terminal_failure_result
+    assert terminal is not None and terminal.source_submission is result
+    assert terminal.cleanup.replacement_blocked and terminal.cleanup.next_mode is None
     assert len(client.posts) == 0  # The controlled blocking method owns the SDK POST call.
     assert blocked_network == []
 
@@ -5900,7 +6094,9 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
     admission = await scope.session.initial_normal_admission()
     started = threading.Event()
     release = threading.Event()
-    client = FakeBatchClient(_accepted_rows())
+    gateway, client = _close_gateway_real_executor(scope, admission.candidate.quotes)
+    client.posts = []
+    client.created = []
 
     def blocked_post(args, *, post_only):
         assert post_only is True and len(args) == 2
@@ -5909,11 +6105,10 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
             raise RuntimeError("SYNTHETIC_WAIT_FAILURE_SENTINEL")
         return _accepted_rows()
 
+    client.create_order = lambda *_args, **_kwargs: (
+        client.created.append("SIGNED") or {"fake_signature": "signed"}
+    )
     client.post_orders = blocked_post
-    gateway = ExecutionGateway(Config(), paper=False)
-    gateway._client = client
-    gateway._derive_only = True
-    scope.session.user_session.gateway = gateway
     original_wait = asyncio.wait
 
     async def failing_wait(_tasks, *, timeout=None, return_when=asyncio.ALL_COMPLETED):
@@ -5935,7 +6130,9 @@ async def test_submission_waiter_failure_still_drains_and_resolves_post_outcome(
         await gateway.aclose()
     assert result.outcome == "COMPLETE" and result.post_started
     assert result.interruption_reason == "SUBMISSION_WAIT_FAILED:RuntimeError"
-    assert result.resolved_attempt is scope.owner.current
+    terminal = scope.session.terminal_failure_result
+    assert terminal is not None and terminal.source_submission is result
+    assert terminal.cleanup.replacement_blocked and terminal.cleanup.next_mode is None
     assert result.resolved_attempt.outcome == "COMPLETE"
     assert len(client.created) == 2
     assert blocked_network == []

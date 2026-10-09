@@ -1596,7 +1596,9 @@ class RDPInputSession:
         result = self._retain_initial_submission_result(result)
         if self._submission_requires_terminal_stop(result):
             await self._ensure_terminal_failure(
-                resolved_attempt or attempt, cause=result.outcome, submission=result,
+                resolved_attempt or attempt,
+                cause=result.interruption_reason or result.outcome,
+                submission=result,
                 close_budget_s=operation.close_budget_s,
             )
         return result
@@ -1607,7 +1609,12 @@ class RDPInputSession:
     ) -> bool:
         if not result.authorization_granted:
             return False
-        return result.outcome in {"PARTIAL", "UNKNOWN", "RESOLUTION_ERROR"}
+        if result.outcome in {"PARTIAL", "UNKNOWN", "RESOLUTION_ERROR"}:
+            return True
+        # A fully acknowledged pair is still unsafe when the caller, deadline,
+        # or teardown interrupted its continuation. Keep the immutable COMPLETE
+        # result, but connect its actual interruption evidence to terminal close.
+        return result.post_started and result.interruption_reason is not None
 
     @property
     def terminal_failure_result(self) -> RDPTerminalFailureResult | None:
@@ -1628,13 +1635,29 @@ class RDPInputSession:
 
     def _terminal_scope(self, attempt: RDPPlacementAttempt) -> tuple[str, ...] | None:
         current = self.placement_owner.current
-        if (current is not attempt or attempt.outcome == "ARMED"
-                or attempt.slug != self.bootstrap.market.slug
-                or attempt.condition_id != self.bootstrap.market.condition_id):
+        if (current is None
+                or (current is not attempt and current.attempt_id != attempt.attempt_id)
+                or current.outcome == "ARMED"
+                or current.slug != self.bootstrap.market.slug
+                or current.condition_id != self.bootstrap.market.condition_id):
             return None
-        if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) is None:
-            return None
-        return tuple(sorted(set(attempt.acknowledged_order_ids)))
+        return _registered_placement_order_ids(
+            self.processor, self.bootstrap, current,
+        )
+
+    def _terminal_internal_close_allowed(self) -> bool:
+        """Allow only the retained owner tasks to perform STOP-scoped closure."""
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        return bool(
+            current is not None
+            and (current in self._terminal_delegate_tasks
+                 or current in self._initial_cycle_delegate_tasks
+                 or current is self._initial_cycle_task
+                 or current is self._fill_window_task)
+        )
 
     async def _ensure_terminal_failure(
         self, attempt: RDPPlacementAttempt, *, cause: str,
@@ -1698,6 +1721,7 @@ class RDPInputSession:
                     attempt,
                     deadline=asyncio.get_running_loop().time() + close_budget_s,
                     _window_continuation_safe=False,
+                    _terminal_order_ids=registered,
                 )
             except asyncio.CancelledError:
                 raise
@@ -1724,9 +1748,9 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt,
     ) -> tuple[Any | None, tuple[str, ...], str]:
         current = self.placement_owner.current
-        if current is None or self._terminal_scope(current) is None:
+        registered = self._terminal_scope(current) if current is not None else None
+        if current is None or registered is None or not registered:
             return None, (), "NONE"
-        registered = tuple(sorted(set(current.acknowledged_order_ids)))
         inventory_order_ids = tuple(
             order_id for order_id in registered
             if (order_id not in self.processor.quarantined_orders
@@ -1758,14 +1782,25 @@ class RDPInputSession:
             return self._terminal_failure_result
         current = self.placement_owner.current
         evidence = submission.gateway_evidence if submission is not None else None
-        registered = tuple(sorted(set(
-            current.acknowledged_order_ids if current is not None else ()
-        )))
-        registered_set = set(registered)
-        acknowledgment_ids = (
-            tuple(order.order_id for order in evidence.acknowledged_orders)
-            if evidence is not None else ()
+        current_matches = bool(
+            current is not None
+            and current.attempt_id == attempt.attempt_id
+            and current.slug == attempt.slug
+            and current.condition_id == attempt.condition_id
         )
+        registered = (
+            self._terminal_scope(current) or ()
+            if current_matches and current is not None else ()
+        )
+        registered_set = set(registered)
+        acknowledgment_values = list(attempt.acknowledged_order_ids)
+        if current_matches and current is not None:
+            acknowledgment_values.extend(current.acknowledged_order_ids)
+        if evidence is not None:
+            acknowledgment_values.extend(
+                order.order_id for order in evidence.acknowledged_orders
+            )
+        acknowledgment_ids = tuple(dict.fromkeys(acknowledgment_values))
         unregistered = tuple(order_id for order_id in dict.fromkeys(acknowledgment_ids)
                              if order_id not in registered_set)
         observed_values = list(evidence.observed_order_ids if evidence is not None else ())
@@ -1793,6 +1828,7 @@ class RDPInputSession:
         registered_complete = bool(
             cleanup.barrier_complete and barrier is not None and barrier.complete
             and barrier.reason is None and barrier.inventory is not None
+            and set(registered) == set(acknowledgment_ids)
         )
         unresolved = bool(
             (current.unresolved if current is not None else True)
@@ -3544,8 +3580,7 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPFillWindowCompletion:
         """Wait for the retained window, then run its existing scoped close once."""
-        if (self._terminal_stop_latched
-                and not self._initial_cycle_call_allowed()):
+        if self._terminal_stop_latched and not self._terminal_internal_close_allowed():
             raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         if self._initial_submission_conflicts_with_current_task():
             raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
@@ -3768,8 +3803,11 @@ class RDPInputSession:
     async def close_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, *, deadline: float,
         _window_continuation_safe: bool = True,
+        _terminal_order_ids: tuple[str, ...] | None = None,
     ) -> RDPInitialPlacementClose:
         """Explicitly close this attempt's known owned IDs through the existing barrier."""
+        if self._terminal_stop_latched and not self._terminal_internal_close_allowed():
+            raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         if self._initial_submission_conflicts_with_current_task():
             raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         if not self._initial_cycle_call_allowed():
@@ -3792,7 +3830,10 @@ class RDPInputSession:
         if active is not None and not active.done():
             raise RDPPlacementError("PLACEMENT_CLOSE_IN_PROGRESS")
 
-        order_ids = tuple(sorted(set(attempt.acknowledged_order_ids)))
+        order_ids = tuple(sorted(set(
+            attempt.acknowledged_order_ids if _terminal_order_ids is None
+            else _terminal_order_ids
+        )))
         if not order_ids:
             return self._placement_close_result(
                 current, None, None,
@@ -3801,9 +3842,19 @@ class RDPInputSession:
                 barrier_complete=False,
             )
 
-        registry_snapshot = _placement_registry_snapshot(
-            self.processor, self.bootstrap, attempt,
-        )
+        if _terminal_order_ids is not None:
+            if (not self._terminal_stop_latched
+                    or not self._terminal_internal_close_allowed()
+                    or set(order_ids) != set(_terminal_order_ids)
+                    or not set(order_ids).issubset(set(attempt.acknowledged_order_ids))):
+                raise RDPPlacementError("TERMINAL_CLOSE_SCOPE_INVALID")
+            registry_snapshot = _placement_registry_snapshot_for_ids(
+                self.processor, self.bootstrap, attempt, order_ids,
+            )
+        else:
+            registry_snapshot = _placement_registry_snapshot(
+                self.processor, self.bootstrap, attempt,
+            )
         if registry_snapshot is None:
             return self._placement_close_result(
                 current, None, None, reason="OWNERSHIP_SCOPE_CONTRADICTION",
@@ -3812,6 +3863,7 @@ class RDPInputSession:
         task = asyncio.create_task(
             self._close_initial_normal_placement(
                 attempt, order_ids, registry_snapshot, deadline,
+                terminal_scope=_terminal_order_ids is not None,
                 continuation_safe=_window_continuation_safe,
             ),
             name="rdp-initial-placement-close",
@@ -3832,7 +3884,7 @@ class RDPInputSession:
     async def _close_initial_normal_placement(
         self, attempt: RDPPlacementAttempt, order_ids: tuple[str, ...],
         registry_snapshot: tuple[tuple[Any, ...], ...], deadline: float,
-        *, continuation_safe: bool = True,
+        *, terminal_scope: bool = False, continuation_safe: bool = True,
     ) -> RDPInitialPlacementClose:
         gateway = getattr(self.user_session, "gateway", None)
         if gateway is None:
@@ -3859,7 +3911,14 @@ class RDPInputSession:
                 current or attempt, barrier, None,
                 reason="PLACEMENT_ATTEMPT_CHANGED", barrier_complete=False,
             )
-        if _placement_registry_snapshot(self.processor, self.bootstrap, attempt) != registry_snapshot:
+        current_snapshot = (
+            _placement_registry_snapshot_for_ids(
+                self.processor, self.bootstrap, attempt, order_ids,
+            ) if terminal_scope else _placement_registry_snapshot(
+                self.processor, self.bootstrap, attempt,
+            )
+        )
+        if current_snapshot != registry_snapshot:
             return self._placement_close_result(
                 attempt, barrier, None, reason="OWNERSHIP_SCOPE_CHANGED",
                 barrier_complete=barrier.complete,
@@ -3873,6 +3932,9 @@ class RDPInputSession:
         if self._initial_cycle_interrupt_reason is not None:
             state_reliable = False
             health_reason = health_reason or self._initial_cycle_interrupt_reason
+        if self._terminal_stop_latched:
+            state_reliable = False
+            health_reason = health_reason or self._terminal_stop_cause or "TERMINAL_STOP_LATCHED"
         if not continuation_safe:
             # Risk closure/reconciliation still runs and records known inventory,
             # but an interrupted or unreliable FillWindow cannot certify the next
@@ -3911,6 +3973,12 @@ class RDPInputSession:
             next_mode = None
             state_reliable = False
             reason = self._initial_cycle_interrupt_reason
+        if self._terminal_stop_latched:
+            if capital is not None and capital.certified:
+                capital = None
+            next_mode = None
+            state_reliable = False
+            reason = reason or self._terminal_stop_cause or "TERMINAL_STOP_LATCHED"
 
         try:
             updated = self.placement_owner.record_close(attempt, barrier, capital)
@@ -4347,9 +4415,22 @@ class _StrictCloseGateway:
 def _placement_registry_snapshot(
     processor: Any, bootstrap: RDPBootstrap, attempt: RDPPlacementAttempt,
 ) -> tuple[tuple[Any, ...], ...] | None:
+    return _placement_registry_snapshot_for_ids(
+        processor, bootstrap, attempt, attempt.acknowledged_order_ids,
+    )
+
+
+def _placement_registry_snapshot_for_ids(
+    processor: Any, bootstrap: RDPBootstrap, attempt: RDPPlacementAttempt,
+    order_ids: Any,
+) -> tuple[tuple[Any, ...], ...] | None:
     market = bootstrap.market
     snapshot = []
-    for order_id in attempt.acknowledged_order_ids:
+    order_ids = tuple(order_ids)
+    if (len(order_ids) != len(set(order_ids))
+            or any(not isinstance(order_id, str) or not order_id for order_id in order_ids)):
+        return None
+    for order_id in order_ids:
         record = processor.owned_record(order_id)
         quote = next((item for item in attempt.quotes
                       if item.token_id == (record or {}).get("token_id")), None)
@@ -4364,9 +4445,22 @@ def _placement_registry_snapshot(
             record.get("side"), str(record.get("submitted_qty")),
             str(record.get("submitted_price")),
         ))
-    if len(snapshot) != len(set(attempt.acknowledged_order_ids)):
+    if len(snapshot) != len(order_ids):
         return None
     return tuple(sorted(snapshot))
+
+
+def _registered_placement_order_ids(
+    processor: Any, bootstrap: RDPBootstrap, attempt: RDPPlacementAttempt,
+) -> tuple[str, ...]:
+    """Return only acknowledged IDs whose actual registry economics still match."""
+    registered = []
+    for order_id in dict.fromkeys(attempt.acknowledged_order_ids):
+        if _placement_registry_snapshot_for_ids(
+            processor, bootstrap, attempt, (order_id,),
+        ) is not None:
+            registered.append(order_id)
+    return tuple(sorted(registered))
 
 
 def _same_decimal(actual: Any, expected: Any) -> bool:

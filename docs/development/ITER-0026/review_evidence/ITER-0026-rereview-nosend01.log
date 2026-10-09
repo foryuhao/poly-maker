@@ -1,0 +1,102 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_no_post_with_unresolved_capture_still_has_terminal_result[guard-denial] _
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x719d177baea0>, make_session=<function placement_scope.<locals>.make_session at 0x719d177b1800>)
+blocked_network = [], stage = 'guard-denial'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('stage',['guard-denial','sign-failure'])
+    async def test_no_post_with_unresolved_capture_still_has_terminal_result(placement_scope,blocked_network,stage):
+        scope=placement_scope
+        _prepare_real_admission(scope)
+        admission=await scope.session.initial_normal_admission()
+        sent=False
+        def on_create():
+            nonlocal sent
+            if sent:return
+            sent=True
+            ev=TradeEvent('yes-token',Side.BUY,.55,1,'unattributed-before-post',TradeState.MATCHED,time.time(),'unattributed-order',scope.market.condition_id)
+            scope.processor.on_trade(ev,scope.market.condition_id,received_at_us=1_800_000_000_000_000,received_monotonic_ns=2_000_000_000_000,connection_generation=4)
+            if stage=='sign-failure':raise RuntimeError('synthetic signing failure')
+        client=FakeBatchClient([],on_create=on_create)
+        gateway=ExecutionGateway(Config(),paper=False)
+        gateway._client=client
+        gateway._derive_only=True
+        scope.session.user_session.gateway=gateway
+        try:
+            result=await scope.session.submit_initial_normal(admission,authorization=True,order_budget_s=2,close_budget_s=2)
+            print('NO_POST_UNRESOLVED',result.outcome,result.reason,result.resolved_attempt.outcome,result.resolved_attempt.unresolved,result.resolved_attempt.pending_anomalies,'terminal',scope.session.terminal_failure_result,'post',client.posts)
+            assert not result.post_started and not client.posts
+            assert result.resolved_attempt.unresolved
+>           assert scope.session.terminal_failure_result is not None
+E           AssertionError: assert None is not None
+E            +  where None = <polymaker.rdp_runtime.RDPInputSession object at 0x719d177baea0>.terminal_failure_result
+E            +    where <polymaker.rdp_runtime.RDPInputSession object at 0x719d177baea0> = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x719d177baea0>, make_session=<function placement_scope.<locals>.make_session at 0x719d177b1800>).session
+
+/tmp/test_iter0026_rereview_nosend01.py:33: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-09 20:46:39 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.9e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791550299 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791549999.952755 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-09 20:46:39 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-09 20:46:39 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0276146 attempt_id=1 book_ages=(('yes-token', 0.0281136), ('no-token', 0.0279889)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791549999.980607 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.027852 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-09 20:46:39 [debug    ] foreign_trade_ignored          order_id=unattributed-order trade_id=unattributed-before-post
+2026-10-09 20:46:39 [info     ] rdp_initial_intent_revalidation account_read_age_s=None attempt_id=1 book_ages=() candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=None condition_id=rdp-placement-condition execution_authorized=False factual_valid=False market_status_age_s=None minimum_sizes=() outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=PREACK_CAPTURE_NOT_CLEAN slug=btc-updown-5m-placement token_ticks=() user_generation=4
+2026-10-09 20:46:39 [info     ] order_place_aborted_stale_connectivity cid=rdp-plac
+2026-10-09 20:46:39 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=() condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=UNKNOWN pending_anomalies=('UNMATCHED_CANDIDATE_TRADE:unattributed-before-post',) public_generation=3 reason=PENDING_CAPTURE_ANOMALY replacement_blocked=True user_generation=4
+2026-10-09 20:46:39 [info     ] rdp_initial_submission_result  acknowledged_order_ids=() attempt_id=1 authorization_granted=True close_budget_s=2.0 execution_authorized=False gateway_acknowledged_orders=() gateway_error_type=None gateway_invalid_acknowledgment_count=0 gateway_observed_order_ids=() gateway_post_attempted=False gateway_reason=None gateway_result_type=EMPTY guard_reasons=(None, 'PREACK_CAPTURE_NOT_CLEAN') interruption_reason=None observed_order_ids=() order_budget_s=2.0 order_deadline_monotonic=2061294.116890505 outcome=NO_SEND post_started=False reason=PREACK_CAPTURE_NOT_CLEAN resolution_error_type=None resolved_outcome=UNKNOWN
+NO_POST_UNRESOLVED NO_SEND PREACK_CAPTURE_NOT_CLEAN UNKNOWN True ('UNMATCHED_CANDIDATE_TRADE:unattributed-before-post',) terminal None post []
+_ test_no_post_with_unresolved_capture_still_has_terminal_result[sign-failure] _
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x719d16bbb680>, make_session=<function placement_scope.<locals>.make_session at 0x719d1635a200>)
+blocked_network = [], stage = 'sign-failure'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('stage',['guard-denial','sign-failure'])
+    async def test_no_post_with_unresolved_capture_still_has_terminal_result(placement_scope,blocked_network,stage):
+        scope=placement_scope
+        _prepare_real_admission(scope)
+        admission=await scope.session.initial_normal_admission()
+        sent=False
+        def on_create():
+            nonlocal sent
+            if sent:return
+            sent=True
+            ev=TradeEvent('yes-token',Side.BUY,.55,1,'unattributed-before-post',TradeState.MATCHED,time.time(),'unattributed-order',scope.market.condition_id)
+            scope.processor.on_trade(ev,scope.market.condition_id,received_at_us=1_800_000_000_000_000,received_monotonic_ns=2_000_000_000_000,connection_generation=4)
+            if stage=='sign-failure':raise RuntimeError('synthetic signing failure')
+        client=FakeBatchClient([],on_create=on_create)
+        gateway=ExecutionGateway(Config(),paper=False)
+        gateway._client=client
+        gateway._derive_only=True
+        scope.session.user_session.gateway=gateway
+        try:
+            result=await scope.session.submit_initial_normal(admission,authorization=True,order_budget_s=2,close_budget_s=2)
+            print('NO_POST_UNRESOLVED',result.outcome,result.reason,result.resolved_attempt.outcome,result.resolved_attempt.unresolved,result.resolved_attempt.pending_anomalies,'terminal',scope.session.terminal_failure_result,'post',client.posts)
+            assert not result.post_started and not client.posts
+            assert result.resolved_attempt.unresolved
+>           assert scope.session.terminal_failure_result is not None
+E           AssertionError: assert None is not None
+E            +  where None = <polymaker.rdp_runtime.RDPInputSession object at 0x719d16bbb680>.terminal_failure_result
+E            +    where <polymaker.rdp_runtime.RDPInputSession object at 0x719d16bbb680> = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x719d16bbb680>, make_session=<function placement_scope.<locals>.make_session at 0x719d1635a200>).session
+
+/tmp/test_iter0026_rereview_nosend01.py:33: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-10-09 20:46:40 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.2e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791550300 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791550000.0178704 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-09 20:46:40 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-09 20:46:40 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0017589 attempt_id=1 book_ages=(('yes-token', 0.0021468), ('no-token', 0.0020497)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791550000.019831 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0019606 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-09 20:46:40 [debug    ] foreign_trade_ignored          order_id=unattributed-order trade_id=unattributed-before-post
+2026-10-09 20:46:40 [warning  ] place_failed                   error_type=RuntimeError n=2 operation=place post_attempted=False
+2026-10-09 20:46:40 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=() condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=UNKNOWN pending_anomalies=('UNMATCHED_CANDIDATE_TRADE:unattributed-before-post',) public_generation=3 reason=PENDING_CAPTURE_ANOMALY replacement_blocked=True user_generation=4
+2026-10-09 20:46:40 [info     ] rdp_initial_submission_result  acknowledged_order_ids=() attempt_id=1 authorization_granted=True close_budget_s=2.0 execution_authorized=False gateway_acknowledged_orders=() gateway_error_type=RuntimeError gateway_invalid_acknowledgment_count=0 gateway_observed_order_ids=() gateway_post_attempted=False gateway_reason=PLACEMENT_NOT_ATTEMPTED gateway_result_type=PLACEMENT_NOT_ATTEMPTED guard_reasons=(None,) interruption_reason=None observed_order_ids=() order_budget_s=2.0 order_deadline_monotonic=2061294.181916641 outcome=FAILURE_PRE_POST post_started=False reason=PLACEMENT_NOT_ATTEMPTED resolution_error_type=None resolved_outcome=UNKNOWN
+NO_POST_UNRESOLVED FAILURE_PRE_POST PLACEMENT_NOT_ATTEMPTED UNKNOWN True ('UNMATCHED_CANDIDATE_TRADE:unattributed-before-post',) terminal None post []
+=============================== warnings summary ===============================
+test_iter0026_rereview_nosend01.py::test_no_post_with_unresolved_capture_still_has_terminal_result[guard-denial]
+  /home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../tmp/test_iter0026_rereview_nosend01.py::test_no_post_with_unresolved_capture_still_has_terminal_result[guard-denial]
+FAILED ../../../tmp/test_iter0026_rereview_nosend01.py::test_no_post_with_unresolved_capture_still_has_terminal_result[sign-failure]
+2 failed, 1 warning in 0.53s
+REVIEW_NETWORK_ATTEMPTS []
