@@ -288,7 +288,7 @@ CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITE
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0028.
-Current Stage: ARCHIVE_PENDING.
+Current Stage: ARCHIVED.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
