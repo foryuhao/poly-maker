@@ -535,6 +535,51 @@ async def test_per_token_ticks_sign_single_outcome_at_its_tick(meta, token, tick
 
 
 @pytest.mark.asyncio
+async def test_opt_in_single_rebalance_requires_canonical_ack_and_five_share_buy(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "repair-1")])
+    gw._client, gw._io = client, _inline_io
+    quote = Quote(meta.no.token_id, Side.BUY, .48, 5)
+    placed = await gw.place([quote], meta, token_ticks={meta.no.token_id: .01},
+        submit_guard=lambda: True, force_post_only=True, strict_placement=True,
+        allow_single_order_rdp_rebalance=True)
+    assert [order.order_id for order in placed] == ["repair-1"]
+    assert client.posts[0][1] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", [
+    {"orderID": "missing-success"},
+    {"success": 1, "orderID": "nonboolean"},
+    {"success": False, "orderID": "rejected-with-id"},
+    {"success": True, "orderID": "a", "order_id": "b"},
+    {"success": True, "order_id": "alias-only"},
+])
+async def test_opt_in_single_rebalance_ambiguous_ack_is_unknown(meta, row):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([row])
+    gw._client, gw._io = client, _inline_io
+    with pytest.raises(PlacementUnknown):
+        await gw.place([Quote(meta.no.token_id, Side.BUY, .48, 5)], meta,
+            token_ticks={meta.no.token_id: .01}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True,
+            allow_single_order_rdp_rebalance=True)
+
+
+@pytest.mark.asyncio
+async def test_opt_in_single_rebalance_rejects_noncanonical_shape_before_signing(meta):
+    gw = ExecutionGateway(Config(), paper=False)
+    client = FakeBatchClient([placement_row(True, "unused")])
+    gw._client, gw._io = client, _inline_io
+    with pytest.raises(ValueError):
+        await gw.place([Quote(meta.yes.token_id, Side.BUY, .48, 4)], meta,
+            token_ticks={meta.yes.token_id: .01}, submit_guard=lambda: True,
+            force_post_only=True, strict_placement=True,
+            allow_single_order_rdp_rebalance=True)
+    assert client.created == [] and client.posts == []
+
+
+@pytest.mark.asyncio
 async def test_per_token_ticks_successive_calls_use_new_tick_snapshot(meta):
     gw = ExecutionGateway(Config(), paper=False)
     client = FakeBatchClient([placement_row(True, "same")])

@@ -1,0 +1,30 @@
+[
+  {
+    "command": "TMPDIR=/var/tmp/poly-maker-ITER-0029-rereview-03 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence:/tmp/ITER-0029-rereview-02-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short > /var/tmp/poly-maker-ITER-0029-rereview-03/full_valid.log 2>&1",
+    "log": "/var/tmp/poly-maker-ITER-0029-rereview-03/full_valid.log",
+    "exit_code": 0,
+    "result": "1749 passed, 2 skipped in 115.16s",
+    "network_attempts": []
+  },
+  {
+    "command": "TMPDIR=/var/tmp/poly-maker-ITER-0029-rereview-03 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence:/tmp/ITER-0029-rereview-02-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q -s --tb=short /tmp/ITER-0029-rereview-02-evidence/final_guards_and_diagnostics.py /var/tmp/poly-maker-ITER-0029-rereview-03/thread_final_clock_probe.py > /var/tmp/poly-maker-ITER-0029-rereview-03/original_final_thread_valid.log 2>&1",
+    "log": "/var/tmp/poly-maker-ITER-0029-rereview-03/original_final_thread_valid.log",
+    "exit_code": 0,
+    "result": "5 passed in 8.51s",
+    "network_attempts": []
+  },
+  {
+    "command": "TMPDIR=/var/tmp/poly-maker-ITER-0029-rereview-03 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence:/tmp/ITER-0029-rereview-02-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q -s --tb=short /tmp/ITER-0029-review-evidence/probes_v2.py /tmp/ITER-0029-review-evidence/extra_v3.py -k 'not normal_proof_order_variation' > /var/tmp/poly-maker-ITER-0029-rereview-03/original_p2_e3_valid.log 2>&1",
+    "log": "/var/tmp/poly-maker-ITER-0029-rereview-03/original_p2_e3_valid.log",
+    "exit_code": 0,
+    "result": "12 passed, 1 deselected in 6.52s",
+    "network_attempts": []
+  },
+  {
+    "command": "TMPDIR=/var/tmp/poly-maker-ITER-0029-rereview-03 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence:/tmp/ITER-0029-rereview-02-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short tests/test_rdp_runtime.py tests/test_rdp_placement.py::test_initial_prefill_terminal_failure_recaptures_freshness_and_event tests/test_rdp_placement.py::test_initial_prefill_terminal_freshness_boundary_matches_result_and_event tests/test_rdp_placement.py::test_rebalance_safety_stop_closes_scope_without_reposting tests/test_rdp_placement.py::test_iter0029_fix01_unregistered_repair_ack_keeps_known_inventory_and_no_false_close /var/tmp/poly-maker-ITER-0029-rereview-03/additional_probes_capture_v3.py > /var/tmp/poly-maker-ITER-0029-rereview-03/runtime_capture_a2_valid.log 2>&1",
+    "log": "/var/tmp/poly-maker-ITER-0029-rereview-03/runtime_capture_a2_valid.log",
+    "exit_code": 0,
+    "result": "91 passed in 70.17s",
+    "network_attempts": []
+  }
+]

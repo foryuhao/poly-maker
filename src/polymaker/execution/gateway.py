@@ -359,6 +359,7 @@ class ExecutionGateway:
         force_post_only: bool = False,
         strict_placement: bool = False,
         allow_two_order_rdp_pair: bool = False,
+        allow_single_order_rdp_rebalance: bool = False,
         token_ticks: Mapping[str, int | float | Decimal] | None = None,
         safe_diagnostics: bool = False,
         on_post_start: Callable[[], None] | None = None,
@@ -374,10 +375,15 @@ class ExecutionGateway:
                 force_post_only=force_post_only,
                 strict_placement=strict_placement,
                 allow_two_order_rdp_pair=allow_two_order_rdp_pair,
+                allow_single_order_rdp_rebalance=allow_single_order_rdp_rebalance,
                 submit_guard=submit_guard,
             )
         if allow_two_order_rdp_pair:
             self._validate_two_order_rdp_pair(
+                quotes, meta, force_post_only=force_post_only,
+                strict_placement=strict_placement)
+        if allow_single_order_rdp_rebalance:
+            self._validate_single_order_rdp_rebalance(
                 quotes, meta, force_post_only=force_post_only,
                 strict_placement=strict_placement)
         if not quotes:
@@ -443,7 +449,8 @@ class ExecutionGateway:
                 )
             except Exception as exc:
                 if not safe_diagnostics:
-                    reason = "BATCH_POST_EXCEPTION" if allow_two_order_rdp_pair else None
+                    reason = ("BATCH_POST_EXCEPTION" if (allow_two_order_rdp_pair
+                             or allow_single_order_rdp_rebalance) else None)
                     raise PlacementUnknown("order POST outcome is unknown", reason=reason) from exc
                 post_error_type = type(exc).__name__
             if post_error_type is not None:
@@ -454,6 +461,8 @@ class ExecutionGateway:
             try:
                 if allow_two_order_rdp_pair:
                     return self._parse_two_order_rdp_pair_response(resp, quotes)
+                if allow_single_order_rdp_rebalance:
+                    return self._parse_single_order_rdp_rebalance_response(resp, quotes)
                 return self._parse_place_response(resp, quotes)
             except PlacementUnknown:
                 raise
@@ -566,6 +575,7 @@ class ExecutionGateway:
         token_ticks: Mapping[str, int | float | Decimal], *,
         force_post_only: bool, strict_placement: bool,
         allow_two_order_rdp_pair: bool,
+        allow_single_order_rdp_rebalance: bool = False,
         submit_guard: Callable[[], bool] | None,
     ) -> tuple[list[Quote], dict[str, str]]:
         """Copy and validate opt-in per-token signing inputs before any await."""
@@ -575,18 +585,23 @@ class ExecutionGateway:
         if not isinstance(meta, MarketMeta) or not isinstance(quotes, list):
             raise ValueError("per-token tick placement requires market metadata and a quote list")
         quote_snapshot = list(quotes)
-        if len(quote_snapshot) == 1:
+        if len(quote_snapshot) == 1 and not allow_single_order_rdp_rebalance:
             quote = quote_snapshot[0]
             if (not isinstance(quote, Quote) or quote.side is not Side.BUY
                     or quote.token_id not in (meta.yes.token_id, meta.no.token_id)):
                 raise ValueError("per-token tick single placement requires one market BUY quote")
+        elif len(quote_snapshot) == 1 and allow_single_order_rdp_rebalance is True:
+            ExecutionGateway._validate_single_order_rdp_rebalance(
+                quote_snapshot, meta, force_post_only=force_post_only,
+                strict_placement=strict_placement,
+            )
         elif len(quote_snapshot) == 2 and allow_two_order_rdp_pair is True:
             ExecutionGateway._validate_two_order_rdp_pair(
                 quote_snapshot, meta, force_post_only=force_post_only,
                 strict_placement=strict_placement,
             )
         else:
-            raise ValueError("per-token tick placement requires one BUY or an opted-in market pair")
+            raise ValueError("per-token tick placement requires one BUY, opted-in rebalance, or opted-in market pair")
 
         if not isinstance(token_ticks, Mapping):
             raise ValueError("per-token ticks must be a token-to-tick mapping")
@@ -692,6 +707,61 @@ class ExecutionGateway:
         expected = {meta.yes.token_id, meta.no.token_id}
         if (len(expected) != 2 or tokens != expected):
             raise ValueError("RDP pair placement requires one quote per market outcome token")
+
+    @staticmethod
+    def _validate_single_order_rdp_rebalance(
+        quotes: list[Quote], meta: MarketMeta, *, force_post_only: bool,
+        strict_placement: bool,
+    ) -> None:
+        if (not isinstance(quotes, list) or len(quotes) != 1
+                or not isinstance(meta, MarketMeta)
+                or force_post_only is not True or strict_placement is not True):
+            raise ValueError("RDP rebalance placement requires one quote, strict mode, and forced post-only")
+        quote = quotes[0]
+        if (not isinstance(quote, Quote) or quote.side is not Side.BUY
+                or quote.token_id not in (meta.yes.token_id, meta.no.token_id)
+                or quote.size != 5 or not 0 < quote.price < 1):
+            raise ValueError("RDP rebalance placement requires a five-share market BUY")
+
+    @staticmethod
+    def _parse_single_order_rdp_rebalance_response(
+        resp: Any, quotes: list[Quote],
+    ) -> list[OpenOrder]:
+        observed = _observed_order_ids(resp)
+        if not isinstance(resp, list) or len(resp) != 1 or len(quotes) != 1:
+            raise PlacementUnknown(
+                "single rebalance POST response did not contain one positional result",
+                observed_order_ids=observed, reason="BATCH_CARDINALITY_UNKNOWN",
+            )
+        row = resp[0]
+        if not isinstance(row, Mapping) or type(row.get("success")) is not bool:
+            raise PlacementUnknown(
+                "single rebalance POST response was malformed",
+                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
+            )
+        aliases = tuple(row.get(key) for key in ("orderID", "order_id", "orderId", "id")
+                        if isinstance(row.get(key), str) and row[key].strip())
+        if len(set(aliases)) > 1:
+            raise PlacementUnknown(
+                "single rebalance POST response contained conflicting ids",
+                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
+            )
+        canonical = row.get("orderID")
+        if row["success"] is False:
+            if aliases:
+                raise PlacementUnknown(
+                    "rejected single rebalance response contained an id",
+                    observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
+                )
+            return []
+        if not isinstance(canonical, str) or not canonical.strip():
+            raise PlacementUnknown(
+                "accepted single rebalance response omitted canonical id",
+                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
+            )
+        quote = quotes[0]
+        return [OpenOrder(canonical.strip(), quote.token_id, quote.side,
+                          quote.price, quote.size, OrderState.LIVE)]
 
     @staticmethod
     def _parse_two_order_rdp_pair_response(

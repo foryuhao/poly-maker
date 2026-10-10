@@ -1,0 +1,19 @@
+{
+  "AGENTS.md": "0dedaab0b6653bd030d01c494d42d10619727f0e9f78bed9703002816538aa25",
+  "docs/strategy/RDP_PHASE0_FROZEN.md": "92e455097c7567007ed8688faae81241588d77af2f614cd3f8a663486856d32d",
+  "docs/development/BASELINE.md": "8fbf83198838af4fe9a46daee803a3fe4379139c429d65b7278f7ae29106bfe7",
+  "docs/development/ITERATION_INDEX.md": "3c03e7eb6a5c64ab3924feaca61b8cebc7a783d81008f95559940b6ffaafe27b",
+  "docs/development/DELIVERY_GAPS.md": "12ed65027d21a03ba3c7789229cd1449bb6922af78740de6dcdb625afd245604",
+  "docs/development/ITER-0029/01_ARCHITECT.md": "fa2c9fab2346b94de58353c5564e9dbe6cc85bc6a6d34d01a0859c4ceb62423c",
+  "docs/development/ITER-0029/02_WORKER.md": "7cb7ecbc1590787697c38a8ef146ab9bba2ec493d5524f3d56fca8ff2ecfad31",
+  "docs/development/ITER-0029/WORKER_EVIDENCE_ARCHIVE.md": "8b5d9f12ae0a9fd0e411e22b40678736b43699c1faffdeaac27e5a3d059ac657",
+  "docs/development/ITER-0029/worker_evidence/affected_rdp_execution_final.log": "407c8dbde23265c47ee8004d9629abb06d5d81ddc40cd3063c17d5cbaf4c151e",
+  "src/polymaker/execution/gateway.py": "c1d809cb09d2c697b02cad7e939fc6dc568a28ba2db5750dfbc70df8e2a47da8",
+  "src/polymaker/execution/rdp_placement.py": "5d02f872f28e0e83f31695c5eeafa63ed7f4ffe1be3ba8150c8f987da99eadc6",
+  "src/polymaker/rdp_runtime.py": "c81e5b4d35603ff5e86086bca1e598a4af2efd8b0643d4babd016976ccc4d862",
+  "src/polymaker/risk/rdp_capital.py": "d3208986ba14d0e57402c9b22bdd5d486a7c2d5bbb742443c8ee1e0432e1dbd6",
+  "tests/test_execution.py": "df6f2ea4ccfd4f1c4550d0cb7c5a243f4dfe3be6843fb01fe90bb9d58ddefb2a",
+  "tests/test_rdp_capital.py": "687de05bd028554081f632c206d5b435cffea219d065fd8fcdd8e1c8b1344218",
+  "tests/test_rdp_placement.py": "75eb72cbda33f0b5172ee77a6956f7f4dcfb470435d6e1b72d60789d841fb20c",
+  "docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py": "bac8efb151d4e69c33bad9ef345bb9ad1c6d4e412aea38d0ec6d2a7e80fe9641"
+}

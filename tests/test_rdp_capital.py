@@ -968,6 +968,39 @@ def test_current_backing_checks_cash_and_allowance_boundaries_independently():
     assert low_allowance.reason == "INSUFFICIENT_CURRENT_ALLOWANCE"
 
 
+def test_current_backing_accepts_only_projected_registered_active_reservation():
+    from polymaker.rdp_account import RDPPositionEvidence
+
+    active = order_evidence("active-run", token_id="yes", price="0.5", remaining="5")
+    positions = (
+        RDPPositionEvidence("Yes", "yes", Decimal("1"), Decimal(".4")),
+        RDPPositionEvidence("No", "no", Decimal("0"), Decimal("0")),
+    )
+    bootstrap, account = account_capture(
+        balance=Decimal("11"), allowance=Decimal("9"), orders=(active,),
+        positions=positions,
+    )
+    projection = projection_for_current_backing(qy=1, qn=0, cost=.4)
+    snapshot = replace(
+        projection.snapshot, run_order_ids=("active-run",),
+        resting_order_ids=("active-run",), reserved_cash=Decimal("2.5"),
+        free_cash=Decimal("27.1"),
+    )
+    projection = replace(projection, snapshot=snapshot)
+    result = evaluate_current_rdp_backing(
+        bootstrap, account, projection, RDPMode.REBALANCE, Decimal("2"),
+        ("active-run",), now=1000, max_age_s=15,
+        active_order_ids=("active-run",),
+    )
+    assert result.eligible
+    assert result.account_buy_commitment == Decimal("2.5")
+    assert result.observed_cash_backing == Decimal("8.5")
+    assert not evaluate_current_rdp_backing(
+        bootstrap, account, projection, RDPMode.REBALANCE, Decimal("2"),
+        ("active-run",), now=1000, max_age_s=15,
+    ).eligible
+
+
 def projection_for_current_backing(*, qy: float, qn: float, cost: float):
     from polymaker.risk.rdp_capital import RDPCapitalProjection, RDPCapitalSnapshot
 

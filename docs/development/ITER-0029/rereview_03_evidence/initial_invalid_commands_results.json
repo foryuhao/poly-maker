@@ -1,0 +1,38 @@
+[
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short --show-capture=all > /tmp/ITER-0029-rereview-03-evidence/full.log 2>&1",
+    "exit_code": 120,
+    "description": "Quota-contaminated: ResearchWriter.close false, truncated traceback/log, no terminal pytest summary/network footer. Not a valid production/test verdict.",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/full.log"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q -s --tb=short --show-capture=all /tmp/ITER-0029-rereview-02-evidence/final_guards_and_diagnostics.py /tmp/ITER-0029-review-evidence/probes_v2.py /tmp/ITER-0029-review-evidence/extra_v3.py -k 'not normal_proof_order_variation' > /tmp/ITER-0029-rereview-03-evidence/original_final_and_p2_e3.log 2>&1",
+    "exit_code": 2,
+    "description": "Duplicate probes_v2 module collection error, no test acceptance evidence. REVIEW_NETWORK_ATTEMPTS [].",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/original_final_and_p2_e3.log"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q -s --tb=short --show-capture=all tests/test_rdp_runtime.py tests/test_rdp_placement.py::test_initial_prefill_terminal_failure_recaptures_freshness_and_event tests/test_rdp_placement.py::test_initial_prefill_terminal_freshness_boundary_matches_result_and_event tests/test_rdp_placement.py::test_rebalance_safety_stop_closes_scope_without_reposting tests/test_rdp_placement.py::test_iter0029_fix01_unregistered_repair_ack_keeps_known_inventory_and_no_false_close /tmp/ITER-0029-rereview-03-evidence/additional_probes_capture_v3.py > /tmp/ITER-0029-rereview-03-evidence/runtime_then_capture_and_a2.log 2>&1",
+    "exit_code": 120,
+    "description": "Quota-contaminated: closed-file logging/INTERNALERROR and truncated log. No valid terminal result/footer.",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/runtime_then_capture_and_a2.log"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short --show-capture=no > /tmp/ITER-0029-rereview-03-evidence/full_default_capture.log 2>&1",
+    "exit_code": 120,
+    "description": "Quota; zero-byte log, no valid result.",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/full_default_capture.log"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short --show-capture=no /tmp/ITER-0029-rereview-02-evidence/final_guards_and_diagnostics.py /tmp/ITER-0029-rereview-02-evidence/probes_v2.py /tmp/ITER-0029-review-evidence/extra_v3.py -k 'not normal_proof_order_variation' > /tmp/ITER-0029-rereview-03-evidence/original_final_and_p2_e3_same_module.log 2>&1",
+    "exit_code": 120,
+    "description": "Quota; zero-byte log, no valid result.",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/original_final_and_p2_e3_same_module.log"
+  },
+  {
+    "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests:/tmp/ITER-0029-review-evidence .venv/bin/python docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py -q --tb=short --show-capture=no tests/test_rdp_runtime.py tests/test_rdp_placement.py::test_initial_prefill_terminal_failure_recaptures_freshness_and_event tests/test_rdp_placement.py::test_initial_prefill_terminal_freshness_boundary_matches_result_and_event tests/test_rdp_placement.py::test_rebalance_safety_stop_closes_scope_without_reposting tests/test_rdp_placement.py::test_iter0029_fix01_unregistered_repair_ack_keeps_known_inventory_and_no_false_close /tmp/ITER-0029-rereview-03-evidence/additional_probes_capture_v3.py > /tmp/ITER-0029-rereview-03-evidence/runtime_then_capture_a2_default.log 2>&1",
+    "exit_code": 120,
+    "description": "Quota; zero-byte log, no valid result.",
+    "preserved_copy": "/var/tmp/poly-maker-ITER-0029-rereview-03/quota_contaminated_originals/runtime_then_capture_a2_default.log"
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "AGENTS.md": "0dedaab0b6653bd030d01c494d42d10619727f0e9f78bed9703002816538aa25",
+  "docs/strategy/RDP_PHASE0_FROZEN.md": "92e455097c7567007ed8688faae81241588d77af2f614cd3f8a663486856d32d",
+  "docs/development/BASELINE.md": "8fbf83198838af4fe9a46daee803a3fe4379139c429d65b7278f7ae29106bfe7",
+  "docs/development/ITERATION_INDEX.md": "ea311fcd599e4112c66f547df5bb8ee22c62e61552afe6d3e86c1727bbddd099",
+  "docs/development/DELIVERY_GAPS.md": "79662b571f2c2ed52c1098fbb8b0e41332236c380ece7d66762362e3cd8f6206",
+  "docs/development/ITER-0029/01_ARCHITECT.md": "fa2c9fab2346b94de58353c5564e9dbe6cc85bc6a6d34d01a0859c4ceb62423c",
+  "docs/development/ITER-0029/02_WORKER.md": "7cb7ecbc1590787697c38a8ef146ab9bba2ec493d5524f3d56fca8ff2ecfad31",
+  "docs/development/ITER-0029/03_REVIEWER.md": "c1b2cf39f5e81dad7c9c71b1875af17b5a2bbc757ad09d1f7236c424f38d6bf8",
+  "docs/development/ITER-0029/04_WORKER_FIX_01.md": "c16cabb0bcca6eb0f927aac7fd367caeaf59bc5b8fdcb5ca96771b04f086d9ac",
+  "docs/development/ITER-0029/ENVIRONMENT_OBSERVATION_01.md": "9d328c82b419b8109ff4d0e641c702c7369f0209580b9d560e0efc41ed5790a7",
+  "src/polymaker/execution/gateway.py": "c1d809cb09d2c697b02cad7e939fc6dc568a28ba2db5750dfbc70df8e2a47da8",
+  "src/polymaker/execution/rdp_placement.py": "5d02f872f28e0e83f31695c5eeafa63ed7f4ffe1be3ba8150c8f987da99eadc6",
+  "src/polymaker/rdp_runtime.py": "0b01182d5068fb91610fa5dd5709a726e817833e1fe424638c36f1da2c07363d",
+  "src/polymaker/risk/rdp_capital.py": "d3208986ba14d0e57402c9b22bdd5d486a7c2d5bbb742443c8ee1e0432e1dbd6",
+  "tests/test_execution.py": "df6f2ea4ccfd4f1c4550d0cb7c5a243f4dfe3be6843fb01fe90bb9d58ddefb2a",
+  "tests/test_rdp_capital.py": "687de05bd028554081f632c206d5b435cffea219d065fd8fcdd8e1c8b1344218",
+  "tests/test_rdp_placement.py": "ccebd1d78ced1250b89d896005bac8769b50b26504bb20674d424992cba6ad61",
+  "docs/development/ITER-0026/review_evidence/iter0026_review_pytest.py": "bac8efb151d4e69c33bad9ef345bb9ad1c6d4e412aea38d0ec6d2a7e80fe9641"
+}

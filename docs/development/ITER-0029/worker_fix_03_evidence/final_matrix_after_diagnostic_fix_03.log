@@ -1,0 +1,14 @@
+ERROR: found no collectors for /home/ubuntu/poly-maker/tests/test_rdp_placement.py::test_iter0029_fix03_final_guard_rejects_regressed_operation_clock_before_post
+
+ERROR: found no collectors for /home/ubuntu/poly-maker/tests/test_rdp_placement.py::test_iter0029_fix03_primary_interruption_survives_postdrain_clock_failure
+
+ERROR: found no collectors for /home/ubuntu/poly-maker/tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+
+
+==================================== ERRORS ====================================
+_________________ ERROR collecting tests/test_rdp_placement.py _________________
+In tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively: function already takes an argument 'diagnostic_probe' with a default value
+=========================== short test summary info ============================
+ERROR tests/test_rdp_placement.py - Failed: In tests/test_rdp_placement.py::t...
+1 error in 1.58s
+REVIEW_NETWORK_ATTEMPTS []

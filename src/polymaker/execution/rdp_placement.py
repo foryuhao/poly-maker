@@ -49,6 +49,7 @@ class RDPPlacementAttempt:
     replacement_blocked: bool
     continuation: bool = False
     source_attempt_id: int | None = None
+    mode: str = "NORMAL"
     execution_authorized: bool = field(default=False, init=False)
 
 
@@ -220,7 +221,8 @@ class RDPPlacementOwner:
                     self._processor.register_order(
                         order.order_id, current.condition_id, order.token_id,
                         order.side, order.size, order.price,
-                        ("rdp_normal_continuation" if current.continuation
+                        ("rdp_rebalance_continuation" if current.mode == "REBALANCE"
+                         else "rdp_normal_continuation" if current.continuation
                          else "rdp_initial"),
                     )
                 except Exception as exc:  # noqa: BLE001 - retain safe partial ownership
@@ -232,12 +234,13 @@ class RDPPlacementOwner:
                 anomaly_snapshot = tuple(dict.fromkeys(anomaly_snapshot + tuple(register_anomalies)))
             # A gateway exception, partial result, or any contradictory capture
             # remains blocked. Do not clear pending evidence as generic cleanup.
-            if result_kind == "ACKNOWLEDGED" and len(safe_orders) == 2 and not unresolved:
+            expected_count = 1 if current.mode == "REBALANCE" else 2
+            if result_kind == "ACKNOWLEDGED" and len(safe_orders) == expected_count and not unresolved:
                 result_kind = "COMPLETE"
             elif result_kind == "ACKNOWLEDGED":
                 result_kind = "UNKNOWN" if not safe_orders else "PARTIAL"
                 unresolved = True
-                reason = reason or "ACKNOWLEDGMENT_PAIR_INCOMPLETE"
+                reason = reason or "ACKNOWLEDGMENT_MODE_CARDINALITY_INCOMPLETE"
             blocked = unresolved or bool(safe_orders)
 
         # Processor replay can discover malformed economics and quarantine an
@@ -365,6 +368,72 @@ class RDPPlacementOwner:
                  acknowledged_order_ids=tuple(sorted(run_ids)), execution_authorized=False)
         return attempt
 
+    def arm_rebalance_continuation(
+        self, admission: Any, *, current_public_generation: int,
+        current_user_generation: int, session_healthy: bool, now: float,
+    ) -> RDPPlacementAttempt:
+        """Capture exactly one deficient-side five-share repair order."""
+        previous = self._current
+        if (previous is None or previous.replacement_blocked or previous.unresolved
+                or previous.outcome != "COMPLETE"
+                or set(previous.closed_order_ids) != set(previous.acknowledged_order_ids)):
+            raise RDPPlacementError("PRIOR_PLACEMENT_NOT_CLOSED")
+        if not session_healthy:
+            raise RDPPlacementError("INPUT_SESSION_UNHEALTHY")
+        if now >= self._bootstrap.end_epoch:
+            raise RDPPlacementError("MARKET_EXPIRED")
+        market = self._bootstrap.market
+        if (getattr(admission, "eligible", False) is not True
+                or getattr(admission, "execution_authorized", True) is not False
+                or getattr(admission, "condition_id", None) != market.condition_id
+                or getattr(admission, "slug", None) != market.slug
+                or getattr(admission, "attempt_id", None) != previous.attempt_id
+                or getattr(admission, "public_generation", None) != current_public_generation
+                or getattr(admission, "user_generation", None) != current_user_generation
+                or getattr(getattr(admission, "mode", None), "value", None) != "REBALANCE"):
+            raise RDPPlacementError("REBALANCE_ADMISSION_SCOPE_MISMATCH")
+        candidate = getattr(admission, "candidate", None)
+        quotes = getattr(candidate, "quotes", None)
+        run_ids = self._registered_run_ids()
+        inventory = snapshot_inventory(market, self._processor, run_ids)
+        delta = Decimal(str(inventory.delta))
+        expected_token = (market.no.token_id if delta >= 5 else
+                          market.yes.token_id if delta <= -5 else None)
+        quote = quotes[0] if isinstance(quotes, tuple) and len(quotes) == 1 else None
+        proof_ids = set(self._close_proofs)
+        expected_proof_ids = {key for key, value in self._attempts.items()
+                              if value.acknowledged_order_ids}
+        if (expected_token is None or not isinstance(quote, Quote)
+                or quote.token_id != expected_token or quote.side is not Side.BUY
+                or quote.size != 5 or not 0 < quote.price < 1
+                or self.registered_run_order_sequence
+                != tuple(getattr(admission, "run_order_ids", ()))
+                or proof_ids != expected_proof_ids
+                or set(self._attempts) != proof_ids | {
+                    key for key, value in self._attempts.items()
+                    if value.outcome == "EMPTY" and not value.unresolved
+                    and not value.replacement_blocked and not value.acknowledged_order_ids
+                    and not value.observed_order_ids and not value.pending_anomalies
+                }):
+            raise RDPPlacementError("REBALANCE_SCOPE_OR_QUOTE_INVALID")
+        if self._processor._pending or self._processor._pending_events:
+            raise RDPPlacementError("PENDING_CAPTURE_ALREADY_ACTIVE")
+        self._processor.arm_pending_many([(quote.token_id, quote.side)])
+        attempt = RDPPlacementAttempt(
+            attempt_id=self._next_attempt_id, slug=market.slug,
+            condition_id=market.condition_id,
+            public_generation=current_public_generation,
+            user_generation=current_user_generation, quotes=(quote,),
+            outcome="ARMED", reason=None, acknowledged_order_ids=(),
+            observed_order_ids=(), closed_order_ids=(), pending_anomalies=(),
+            unresolved=True, replacement_blocked=True, continuation=True,
+            source_attempt_id=previous.attempt_id, mode="REBALANCE",
+        )
+        self._next_attempt_id += 1
+        self._current = attempt
+        self._attempts[attempt.attempt_id] = attempt
+        return attempt
+
     def _registered_run_ids(self) -> set[str]:
         return {
             order_id for attempt in self._attempts.values()
@@ -400,15 +469,24 @@ class RDPPlacementOwner:
         market_tokens = {self._bootstrap.market.yes.token_id,
                          self._bootstrap.market.no.token_id}
         quote_tokens = {quote.token_id for quote in current.quotes}
-        valid_pair = (
-            current.outcome == "COMPLETE" and not current.unresolved
-            and len(current.acknowledged_order_ids) == 2
-            and quote_tokens == market_tokens and acknowledged == closed
+        normal_shape = (
+            current.mode == "NORMAL" and len(current.acknowledged_order_ids) == 2
+            and quote_tokens == market_tokens
             and (not current.continuation and len(acknowledged) == 2
                  or current.continuation and _valid_continuation_pair(
                      self._bootstrap.market, current.quotes,
                      self._registered_run_ids() - acknowledged, self._processor,
                  ))
+        )
+        rebalance_shape = (
+            current.mode == "REBALANCE" and current.continuation
+            and len(acknowledged) == 1 and len(current.quotes) == 1
+            and next(iter(quote_tokens), None)
+            in (self._bootstrap.market.yes.token_id, self._bootstrap.market.no.token_id)
+        )
+        valid_pair = (
+            current.outcome == "COMPLETE" and not current.unresolved
+            and acknowledged == closed and (normal_shape or rebalance_shape)
         )
         capital_snapshot = getattr(capital, "snapshot", None)
         cumulative_ids = self._registered_run_ids()
@@ -507,7 +585,7 @@ class RDPPlacementOwner:
                 continue
             candidates[order_id] = order
 
-        if len(acknowledgements) > 2:
+        if len(acknowledgements) > (1 if attempt.mode == "REBALANCE" else 2):
             errors.append("TOO_MANY_ACKNOWLEDGMENTS")
         # When duplicate IDs occur, the gateway evidence cannot safely identify
         # either occurrence. No one may overwrite the existing registry entry.
@@ -571,9 +649,12 @@ def _registry_matches_attempt(
 ) -> bool:
     market = bootstrap.market
     quotes = {quote.token_id: quote for quote in attempt.quotes}
+    expected = ({quote.token_id for quote in attempt.quotes}
+                if attempt.mode == "REBALANCE" else
+                {market.yes.token_id, market.no.token_id})
     if (attempt.condition_id != market.condition_id or attempt.slug != market.slug
-            or len(quotes) != 2
-            or set(quotes) != {market.yes.token_id, market.no.token_id}):
+            or len(quotes) != (1 if attempt.mode == "REBALANCE" else 2)
+            or set(quotes) != expected):
         return False
     for order_id in attempt.acknowledged_order_ids:
         record = processor.owned_record(order_id)

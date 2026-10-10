@@ -1,0 +1,545 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+______ test_rebalance_rechecks_tick_target_after_account_read_await[ask] _______
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x7659bcda1580>, make_session=<function placement_scope.<locals>.make_session at 0x7659b83727a0>)
+blocked_network = []
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7659bcd9aab0>
+change = 'ask'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["ask", "tick"])
+    async def test_rebalance_rechecks_tick_target_after_account_read_await(
+        placement_scope, blocked_network, monkeypatch, change,
+    ):
+        scope = placement_scope
+        await _complete_cycle_with_confirmed_fill(scope, size=5)
+        client, gateway = await _prepare_repeated_continuation(
+            scope, monkeypatch,
+            [("foreign-token", 0), ("no-token", 5), ("yes-token", 5)],
+            initial_size=None,
+        )
+        scope.session._market_data_max_age_s = 60
+        import polymaker.rdp_runtime as runtime
+        old_capture = runtime._capture_account_with_gateway
+        mutated = False
+    
+        async def mutate_book_after_account_read(*args, **kwargs):
+            nonlocal mutated
+            evidence = await old_capture(*args, **kwargs)
+            if client.posts == 1 and not mutated:
+                mutated = True
+                book = scope.session.public_session.service.book("no-token")
+                if change == "ask":
+                    book.apply_delta(Side.SELL, .48, 0, time.time())
+                    book.apply_delta(Side.SELL, .49, 10, time.time())
+                else:
+                    book.set_tick_size(.05)
+                    scope.session.public_session.service._tick_source[
+                        "no-token"
+                    ] = "WS_TICK_SIZE_CHANGE"
+            return evidence
+    
+        monkeypatch.setattr(runtime, "_capture_account_with_gateway",
+                            mutate_book_after_account_read)
+        try:
+>           result = await asyncio.wait_for(scope.session.continue_rebalance(
+                authorization=True, order_budget_s=1, close_budget_s=1,
+            ), timeout=5)
+
+tests/test_rdp_placement.py:9032: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/polymaker/rdp_runtime.py:1165: in continue_rebalance
+    result = await asyncio.shield(task)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polymaker/rdp_runtime.py:1338: in _run_rebalance_continuation
+    close_economics = self._rebalance_economic_evidence()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <polymaker.rdp_runtime.RDPInputSession object at 0x7659bcda1580>
+
+    def _rebalance_economic_evidence(self) -> dict[str, Any] | None:
+        """Return in-memory economics from currently registered confirmed fills."""
+        run_ids = self.placement_owner.registered_run_order_ids
+        if not run_ids:
+            return None
+        try:
+            inventory = snapshot_inventory(
+                self.bootstrap.market, self.processor, set(run_ids),
+            )
+        except Exception:
+            return None
+        return {
+            "captured_at": self._now(),
+            "run_order_ids": tuple(run_ids),
+            "inventory_scope": "REGISTERED_CONFIRMED_FILLS",
+            "closed_order_ids": tuple(sorted({
+                order_id for closed_attempt in self.placement_owner.attempts
+                for order_id in closed_attempt.closed_order_ids
+            })),
+>           "close_proof_attempt_ids": tuple(sorted(self.placement_owner.close_proofs)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "qy": inventory.qy,
+            "qn": inventory.qn,
+            "delta": inventory.delta,
+            "inventory_cost": inventory.inventory_cost,
+            "locked_pnl": inventory.locked_pnl,
+            "worst_settlement_pnl": inventory.worst_settlement_pnl,
+        }
+E       TypeError: '<' not supported between instances of 'RDPCloseResult' and 'RDPCloseResult'
+
+src/polymaker/rdp_runtime.py:1393: TypeError
+----------------------------- Captured stdout call -----------------------------
+2026-10-10 09:53:05 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.76e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791597485 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791597185.6112247 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=yes-order source=rdp_initial token=yes-token
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=no-order source=rdp_initial token=no-token
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('yes-order', 'no-order') condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] fill                           pos=5.0 price=0.55 side=BUY size=5 token=yes-token
+2026-10-10 09:53:05 [info     ] owned_maker_fill_applied       order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] rdp_initial_cycle_started      acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False
+2026-10-10 09:53:05 [info     ] rdp_fill_window_started        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108480801145420 duration_s=3.0 first_receipt_monotonic_ns=2108477801145420 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_prefill_decision   acknowledged_order_ids=('yes-order', 'no-order') action=FILL_WINDOW attempt_id=1 book_filter_ready=None book_filter_reasons=() candidate_quotes=() candidate_reason=None capital_certified=None capital_reason=None captured_at=1791597185.6407886 condition_id=rdp-placement-condition execution_authorized=False fill_window_deadline_monotonic_ns=2108480801145420 fill_window_first_receipt_monotonic_ns=2108477801145420 fill_window_started=True free_cash=None inventory_cost=None inventory_delta=None inventory_qn=None inventory_qy=None market_status_age_s=None market_status_receipt_ts=None order_age_s=None order_receipt_ts=None public_generation=3 reason=CONFIRMED_FILL_HANDOFF reserved_cash=None slug=btc-updown-5m-placement submitted_quotes=(('yes-token', 'BUY', 0.55, 5.0), ('no-token', 'BUY', 0.41, 5.0)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_fill_window_completion_started acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False window_deadline_monotonic_ns=2108480801145420
+2026-10-10 09:53:05 [info     ] rdp_fill_window_expired        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108480801145420 duration_s=3.0 first_receipt_monotonic_ns=2108477801145420 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=no-order
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=no-order tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=yes-order
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5.0 side=BUY source=REST status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=yes-order tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=no-order status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=yes-order status=MATCHED tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:05 [info     ] rdp_initial_placement_close    attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('yes-order', 'no-order') placement_unresolved=False reason=None replacement_blocked=False
+2026-10-10 09:53:05 [info     ] rdp_fill_window_completion_finished acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE operational_close_deadline=2108479.805664723 replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108480801145420
+2026-10-10 09:53:05 [info     ] rdp_initial_cycle_finished     acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True capital_certified=True condition_id=rdp-placement-condition execution_authorized=False last_prefill_action=FILL_WINDOW last_prefill_reason=CONFIRMED_FILL_HANDOFF next_mode=REBALANCE replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108480801145420
+2026-10-10 09:53:05 [info     ] rdp_post_cycle_next_action_admission account_buy_commitment=Decimal('0') account_read_age_s=0.0025528 account_receipt_times=(1791597185.6441886, 1791597185.6451888, 1791597185.6461887) attempt_id=1 book_ages=(('yes-token', 0.0357609), ('no-token', 0.0356312)) book_filter_ready=True book_filter_rejected=False candidate_notional=Decimal('2.350') candidate_quotes=(('no-token', 0.47, 5.0),) capital_gate_reason=None capital_reason=None captured_at=1791597185.6467414 closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition delta=5.0 execution_authorized=False free_cash=Decimal('27.250') inventory_cost=Decimal('2.750') market_status_age_s=0.0001397 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) mode=REBALANCE observed_allowance_backing=Decimal('27.25') observed_cash_backing=Decimal('27.25') outstanding_execution_gates=('OPERATIONAL_TIME_SUFFICIENCY', 'FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 qn=0.0 qy=5.0 reason=None reserved_cash=Decimal('0') resting_order_ids=() result=SUCCESS run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_rebalance_entered          candidate_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition economics={'captured_at': 1791597185.6470132, 'run_order_ids': ('no-order', 'yes-order'), 'inventory_scope': 'REGISTERED_CONFIRMED_FILLS', 'closed_order_ids': ('no-order', 'yes-order'), 'close_proof_attempt_ids': (RDPCloseResult(complete=True, reason=None, affected_order_ids=(), reconciliation_outcomes=(('no-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>), ('yes-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>)), inventory=RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=5.0, qn=0.0, cy=2.75, cn=0.0, delta=5.0, inventory_exposure=5.0, c_total=2.75, inventory_cost=2.75, avg_yes_cost=0.55, avg_no_cost=None, balanced_qty=0.0, residual_yes=5.0, residual_no=0.0, residual_qty=5.0, balanced_yes_cost=0.0, balanced_no_cost=0.0, balanced_cost=0.0, residual_cost=2.75, locked_pnl=0.0, residual_worst_loss=2.75, residual_best_pnl=2.25, worst_settlement_pnl=-2.75, best_settlement_pnl=2.25)),), 'qy': 5.0, 'qn': 0.0, 'delta': 5.0, 'inventory_cost': 2.75, 'locked_pnl': 0.0, 'worst_settlement_pnl': -2.75} entered_at=1791597185.6467414 execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) public_generation=3 run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement source_attempt_id=1 token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0025528 attempt_id=2 book_ages=(('yes-token', 0.0363321), ('no-token', 0.0362024)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597185.6473126 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0012171 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0025528 attempt_id=2 book_ages=(('yes-token', 0.0367863), ('no-token', 0.0366566)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597185.6477668 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0016713 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=cycle-1-no-token source=rdp_rebalance_continuation token=no-token
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_continuation_submission_result acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 execution_authorized=False gateway_result_type=ACKNOWLEDGMENTS guard_reasons=(None, None) outcome=COMPLETE post_started=True reason=None source_attempt_id=1
+2026-10-10 09:53:05 [info     ] rdp_rebalance_attempt_submitted acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 condition_id=rdp-placement-condition contemporaneous_books=[{'token_id': 'no-token', 'best_bid': None, 'best_ask': None, 'tick_size': '0.01'}] execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS mode=REBALANCE observed_order_ids=() posted_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) slug=btc-updown-5m-placement source_attempt_id=1 submitted_at=1791597185.6483374
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=cycle-1-no-token
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=cycle-1-no-token tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=cycle-1-no-token status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] rdp_initial_placement_close    attempt_id=2 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('cycle-1-no-token',) placement_unresolved=False reason=None replacement_blocked=False
+______ test_rebalance_rechecks_tick_target_after_account_read_await[tick] ______
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x7659b8766ea0>, make_session=<function placement_scope.<locals>.make_session at 0x7659bab51d00>)
+blocked_network = []
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7659bcda0b60>
+change = 'tick'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["ask", "tick"])
+    async def test_rebalance_rechecks_tick_target_after_account_read_await(
+        placement_scope, blocked_network, monkeypatch, change,
+    ):
+        scope = placement_scope
+        await _complete_cycle_with_confirmed_fill(scope, size=5)
+        client, gateway = await _prepare_repeated_continuation(
+            scope, monkeypatch,
+            [("foreign-token", 0), ("no-token", 5), ("yes-token", 5)],
+            initial_size=None,
+        )
+        scope.session._market_data_max_age_s = 60
+        import polymaker.rdp_runtime as runtime
+        old_capture = runtime._capture_account_with_gateway
+        mutated = False
+    
+        async def mutate_book_after_account_read(*args, **kwargs):
+            nonlocal mutated
+            evidence = await old_capture(*args, **kwargs)
+            if client.posts == 1 and not mutated:
+                mutated = True
+                book = scope.session.public_session.service.book("no-token")
+                if change == "ask":
+                    book.apply_delta(Side.SELL, .48, 0, time.time())
+                    book.apply_delta(Side.SELL, .49, 10, time.time())
+                else:
+                    book.set_tick_size(.05)
+                    scope.session.public_session.service._tick_source[
+                        "no-token"
+                    ] = "WS_TICK_SIZE_CHANGE"
+            return evidence
+    
+        monkeypatch.setattr(runtime, "_capture_account_with_gateway",
+                            mutate_book_after_account_read)
+        try:
+>           result = await asyncio.wait_for(scope.session.continue_rebalance(
+                authorization=True, order_budget_s=1, close_budget_s=1,
+            ), timeout=5)
+
+tests/test_rdp_placement.py:9032: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/polymaker/rdp_runtime.py:1165: in continue_rebalance
+    result = await asyncio.shield(task)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polymaker/rdp_runtime.py:1338: in _run_rebalance_continuation
+    close_economics = self._rebalance_economic_evidence()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <polymaker.rdp_runtime.RDPInputSession object at 0x7659b8766ea0>
+
+    def _rebalance_economic_evidence(self) -> dict[str, Any] | None:
+        """Return in-memory economics from currently registered confirmed fills."""
+        run_ids = self.placement_owner.registered_run_order_ids
+        if not run_ids:
+            return None
+        try:
+            inventory = snapshot_inventory(
+                self.bootstrap.market, self.processor, set(run_ids),
+            )
+        except Exception:
+            return None
+        return {
+            "captured_at": self._now(),
+            "run_order_ids": tuple(run_ids),
+            "inventory_scope": "REGISTERED_CONFIRMED_FILLS",
+            "closed_order_ids": tuple(sorted({
+                order_id for closed_attempt in self.placement_owner.attempts
+                for order_id in closed_attempt.closed_order_ids
+            })),
+>           "close_proof_attempt_ids": tuple(sorted(self.placement_owner.close_proofs)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "qy": inventory.qy,
+            "qn": inventory.qn,
+            "delta": inventory.delta,
+            "inventory_cost": inventory.inventory_cost,
+            "locked_pnl": inventory.locked_pnl,
+            "worst_settlement_pnl": inventory.worst_settlement_pnl,
+        }
+E       TypeError: '<' not supported between instances of 'RDPCloseResult' and 'RDPCloseResult'
+
+src/polymaker/rdp_runtime.py:1393: TypeError
+----------------------------- Captured stdout call -----------------------------
+2026-10-10 09:53:05 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.6e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791597485 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791597185.9322178 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=yes-order source=rdp_initial token=yes-token
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=no-order source=rdp_initial token=no-token
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('yes-order', 'no-order') condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] fill                           pos=5.0 price=0.55 side=BUY size=5 token=yes-token
+2026-10-10 09:53:05 [info     ] owned_maker_fill_applied       order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] rdp_initial_cycle_started      acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False
+2026-10-10 09:53:05 [info     ] rdp_fill_window_started        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481096681629 duration_s=3.0 first_receipt_monotonic_ns=2108478096681629 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_prefill_decision   acknowledged_order_ids=('yes-order', 'no-order') action=FILL_WINDOW attempt_id=1 book_filter_ready=None book_filter_reasons=() candidate_quotes=() candidate_reason=None capital_certified=None capital_reason=None captured_at=1791597185.9358294 condition_id=rdp-placement-condition execution_authorized=False fill_window_deadline_monotonic_ns=2108481096681629 fill_window_first_receipt_monotonic_ns=2108478096681629 fill_window_started=True free_cash=None inventory_cost=None inventory_delta=None inventory_qn=None inventory_qy=None market_status_age_s=None market_status_receipt_ts=None order_age_s=None order_receipt_ts=None public_generation=3 reason=CONFIRMED_FILL_HANDOFF reserved_cash=None slug=btc-updown-5m-placement submitted_quotes=(('yes-token', 'BUY', 0.55, 5.0), ('no-token', 'BUY', 0.41, 5.0)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_fill_window_completion_started acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False window_deadline_monotonic_ns=2108481096681629
+2026-10-10 09:53:05 [info     ] rdp_fill_window_expired        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481096681629 duration_s=3.0 first_receipt_monotonic_ns=2108478096681629 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=no-order
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=no-order tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=yes-order
+2026-10-10 09:53:05 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5.0 side=BUY source=REST status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=yes-order tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=no-order status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=yes-order status=MATCHED tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:05 [info     ] rdp_initial_placement_close    attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('yes-order', 'no-order') placement_unresolved=False reason=None replacement_blocked=False
+2026-10-10 09:53:05 [info     ] rdp_fill_window_completion_finished acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE operational_close_deadline=2108480.102855745 replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481096681629
+2026-10-10 09:53:05 [info     ] rdp_initial_cycle_finished     acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True capital_certified=True condition_id=rdp-placement-condition execution_authorized=False last_prefill_action=FILL_WINDOW last_prefill_reason=CONFIRMED_FILL_HANDOFF next_mode=REBALANCE replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481096681629
+2026-10-10 09:53:05 [info     ] rdp_post_cycle_next_action_admission account_buy_commitment=Decimal('0') account_read_age_s=0.0025122 account_receipt_times=(1791597185.94149, 1791597185.94249, 1791597185.94349) attempt_id=1 book_ages=(('yes-token', 0.0119629), ('no-token', 0.0118682)) book_filter_ready=True book_filter_rejected=False candidate_notional=Decimal('2.350') candidate_quotes=(('no-token', 0.47, 5.0),) capital_gate_reason=None capital_reason=None captured_at=1791597185.9440022 closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition delta=5.0 execution_authorized=False free_cash=Decimal('27.250') inventory_cost=Decimal('2.750') market_status_age_s=0.0001285 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) mode=REBALANCE observed_allowance_backing=Decimal('27.25') observed_cash_backing=Decimal('27.25') outstanding_execution_gates=('OPERATIONAL_TIME_SUFFICIENCY', 'FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 qn=0.0 qy=5.0 reason=None reserved_cash=Decimal('0') resting_order_ids=() result=SUCCESS run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_rebalance_entered          candidate_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition economics={'captured_at': 1791597185.9442651, 'run_order_ids': ('no-order', 'yes-order'), 'inventory_scope': 'REGISTERED_CONFIRMED_FILLS', 'closed_order_ids': ('no-order', 'yes-order'), 'close_proof_attempt_ids': (RDPCloseResult(complete=True, reason=None, affected_order_ids=(), reconciliation_outcomes=(('no-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>), ('yes-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>)), inventory=RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=5.0, qn=0.0, cy=2.75, cn=0.0, delta=5.0, inventory_exposure=5.0, c_total=2.75, inventory_cost=2.75, avg_yes_cost=0.55, avg_no_cost=None, balanced_qty=0.0, residual_yes=5.0, residual_no=0.0, residual_qty=5.0, balanced_yes_cost=0.0, balanced_no_cost=0.0, balanced_cost=0.0, residual_cost=2.75, locked_pnl=0.0, residual_worst_loss=2.75, residual_best_pnl=2.25, worst_settlement_pnl=-2.75, best_settlement_pnl=2.25)),), 'qy': 5.0, 'qn': 0.0, 'delta': 5.0, 'inventory_cost': 2.75, 'locked_pnl': 0.0, 'worst_settlement_pnl': -2.75} entered_at=1791597185.9440022 execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) public_generation=3 run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement source_attempt_id=1 token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0025122 attempt_id=2 book_ages=(('yes-token', 0.0125084), ('no-token', 0.0124137)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597185.9445477 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0011442 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0025122 attempt_id=2 book_ages=(('yes-token', 0.0129091), ('no-token', 0.0128144)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597185.9449484 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0015449 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:05 [info     ] owned_order_registered         order_id=cycle-1-no-token source=rdp_rebalance_continuation token=no-token
+2026-10-10 09:53:05 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:05 [info     ] rdp_continuation_submission_result acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 execution_authorized=False gateway_result_type=ACKNOWLEDGMENTS guard_reasons=(None, None) outcome=COMPLETE post_started=True reason=None source_attempt_id=1
+2026-10-10 09:53:05 [info     ] rdp_rebalance_attempt_submitted acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 condition_id=rdp-placement-condition contemporaneous_books=[{'token_id': 'no-token', 'best_bid': None, 'best_ask': None, 'tick_size': '0.01'}] execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS mode=REBALANCE observed_order_ids=() posted_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) slug=btc-updown-5m-placement source_attempt_id=1 submitted_at=1791597185.9454892
+2026-10-10 09:53:05 [info     ] order_reconcile_started        order_id=cycle-1-no-token
+2026-10-10 09:53:05 [info     ] order_reconcile_complete       order_id=cycle-1-no-token tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] order_match_checksum           order_id=cycle-1-no-token status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:05 [info     ] rdp_initial_placement_close    attempt_id=2 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('cycle-1-no-token',) placement_unresolved=False reason=None replacement_blocked=False
+_____ test_rebalance_cancel_race_fill_is_reconciled_before_normal_recovery _____
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x7659b8718bc0>, make_session=<function placement_scope.<locals>.make_session at 0x7659b8311800>)
+blocked_network = []
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7659b8718140>
+
+    @pytest.mark.asyncio
+    async def test_rebalance_cancel_race_fill_is_reconciled_before_normal_recovery(
+        placement_scope, blocked_network, monkeypatch,
+    ):
+        scope = placement_scope
+        await _complete_cycle_with_confirmed_fill(scope, size=5)
+        client, gateway = await _prepare_repeated_continuation(
+            scope, monkeypatch, [("foreign-token", 0), ("yes-token", 5)],
+            initial_size=None,
+        )
+        scope.session._market_data_max_age_s = 60
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_sleep = scope.session._sleep
+        held = False
+    
+        async def hold_repair_poll(delay):
+            nonlocal held
+            if client.posts == 1 and not held:
+                held = True
+                entered.set()
+                await release.wait()
+            await original_sleep(delay)
+    
+        original_cancel = client.cancel_orders
+        raced = False
+    
+        def cancel_with_late_fill(order_ids):
+            nonlocal raced
+            if order_ids == ["cycle-1-no-token"] and not raced:
+                raced = True
+                row = client.rows[order_ids[0]]
+                _send_matched_then_confirmed(
+                    scope, order_ids[0], trade_id="iter0029-cancel-race-fill",
+                    size=2, price=float(row["price"]),
+                    receipt_ns=scope.session._monotonic_ns(),
+                )
+                row["size_matched"] = "2"
+                row["status"] = "LIVE"
+                client.trades.append(_rest_trade(
+                    order_ids[0], "no-token", row["price"], "2",
+                    trade_id="iter0029-cancel-race-fill",
+                ))
+            return original_cancel(order_ids)
+    
+        client.cancel_orders = cancel_with_late_fill
+        scope.session._sleep = hold_repair_poll
+        operation = asyncio.create_task(scope.session.continue_rebalance(
+            authorization=True, order_budget_s=1, close_budget_s=1,
+        ))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            no_book = scope.session.public_session.service.book("no-token")
+            no_book.apply_delta(Side.SELL, .48, 0, time.time())
+            no_book.apply_delta(Side.SELL, .49, 10, time.time())
+            release.set()
+>           result = await asyncio.wait_for(operation, timeout=5)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_rdp_placement.py:9104: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/polymaker/rdp_runtime.py:1165: in continue_rebalance
+    result = await asyncio.shield(task)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polymaker/rdp_runtime.py:1338: in _run_rebalance_continuation
+    close_economics = self._rebalance_economic_evidence()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <polymaker.rdp_runtime.RDPInputSession object at 0x7659b8718bc0>
+
+    def _rebalance_economic_evidence(self) -> dict[str, Any] | None:
+        """Return in-memory economics from currently registered confirmed fills."""
+        run_ids = self.placement_owner.registered_run_order_ids
+        if not run_ids:
+            return None
+        try:
+            inventory = snapshot_inventory(
+                self.bootstrap.market, self.processor, set(run_ids),
+            )
+        except Exception:
+            return None
+        return {
+            "captured_at": self._now(),
+            "run_order_ids": tuple(run_ids),
+            "inventory_scope": "REGISTERED_CONFIRMED_FILLS",
+            "closed_order_ids": tuple(sorted({
+                order_id for closed_attempt in self.placement_owner.attempts
+                for order_id in closed_attempt.closed_order_ids
+            })),
+>           "close_proof_attempt_ids": tuple(sorted(self.placement_owner.close_proofs)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "qy": inventory.qy,
+            "qn": inventory.qn,
+            "delta": inventory.delta,
+            "inventory_cost": inventory.inventory_cost,
+            "locked_pnl": inventory.locked_pnl,
+            "worst_settlement_pnl": inventory.worst_settlement_pnl,
+        }
+E       TypeError: '<' not supported between instances of 'RDPCloseResult' and 'RDPCloseResult'
+
+src/polymaker/rdp_runtime.py:1393: TypeError
+----------------------------- Captured stdout call -----------------------------
+2026-10-10 09:53:06 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.23e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791597486 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791597186.3260567 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=yes-order source=rdp_initial token=yes-token
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=no-order source=rdp_initial token=no-token
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('yes-order', 'no-order') condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] fill                           pos=5.0 price=0.55 side=BUY size=5 token=yes-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_applied       order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] rdp_initial_cycle_started      acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False
+2026-10-10 09:53:06 [info     ] rdp_fill_window_started        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481490563386 duration_s=3.0 first_receipt_monotonic_ns=2108478490563386 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_prefill_decision   acknowledged_order_ids=('yes-order', 'no-order') action=FILL_WINDOW attempt_id=1 book_filter_ready=None book_filter_reasons=() candidate_quotes=() candidate_reason=None capital_certified=None capital_reason=None captured_at=1791597186.3297164 condition_id=rdp-placement-condition execution_authorized=False fill_window_deadline_monotonic_ns=2108481490563386 fill_window_first_receipt_monotonic_ns=2108478490563386 fill_window_started=True free_cash=None inventory_cost=None inventory_delta=None inventory_qn=None inventory_qy=None market_status_age_s=None market_status_receipt_ts=None order_age_s=None order_receipt_ts=None public_generation=3 reason=CONFIRMED_FILL_HANDOFF reserved_cash=None slug=btc-updown-5m-placement submitted_quotes=(('yes-token', 'BUY', 0.55, 5.0), ('no-token', 'BUY', 0.41, 5.0)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_fill_window_completion_started acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False window_deadline_monotonic_ns=2108481490563386
+2026-10-10 09:53:06 [info     ] rdp_fill_window_expired        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481490563386 duration_s=3.0 first_receipt_monotonic_ns=2108478490563386 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=no-order
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=no-order tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=yes-order
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5.0 side=BUY source=REST status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=yes-order tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=no-order status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=yes-order status=MATCHED tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:06 [info     ] rdp_initial_placement_close    attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('yes-order', 'no-order') placement_unresolved=False reason=None replacement_blocked=False
+2026-10-10 09:53:06 [info     ] rdp_fill_window_completion_finished acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE operational_close_deadline=2108480.494565923 replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481490563386
+2026-10-10 09:53:06 [info     ] rdp_initial_cycle_finished     acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True capital_certified=True condition_id=rdp-placement-condition execution_authorized=False last_prefill_action=FILL_WINDOW last_prefill_reason=CONFIRMED_FILL_HANDOFF next_mode=REBALANCE replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481490563386
+2026-10-10 09:53:06 [info     ] rdp_post_cycle_next_action_admission account_buy_commitment=Decimal('0') account_read_age_s=0.0024638 account_receipt_times=(1791597186.3329442, 1791597186.3339443, 1791597186.3349442) attempt_id=1 book_ages=(('yes-token', 0.0095341), ('no-token', 0.0094343)) book_filter_ready=True book_filter_rejected=False candidate_notional=Decimal('2.350') candidate_quotes=(('no-token', 0.47, 5.0),) capital_gate_reason=None capital_reason=None captured_at=1791597186.335408 closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition delta=5.0 execution_authorized=False free_cash=Decimal('27.250') inventory_cost=Decimal('2.750') market_status_age_s=0.0001216 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) mode=REBALANCE observed_allowance_backing=Decimal('27.25') observed_cash_backing=Decimal('27.25') outstanding_execution_gates=('OPERATIONAL_TIME_SUFFICIENCY', 'FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 qn=0.0 qy=5.0 reason=None reserved_cash=Decimal('0') resting_order_ids=() result=SUCCESS run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_rebalance_entered          candidate_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition economics={'captured_at': 1791597186.335679, 'run_order_ids': ('no-order', 'yes-order'), 'inventory_scope': 'REGISTERED_CONFIRMED_FILLS', 'closed_order_ids': ('no-order', 'yes-order'), 'close_proof_attempt_ids': (RDPCloseResult(complete=True, reason=None, affected_order_ids=(), reconciliation_outcomes=(('no-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>), ('yes-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>)), inventory=RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=5.0, qn=0.0, cy=2.75, cn=0.0, delta=5.0, inventory_exposure=5.0, c_total=2.75, inventory_cost=2.75, avg_yes_cost=0.55, avg_no_cost=None, balanced_qty=0.0, residual_yes=5.0, residual_no=0.0, residual_qty=5.0, balanced_yes_cost=0.0, balanced_no_cost=0.0, balanced_cost=0.0, residual_cost=2.75, locked_pnl=0.0, residual_worst_loss=2.75, residual_best_pnl=2.25, worst_settlement_pnl=-2.75, best_settlement_pnl=2.25)),), 'qy': 5.0, 'qn': 0.0, 'delta': 5.0, 'inventory_cost': 2.75, 'locked_pnl': 0.0, 'worst_settlement_pnl': -2.75} entered_at=1791597186.335408 execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) public_generation=3 run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement source_attempt_id=1 token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0024638 attempt_id=2 book_ages=(('yes-token', 0.0100715), ('no-token', 0.0099717)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597186.3359454 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0010817 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0024638 attempt_id=2 book_ages=(('yes-token', 0.0104599), ('no-token', 0.0103601)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597186.3363338 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0014701 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=cycle-1-no-token source=rdp_rebalance_continuation token=no-token
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_continuation_submission_result acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 execution_authorized=False gateway_result_type=ACKNOWLEDGMENTS guard_reasons=(None, None) outcome=COMPLETE post_started=True reason=None source_attempt_id=1
+2026-10-10 09:53:06 [info     ] rdp_rebalance_attempt_submitted acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 condition_id=rdp-placement-condition contemporaneous_books=[{'token_id': 'no-token', 'best_bid': None, 'best_ask': None, 'tick_size': '0.01'}] execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS mode=REBALANCE observed_order_ids=() posted_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) slug=btc-updown-5m-placement source_attempt_id=1 submitted_at=1791597186.3368707
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=2 side=BUY source=WS status=MATCHED token=no-token trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] fill                           pos=2.0 price=0.47 side=BUY size=2 token=no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_applied       order_id=cycle-1-no-token price=0.47 qty=2 side=BUY source=WS status=MATCHED token=no-token trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=2 side=BUY source=WS status=CONFIRMED token=no-token trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=cycle-1-no-token status=CONFIRMED trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=cycle-1-no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=2.0 side=BUY source=REST status=CONFIRMED token=no-token trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=cycle-1-no-token status=CONFIRMED trade_id=iter0029-cancel-race-fill
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=cycle-1-no-token tracked_qty=2.0 venue_qty=2.0
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=cycle-1-no-token status=CANCELED tracked_qty=2.0 venue_qty=2.0
+2026-10-10 09:53:06 [info     ] rdp_initial_placement_close    attempt_id=2 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False next_mode=NORMAL owned_order_ids=('cycle-1-no-token',) placement_unresolved=False reason=None replacement_blocked=False
+_ test_rebalance_fractional_repair_fill_keeps_confirmed_cost_through_recovery __
+
+placement_scope = namespace(bootstrap=RDPBootstrap(market=MarketMeta(condition_id='rdp-placement-condition', question='BTC Up or Down', ...nputSession object at 0x7659bc9ce6f0>, make_session=<function placement_scope.<locals>.make_session at 0x7659bab522a0>)
+blocked_network = []
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7659b8767b30>
+
+    @pytest.mark.asyncio
+    async def test_rebalance_fractional_repair_fill_keeps_confirmed_cost_through_recovery(
+        placement_scope, blocked_network, monkeypatch,
+    ):
+        scope = placement_scope
+        await _complete_cycle_with_confirmed_fill(scope, size=5)
+        client, gateway = await _prepare_repeated_continuation(
+            scope, monkeypatch, [("no-token", 4.75), ("yes-token", 5)],
+            initial_size=None,
+        )
+        scope.session._market_data_max_age_s = 60
+        try:
+>           result = await asyncio.wait_for(scope.session.continue_rebalance(
+                authorization=True, order_budget_s=2, close_budget_s=2,
+            ), timeout=5)
+
+tests/test_rdp_placement.py:9137: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+src/polymaker/rdp_runtime.py:1165: in continue_rebalance
+    result = await asyncio.shield(task)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/polymaker/rdp_runtime.py:1338: in _run_rebalance_continuation
+    close_economics = self._rebalance_economic_evidence()
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <polymaker.rdp_runtime.RDPInputSession object at 0x7659bc9ce6f0>
+
+    def _rebalance_economic_evidence(self) -> dict[str, Any] | None:
+        """Return in-memory economics from currently registered confirmed fills."""
+        run_ids = self.placement_owner.registered_run_order_ids
+        if not run_ids:
+            return None
+        try:
+            inventory = snapshot_inventory(
+                self.bootstrap.market, self.processor, set(run_ids),
+            )
+        except Exception:
+            return None
+        return {
+            "captured_at": self._now(),
+            "run_order_ids": tuple(run_ids),
+            "inventory_scope": "REGISTERED_CONFIRMED_FILLS",
+            "closed_order_ids": tuple(sorted({
+                order_id for closed_attempt in self.placement_owner.attempts
+                for order_id in closed_attempt.closed_order_ids
+            })),
+>           "close_proof_attempt_ids": tuple(sorted(self.placement_owner.close_proofs)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "qy": inventory.qy,
+            "qn": inventory.qn,
+            "delta": inventory.delta,
+            "inventory_cost": inventory.inventory_cost,
+            "locked_pnl": inventory.locked_pnl,
+            "worst_settlement_pnl": inventory.worst_settlement_pnl,
+        }
+E       TypeError: '<' not supported between instances of 'RDPCloseResult' and 'RDPCloseResult'
+
+src/polymaker/rdp_runtime.py:1393: TypeError
+----------------------------- Captured stdout call -----------------------------
+2026-10-10 09:53:06 [info     ] rdp_initial_market_status      accepting_orders=True age_s=2.02e-05 category=MARKET_STATUS_FRESH closed=False condition_id=rdp-placement-condition end_epoch=1791597486 max_age_s=10.0 neg_risk=False outcomes=('Up', 'Down') real_money_trading_performed=False receipt_ts=1791597186.6454945 result=SUCCESS slug=btc-updown-5m-placement token_ids=('yes-token', 'no-token')
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_armed    condition_id=rdp-placement-condition execution_authorized=False outcome=ARMED public_generation=3 user_generation=4
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=yes-order source=rdp_initial token=yes-token
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=no-order source=rdp_initial token=no-token
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('yes-order', 'no-order') condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] fill                           pos=5.0 price=0.55 side=BUY size=5 token=yes-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_applied       order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=MATCHED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5 side=BUY source=WS status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] rdp_initial_cycle_started      acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False
+2026-10-10 09:53:06 [info     ] rdp_fill_window_started        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481809915128 duration_s=3.0 first_receipt_monotonic_ns=2108478809915128 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_prefill_decision   acknowledged_order_ids=('yes-order', 'no-order') action=FILL_WINDOW attempt_id=1 book_filter_ready=None book_filter_reasons=() candidate_quotes=() candidate_reason=None capital_certified=None capital_reason=None captured_at=1791597186.649047 condition_id=rdp-placement-condition execution_authorized=False fill_window_deadline_monotonic_ns=2108481809915128 fill_window_first_receipt_monotonic_ns=2108478809915128 fill_window_started=True free_cash=None inventory_cost=None inventory_delta=None inventory_qn=None inventory_qy=None market_status_age_s=None market_status_receipt_ts=None order_age_s=None order_receipt_ts=None public_generation=3 reason=CONFIRMED_FILL_HANDOFF reserved_cash=None slug=btc-updown-5m-placement submitted_quotes=(('yes-token', 'BUY', 0.55, 5.0), ('no-token', 'BUY', 0.41, 5.0)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_fill_window_completion_started acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 close_budget_s=2.0 condition_id=rdp-placement-condition execution_authorized=False window_deadline_monotonic_ns=2108481809915128
+2026-10-10 09:53:06 [info     ] rdp_fill_window_expired        acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 condition_id=rdp-placement-condition deadline_monotonic_ns=2108481809915128 duration_s=3.0 first_receipt_monotonic_ns=2108478809915128 public_generation=3 reliable=True user_generation=4
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=no-order
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=no-order tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=yes-order
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=yes-order price=0.55 qty=5.0 side=BUY source=REST status=CONFIRMED token=yes-token trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=yes-order status=CONFIRMED trade_id=next-action-fill-yes-token-5
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=yes-order tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=no-order status=CANCELED tracked_qty=0 venue_qty=0.0
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=yes-order status=MATCHED tracked_qty=5.0 venue_qty=5.0
+2026-10-10 09:53:06 [info     ] rdp_initial_placement_close    attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE owned_order_ids=('yes-order', 'no-order') placement_unresolved=False reason=None replacement_blocked=False
+2026-10-10 09:53:06 [info     ] rdp_fill_window_completion_finished acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True barrier_reason=None capital_certified=True condition_id=rdp-placement-condition execution_authorized=False next_mode=REBALANCE operational_close_deadline=2108480.813997542 replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481809915128
+2026-10-10 09:53:06 [info     ] rdp_initial_cycle_finished     acknowledged_order_ids=('yes-order', 'no-order') attempt_id=1 barrier_complete=True capital_certified=True condition_id=rdp-placement-condition execution_authorized=False last_prefill_action=FILL_WINDOW last_prefill_reason=CONFIRMED_FILL_HANDOFF next_mode=REBALANCE replacement_blocked=False trigger=WINDOW_EXPIRED window_deadline_monotonic_ns=2108481809915128
+2026-10-10 09:53:06 [info     ] rdp_post_cycle_next_action_admission account_buy_commitment=Decimal('0') account_read_age_s=0.0024791 account_receipt_times=(1791597186.6523707, 1791597186.6533709, 1791597186.6543708) attempt_id=1 book_ages=(('yes-token', 0.0095413), ('no-token', 0.0094364)) book_filter_ready=True book_filter_rejected=False candidate_notional=Decimal('2.350') candidate_quotes=(('no-token', 0.47, 5.0),) capital_gate_reason=None capital_reason=None captured_at=1791597186.6548498 closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition delta=5.0 execution_authorized=False free_cash=Decimal('27.250') inventory_cost=Decimal('2.750') market_status_age_s=0.0001198 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) mode=REBALANCE observed_allowance_backing=Decimal('27.25') observed_cash_backing=Decimal('27.25') outstanding_execution_gates=('OPERATIONAL_TIME_SUFFICIENCY', 'FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 qn=0.0 qy=5.0 reason=None reserved_cash=Decimal('0') resting_order_ids=() result=SUCCESS run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_rebalance_entered          candidate_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) closed_order_ids=('no-order', 'yes-order') condition_id=rdp-placement-condition economics={'captured_at': 1791597186.655098, 'run_order_ids': ('no-order', 'yes-order'), 'inventory_scope': 'REGISTERED_CONFIRMED_FILLS', 'closed_order_ids': ('no-order', 'yes-order'), 'close_proof_attempt_ids': (RDPCloseResult(complete=True, reason=None, affected_order_ids=(), reconciliation_outcomes=(('no-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>), ('yes-order', <ReconciliationOutcome.COMPLETE: 'COMPLETE'>)), inventory=RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=5.0, qn=0.0, cy=2.75, cn=0.0, delta=5.0, inventory_exposure=5.0, c_total=2.75, inventory_cost=2.75, avg_yes_cost=0.55, avg_no_cost=None, balanced_qty=0.0, residual_yes=5.0, residual_no=0.0, residual_qty=5.0, balanced_yes_cost=0.0, balanced_no_cost=0.0, balanced_cost=0.0, residual_cost=2.75, locked_pnl=0.0, residual_worst_loss=2.75, residual_best_pnl=2.25, worst_settlement_pnl=-2.75, best_settlement_pnl=2.25)),), 'qy': 5.0, 'qn': 0.0, 'delta': 5.0, 'inventory_cost': 2.75, 'locked_pnl': 0.0, 'worst_settlement_pnl': -2.75} entered_at=1791597186.6548498 execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) public_generation=3 run_order_ids=('yes-order', 'no-order') slug=btc-updown-5m-placement source_attempt_id=1 token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0024791 attempt_id=2 book_ages=(('yes-token', 0.0100462), ('no-token', 0.0099413)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597186.6553547 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0010637 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_initial_intent_revalidation account_read_age_s=0.0024791 attempt_id=2 book_ages=(('yes-token', 0.010453), ('no-token', 0.0103481)) candidate_reason=None capital_gate_reason=None capital_reason=None captured_at=1791597186.6557615 condition_id=rdp-placement-condition execution_authorized=False factual_valid=True market_status_age_s=0.0014705 minimum_sizes=(('yes-token', 5.0), ('no-token', 5.0)) outstanding_execution_gates=('FINAL_SUBMIT_REVALIDATION', 'HUMAN_LIVE_AUTHORIZATION') public_generation=3 reason=None slug=btc-updown-5m-placement token_ticks=(('yes-token', 0.01), ('no-token', 0.01)) user_generation=4
+2026-10-10 09:53:06 [debug    ] foreign_trade_ignored          order_id=cycle-1-no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [debug    ] foreign_trade_ignored          order_id=cycle-1-no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] owned_order_registered         order_id=cycle-1-no-token source=rdp_rebalance_continuation token=no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=4.75 side=BUY source=WS status=MATCHED token=no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] fill                           pos=4.75 price=0.47 side=BUY size=4.75 token=no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_applied       order_id=cycle-1-no-token price=0.47 qty=4.75 side=BUY source=WS status=MATCHED token=no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=4.75 side=BUY source=WS status=CONFIRMED token=no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=cycle-1-no-token status=CONFIRMED trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] rdp_placement_capture_resolved acknowledged_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False observed_order_ids=() outcome=COMPLETE pending_anomalies=() public_generation=3 reason=None replacement_blocked=True user_generation=4
+2026-10-10 09:53:06 [info     ] rdp_continuation_submission_result acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 execution_authorized=False gateway_result_type=ACKNOWLEDGMENTS guard_reasons=(None, None) outcome=COMPLETE post_started=True reason=None source_attempt_id=1
+2026-10-10 09:53:06 [info     ] rdp_rebalance_attempt_submitted acknowledged_order_ids=('cycle-1-no-token',) attempt_id=2 condition_id=rdp-placement-condition contemporaneous_books=[{'token_id': 'no-token', 'best_bid': None, 'best_ask': None, 'tick_size': '0.01'}] execution_authorized=False inventory_scope=CURRENT_REGISTERED_CONFIRMED_FILLS mode=REBALANCE observed_order_ids=() posted_quotes=({'token_id': 'no-token', 'side': 'BUY', 'price': 0.47, 'size': 5.0},) slug=btc-updown-5m-placement source_attempt_id=1 submitted_at=1791597186.6565197
+2026-10-10 09:53:06 [info     ] order_reconcile_started        order_id=cycle-1-no-token
+2026-10-10 09:53:06 [info     ] owned_maker_fill_seen          order_id=cycle-1-no-token price=0.47 qty=4.75 side=BUY source=REST status=CONFIRMED token=no-token trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] trade_status_updated           order_id=cycle-1-no-token status=CONFIRMED trade_id=cycle-1-fill-no-token
+2026-10-10 09:53:06 [info     ] order_reconcile_complete       order_id=cycle-1-no-token tracked_qty=4.75 venue_qty=4.75
+2026-10-10 09:53:06 [info     ] order_match_checksum           order_id=cycle-1-no-token status=CANCELED tracked_qty=4.75 venue_qty=4.75
+2026-10-10 09:53:06 [info     ] rdp_initial_placement_close    attempt_id=2 barrier_complete=True barrier_reason=None capital_certified=True capital_reason=None closed_order_ids=('cycle-1-no-token',) condition_id=rdp-placement-condition execution_authorized=False next_mode=NORMAL owned_order_ids=('cycle-1-no-token',) placement_unresolved=False reason=None replacement_blocked=False
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_rebalance_rechecks_tick_target_after_account_read_await[ask]
+FAILED tests/test_rdp_placement.py::test_rebalance_rechecks_tick_target_after_account_read_await[tick]
+FAILED tests/test_rdp_placement.py::test_rebalance_cancel_race_fill_is_reconciled_before_normal_recovery
+FAILED tests/test_rdp_placement.py::test_rebalance_fractional_repair_fill_keeps_confirmed_cost_through_recovery
+4 failed, 434 deselected in 2.96s
+REVIEW_NETWORK_ATTEMPTS []

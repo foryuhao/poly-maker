@@ -1,0 +1,1970 @@
+diff --git a/tests/test_rdp_placement.py b/tests/test_rdp_placement.py
+index e892528..14f2a79 100644
+--- a/tests/test_rdp_placement.py
++++ b/tests/test_rdp_placement.py
+@@ -11,7 +11,7 @@ import subprocess
+ import sys
+ import threading
+ import time
+-from contextlib import suppress
++from contextlib import contextmanager, suppress
+ from dataclasses import replace
+ from datetime import UTC, datetime
+ from decimal import Decimal
+@@ -21,7 +21,6 @@ import httpx
+ import pytest
+ import respx
+ import structlog
+-from structlog.testing import capture_logs
+ 
+ from polymaker.config import Config
+ from polymaker.domain import (
+@@ -70,6 +69,28 @@ from polymaker.strategy.rdp_quotes import RDPQuoteDecision
+ from polymaker.userstream.parse import normalize_order
+ 
+ 
++@contextmanager
++def _capture_structlog_event_dicts():
++    """Capture structured records without changing cached structlog processors."""
++    root = logging.getLogger()
++    old_level = root.level
++    events = []
++
++    class EventHandler(logging.Handler):
++        def emit(self, record):
++            if isinstance(record.msg, dict):
++                events.append(record.msg)
++
++    handler = EventHandler()
++    root.addHandler(handler)
++    root.setLevel(min(old_level, logging.INFO))
++    try:
++        yield events
++    finally:
++        root.removeHandler(handler)
++        root.setLevel(old_level)
++
++
+ @pytest.fixture
+ def blocked_network(monkeypatch):
+     attempts = []
+@@ -2240,7 +2261,7 @@ async def test_initial_prefill_terminal_failure_recaptures_freshness_and_event(
+     )
+     scope.session.user_session.gateway = gateway
+ 
+-    with capture_logs() as events:
++    with _capture_structlog_event_dicts() as events:
+         result = await scope.session.evaluate_initial_prefill(attempt)
+ 
+     if failure == "delayed-read-error":
+@@ -2319,7 +2340,7 @@ async def test_initial_prefill_terminal_freshness_boundary_matches_result_and_ev
+     gateway = FakePrefillGateway(_prefill_rows(attempt))
+     scope.session.user_session.gateway = gateway
+ 
+-    with capture_logs() as events:
++    with _capture_structlog_event_dicts() as events:
+         result = await scope.session.evaluate_initial_prefill(attempt)
+ 
+     assert result.action == expected_action and result.reason == expected_reason
+@@ -8774,9 +8795,10 @@ class RepeatedNormalSDKClient:
+         return list(self.trades)
+ 
+ 
+-async def _prepare_repeated_continuation(scope, monkeypatch, fills=None):
++async def _prepare_repeated_continuation(scope, monkeypatch, fills=None, *, initial_size=1.25):
+     """Build a real retained initial close plus deterministic fake SDK owner."""
+-    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
++    if initial_size is not None:
++        await _complete_cycle_with_confirmed_fill(scope, size=initial_size)
+     client = RepeatedNormalSDKClient(
+         scope, fills or [("no-token", 1), ("no-token", 5.25)],
+     )
+@@ -8806,6 +8828,15 @@ async def _prepare_repeated_continuation(scope, monkeypatch, fills=None):
+         )
+         cash = Decimal("30") - Decimal(str(inventory.inventory_cost))
+         captured = now()
++        all_orders = tuple(
++            RDPOrderEvidence(
++                row["id"], row["asset_id"], row["side"], Decimal(row["price"]),
++                Decimal(row["original_size"]) - Decimal(row["size_matched"]),
++            )
++            for row in client.get_open_orders()
++        )
++        selected_orders = tuple(row for row in all_orders
++                                if row.token_id in {"yes-token", "no-token"})
+         return SimpleNamespace(
+             signer=signer, funder=funder, condition_id=scope.market.condition_id,
+             balance_usd=cash, allowance_usd=cash,
+@@ -8814,7 +8845,8 @@ async def _prepare_repeated_continuation(scope, monkeypatch, fills=None):
+                 RDPPositionEvidence("Up", "yes-token", Decimal(str(inventory.qy)), Decimal("0")),
+                 RDPPositionEvidence("Down", "no-token", Decimal(str(inventory.qn)), Decimal("0")),
+             ),
+-            selected_open_orders=(), total_open_order_count=0, all_open_orders=(),
++            selected_open_orders=selected_orders, total_open_order_count=len(all_orders),
++            all_open_orders=all_orders,
+             orders_receipt_ts=captured - .002, positions_receipt_ts=captured - .001,
+             collateral_receipt_ts=captured,
+         )
+@@ -8824,274 +8856,1535 @@ async def _prepare_repeated_continuation(scope, monkeypatch, fills=None):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_iter0028_clock_failure_latches_before_any_reentry(
++@pytest.mark.parametrize(("initial_token", "repair_token", "normal_fill_token"), [
++    ("yes-token", "no-token", "yes-token"),
++    ("no-token", "yes-token", "no-token"),
++])
++async def test_authorized_rebalance_repairs_and_posts_actual_skewed_normal_pair(
+     placement_scope, blocked_network, monkeypatch,
++    initial_token, repair_token, normal_fill_token,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    original_now = scope.session._now
+-
+-    def broken_clock():
+-        raise RuntimeError("private clock detail")
+-
+-    scope.session._now = broken_clock
++    await _complete_cycle_with_confirmed_fill(
++        scope, token_id=initial_token, size=5,
++    )
++    assert scope.session._initial_cycle_result.close_result.next_mode is RDPMode.REBALANCE
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch,
++        [(repair_token, 5), (normal_fill_token, 5)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    current_filter = scope.session.book_filter_result()
++    assert current_filter.ready and not current_filter.rejected
+     try:
+-        first = await scope.session.continue_normal(
+-            authorization=True, order_budget_s=2, close_budget_s=2,
+-        )
+-        scope.session._now = original_now
+-        second = await scope.session.continue_normal(
++        result = await scope.session.continue_rebalance(
+             authorization=True, order_budget_s=2, close_budget_s=2,
+         )
+     finally:
+-        scope.session._now = original_now
+         gateway.close()
+-
+-    assert first.outcome == "TERMINAL"
+-    assert first.reason == "OPERATION_CLOCK_FAILED:RuntimeError"
+-    assert second.outcome in {"DENIED", "TERMINAL"}
+-    assert scope.session._terminal_stop_latched
+-    assert client.posts == 0 and client.cancel_calls == []
++    assert client.posts >= 2
++    assert len(client.created[0:1]) == 1
++    assert client.created[0].token_id == repair_token
++    assert client.created[0].size == 5
++    assert len(client.created[1:]) >= 2
++    assert {row.token_id for row in client.created[1:3]} == {"yes-token", "no-token"}
++    assert result.outcome in {"NORMAL_HANDOFF", "REBALANCE_HANDOFF", "TIME_EXHAUSTED"}
++    assert result.run_order_ids and not result.execution_authorized
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-@pytest.mark.parametrize("invalid_clock", [True, float("nan"), "123"])
+-async def test_iter0028_malformed_clock_values_fail_closed(
+-    placement_scope, blocked_network, monkeypatch, invalid_clock,
++async def test_rebalance_default_denial_sends_nothing_and_retains_handoff(
++    placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    original_now = scope.session._now
+-    scope.session._now = lambda: invalid_clock
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 5)], initial_size=None,
++    )
+     try:
+-        result = await scope.session.continue_normal(
+-            authorization=True, order_budget_s=2, close_budget_s=2,
++        result = await scope.session.continue_rebalance(
++            order_budget_s=2, close_budget_s=2,
+         )
+     finally:
+-        scope.session._now = original_now
+         gateway.close()
+-    assert result.outcome == "TERMINAL"
+-    assert result.reason == "OPERATION_CLOCK_FAILED:ValueError"
+-    assert scope.session._terminal_stop_latched
++    assert result.outcome == "DENIED"
++    assert result.reason == "HUMAN_AUTHORIZATION_REQUIRED"
+     assert client.posts == 0 and client.cancel_calls == []
++    assert scope.session.placement_owner.current is not None
++    assert not scope.session.placement_owner.current.continuation
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-@pytest.mark.parametrize("fault", ["partial", "unknown"])
+-async def test_iter0028_terminal_result_keeps_current_registered_fill_scope(
+-    placement_scope, blocked_network, monkeypatch, fault,
++async def test_rebalance_conflicting_single_ack_stops_with_observed_id_unadopted(
++    placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
+     client, gateway = await _prepare_repeated_continuation(
+-        scope, monkeypatch, [("yes-token", 1)],
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
+     )
+     original_post = client.post_orders
+ 
+-    def uncertain_post(*args, **kwargs):
+-        acknowledgements = original_post(*args, **kwargs)
+-        if fault == "partial":
+-            return [acknowledgements[0], {"success": False, "errorMsg": "rejected"}]
+-        raise RuntimeError("private gateway detail")
++    def reject_with_contradictory_repair_id(*args, **kwargs):
++        acknowledgments = original_post(*args, **kwargs)
++        if client.posts == 1:
++            return [{"success": False, "orderID": acknowledgments[0]["orderID"]}]
++        return acknowledgments
+ 
+-    client.post_orders = uncertain_post
++    client.post_orders = reject_with_contradictory_repair_id
+     try:
+-        result = await scope.session.continue_normal(
++        result = await scope.session.continue_rebalance(
+             authorization=True, order_budget_s=2, close_budget_s=2,
+         )
+     finally:
+         gateway.close()
+ 
+-    terminal = scope.session.terminal_failure_result
+-    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
+-    assert client.posts == 1 and terminal is not None
+-    assert result.inventory is not None
+-    assert result.inventory.qy == pytest.approx(
+-        2.25 if fault == "partial" else 1.25,
+-    )
+-    assert Decimal(str(result.inventory_cost)) == Decimal(
+-        "1.2375" if fault == "partial" else ".6875",
+-    )
+-    assert result.inventory_order_ids == terminal.confirmed_inventory_order_ids
+-    assert result.inventory_scope == terminal.inventory_scope
+-    assert not result.capital_certified and result.unresolved_exposure
+-    assert terminal.cleanup.replacement_blocked
++    repair = result.submissions[0]
++    assert result.outcome == "TERMINAL"
++    assert repair.outcome == "UNKNOWN" and repair.post_started
++    assert repair.gateway_evidence.observed_order_ids == ("cycle-1-no-token",)
++    assert repair.resolved_attempt.observed_order_ids == ("cycle-1-no-token",)
++    assert repair.resolved_attempt.acknowledged_order_ids == ()
++    assert result.unresolved_exposure
++    assert client.posts == 1
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification(
++async def test_concurrent_rebalance_continuation_is_denied_without_second_post(
+     placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    client.on_create = lambda: _send_matched_then_confirmed(
+-        scope, "yes-order", trade_id="iter0028-late-prior", size=.25,
+-        price=.55, receipt_ns=scope.session._monotonic_ns(),
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
+     )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    original_sleep = scope.session._sleep
++    held = False
++
++    async def hold_repair_wait(delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await original_sleep(delay)
++
++    original_now = scope.session._now
++    scope.session._sleep = hold_repair_wait
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
++    ))
+     try:
+-        result = await scope.session.continue_normal(
+-            authorization=True, order_budget_s=2, close_budget_s=2,
++        await asyncio.wait_for(entered.wait(), 2)
++        second = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=1, close_budget_s=1,
+         )
++        assert second.outcome == "DENIED"
++        assert second.reason == "REBALANCE_HANDOFF_NOT_RETAINED"
++        assert client.posts == 1 and client.cancel_calls == []
++        scope.session._now = lambda: scope.bootstrap.end_epoch - .01
++        release.set()
++        first = await asyncio.wait_for(operation, timeout=4)
+     finally:
++        release.set()
++        scope.session._sleep = original_sleep
++        scope.session._now = original_now
++        if not operation.done():
++            operation.cancel()
+         gateway.close()
+ 
+-    assert result.outcome == "TERMINAL"
+-    assert result.reason == "STALE_CLOSE_EVIDENCE"
+-    assert client.posts == 0 and client.cancel_calls == []
+-    assert result.submissions[0].outcome == "NO_SEND"
+-    assert "STALE_CLOSE_EVIDENCE" in result.submissions[0].guard_reasons
+-    assert result.inventory is not None and result.inventory.qy == pytest.approx(1.5)
+-    assert Decimal(str(result.inventory_cost)) == Decimal(".825")
+-    assert not result.capital_certified
+-    assert result.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
++    assert first.outcome == "TERMINAL" and first.reason == "TIME_EXHAUSTED"
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory(
++async def test_cancelled_rebalance_monitor_drains_then_closes_repair_scope(
+     placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    gateway._io = ExecutionGateway._io.__get__(gateway, ExecutionGateway)
+-    started, release = threading.Event(), threading.Event()
+-    original_post = client.post_orders
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    original_sleep = scope.session._sleep
++    held = False
+ 
+-    def held_complete_post(*args, **kwargs):
+-        acknowledgements = original_post(*args, **kwargs)
+-        started.set()
+-        if not release.wait(3):
+-            raise TimeoutError("fake SDK release timed out")
+-        return acknowledgements
++    async def hold_repair_wait(delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await original_sleep(delay)
+ 
+-    client.post_orders = held_complete_post
+-    operation = asyncio.create_task(scope.session.continue_normal(
+-        authorization=True, order_budget_s=.08, close_budget_s=2,
++    scope.session._sleep = hold_repair_wait
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
+     ))
+     try:
+-        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), 3)
+-        await asyncio.sleep(.12)
+-        assert not operation.done()
+-        release.set()
+-        result = await operation
++        await asyncio.wait_for(entered.wait(), 2)
++        assert client.posts == 1 and client.cancel_calls == []
++        operation.cancel()
++        with pytest.raises(asyncio.CancelledError):
++            await asyncio.wait_for(operation, timeout=4)
+     finally:
+         release.set()
++        scope.session._sleep = original_sleep
+         if not operation.done():
+             operation.cancel()
+         gateway.close()
+ 
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
+     terminal = scope.session.terminal_failure_result
+-    assert result.outcome == "TERMINAL"
+-    assert result.reason == "ORDER_OPERATION_DEADLINE"
+-    assert result.submissions[0].outcome == "COMPLETE"
+-    assert result.submissions[0].interruption_reason == "ORDER_OPERATION_DEADLINE"
+-    assert terminal is not None and terminal.cause == "ORDER_OPERATION_DEADLINE"
++    assert terminal is not None
++    assert terminal.cause == "CALLER_CANCELLED"
++    assert terminal.cleanup.barrier_complete
++    assert terminal.cleanup.closed_order_ids == ("cycle-1-no-token",)
+     assert terminal.cleanup.replacement_blocked
+-    assert client.posts == 1 and len(client.cancel_calls) == 1
+-    assert result.inventory is not None
+-    assert (result.inventory.qy, result.inventory.qn) == pytest.approx((1.25, 1.0))
+-    assert Decimal(str(result.inventory_cost)) == Decimal("1.0975")
+-    assert not result.capital_certified and result.unresolved_exposure
++    assert not terminal.unresolved_exposure
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops(
++async def test_rebalance_session_teardown_drains_then_closes_repair_scope(
+     placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    client.on_create = lambda: scope.session.public_session.service.book(
+-        "yes-token",
+-    ).apply_delta(Side.BUY, .56, 0, time.time())
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    original_sleep = scope.session._sleep
++    held = False
++
++    async def hold_repair_wait(delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await original_sleep(delay)
++
++    scope.session._sleep = hold_repair_wait
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
++    ))
+     try:
+-        result = await scope.session.continue_normal(
+-            authorization=True, order_budget_s=2, close_budget_s=2,
++        await asyncio.wait_for(entered.wait(), 2)
++        teardown = asyncio.create_task(scope.session.aclose())
++        release.set()
++        _continuation_result, teardown_result = await asyncio.wait_for(
++            asyncio.gather(operation, teardown, return_exceptions=True), timeout=5,
+         )
+     finally:
++        release.set()
++        scope.session._sleep = original_sleep
+         gateway.close()
+ 
+-    assert result.submissions[0].outcome == "NO_SEND"
+-    assert result.submissions[0].reason == "CONTINUATION_QUOTE_INTENT_CHANGED"
+-    assert result.admissions[1].eligible
+-    assert len(result.submissions) >= 2 and result.submissions[1].outcome == "COMPLETE"
+-    assert client.posts >= 1 and not scope.session._terminal_stop_latched
+-    empty_attempts = [attempt for attempt in scope.session.placement_owner._attempts.values()
+-                      if attempt.outcome == "EMPTY" and not attempt.acknowledged_order_ids]
+-    assert len(empty_attempts) == 1
+-    fresh = result.admissions[1]
+-    first_post_prices = {
+-        token: Decimal(row["price"])
+-        for token in ("yes-token", "no-token")
+-        for row in (client.rows[f"cycle-1-{token}"],)
+-    }
+-    assert first_post_prices == {
+-        quote.token_id: Decimal(str(quote.price)) for quote in fresh.candidate.quotes
++    assert isinstance(_continuation_result, asyncio.CancelledError)
++    assert teardown_result is None
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    terminal = scope.session.terminal_failure_result
++    assert terminal is not None and terminal.cause in {
++        "CALLER_CANCELLED", "SESSION_TEARDOWN",
+     }
++    assert terminal.cleanup.barrier_complete
++    assert terminal.cleanup.closed_order_ids == ("cycle-1-no-token",)
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal(
++async def test_rebalance_keeps_unchanged_no_fill_resting_past_close_budget_then_recovers(
+     placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
+-    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+-    def inject_pending_candidate_trade():
+-        event = TradeEvent(
+-            token_id="yes-token", our_side=Side.BUY, price=.55, size=.1,
+-            trade_id="iter0028-pending-capture", status=TradeState.MATCHED,
+-            ts=time.time(), maker_order_id="unregistered-continuation-order",
+-            market_id=scope.market.condition_id,
+-        )
+-        scope.processor.on_trade(
+-            event, scope.market.condition_id,
+-            received_at_us=int(time.time() * 1_000_000),
+-            received_monotonic_ns=scope.session._monotonic_ns(),
+-            connection_generation=scope.session.user_generation,
+-        )
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0), ("yes-token", 5)],
++        initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    old_sleep = scope.session._sleep
++    held = False
+ 
+-    client.on_create = inject_pending_candidate_trade
++    async def hold_one_safe_repair_wait(_delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await old_sleep(_delay)
++
++    scope.session._sleep = hold_one_safe_repair_wait
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=.03,
++    ))
+     try:
+-        result = await scope.session.continue_normal(
+-            authorization=True, order_budget_s=2, close_budget_s=2,
++        await asyncio.wait_for(entered.wait(), 2)
++        first_id = "cycle-1-no-token"
++        assert client.posts == 1 and client.cancel_calls == []
++        await asyncio.sleep(.08)  # longer than the close budget, with no fill
++        assert client.posts == 1 and client.cancel_calls == []
++        price = float(client.rows[first_id]["price"])
++        _send_matched_then_confirmed(
++            scope, first_id, trade_id="iter0029-held-repair-fill",
++            size=4, price=price, receipt_ns=scope.session._monotonic_ns(),
+         )
++        client.rows[first_id]["size_matched"] = "4"
++        client.rows[first_id]["status"] = "LIVE"
++        client.trades.append(_rest_trade(
++            first_id, "no-token", str(price), "4",
++            trade_id="iter0029-held-repair-fill",
++        ))
++        release.set()
++        result = await asyncio.wait_for(operation, timeout=4)
+     finally:
++        release.set()
++        scope.session._sleep = old_sleep
++        if not operation.done():
++            operation.cancel()
+         gateway.close()
+ 
+-    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
+-    assert client.posts == 0
+-    assert result.submissions[0].resolved_attempt.outcome in {"UNKNOWN", "PARTIAL"}
+-    assert result.submissions[0].resolved_attempt.pending_anomalies
+-    assert result.unresolved_exposure and not result.capital_certified
+-    assert len(result.submissions) == 1
++    assert client.posts == 2
++    assert client.cancel_calls[0] == (first_id,)
++    assert client.cancel_calls == [(first_id,), ("cycle-2-no-token",)]
++    assert result.outcome in {"NORMAL_HANDOFF", "REBALANCE_HANDOFF"}
++    assert result.cycles[-1].close_result.barrier_complete
++    assert result.inventory.delta == pytest.approx(6)
+     assert blocked_network == []
+ 
+ 
+ @pytest.mark.asyncio
+-@pytest.mark.parametrize("action", ["latefill", "cancel", "teardown"])
+-async def test_iter0028_held_continuation_close_drains_before_releasing_owner(
+-    placement_scope, blocked_network, monkeypatch, action,
++async def test_rebalance_reprices_only_after_cancel_and_reconcile(
++    placement_scope, blocked_network, monkeypatch,
+ ):
+     scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
+     client, gateway = await _prepare_repeated_continuation(
+-        scope, monkeypatch, [("no-token", 1), ("no-token", 4.75)],
++        scope, monkeypatch,
++        [("foreign-token", 0), ("no-token", 5), ("yes-token", 5)],
++        initial_size=None,
+     )
+-    started, release = asyncio.Event(), asyncio.Event()
+-    original_cancel = gateway.cancel
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    old_sleep = scope.session._sleep
+     held = False
+ 
+-    async def hold_first_cancel(*args, **kwargs):
++    async def hold_first_repair_poll(delay):
+         nonlocal held
+-        if not held:
++        if client.posts == 1 and not held:
+             held = True
+-            result = await original_cancel(*args, **kwargs)
+-            started.set()
++            entered.set()
+             await release.wait()
+-            return result
+-        return await original_cancel(*args, **kwargs)
++        await old_sleep(delay)
++
++    scope.session._sleep = hold_first_repair_poll
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
++    ))
++    try:
++        await asyncio.wait_for(entered.wait(), 2)
++        first = client.created[0]
++        book = scope.session.public_session.service.book("no-token")
++        assert client.posts == 1 and client.cancel_calls == []
++        book.apply_delta(Side.SELL, .48, 0, time.time())
++        book.apply_delta(Side.SELL, .49, 10, time.time())
++        release.set()
++        await asyncio.sleep(.25)
++        result = await asyncio.wait_for(operation, timeout=5)
++    finally:
++        release.set()
++        scope.session._sleep = old_sleep
++        if not operation.done():
++            operation.cancel()
++        gateway.close()
++
++    assert first.token_id == "no-token" and first.price == pytest.approx(.47)
++    assert client.created[1].token_id == "no-token"
++    assert client.created[1].price == pytest.approx(.48)
++    assert client.cancel_calls[0] == ("cycle-1-no-token",)
++    first_post = client.events.index(("POST", 1))
++    cancel = client.events.index(("CANCEL", ("cycle-1-no-token",)))
++    second_post = client.events.index(("POST", 2))
++    assert first_post < cancel < second_post
++    assert any(event[0] == "TRADES" and event[1] == 1
++               for event in client.events[cancel + 1:second_post])
++    assert result.outcome in {"NORMAL_HANDOFF", "REBALANCE_HANDOFF"}
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("change", ["ask", "tick"])
++async def test_rebalance_rechecks_tick_target_after_account_read_await(
++    placement_scope, blocked_network, monkeypatch, change,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    fills = ([ ("foreign-token", 0), ("foreign-token", 0) ]
++             if change == "tick" else
++             [("foreign-token", 0), ("no-token", 5), ("yes-token", 5)])
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, fills, initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    import polymaker.rdp_runtime as runtime
++    old_capture = runtime._capture_account_with_gateway
++    mutated = False
++
++    async def mutate_book_after_account_read(*args, **kwargs):
++        nonlocal mutated
++        evidence = await old_capture(*args, **kwargs)
++        if client.posts == 1 and not mutated:
++            mutated = True
++            book = scope.session.public_session.service.book("no-token")
++            if change == "ask":
++                book.apply_delta(Side.SELL, .48, 0, time.time())
++                book.apply_delta(Side.SELL, .49, 10, time.time())
++            else:
++                scope.session.public_session.service._on_tick_change({
++                    "asset_id": "no-token", "new_tick_size": ".001",
++                })
++                scope.session.public_session.service._tick_source[
++                    "no-token"
++                ] = "WS_TICK_SIZE_CHANGE"
++        return evidence
++
++    monkeypatch.setattr(runtime, "_capture_account_with_gateway",
++                        mutate_book_after_account_read)
++    original_now = scope.session._now
++    if change == "tick":
++        original_post = client.post_orders
++
++        def exhaust_after_tick_replacement(*args, **kwargs):
++            acknowledgments = original_post(*args, **kwargs)
++            if client.posts == 2:
++                scope.session._now = lambda: scope.bootstrap.end_epoch - .01
++            return acknowledgments
++
++        client.post_orders = exhaust_after_tick_replacement
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=1, close_budget_s=1,
++        ), timeout=5)
++    finally:
++        scope.session._now = original_now
++        gateway.close()
++
++    assert mutated
++    expected_reprice = .48 if change == "ask" else .479
++    assert [order.price for order in client.created[:2]] == pytest.approx(
++        [.47, expected_reprice],
++    )
++    assert client.cancel_calls[0] == ("cycle-1-no-token",)
++    assert client.events.index(("CANCEL", ("cycle-1-no-token",))) < client.events.index(("POST", 2))
++    if change == "tick":
++        assert result.outcome == "TERMINAL" and result.reason == "TIME_EXHAUSTED"
++        assert client.posts == 2
++        assert client.cancel_calls == [
++            ("cycle-1-no-token",), ("cycle-2-no-token",),
++        ]
++    else:
++        assert result.outcome in {"NORMAL_HANDOFF", "REBALANCE_HANDOFF"}
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_rebalance_cancel_race_fill_is_reconciled_before_normal_recovery(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0), ("yes-token", 5)],
++        initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    original_sleep = scope.session._sleep
++    held = False
++
++    async def hold_repair_poll(delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await original_sleep(delay)
++
++    original_cancel = client.cancel_orders
++    raced = False
++
++    def cancel_with_late_fill(order_ids):
++        nonlocal raced
++        if order_ids == ["cycle-1-no-token"] and not raced:
++            raced = True
++            row = client.rows[order_ids[0]]
++            _send_matched_then_confirmed(
++                scope, order_ids[0], trade_id="iter0029-cancel-race-fill",
++                size=2, price=float(row["price"]),
++                receipt_ns=scope.session._monotonic_ns(),
++            )
++            row["size_matched"] = "2"
++            row["status"] = "LIVE"
++            client.trades.append(_rest_trade(
++                order_ids[0], "no-token", row["price"], "2",
++                trade_id="iter0029-cancel-race-fill",
++            ))
++        return original_cancel(order_ids)
++
++    client.cancel_orders = cancel_with_late_fill
++    scope.session._sleep = hold_repair_poll
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
++    ))
++    try:
++        await asyncio.wait_for(entered.wait(), 2)
++        no_book = scope.session.public_session.service.book("no-token")
++        no_book.apply_delta(Side.SELL, .48, 0, time.time())
++        no_book.apply_delta(Side.SELL, .49, 10, time.time())
++        release.set()
++        result = await asyncio.wait_for(operation, timeout=5)
++    finally:
++        release.set()
++        scope.session._sleep = original_sleep
++        if not operation.done():
++            operation.cancel()
++        gateway.close()
++
++    repair_cycle = next(cycle for cycle in result.cycles if cycle.attempt_id == 2)
++    assert raced and client.cancel_calls[0] == ("cycle-1-no-token",)
++    assert repair_cycle.close_result.barrier_complete
++    assert repair_cycle.close_result.capital.snapshot.inventory.qn == pytest.approx(2)
++    assert repair_cycle.close_result.capital.snapshot.inventory.delta == pytest.approx(3)
++    cancel_index = client.events.index(("CANCEL", ("cycle-1-no-token",)))
++    next_post_index = client.events.index(("POST", 2))
++    assert any(event[0] == "TRADES" for event in client.events[cancel_index + 1:next_post_index])
++    assert next_post_index > cancel_index
++    assert client.posts == 2  # repair, then the resumed NORMAL pair
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_rebalance_fractional_repair_fill_keeps_confirmed_cost_through_recovery(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 4.75), ("yes-token", 5)],
++        initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        ), timeout=5)
++    finally:
++        gateway.close()
++
++    repair_cycle = next(cycle for cycle in result.cycles if cycle.attempt_id == 2)
++    snapshot = repair_cycle.close_result.capital.snapshot
++    assert snapshot.inventory.qy == pytest.approx(5)
++    assert snapshot.inventory.qn == pytest.approx(4.75)
++    assert snapshot.inventory.delta == pytest.approx(.25)
++    assert snapshot.inventory_cost == Decimal("4.9825")
++    assert snapshot.inventory.inventory_cost == pytest.approx(4.9825)
++    assert result.inventory is not None and result.inventory.delta == pytest.approx(5.25)
++    assert result.inventory_cost == Decimal("7.7325")
++    assert client.posts >= 2
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_rebalance_incompatible_minimum_closes_without_resizing_or_reposting(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    mutated = False
++
++    original_post = client.post_orders
++
++    def raise_repair_minimum_after_post(*args, **kwargs):
++        nonlocal mutated
++        acknowledgments = original_post(*args, **kwargs)
++        if client.posts == 1 and not mutated:
++            mutated = True
++            scope.bootstrap = replace(
++                scope.bootstrap,
++                token_metadata=tuple(
++                replace(item, min_order_size=6)
++                if item.token_id == "no-token" else item
++                for item in scope.bootstrap.token_metadata
++                ),
++            )
++            scope.session.bootstrap = scope.bootstrap
++        return acknowledgments
++
++    client.post_orders = raise_repair_minimum_after_post
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        ), timeout=5)
++    finally:
++        gateway.close()
++
++    assert mutated
++    assert result.outcome == "TERMINAL" and result.reason == "MARKET_NOT_TRADABLE"
++    assert len(client.created) == 1 and client.created[0].size == 5
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    assert result.cycles[-1].close_result.barrier_complete
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_rebalance_final_guard_re_admits_changed_quote_without_stale_post(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 5), ("yes-token", 5)],
++        initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++
++    def change_repair_target_after_signing():
++        book = scope.session.public_session.service.book("no-token")
++        book.apply_delta(Side.SELL, .48, 0, time.time())
++        book.apply_delta(Side.SELL, .49, 10, time.time())
++
++    client.on_create = change_repair_target_after_signing
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        ), timeout=5)
++    finally:
++        gateway.close()
++
++    assert result.submissions[0].outcome == "NO_SEND"
++    assert result.submissions[0].post_started is False
++    assert result.submissions[0].reason == "REBALANCE_QUOTE_INTENT_CHANGED"
++    assert client.posts == 2  # one repair plus the resumed NORMAL pair
++    assert [order.price for order in client.created[:2]] == pytest.approx([.47, .48])
++    assert result.outcome == "REBALANCE_HANDOFF"
++    assert result.reason is None
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_rebalance_accepts_later_normal_continuation_handoff(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch,
++        [("yes-token", 5), ("no-token", 5), ("yes-token", 5)],
++        initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    try:
++        normal = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++        assert normal.outcome == "REBALANCE_HANDOFF"
++        assert normal.cycles[-1].close_result.next_mode is RDPMode.REBALANCE
++        posts_before_rebalance = client.posts
++
++        resumed = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    assert posts_before_rebalance == 1
++    assert client.posts >= 3
++    assert client.created[2].token_id == "no-token"
++    assert client.created[2].size == 5
++    assert {row.token_id for row in client.created[3:5]} == {"yes-token", "no-token"}
++    repair_cycle = next(cycle for cycle in resumed.cycles if cycle.attempt_id == 3)
++    assert repair_cycle.close_result.capital.snapshot.inventory.delta == pytest.approx(1.25)
++    assert resumed.inventory.delta == pytest.approx(6.25)
++    assert resumed.outcome == "REBALANCE_HANDOFF"
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("failure", [
++    "time", "market", "state", "capital",
++])
++async def test_rebalance_safety_stop_closes_scope_without_reposting(
++    placement_scope, blocked_network, monkeypatch, failure,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    entered, release = asyncio.Event(), asyncio.Event()
++    old_sleep = scope.session._sleep
++    held = False
++
++    async def hold_one_repair_poll(delay):
++        nonlocal held
++        if client.posts == 1 and not held:
++            held = True
++            entered.set()
++            await release.wait()
++        await old_sleep(delay)
++
++    scope.session._sleep = hold_one_repair_poll
++    original_now = scope.session._now
++    if failure == "market":
++        import polymaker.rdp_runtime as runtime
++        old_status = runtime.read_rdp_market_status
++        reject_status = False
++
++        async def untradable_status(bootstrap, origin, *, now):
++            status = await old_status(bootstrap, origin, now=now)
++            return (replace(status, accepting_orders=False)
++                    if reject_status else status)
++
++        monkeypatch.setattr(runtime, "read_rdp_market_status", untradable_status)
++    elif failure == "capital":
++        import polymaker.rdp_runtime as runtime
++        old_capture = runtime._capture_account_with_gateway
++        old_backing = runtime.evaluate_current_rdp_backing
++        backing_reasons = []
++
++        async def insufficient_cash(*args, **kwargs):
++            evidence = await old_capture(*args, **kwargs)
++            if held:
++                return SimpleNamespace(
++                    **{**vars(evidence), "balance_usd": Decimal("0"),
++                       "allowance_usd": Decimal("0")},
++                )
++            return evidence
++
++        def inspect_backing(*args, **kwargs):
++            result = old_backing(*args, **kwargs)
++            backing_reasons.append(result.reason)
++            return result
++
++        monkeypatch.setattr(runtime, "_capture_account_with_gateway", insufficient_cash)
++        monkeypatch.setattr(runtime, "evaluate_current_rdp_backing", inspect_backing)
++
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True, order_budget_s=1, close_budget_s=1,
++    ))
++    try:
++        await asyncio.wait_for(entered.wait(), 2)
++        assert client.posts == 1 and client.cancel_calls == []
++        if failure == "time":
++            scope.session._now = lambda: scope.bootstrap.end_epoch - .01
++        elif failure == "state":
++            scope.session.public_session.service.connection_generation += 1
++        elif failure == "market":
++            reject_status = True
++        release.set()
++        with _capture_structlog_event_dicts() as stop_events:
++            result = await asyncio.wait_for(operation, timeout=4)
++    finally:
++        release.set()
++        scope.session._sleep = old_sleep
++        scope.session._now = original_now
++        if not operation.done():
++            operation.cancel()
++        gateway.close()
++
++    expected = {
++        "time": "TIME_EXHAUSTED",
++        "market": "MARKET_NOT_TRADABLE",
++        "state": "STATE_UNRELIABLE",
++        "capital": "CAPITAL_INSUFFICIENT",
++    }[failure]
++    assert result.outcome == "TERMINAL"
++    if failure == "capital":
++        assert "INSUFFICIENT_CURRENT_CASH" in backing_reasons
++    assert result.reason == expected
++    assert scope.session._terminal_stop_reason == expected
++    terminal = scope.session.terminal_failure_result
++    assert terminal is not None and terminal.stop_reason == expected
++    required_events = [
++        row for row in stop_events
++        if row.get("event") in {
++            "rdp_terminal_stop_latched", "rdp_terminal_failure_finished",
++            "rdp_rebalance_stopped",
++        }
++    ]
++    assert required_events
++    assert all(row.get("stop_reason") == expected for row in required_events)
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    assert result.cycles[-1].close_result.barrier_complete
++    assert result.cycles[-1].close_result.replacement_blocked is (
++        failure == "state"
++    )
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix02_backward_clock_inside_market_stops_before_second_poll(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    base = time.time()
++    clock = [base + 3]
++    scope.session._now = lambda: clock[0]
++    old_sleep = scope.session._sleep
++    polls = []
++
++    async def regress_on_first_wait(delay):
++        polls.append(clock[0])
++        clock[0] = base + 2 if len(polls) == 1 else scope.bootstrap.end_epoch - .1
++        await old_sleep(delay)
++
++    scope.session._sleep = regress_on_first_wait
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=1, close_budget_s=1,
++        ), 4)
++    finally:
++        scope.session._sleep = old_sleep
++        gateway.close()
++
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "STATE_UNRELIABLE"
++    assert scope.session._terminal_stop_latched
++    assert scope.session._terminal_stop_detail == "OPERATION_CLOCK_REGRESSED"
++    assert len(polls) == 1
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    assert result.cycles[-1].close_result.barrier_complete
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("remaining", [2.0, 1.99])
++async def test_iter0029_fix02_entry_requires_strictly_more_than_order_and_close_budget(
++    placement_scope, blocked_network, monkeypatch, remaining,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._now = lambda: scope.bootstrap.end_epoch - remaining
++    try:
++        result = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=1, close_budget_s=1,
++        )
++    finally:
++        gateway.close()
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "TIME_EXHAUSTED"
++    assert client.posts == 0 and client.cancel_calls == []
++    assert scope.session._terminal_stop_reason == "TIME_EXHAUSTED"
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("remaining", [2.0, 1.99, 2.01])
++async def test_iter0029_fix02_live_budget_rechecks_after_poll_awaits(
++    placement_scope, blocked_network, monkeypatch, remaining,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 1000
++    original_post = client.post_orders
++    original_sleep = scope.session._sleep
++    clock = [scope.bootstrap.end_epoch - remaining]
++    sleeps = []
++
++    def post_at_budget(*args, **kwargs):
++        result = original_post(*args, **kwargs)
++        scope.session._now = lambda: clock[0]
++        return result
++
++    async def advance_to_exact_boundary(delay):
++        sleeps.append(clock[0])
++        clock[0] = scope.bootstrap.end_epoch - 2.0
++        await original_sleep(delay)
++
++    client.post_orders = post_at_budget
++    scope.session._sleep = advance_to_exact_boundary
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=1, close_budget_s=1,
++        ), 4)
++    finally:
++        scope.session._sleep = original_sleep
++        gateway.close()
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "TIME_EXHAUSTED"
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    assert len(sleeps) == (1 if remaining > 2.0 else 0)
++    assert result.cycles[-1].close_result.barrier_complete
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix03_final_guard_rejects_regressed_operation_clock_before_post(
++    placement_scope, blocked_network, monkeypatch,
++):
++    import polymaker.rdp_runtime as runtime
++
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    base = time.time()
++    now = [base + 3]
++    old_now = scope.session._now
++    scope.session._now = lambda: now[0]
++    original_capture = runtime._capture_account_with_gateway
++    original_status = runtime.read_rdp_market_status
++
++    async def older_account(*args, **kwargs):
++        evidence = await original_capture(*args, **kwargs)
++        return SimpleNamespace(**{
++            **vars(evidence),
++            "orders_receipt_ts": evidence.orders_receipt_ts - 1.5,
++            "positions_receipt_ts": evidence.positions_receipt_ts - 1.5,
++            "collateral_receipt_ts": evidence.collateral_receipt_ts - 1.5,
++        })
++
++    async def older_status(*args, **kwargs):
++        evidence = await original_status(*args, **kwargs)
++        return replace(evidence, receipt_ts=evidence.receipt_ts - 1.5)
++
++    monkeypatch.setattr(runtime, "_capture_account_with_gateway", older_account)
++    monkeypatch.setattr(runtime, "read_rdp_market_status", older_status)
++    client.on_create = lambda: now.__setitem__(0, base + 2)
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        ), 4)
++    finally:
++        scope.session._now = old_now
++        gateway.close()
++
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "STATE_UNRELIABLE"
++    assert scope.session._terminal_stop_latched
++    assert scope.session._terminal_stop_detail == "OPERATION_CLOCK_REGRESSED"
++    assert client.posts == 0
++    assert client.cancel_calls == []
++    assert len(result.submissions) == 1
++    assert result.submissions[0].outcome == "NO_SEND"
++    assert result.submissions[0].post_started is False
++    assert "OPERATION_CLOCK_REGRESSED" in result.submissions[0].guard_reasons
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("interruption", ["deadline", "teardown"])
++async def test_iter0029_fix03_primary_interruption_survives_postdrain_clock_failure(
++    placement_scope, blocked_network, monkeypatch, interruption,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 1)], initial_size=None,
++    )
++    gateway._io = ExecutionGateway._io.__get__(gateway, ExecutionGateway)
++    entered, release = threading.Event(), threading.Event()
++    original_post = client.post_orders
++    original_now = scope.session._now
++
++    def held_post(*args, **kwargs):
++        result = original_post(*args, **kwargs)
++        entered.set()
++        assert release.wait(3)
++        scope.session._now = lambda: float("nan")
++        return result
++
++    client.post_orders = held_post
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True,
++        order_budget_s=.08 if interruption == "deadline" else 2,
++        close_budget_s=2,
++    ))
++    teardown = None
++    try:
++        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 3)
++        if interruption == "deadline":
++            await asyncio.sleep(.12)
++        else:
++            teardown = asyncio.create_task(scope.session.aclose())
++            await asyncio.sleep(.02)
++        assert not operation.done()
++        assert client.cancel_calls == []
++        if teardown is not None:
++            assert not teardown.done()
++        release.set()
++        if interruption == "deadline":
++            result = await asyncio.wait_for(operation, 4)
++            assert result.outcome == "TERMINAL"
++            assert result.reason == "ORDER_OPERATION_DEADLINE"
++        else:
++            with pytest.raises(asyncio.CancelledError):
++                await asyncio.wait_for(operation, 4)
++            assert teardown is not None
++            await asyncio.wait_for(teardown, 4)
++        terminal = scope.session.terminal_failure_result
++        expected_cause = ("ORDER_OPERATION_DEADLINE" if interruption == "deadline"
++                          else "SESSION_TEARDOWN")
++        assert terminal is not None
++        assert terminal.cause == expected_cause
++        assert scope.session._terminal_stop_detail == expected_cause
++        assert terminal.confirmed_inventory.qy == pytest.approx(5)
++        assert terminal.confirmed_inventory.qn == pytest.approx(1)
++        assert terminal.cleanup.barrier_complete
++        assert client.posts == 1
++        assert client.cancel_calls == [("cycle-1-no-token",)]
++        assert blocked_network == []
++    finally:
++        release.set()
++        scope.session._now = original_now
++        if not operation.done():
++            operation.cancel()
++        if teardown is not None and not teardown.done():
++            teardown.cancel()
++        await gateway.aclose()
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix01_initial_rebalance_capital_stop_separates_category_and_cause(
++    placement_scope, blocked_network, monkeypatch,
++):
++    import polymaker.rdp_runtime as runtime
++
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    old_capture = runtime._capture_account_with_gateway
++
++    async def zero_backing(*args, **kwargs):
++        evidence = await old_capture(*args, **kwargs)
++        return SimpleNamespace(**{
++            **vars(evidence), "balance_usd": Decimal("0"),
++            "allowance_usd": Decimal("0"),
++        })
++
++    monkeypatch.setattr(runtime, "_capture_account_with_gateway", zero_backing)
++    try:
++        result = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "CAPITAL_INSUFFICIENT"
++    assert scope.session._terminal_stop_reason == "CAPITAL_INSUFFICIENT"
++    assert scope.session._terminal_stop_detail == "INSUFFICIENT_CURRENT_CASH"
++    assert client.posts == 0 and client.cancel_calls == []
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("fault", ["deadline", "caller_cancel", "teardown"])
++async def test_iter0029_fix01_held_repair_post_is_drained_before_terminal_result(
++    placement_scope, blocked_network, monkeypatch, fault,
++):
++    """A terminal interruption after SDK entry cannot bypass drain/owned cleanup."""
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 1)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    gateway._io = ExecutionGateway._io.__get__(gateway, ExecutionGateway)
++    entered, release = threading.Event(), threading.Event()
++    original_post = client.post_orders
++
++    def held_post(*args, **kwargs):
++        acknowledgments = original_post(*args, **kwargs)
++        entered.set()
++        assert release.wait(3)
++        return acknowledgments
++
++    client.post_orders = held_post
++    operation = asyncio.create_task(scope.session.continue_rebalance(
++        authorization=True,
++        order_budget_s=.08 if fault == "deadline" else 2,
++        close_budget_s=2,
++    ))
++    teardown = None
++    try:
++        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 3)
++        if fault == "deadline":
++            await asyncio.sleep(.12)
++        elif fault == "caller_cancel":
++            operation.cancel()
++            await asyncio.sleep(.02)
++        else:
++            teardown = asyncio.create_task(scope.session.aclose())
++            await asyncio.sleep(.02)
++        assert not operation.done()
++        assert client.cancel_calls == []
++        if teardown is not None:
++            assert not teardown.done()
++
++        release.set()
++        result = None
++        with pytest.raises(asyncio.CancelledError) if fault != "deadline" else suppress():
++            result = await asyncio.wait_for(operation, 4)
++        if teardown is not None:
++            await teardown
++        terminal = scope.session.terminal_failure_result
++        assert terminal is not None
++        assert scope.session._terminal_stop_latched
++        assert client.posts == 1
++        assert client.cancel_calls == [("cycle-1-no-token",)]
++        assert terminal.confirmed_inventory.qy == pytest.approx(5)
++        assert terminal.confirmed_inventory.qn == pytest.approx(1)
++        if fault == "deadline":
++            assert result is not None and result.reason == "ORDER_OPERATION_DEADLINE"
++        assert blocked_network == []
++    finally:
++        release.set()
++        if not operation.done():
++            operation.cancel()
++        if teardown is not None and not teardown.done():
++            teardown.cancel()
++        await gateway.aclose()
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix01_unreadable_rebalance_clock_latches_before_reentry(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    original_now = scope.session._now
++
++    def unreadable_clock():
++        raise RuntimeError("review-clock-fault")
++
++    scope.session._now = unreadable_clock
++    try:
++        first = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++        scope.session._now = original_now
++        second = await scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        scope.session._now = original_now
++        gateway.close()
++
++    assert first.outcome == "TERMINAL"
++    assert first.reason == "STATE_UNRELIABLE"
++    assert second.outcome in {"DENIED", "TERMINAL"}
++    assert scope.session._terminal_stop_latched
++    assert scope.session._terminal_stop_reason == "STATE_UNRELIABLE"
++    assert scope.session._terminal_stop_detail == "OPERATION_CLOCK_FAILED:RuntimeError"
++    assert client.posts == 0 and client.cancel_calls == []
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("fault", ["nonfinite_clock", "quarantine"])
++async def test_iter0029_fix01_live_repair_unreliable_monitor_closes_registered_order(
++    placement_scope, blocked_network, monkeypatch, fault,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("foreign-token", 0)], initial_size=None,
++    )
++    scope.session._market_data_max_age_s = 60
++    original_now, original_sleep = scope.session._now, scope.session._sleep
++    if fault == "nonfinite_clock":
++        original_post = client.post_orders
++
++        def post_then_break_clock(*args, **kwargs):
++            result = original_post(*args, **kwargs)
++            scope.session._now = lambda: float("nan")
++            return result
++
++        client.post_orders = post_then_break_clock
++    else:
++        async def quarantine_during_monitor(delay):
++            scope.processor.quarantine_order("cycle-1-no-token", "review-unreliable")
++            await original_sleep(delay)
++
++        scope.session._sleep = quarantine_during_monitor
++    try:
++        result = await asyncio.wait_for(scope.session.continue_rebalance(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        ), 4)
++    finally:
++        scope.session._now, scope.session._sleep = original_now, original_sleep
++        gateway.close()
++
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "STATE_UNRELIABLE"
++    assert scope.session._terminal_stop_latched
++    assert scope.session._terminal_stop_reason == "STATE_UNRELIABLE"
++    assert client.posts == 1
++    assert client.cancel_calls == [("cycle-1-no-token",)]
++    assert result.cycles[-1].close_result.barrier_complete
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix01_unregistered_repair_ack_keeps_known_inventory_and_no_false_close(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    await _complete_cycle_with_confirmed_fill(scope, size=5)
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 1)], initial_size=None,
++    )
++    original_register = scope.processor.register_order
++
++    def fail_before_register(order_id, *args, **kwargs):
++        if order_id.startswith("cycle-1-"):
++            raise RuntimeError("review-registration-fault")
++        return original_register(order_id, *args, **kwargs)
++
++    monkeypatch.setattr(scope.processor, "register_order", fail_before_register)
++    try:
++        with _capture_structlog_event_dicts() as captured:
++            result = await scope.session.continue_rebalance(
++                authorization=True, order_budget_s=2, close_budget_s=2,
++            )
++    finally:
++        gateway.close()
++
++    terminal = scope.session.terminal_failure_result
++    assert result.outcome == "TERMINAL" and terminal is not None
++    assert result.inventory is not None and result.inventory.qy == pytest.approx(5)
++    assert result.inventory.qn == pytest.approx(0)
++    assert Decimal(str(result.inventory_cost)) == Decimal("2.75")
++    assert terminal.confirmed_inventory == result.inventory
++    # The terminal result's registered_order_ids is the current repair attempt
++    # scope (empty here); known cumulative inventory is separately scoped.
++    assert terminal.registered_order_ids == ()
++    assert terminal.confirmed_inventory_order_ids == ("no-order", "yes-order")
++    assert terminal.unregistered_acknowledgment_ids == ("cycle-1-no-token",)
++    assert result.inventory_scope == "CLEAN_REGISTERED_SUBSET_CONFIRMED_FILLS"
++    assert not result.capital_certified and result.unresolved_exposure
++    assert client.posts == 1 and client.cancel_calls == []
++
++    stopped = next(row for row in captured if row.get("event") == "rdp_rebalance_stopped")
++    assert stopped["attempt_id"] == 2
++    assert stopped["closed_order_ids"] == ()
++    assert stopped["close_complete"] is False
++    assert stopped["close_proof_attempt_id"] is None
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0028_clock_failure_latches_before_any_reentry(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    original_now = scope.session._now
++
++    def broken_clock():
++        raise RuntimeError("private clock detail")
++
++    scope.session._now = broken_clock
++    try:
++        first = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++        scope.session._now = original_now
++        second = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        scope.session._now = original_now
++        gateway.close()
++
++    assert first.outcome == "TERMINAL"
++    assert first.reason == "OPERATION_CLOCK_FAILED:RuntimeError"
++    assert second.outcome in {"DENIED", "TERMINAL"}
++    assert scope.session._terminal_stop_latched
++    assert client.posts == 0 and client.cancel_calls == []
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("invalid_clock", [True, float("nan"), "123"])
++async def test_iter0028_malformed_clock_values_fail_closed(
++    placement_scope, blocked_network, monkeypatch, invalid_clock,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    original_now = scope.session._now
++    scope.session._now = lambda: invalid_clock
++    try:
++        result = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        scope.session._now = original_now
++        gateway.close()
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "OPERATION_CLOCK_FAILED:ValueError"
++    assert scope.session._terminal_stop_latched
++    assert client.posts == 0 and client.cancel_calls == []
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("fault", ["partial", "unknown"])
++async def test_iter0028_terminal_result_keeps_current_registered_fill_scope(
++    placement_scope, blocked_network, monkeypatch, fault,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("yes-token", 1)],
++    )
++    original_post = client.post_orders
++
++    def uncertain_post(*args, **kwargs):
++        acknowledgements = original_post(*args, **kwargs)
++        if fault == "partial":
++            return [acknowledgements[0], {"success": False, "errorMsg": "rejected"}]
++        raise RuntimeError("private gateway detail")
++
++    client.post_orders = uncertain_post
++    try:
++        result = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    terminal = scope.session.terminal_failure_result
++    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
++    assert client.posts == 1 and terminal is not None
++    assert result.inventory is not None
++    assert result.inventory.qy == pytest.approx(
++        2.25 if fault == "partial" else 1.25,
++    )
++    assert Decimal(str(result.inventory_cost)) == Decimal(
++        "1.2375" if fault == "partial" else ".6875",
++    )
++    assert result.inventory_order_ids == terminal.confirmed_inventory_order_ids
++    assert result.inventory_scope == terminal.inventory_scope
++    assert not result.capital_certified and result.unresolved_exposure
++    assert terminal.cleanup.replacement_blocked
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    client.on_create = lambda: _send_matched_then_confirmed(
++        scope, "yes-order", trade_id="iter0028-late-prior", size=.25,
++        price=.55, receipt_ns=scope.session._monotonic_ns(),
++    )
++    try:
++        result = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "STALE_CLOSE_EVIDENCE"
++    assert client.posts == 0 and client.cancel_calls == []
++    assert result.submissions[0].outcome == "NO_SEND"
++    assert "STALE_CLOSE_EVIDENCE" in result.submissions[0].guard_reasons
++    assert result.inventory is not None and result.inventory.qy == pytest.approx(1.5)
++    assert Decimal(str(result.inventory_cost)) == Decimal(".825")
++    assert not result.capital_certified
++    assert result.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    gateway._io = ExecutionGateway._io.__get__(gateway, ExecutionGateway)
++    started, release = threading.Event(), threading.Event()
++    original_post = client.post_orders
++
++    def held_complete_post(*args, **kwargs):
++        acknowledgements = original_post(*args, **kwargs)
++        started.set()
++        if not release.wait(3):
++            raise TimeoutError("fake SDK release timed out")
++        return acknowledgements
++
++    client.post_orders = held_complete_post
++    operation = asyncio.create_task(scope.session.continue_normal(
++        authorization=True, order_budget_s=.08, close_budget_s=2,
++    ))
++    try:
++        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), 3)
++        await asyncio.sleep(.12)
++        assert not operation.done()
++        release.set()
++        result = await operation
++    finally:
++        release.set()
++        if not operation.done():
++            operation.cancel()
++        gateway.close()
++
++    terminal = scope.session.terminal_failure_result
++    assert result.outcome == "TERMINAL"
++    assert result.reason == "ORDER_OPERATION_DEADLINE"
++    assert result.submissions[0].outcome == "COMPLETE"
++    assert result.submissions[0].interruption_reason == "ORDER_OPERATION_DEADLINE"
++    assert terminal is not None and terminal.cause == "ORDER_OPERATION_DEADLINE"
++    assert terminal.cleanup.replacement_blocked
++    assert client.posts == 1 and len(client.cancel_calls) == 1
++    assert result.inventory is not None
++    assert (result.inventory.qy, result.inventory.qn) == pytest.approx((1.25, 1.0))
++    assert Decimal(str(result.inventory_cost)) == Decimal("1.0975")
++    assert not result.capital_certified and result.unresolved_exposure
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    client.on_create = lambda: scope.session.public_session.service.book(
++        "yes-token",
++    ).apply_delta(Side.BUY, .56, 0, time.time())
++    try:
++        result = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    assert result.submissions[0].outcome == "NO_SEND"
++    assert result.submissions[0].reason == "CONTINUATION_QUOTE_INTENT_CHANGED"
++    assert result.admissions[1].eligible
++    assert len(result.submissions) >= 2 and result.submissions[1].outcome == "COMPLETE"
++    assert client.posts >= 1 and not scope.session._terminal_stop_latched
++    empty_attempts = [attempt for attempt in scope.session.placement_owner._attempts.values()
++                      if attempt.outcome == "EMPTY" and not attempt.acknowledged_order_ids]
++    assert len(empty_attempts) == 1
++    fresh = result.admissions[1]
++    first_post_prices = {
++        token: Decimal(row["price"])
++        for token in ("yes-token", "no-token")
++        for row in (client.rows[f"cycle-1-{token}"],)
++    }
++    assert first_post_prices == {
++        quote.token_id: Decimal(str(quote.price)) for quote in fresh.candidate.quotes
++    }
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++async def test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal(
++    placement_scope, blocked_network, monkeypatch,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
++    def inject_pending_candidate_trade():
++        event = TradeEvent(
++            token_id="yes-token", our_side=Side.BUY, price=.55, size=.1,
++            trade_id="iter0028-pending-capture", status=TradeState.MATCHED,
++            ts=time.time(), maker_order_id="unregistered-continuation-order",
++            market_id=scope.market.condition_id,
++        )
++        scope.processor.on_trade(
++            event, scope.market.condition_id,
++            received_at_us=int(time.time() * 1_000_000),
++            received_monotonic_ns=scope.session._monotonic_ns(),
++            connection_generation=scope.session.user_generation,
++        )
++
++    client.on_create = inject_pending_candidate_trade
++    try:
++        result = await scope.session.continue_normal(
++            authorization=True, order_budget_s=2, close_budget_s=2,
++        )
++    finally:
++        gateway.close()
++
++    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
++    assert client.posts == 0
++    assert result.submissions[0].resolved_attempt.outcome in {"UNKNOWN", "PARTIAL"}
++    assert result.submissions[0].resolved_attempt.pending_anomalies
++    assert result.unresolved_exposure and not result.capital_certified
++    assert len(result.submissions) == 1
++    assert blocked_network == []
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("action", ["latefill", "cancel", "teardown"])
++async def test_iter0028_held_continuation_close_drains_before_releasing_owner(
++    placement_scope, blocked_network, monkeypatch, action,
++):
++    scope = placement_scope
++    client, gateway = await _prepare_repeated_continuation(
++        scope, monkeypatch, [("no-token", 1), ("no-token", 4.75)],
++    )
++    started, release = asyncio.Event(), asyncio.Event()
++    original_cancel = gateway.cancel
++    held = False
++
++    async def hold_first_cancel(*args, **kwargs):
++        nonlocal held
++        if not held:
++            held = True
++            result = await original_cancel(*args, **kwargs)
++            started.set()
++            await release.wait()
++            return result
++        return await original_cancel(*args, **kwargs)
+ 
+     gateway.cancel = hold_first_cancel
+     operation = asyncio.create_task(scope.session.continue_normal(
+@@ -9166,18 +10459,76 @@ async def test_iter0028_held_continuation_close_drains_before_releasing_owner(
+         await gateway.aclose()
+ 
+ 
+-@pytest.mark.asyncio
+-@pytest.mark.parametrize(("fills", "expected_delta", "mutate_after_sign"), [
+-    ([ ("yes-token", 1.25), ("no-token", 1.0),
+-       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, False),
+-    ([ ("yes-token", 1.25), ("yes-token", 1.0),
+-       ("yes-token", 1.0), ("yes-token", 1.75) ], 5.0, False),
+-    ([ ("yes-token", 1.25), ("no-token", 1.0),
+-       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, True),
+-])
+-async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
++def _normal_continuation_failure_diagnostics(scope, result):
++    owner = scope.session.placement_owner
++    current = owner.current
++    terminal = scope.session.terminal_failure_result
++    return {
++        "reason": result.reason,
++        "mode": result.mode,
++        "terminal_latch": scope.session._terminal_stop_latched,
++        "terminal_category": scope.session._terminal_stop_reason,
++        "terminal_detail": scope.session._terminal_stop_detail,
++        "terminal_failure": (
++            (terminal.stop_reason, terminal.cause, terminal.attempt_id,
++             terminal.cleanup.reason, terminal.cleanup.barrier_complete,
++             terminal.cleanup.replacement_blocked,
++             terminal.cleanup.closed_order_ids)
++            if terminal is not None else None
++        ),
++        "owner_current": (
++            (current.attempt_id, current.mode, current.outcome, current.reason,
++             current.unresolved, current.replacement_blocked,
++             current.acknowledged_order_ids, current.closed_order_ids)
++            if current is not None else None
++        ),
++        "owner_attempts": tuple(
++            (attempt.attempt_id, attempt.mode, attempt.outcome,
++             attempt.reason, attempt.replacement_blocked,
++             attempt.acknowledged_order_ids, attempt.closed_order_ids)
++            for attempt in owner.attempts
++        ),
++        # RDPCloseResult intentionally has no attempt_id. The existing owner
++        # dictionary is the authoritative key-to-proof association.
++        "owner_close_proofs_by_attempt": tuple(
++            (attempt_id, proof.complete, proof.reason,
++             proof.affected_order_ids, proof.reconciliation_outcomes,
++             proof.inventory)
++            for attempt_id, proof in sorted(owner._close_proofs.items())
++        ),
++        "cycle_close_results_by_attempt": tuple(
++            (attempt_id, cycle.attempt_id, cycle.close_result.reason,
++             cycle.close_result.barrier_complete,
++             cycle.close_result.replacement_blocked,
++             cycle.close_result.closed_order_ids)
++            for attempt_id, cycle in sorted(scope.session._cycle_results_by_attempt.items())
++        ),
++        "submissions": tuple(
++            (row.outcome, row.reason, row.post_started, row.guard_reasons,
++             getattr(row.resolved_attempt, "attempt_id", None),
++             getattr(row.resolved_attempt, "reason", None),
++             getattr(row.resolved_attempt, "replacement_blocked", None))
++            for row in result.submissions
++        ),
++        "cycles": tuple(
++            (cycle.attempt_id,
++             cycle.close_result.reason, cycle.close_result.barrier_complete,
++             cycle.close_result.replacement_blocked,
++             cycle.close_result.next_mode,
++             cycle.close_result.capital.reason
++             if cycle.close_result.capital is not None else None)
++            for cycle in result.cycles
++        ),
++        "admissions": tuple(
++            (row.attempt_id, row.mode, row.reason)
++            for row in result.admissions
++        ),
++    }
++
++
++async def _exercise_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
+     placement_scope, blocked_network, monkeypatch, fills, expected_delta,
+-    mutate_after_sign,
++    mutate_after_sign, diagnostic_probe=False,
+ ):
+     scope = placement_scope
+     service, _account_reads = _prepare_real_admission(scope)
+@@ -9287,6 +10638,16 @@ async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumula
+                 service._tick_source["yes-token"] = "WS_TICK_SIZE_CHANGE"
+ 
+             client.on_create = change_tick_between_guards
++        if diagnostic_probe:
++            record_close = scope.owner.record_close
++
++            def block_second_close_proof(attempt, barrier, capital):
++                updated = record_close(attempt, barrier, capital)
++                if attempt.attempt_id == 2:
++                    return replace(updated, replacement_blocked=True)
++                return updated
++
++            monkeypatch.setattr(scope.owner, "record_close", block_second_close_proof)
+ 
+         result = await scope.session.continue_normal(
+             authorization=True, order_budget_s=2, close_budget_s=2,
+@@ -9306,7 +10667,21 @@ async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumula
+         assert blocked_network == []
+         return
+ 
+-    assert result.outcome == "REBALANCE_HANDOFF"
++    if result.outcome != "REBALANCE_HANDOFF":
++        diagnostics = _normal_continuation_failure_diagnostics(scope, result)
++        if diagnostic_probe:
++            assert result.reason == "CLOSE_PROOF_NOT_RELEASED"
++            assert "CLOSE_PROOF_NOT_RELEASED" in repr(diagnostics)
++            proof_attempt_ids = {
++                row[0] for row in diagnostics["owner_close_proofs_by_attempt"]
++            }
++            assert proof_attempt_ids == set(scope.owner._close_proofs)
++            assert 2 in proof_attempt_ids
++            assert any(row[0] == 2 and row[1] == 2
++                       for row in diagnostics["cycle_close_results_by_attempt"])
++            assert blocked_network == []
++            return
++        pytest.fail(f"NORMAL positive path diagnostic: {diagnostics!r}")
+     assert result.mode is RDPMode.REBALANCE
+     assert len(result.submissions) == 3
+     assert len(result.cycles) == 4  # initial plus three automatically owned cycles
+@@ -9360,6 +10735,37 @@ async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumula
+     assert blocked_network == []
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize(("fills", "expected_delta", "mutate_after_sign"), [
++    ([ ("yes-token", 1.25), ("no-token", 1.0),
++       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, False),
++    ([ ("yes-token", 1.25), ("yes-token", 1.0),
++       ("yes-token", 1.0), ("yes-token", 1.75) ], 5.0, False),
++    ([ ("yes-token", 1.25), ("no-token", 1.0),
++       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, True),
++])
++async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
++    placement_scope, blocked_network, monkeypatch, fills, expected_delta,
++    mutate_after_sign,
++):
++    await _exercise_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
++        placement_scope, blocked_network, monkeypatch, fills, expected_delta,
++        mutate_after_sign,
++    )
++
++
++@pytest.mark.asyncio
++async def test_iter0029_fix03_normal_failure_diagnostic_uses_attempt_keyed_proofs(
++    placement_scope, blocked_network, monkeypatch,
++):
++    await _exercise_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
++        placement_scope, blocked_network, monkeypatch,
++        [("yes-token", 1.25), ("yes-token", 1.0),
++         ("yes-token", 1.0), ("yes-token", 1.75)],
++        5.0, False, True,
++    )
++
++
+ @pytest.mark.asyncio
+ async def test_iter0028_m3_concurrent_denial_requires_current_cumulative_scope(
+     placement_scope, blocked_network, monkeypatch,

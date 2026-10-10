@@ -7,7 +7,7 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest reviewed implementation: ITER-0028, CODE_READY, final Reviewer09 PASS closes full DG-003; archive verification follows in ITER-0028/10_ARCHIVE_RECEIPT.md. DG-002/004 remain OPEN for operating REBALANCE.
+Latest reviewed implementation: ITER-0029, CODE_READY, final Reviewer09 PASS closes full DG-004; archive/remote verification will be recorded in ITER-0029/10_ARCHIVE_RECEIPT.md. DG-002 remains OPEN pending complete cross-mode capital acceptance.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
 Implementation resume authorization: GRANTED by explicit human resume for automatic required serial iterations and repairs until MICRO_LIVE_READY. No real-money/main merge/strategy-semantic change is authorized.
@@ -55,7 +55,7 @@ These are implemented prerequisites, not declarations that the integrated runner
 | Initial pre-fill REST/FILL_WINDOW/CLOSE and original-receipt window completion | rdp_runtime.py: evaluate_initial_prefill, initial_fill_window, complete_initial_normal_cycle | test_rdp_placement.py: validity, confirmation races, window timing, close once and interrupted continuation |
 | Coherent final initial-intent factual revalidation | rdp_runtime.py: revalidate_initial_normal_intent and retained bridge/capture helpers | test_rdp_placement.py: actual gateway pre/post-sign guards, bridge timeout, freshness, intent mutation and provenance |
 
-At this baseline, the RDP CLI accepts preflight/observation modes and rejects an invocation without a supported read-only mode. ITER-0025 now connects explicitly authorized initial submission to gateway.place; default authorization remains denied. The runtime does not compose build_rebalance_quote into an operating REBALANCE loop.
+At this baseline, the RDP CLI accepts preflight/observation modes and rejects an invocation without a supported read-only mode. ITER-0025 now connects explicitly authorized initial submission to gateway.place; default authorization remains denied. ITER-0029 now composes the existing repair builder/gateway/owner/close into operating REBALANCE and proved NORMAL resumption; remaining runner/CLI/readiness acceptance is still outstanding.
 
 Existing accounting fields and structured decision logs are valuable evidence. They do not constitute the complete required metrics artifact.
 
@@ -107,7 +107,7 @@ Closure evidence: ITER-0028 frozen01, Worker02/Fix04/Addendum05/Fix08, immutable
 
 ### DG-004 — Operating REBALANCE and Return to NORMAL
 
-Status: OPEN.
+Status: CLOSED.
 
 Sources: Frozen §§23–28, 34; delivery transition and risk-closure requirements.
 
@@ -118,6 +118,8 @@ Missing behavior: At abs(Delta)>=5, stop dual NORMAL quoting and operate only th
 Closure: Integrated tests cover both deficiency signs, exact five-share boundary, partial fills, cancel/fill races, dynamic ticks, metadata minimum rejection, recovery, and continuation without a hard rebalance-duration/no-fill stop.
 
 CanSafelyContinue must use actual time, capital, market and state evidence. Existing quote construction does not satisfy this gate.
+
+Closure evidence: ITER-0029 frozen01, Worker02/Fix04/Fix06/Fix08 and separate immutable Fix03 report addendum; original Reviewer03/05/07 findings and final09_REVIEWER_REREVIEW_03.md PASS (SHA256 f096b7b74b56f3bb10b327729433bb4b9ea51728326c0c2eb0d7d12c20dc7430). All11 criteria independently verified: initial/later handoff and both signs, actual deficient BUY5 post-only repair, current cumulative fractional costs/account commitments, safe no-fill/reprice/close/recovery and actual resumed NORMAL pair, dynamic ticks/minimums, four categorical STOP predicates and full operational budgets, final backward-clock guard, primary SDK interruption/drain, registered-only cleanup and truthful current proofs/inventory/economics. Independent full1749/2, final executor/fault5, P2/E3 12, runtime/capture/fault91 passed with zero network. Prior failed reports/logs, /tmp quota-contaminated runs and historic NORMAL causality limitation remain explicitly preserved; current M5 independent disposition is in final09. Prior Evidence/Missing paragraphs describe the convergence baseline and are superseded for this behavior only. No other gap is closed by this PASS.
 
 ### DG-005 — STOP and Operational Time Safety
 
@@ -284,13 +286,13 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 ## Resume and Current Action
 
-CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; implementation9f3ad27 and receipt6b74bca are archived and remote verified. DG-002/004/005/007–012 remain OPEN.
+CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; implementation9f3ad27 and receipt6b74bca are archived and remote verified. DG-004 is CLOSED by ITER-0029 final09; DG-002/005/007–012 remain OPEN.
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0029.
-Current Stage: WORKER.
+Current Stage: ARCHIVAL.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 delivered the necessary DG-002 factual-admission prerequisite. ITER-0028 final independent PASS closes full DG-003 using cumulative inventory/cost and existing gateway/lifecycle. ITER-0029 Architect01 is frozen and approves complete DG-004 operating REBALANCE through actual NORMAL resumption. Dispatch configured Worker within this contract, then independent Reviewer. DG-002/004 stay OPEN for operating REBALANCE and its cumulative capital consumption. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic required development. ITER-0027 delivered a DG-002 prerequisite; ITER-0028 closed DG-003; ITER-0029 final independent09 PASS closes complete DG-004. Complete RESULT/index/archive commit, push and exact remote verification, then automatically dispatch Architect for one minimal remaining stable Gap ID. DG-002 remains OPEN until complete cross-mode acceptance is independently verified. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extension or safety relaxation is authorized.

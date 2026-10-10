@@ -250,6 +250,7 @@ def evaluate_current_rdp_backing(
     *,
     now: float,
     max_age_s: float,
+    active_order_ids: tuple[str, ...] = (),
 ) -> RDPCurrentBackingResult:
     """Check physical account support without replacing model inventory/cost.
 
@@ -327,12 +328,23 @@ def evaluate_current_rdp_backing(
     all_orders = getattr(account, "all_open_orders", None)
     if not isinstance(all_orders, tuple):
         return _current_backing_failure("INCOMPLETE_ACCOUNT_EVIDENCE", initial.read_age_s)
+    if (not isinstance(active_order_ids, tuple)
+            or any(not isinstance(order_id, str) or not order_id for order_id in active_order_ids)
+            or len(set(active_order_ids)) != len(active_order_ids)):
+        return _current_backing_failure("INVALID_ACTIVE_ORDER_SCOPE", initial.read_age_s)
+    active_ids = set(active_order_ids)
+    projected_active = set(projection.snapshot.resting_order_ids)
+    if active_ids != projected_active or not active_ids.issubset(set(run_order_ids)):
+        return _current_backing_failure("ACTIVE_ORDER_PROJECTION_MISMATCH", initial.read_age_s)
+    observed_run_open: set[str] = set()
     for order in all_orders:
         order_id = getattr(order, "order_id", None)
         if order_id in run_order_ids:
-            return _current_backing_failure(
-                "CLOSED_RUN_ORDER_REAPPEARED", initial.read_age_s,
-            )
+            if order_id not in active_ids:
+                return _current_backing_failure("CLOSED_RUN_ORDER_REAPPEARED", initial.read_age_s)
+            observed_run_open.add(order_id)
+    if observed_run_open != active_ids:
+        return _current_backing_failure("ACTIVE_ORDER_ACCOUNT_EVIDENCE_MISMATCH", initial.read_age_s)
 
     reserve = NORMAL_REPAIR_RESERVE if parsed_mode is RDPMode.NORMAL else _ZERO
     try:
