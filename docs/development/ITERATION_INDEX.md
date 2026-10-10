@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0030`
 
-Current Stage: `ARCHITECT_PENDING`
+Current Stage: `WORKER_PENDING`
 
 MICRO_LIVE_READY: `NO`
 
@@ -105,11 +105,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0030 initialized after explicit human resume and direct local/remote1440a30 verification. No unfinished iteration existed. Architect pending: inspect actual code and dependencies, with DG-002 complete cross-mode acceptance as priority candidate; implementation scope is not approved yet. See ITER-0030/00_INITIALIZATION.md. Prior closed gaps/reviews remain valid.
+ITER-0030: DG-002 complete cross-mode current capital/inventory acceptance. Architect01 APPROVED_FOR_IMPLEMENTATION after inspection of actual existing components. Verification-first scope: production unchanged; independent scripted fake venue/account evidence through initial NORMAL, subsequent NORMAL, partial REBALANCE and actual resumed NORMAL. Worker pending; no iteration tests executed yet. DG-002 remains OPEN until complete independent acceptance. Recovery base1440a30 exactly matched remote; initialization48a947e records protected research_outputs and authorization. Prior ITER-0029 final09 PASS and archive9034801/receipt1440a30 remain valid.
 
-Explicit human resume authorizes automatic required iterations/repairs until MICRO_LIVE_READY. ITER-0029 final Reviewer09 PASS closes full DG-004 (all11 criteria); Worker08 plus corrective addendum are immutable. Independent full1749/2, final fault/executor5, P2/E3 12 and runtime/capture/fault91 passed, zero network. Three repair rounds, all failed logs, usage interruption and /tmp quota observations remain preserved. Historic NORMAL cause is unproven; current independent disposition and usable diagnostics are in final09. Implementation/PASS archive9034801 is pushed and exact remote verified; additive10_ARCHIVE_RECEIPT.md records evidence. Next: receipt push/verify, then automatically initialize ITER-0030 for one minimal remaining Gap ID through Architect. DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. No real orders/cancels, main merge or strategy revision authorized.
-
-Prior ITER-0025/0026/0027 archives remain preserved. Current ITER-0028 Reviewer09 verifies the extended runtime and full DG-003 delivery. No prior completed functionality was reimplemented. See ITER-0028/00_INITIALIZATION.md for base evidence/authorization and iteration reports for the two repair rounds.
+Next: Worker under frozen Architect01, then independent actual-diff Reviewer, repairs or additive Architect revision if required. Continue required serial iterations until MICRO_LIVE_READY, then stop and create final comparison/PR. Real orders/cancels, main merge and strategy changes remain unauthorized.
 
 ---
 

@@ -286,13 +286,13 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 ## Resume and Current Action
 
-CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; implementation9f3ad27 and receipt6b74bca are archived and remote verified. DG-004 is CLOSED by ITER-0029 final09; DG-002/005/007–012 remain OPEN.
-
 Development Status: IN_PROGRESS.
-Current Iteration: ITER-0029.
-Current Stage: ARCHIVED.
+Current Iteration: ITER-0030.
+Current Stage: WORKER_PENDING.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic required development. ITER-0027 delivered a DG-002 prerequisite; ITER-0028 closed DG-003; ITER-0029 final independent09 PASS closes complete DG-004. Implementation/PASS/RESULT archive9034801 is pushed and exact remote verified. Complete receipt archival/verification, then automatically initialize ITER-0030 and dispatch Architect for one minimal remaining stable Gap ID. DG-002 remains OPEN until complete cross-mode acceptance is independently verified. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extension or safety relaxation is authorized.
+Explicit human resume authorizes required serial development/repair/review/archive until MICRO_LIVE_READY. ITER-0029 complete DG-004 PASS/archive9034801 and receipt1440a30 are direct-remote verified. No unfinished iteration existed at recovery. ITER-0030 Architect01 approves verification-first complete DG-002 acceptance using existing production and independent fake venue/account oracle. Worker pending; DG-002 remains OPEN. No production changes are authorized by this initial contract. Required production defects return to Architect for additive revision.
+
+DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. Historical convergence and all failed/pass iteration artifacts remain immutable. research_outputs/ remains preserved and excluded. Continue automatic required serial workflow and verified archival; no real orders/cancels, main merge, strategy extension or safety relaxation authorized.
