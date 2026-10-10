@@ -10578,7 +10578,7 @@ async def _exercise_one_normal_continuation_call_operates_real_fake_sdk_cycles_c
 
     monkeypatch.setattr(runtime, "_capture_account_with_gateway", account_snapshot)
     try:
-        initial = await scope.session.initial_normal_admission()
+        initial = await asyncio.wait_for(scope.session.initial_normal_admission(), 5)
         assert initial.eligible, initial.reason
         submission = await scope.session.submit_initial_normal(
             initial, authorization=True, order_budget_s=2, close_budget_s=2,
@@ -10866,4 +10866,769 @@ async def test_iter0028_m3_clean_current_close_remains_certifiable(
     assert result.capital_certified and not result.unresolved_exposure
     assert result.inventory is not None and result.inventory.qy == pytest.approx(1.25)
     assert client.posts == 0 and client.cancel_calls == []
+    assert blocked_network == []
+
+
+class _IndependentCrossModeVenue(RepeatedNormalSDKClient):
+    """Test oracle whose account view is generated from its own post/fill script."""
+
+    def __init__(self, scope, fills):
+        super().__init__(scope, fills)
+        self.scripted_fills = tuple((token, Decimal(str(qty))) for token, qty in fills)
+        self.confirmed = {"yes-token": [Decimal("0"), Decimal("0")],
+                          "no-token": [Decimal("0"), Decimal("0")]}
+        self.venue_rows = {}
+        self.oracle_events = []
+        self.loop = asyncio.get_running_loop()
+        self.registered = {}
+        self.account_mutator = None
+
+    async def _emit_confirmations_after_registration(self, cycle, signed_rows):
+        await self.registered[cycle].wait()
+        for signed in signed_rows:
+            token = signed["token_id"]
+            order_id = f"cycle-{cycle}-{token}"
+            row = self.venue_rows[order_id]
+            if row["matched"] <= 0:
+                continue
+            trade_id = f"cycle-{cycle}-fill-{token}"
+            receipt_ns = self.scope.session._monotonic_ns()
+            event = TradeEvent(
+                token_id=token, our_side=Side.BUY, price=float(row["price"]),
+                size=float(row["matched"]), trade_id=trade_id,
+                status=TradeState.MATCHED, ts=time.time(), maker_order_id=order_id,
+                market_id=self.scope.market.condition_id,
+            )
+            self.scope.processor.on_trade(
+                event, self.scope.market.condition_id,
+                received_at_us=int(time.time() * 1_000_000),
+                received_monotonic_ns=receipt_ns, connection_generation=4,
+            )
+            self.scope.processor.on_trade(
+                replace(event, status=TradeState.CONFIRMED),
+                self.scope.market.condition_id,
+                received_at_us=int(time.time() * 1_000_000),
+                received_monotonic_ns=receipt_ns, connection_generation=4,
+            )
+
+    def post_orders(self, orders, *, post_only):
+        # Independently compute expected venue state from signed order inputs and
+        # the scenario script. The executor runs SDK methods in a worker thread,
+        # so confirmations are exposed through REST reconciliation on the event
+        # loop thread rather than mutating the SQLite-backed processor here.
+        cycle = self.posts + 1
+        fill_token, fill_qty = (
+            self.scripted_fills[cycle - 1]
+            if cycle <= len(self.scripted_fills) else (None, Decimal("0"))
+        )
+        signed_rows = [row.order for row in orders]
+        assert post_only is True
+        self.posts += 1
+        self.registered[cycle] = asyncio.Event()
+        acknowledgments = []
+        for signed in signed_rows:
+            token = signed["token_id"]
+            order_id = f"cycle-{cycle}-{token}"
+            price = Decimal(str(signed["price"]))
+            quantity = Decimal(str(signed["size"]))
+            matched = min(quantity, fill_qty) if token == fill_token else Decimal("0")
+            status = "MATCHED" if matched >= quantity else "LIVE"
+            self.rows[order_id] = {
+                "id": order_id, "asset_id": token, "side": "BUY",
+                "price": str(price), "original_size": str(quantity),
+                "size_matched": str(matched), "status": status,
+                "market": self.scope.market.condition_id,
+            }
+            acknowledgments.append({"success": True, "orderID": order_id})
+            if matched > 0:
+                trade_id = f"cycle-{cycle}-fill-{token}"
+                self.trades.append(_rest_trade(
+                    order_id, token, str(price), str(matched), trade_id=trade_id,
+                ))
+            self.venue_rows[order_id] = {
+                "token": token, "price": price, "quantity": quantity,
+                "matched": matched, "closed": matched >= quantity,
+            }
+            self.confirmed[token][0] += matched
+            self.confirmed[token][1] += matched * price
+            self.oracle_events.append(("POST", cycle, token, quantity, price, matched))
+        self.events.append(("POST", cycle))
+        self.loop.call_soon_threadsafe(
+            lambda: asyncio.create_task(
+                self._emit_confirmations_after_registration(cycle, signed_rows),
+            ),
+        )
+        return acknowledgments
+
+    def cancel_orders(self, order_ids):
+        super().cancel_orders(order_ids)
+        for order_id in order_ids:
+            if order_id in self.venue_rows:
+                self.venue_rows[order_id]["closed"] = True
+        self.oracle_events.append(("CANCEL", tuple(order_ids)))
+
+    def independent_account(self, signer, funder, captured):
+        from polymaker.rdp_account import RDPOrderEvidence, RDPPositionEvidence
+
+        open_orders = []
+        commitment = Decimal("0")
+        for order_id, row in self.venue_rows.items():
+            remaining = row["quantity"] - row["matched"]
+            if row["closed"] or remaining <= 0:
+                continue
+            evidence = RDPOrderEvidence(
+                order_id, row["token"], "BUY", row["price"], remaining,
+            )
+            open_orders.append(evidence)
+            commitment += row["price"] * remaining
+        spent = sum((row[1] for rows in self.confirmed.values() for row in [rows]), Decimal("0"))
+        # Both values are gross venue collateral/allowance; the production
+        # backing evaluator independently subtracts current account commitments.
+        gross_cash = Decimal("30") - spent
+        self.oracle_events.append(("ACCOUNT_READ", tuple(sorted(
+            (token, values[0], values[1]) for token, values in self.confirmed.items()
+        )), commitment, gross_cash))
+        account = SimpleNamespace(
+            signer=signer, funder=funder,
+            condition_id=self.scope.market.condition_id,
+            balance_usd=gross_cash, allowance_usd=gross_cash,
+            required_spenders=("0x" + "a" * 40,),
+            selected_positions=(
+                RDPPositionEvidence("Up", "yes-token", self.confirmed["yes-token"][0], Decimal("0")),
+                RDPPositionEvidence("Down", "no-token", self.confirmed["no-token"][0], Decimal("0")),
+            ),
+            selected_open_orders=tuple(
+                row for row in open_orders if row.token_id in {"yes-token", "no-token"}
+            ),
+            total_open_order_count=len(open_orders), all_open_orders=tuple(open_orders),
+            orders_receipt_ts=captured - .002, positions_receipt_ts=captured - .001,
+            collateral_receipt_ts=captured,
+        )
+        return self.account_mutator(account) if self.account_mutator else account
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("initial_token", "repair_token", "normal_fill_token"), [
+    ("yes-token", "no-token", "yes-token"),
+    ("no-token", "yes-token", "no-token"),
+])
+async def test_iter0030_independent_account_oracle_crosses_normal_rebalance_and_resumes(
+    placement_scope, blocked_network, monkeypatch,
+    initial_token, repair_token, normal_fill_token,
+):
+    scope = placement_scope
+    service, _ = _prepare_real_admission(scope)
+    # The first actual SDK submission is the initial NORMAL pair. The next three
+    # submits drive the retained NORMAL loop to its factual +/-5 handoff; the
+    # repair is partial and leaves a resting commitment before recovery.
+    fills = [
+        (initial_token, Decimal("1.25")),
+        (initial_token, Decimal("1.0")),
+        (initial_token, Decimal("1.0")),
+        # Deliberately cross the NORMAL boundary with residual exposure large
+        # enough to survive the first partial repair, keeping the repair live
+        # through a monitor account read.
+        (initial_token, Decimal("3.75")),
+        (repair_token, Decimal("1.25")),
+        (repair_token, Decimal("1.0")),
+        # The resumed NORMAL fill returns to the frozen >=5 boundary. That is
+        # a genuine next-mode handoff that bounds this scenario without adding
+        # a test-only production attempt limit.
+        (normal_fill_token, Decimal("1.25")),
+    ]
+    client = _IndependentCrossModeVenue(scope, fills)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    gateway._derive_only = True
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    independent_snapshots = []
+    repriced_repair_book = [False]
+    exact_rebalance_capture = [False]
+    async def independent_capture(_bootstrap, _gateway, signer, funder, *, now):
+        account = client.independent_account(signer, funder, now())
+        expected_qy, expected_cy = client.confirmed["yes-token"]
+        expected_qn, expected_cn = client.confirmed["no-token"]
+        actual = snapshot_inventory(
+            scope.market, scope.processor, set(scope.owner.registered_run_order_ids),
+        )
+        assert Decimal(str(actual.qy)) == expected_qy
+        assert Decimal(str(actual.qn)) == expected_qn
+        assert Decimal(str(actual.cy)) == pytest.approx(expected_cy, abs=Decimal("1e-12"))
+        assert Decimal(str(actual.cn)) == pytest.approx(expected_cn, abs=Decimal("1e-12"))
+        independent_snapshots.append((expected_qy, expected_cy, expected_qn, expected_cn))
+        if client.posts == 4 and not exact_rebalance_capture[0]:
+            # Exact physical cash is sufficient in REBALANCE, where the
+            # existing $5 NORMAL reserve does not apply.
+            exact = Decimal("2.35") if repair_token == "no-token" else Decimal("2.975")
+            account = SimpleNamespace(**{
+                **vars(account), "balance_usd": exact,
+                "allowance_usd": exact,
+            })
+            exact_rebalance_capture[0] = True
+        if client.posts == 5 and not repriced_repair_book[0]:
+            # The current account read observes the partial remaining order;
+            # then a changed ask forces the real monitor close/reconcile and a
+            # later fresh REBALANCE admission before replacement.
+            repair_book = service.book(repair_token)
+            repair_book.apply_snapshot(
+                [(0.40, 10), (0.41, 10)], [(0.47, 10)], 2,
+            )
+            repriced_repair_book[0] = True
+        return account
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", independent_capture)
+    original_resolve = scope.owner.resolve
+    def resolve_then_release_fill(attempt, outcome):
+        resolved = original_resolve(attempt, outcome)
+        event = client.registered.get(client.posts)
+        if event is not None:
+            event.set()
+        return resolved
+    monkeypatch.setattr(scope.owner, "resolve", resolve_then_release_fill)
+
+    # Preserve the real ExecutionGateway executor; only its SDK is fake.
+    scope.session._market_data_max_age_s = 60
+    try:
+        initial = await scope.session.initial_normal_admission()
+        assert initial.eligible, initial.reason
+        sent = await asyncio.wait_for(scope.session.submit_initial_normal(
+            initial, authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 5)
+        assert sent.outcome == "COMPLETE", getattr(client, "create_error", None)
+        initial_cycle = await asyncio.wait_for(scope.session.complete_initial_normal_cycle(
+            sent.resolved_attempt, close_budget_s=2,
+        ), 5)
+        assert initial_cycle.close_result.next_mode is RDPMode.NORMAL
+
+        # Warm the real book filter with current feed evidence as the existing
+        # continuation path requires after the initial close.
+        async def process_feed(message):
+            service._processing_receipt_monotonic = time.monotonic()
+            try:
+                await service._process_raw(json.dumps(message))
+            finally:
+                service._processing_receipt_monotonic = None
+        await process_feed({
+            "event_type": "tick_size_change", "market": scope.market.condition_id,
+            "asset_id": "yes-token", "new_tick_size": "0.005",
+        })
+        await asyncio.sleep(2.05)
+        for token, bid, ask in (("yes-token", .56, .60), ("no-token", .42, .48)):
+            await process_feed({
+                "event_type": "book", "market": scope.market.condition_id,
+                "asset_id": token, "tick_size": "0.005" if token == "yes-token" else "0.01",
+                "bids": [{"price": str(bid - (.005 if token == "yes-token" else .01)), "size": "10"},
+                         {"price": str(bid), "size": "10"}],
+                "asks": [{"price": str(ask), "size": "10"}], "timestamp": "2",
+            })
+            await process_feed({
+                "event_type": "last_trade_price", "market": scope.market.condition_id,
+                "asset_id": token, "price": str(bid), "size": "1",
+                "side": "BUY", "timestamp": "2",
+            })
+        filter_evidence = scope.session.book_filter_result()
+        assert filter_evidence.ready and not filter_evidence.rejected, filter_evidence
+        clock = _DeterministicMonotonicClock(time.monotonic_ns())
+        scope.session._monotonic_ns = clock.read
+        scope.session._sleep = clock.sleep
+        normal = await asyncio.wait_for(scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 10)
+        assert normal.outcome == "REBALANCE_HANDOFF", normal.reason
+        assert normal.inventory is not None and abs(normal.inventory.delta) >= 5
+
+        # Replace the unused tail of the fixed script only after the actual
+        # NORMAL handoff; the fake oracle remains independent of processor state.
+        repair = await asyncio.wait_for(scope.session.continue_rebalance(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 10)
+    finally:
+        gateway.close()
+
+    actual_rows = [row for row in client.events if row[0] == "POST"]
+    assert len(actual_rows) == 7, client.oracle_events
+    assert any(row[2] == repair_token for row in client.oracle_events if row[0] == "POST")
+    assert repair.outcome in {"NORMAL_HANDOFF", "REBALANCE_HANDOFF", "TIME_EXHAUSTED"}
+    assert client.posts == 7
+    assert exact_rebalance_capture[0]
+    first_rebalance_admission = next(
+        item for item in repair.admissions if item.mode is RDPMode.REBALANCE
+    )
+    assert first_rebalance_admission.eligible
+    exact_rebalance = Decimal("2.35") if repair_token == "no-token" else Decimal("2.975")
+    assert first_rebalance_admission.current_backing.required_backing == exact_rebalance
+    assert first_rebalance_admission.current_backing.observed_cash_backing == exact_rebalance
+    assert first_rebalance_admission.current_backing.observed_allowance_backing == exact_rebalance
+    # Independent venue accounting and processor inventory must agree at the
+    # retained end boundary; no expected value comes from snapshot_inventory.
+    expected_qy, expected_cy = client.confirmed["yes-token"]
+    expected_qn, expected_cn = client.confirmed["no-token"]
+    actual_inventory = snapshot_inventory(
+        scope.market, scope.processor, set(scope.owner.registered_run_order_ids),
+    )
+    assert Decimal(str(actual_inventory.qy)) == expected_qy
+    assert Decimal(str(actual_inventory.qn)) == expected_qn
+    # The processor's retained public snapshot uses float fields; compare its
+    # representation with a narrow conversion tolerance while keeping the
+    # oracle quantities and costs exact Decimal values.
+    assert Decimal(str(actual_inventory.cy)) == pytest.approx(expected_cy, abs=Decimal("1e-12"))
+    assert Decimal(str(actual_inventory.cn)) == pytest.approx(expected_cn, abs=Decimal("1e-12"))
+    assert len(independent_snapshots) >= 6
+    # The partial repair remains a real venue commitment while the REBALANCE
+    # monitor reads the account. Reprice/resumption closes and reconciles it
+    # before the next NORMAL POST.
+    repair_post = next(
+        index for index, row in enumerate(client.oracle_events)
+        if row[0] == "POST" and row[1] == 5 and row[2] == repair_token
+        and row[5] == Decimal("1.25")
+    )
+    partial_monitor_read = next(
+        index for index, row in enumerate(client.oracle_events)
+        if index > repair_post and row[0] == "ACCOUNT_READ"
+        and row[2] > Decimal("0")
+    )
+    partial_cancel = next(
+        index for index, row in enumerate(client.oracle_events)
+        if index > partial_monitor_read and row[0] == "CANCEL"
+    )
+    resumed_normal_post = next(
+        index for index, row in enumerate(client.oracle_events)
+        if index > partial_cancel and row[0] == "POST" and row[1] == 7
+    )
+    repair_entry = client.oracle_events[repair_post]
+    expected_partial_remaining = repair_entry[3] - repair_entry[5]
+    # Independent account evidence records aggregate unfilled BUY notional.
+    assert client.oracle_events[partial_monitor_read][2] == (
+        repair_entry[4] * expected_partial_remaining
+    )
+    assert repair_post < partial_monitor_read < partial_cancel < resumed_normal_post
+    replacement_repair_post = next(
+        index for index, row in enumerate(client.oracle_events)
+        if index > partial_cancel and row[0] == "POST" and row[1] == 6
+    )
+    assert partial_cancel < replacement_repair_post < resumed_normal_post
+    assert client.oracle_events and any(row[0] == "ACCOUNT_READ" for row in client.oracle_events)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mode", "fault"), [
+    (mode, fault)
+    for mode in ("NORMAL", "REBALANCE")
+    for fault in (
+        "stale_receipts", "position_contradiction", "closed_resurrection",
+        "foreign_commitment", "insufficient_cash", "insufficient_allowance",
+    )
+] + [("NORMAL", "normal_reserve")])
+async def test_iter0030_independent_account_faults_prevent_subsequent_risk_post(
+    placement_scope, blocked_network, monkeypatch, mode, fault,
+):
+    """Current account evidence at either next-action boundary gates the SDK POST."""
+    scope = placement_scope
+    token = "yes-token"
+    quantity = Decimal("1.25") if mode == "NORMAL" else Decimal("5")
+    completion, _account_gateway, _prior_client = await _complete_cycle_with_confirmed_fill(
+        scope, token_id=token, size=float(quantity),
+    )
+    assert completion.close_result.next_mode is RDPMode(mode)
+
+    # Seed the venue oracle only from the test's independent scenario inputs.
+    # Account quantities/costs below never consult the production processor.
+    price = Decimal("0.55")
+    client = _IndependentCrossModeVenue(scope, [("foreign-token", 0)])
+    client.confirmed[token] = [quantity, quantity * price]
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    async def inline_io(fn, *args):
+        return fn(*args)
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    async def independent_capture(_bootstrap, _gateway, signer, funder, *, now):
+        return client.independent_account(signer, funder, now())
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", independent_capture)
+
+    def mutate(account):
+        from polymaker.rdp_account import RDPOrderEvidence
+
+        if fault == "stale_receipts":
+            return SimpleNamespace(**{
+                **vars(account), "orders_receipt_ts": time.time() - 100,
+                "positions_receipt_ts": time.time() - 100,
+                "collateral_receipt_ts": time.time() - 100,
+            })
+        if fault == "position_contradiction":
+            positions = (
+                replace(account.selected_positions[0], quantity=quantity + Decimal("1")),
+                account.selected_positions[1],
+            )
+            return SimpleNamespace(**{**vars(account), "selected_positions": positions})
+        if fault == "closed_resurrection":
+            row = RDPOrderEvidence(
+                "yes-order", "yes-token", "BUY", Decimal("0.55"), Decimal("1"),
+            )
+            return SimpleNamespace(**{
+                **vars(account), "selected_open_orders": (row,),
+                "all_open_orders": (row,), "total_open_order_count": 1,
+            })
+        if fault == "foreign_commitment":
+            row = RDPOrderEvidence(
+                "foreign-buy", "foreign-token", "BUY", Decimal("0.50"), Decimal("18"),
+            )
+            return SimpleNamespace(**{
+                **vars(account), "balance_usd": Decimal("10"),
+                "allowance_usd": Decimal("10"), "all_open_orders": (row,),
+                "total_open_order_count": 1,
+            })
+        if fault == "insufficient_cash":
+            return SimpleNamespace(**{**vars(account), "balance_usd": Decimal("0")})
+        if fault == "insufficient_allowance":
+            return SimpleNamespace(**{**vars(account), "allowance_usd": Decimal("0")})
+        if fault == "normal_reserve":
+            return SimpleNamespace(**{
+                **vars(account), "balance_usd": Decimal("8"),
+                "allowance_usd": Decimal("8"),
+            })
+        raise AssertionError(fault)
+
+    client.account_mutator = mutate
+    # Capital/backing denials in NORMAL are intentionally retryable while fresh
+    # evidence may recover. Advance the fake market clock to its genuine end
+    # after the first denied admission, preserving the no-POST evidence.
+    if mode == "NORMAL" and fault in {
+        "foreign_commitment", "insufficient_cash", "insufficient_allowance",
+        "normal_reserve",
+    }:
+        original_sleep = scope.session._sleep
+        async def end_after_denial(delay):
+            await original_sleep(delay)
+            scope.session._now = lambda: scope.bootstrap.end_epoch
+        scope.session._sleep = end_after_denial
+
+    try:
+        if mode == "NORMAL":
+            result = await asyncio.wait_for(scope.session.continue_normal(
+                authorization=True, order_budget_s=2, close_budget_s=2,
+            ), 5)
+        else:
+            result = await asyncio.wait_for(scope.session.continue_rebalance(
+                authorization=True, order_budget_s=2, close_budget_s=2,
+            ), 5)
+    finally:
+        gateway.close()
+
+    assert result.admissions
+    first = result.admissions[0]
+    expected = {
+        "stale_receipts": "STALE_ACCOUNT_EVIDENCE",
+        "position_contradiction": "SELECTED_POSITION_INVENTORY_MISMATCH",
+        "closed_resurrection": "CLOSED_RUN_ORDER_REAPPEARED",
+        "foreign_commitment": "INSUFFICIENT_CURRENT_CASH",
+        "insufficient_cash": "INSUFFICIENT_CURRENT_CASH",
+        "insufficient_allowance": "INSUFFICIENT_CURRENT_ALLOWANCE",
+        "normal_reserve": "INSUFFICIENT_CURRENT_CASH",
+    }[fault]
+    assert expected in (first.reason or "")
+    assert client.posts == 0
+    assert client.cancel_calls == []
+    assert not any(row[0] == "POST" for row in client.oracle_events)
+    assert blocked_network == []
+    if fault == "foreign_commitment":
+        assert first.account_buy_commitment == Decimal("9.00")
+        assert first.observed_cash_backing == Decimal("1.00")
+        assert first.observed_allowance_backing == Decimal("1.00")
+    if fault == "normal_reserve":
+        assert first.mode is RDPMode.NORMAL
+        assert first.capital_projection is not None
+        assert first.capital_admission is not None
+        assert first.capital_admission.protected_amount == Decimal("5.00")
+        assert first.current_backing.required_backing == (
+            first.capital_admission.new_notional + Decimal("5.00")
+        )
+        assert first.observed_cash_backing == Decimal("8")
+
+
+@pytest.mark.asyncio
+async def test_iter0030_physical_headroom_cannot_override_thirty_dollar_model(
+    placement_scope, blocked_network, monkeypatch,
+):
+    """Real subsequent NORMAL posts stop at the unchanged model-capital limit."""
+    scope = placement_scope
+    service, _ = _prepare_real_admission(scope)
+    scope.session._market_data_max_age_s = 60
+    fills = [
+        (("yes-token" if index % 2 == 0 else "no-token"), Decimal("4"))
+        for index in range(20)
+    ]
+    client = _IndependentCrossModeVenue(scope, fills)
+    client.account_mutator = lambda account: SimpleNamespace(**{
+        **vars(account), "balance_usd": Decimal("100"),
+        "allowance_usd": Decimal("100"),
+    })
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    async def inline_io(fn, *args):
+        return fn(*args)
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    captured_accounts = []
+    async def independent_capture(_bootstrap, _gateway, signer, funder, *, now):
+        account = client.independent_account(signer, funder, now())
+        captured_accounts.append(account)
+        return account
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", independent_capture)
+    original_resolve = scope.owner.resolve
+    def resolve_then_release_fill(attempt, outcome):
+        resolved = original_resolve(attempt, outcome)
+        event = client.registered.get(client.posts)
+        if event is not None:
+            event.set()
+        return resolved
+    monkeypatch.setattr(scope.owner, "resolve", resolve_then_release_fill)
+
+    try:
+        initial = await scope.session.initial_normal_admission()
+        assert initial.eligible, initial.reason
+        submitted = await asyncio.wait_for(scope.session.submit_initial_normal(
+            initial, authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 5)
+        assert submitted.outcome == "COMPLETE"
+        closed = await asyncio.wait_for(scope.session.complete_initial_normal_cycle(
+            submitted.resolved_attempt, close_budget_s=2,
+        ), 5)
+        assert closed.close_result.next_mode is RDPMode.NORMAL
+        async def process_feed(message):
+            service._processing_receipt_monotonic = time.monotonic()
+            try:
+                await service._process_raw(json.dumps(message))
+            finally:
+                service._processing_receipt_monotonic = None
+        await process_feed({
+            "event_type": "tick_size_change", "market": scope.market.condition_id,
+            "asset_id": "yes-token", "new_tick_size": "0.005",
+        })
+        await asyncio.sleep(2.05)
+        for token, bid, ask in (("yes-token", .56, .60), ("no-token", .42, .48)):
+            await process_feed({
+                "event_type": "book", "market": scope.market.condition_id,
+                "asset_id": token, "tick_size": "0.005" if token == "yes-token" else "0.01",
+                "bids": [{"price": str(bid - (.005 if token == "yes-token" else .01)), "size": "10"},
+                         {"price": str(bid), "size": "10"}],
+                "asks": [{"price": str(ask), "size": "10"}], "timestamp": "2",
+            })
+            await process_feed({
+                "event_type": "last_trade_price", "market": scope.market.condition_id,
+                "asset_id": token, "price": str(bid), "size": "1",
+                "side": "BUY", "timestamp": "2",
+            })
+        clock = _DeterministicMonotonicClock(time.monotonic_ns())
+        scope.session._monotonic_ns = clock.read
+        denial_observed = [False]
+        original_log = scope.session._log_next_action_result
+        def capture_denial(admission):
+            original_log(admission)
+            if admission.reason in {"INSUFFICIENT_FREE_CASH", "NORMAL_REPAIR_RESERVE"}:
+                denial_observed[0] = True
+        monkeypatch.setattr(scope.session, "_log_next_action_result", capture_denial)
+        async def bounded_sleep(delay):
+            await clock.sleep(delay)
+            if denial_observed[0]:
+                scope.session._now = lambda: float(scope.bootstrap.end_epoch)
+        scope.session._sleep = bounded_sleep
+        result = await asyncio.wait_for(scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 20)
+    finally:
+        gateway.close()
+
+    denial = next(item for item in result.admissions if item.reason == "NORMAL_REPAIR_RESERVE")
+    assert result.outcome == "TIME_EXHAUSTED"
+    assert denial_observed[0] and denial.capital_projection.certified
+    assert denial.capital_projection.snapshot.capital == Decimal("30.00")
+    assert denial.capital_admission is not None
+    assert denial.capital_projection.snapshot.free_cash < (
+        denial.capital_admission.new_notional + denial.capital_admission.protected_amount
+    )
+    assert captured_accounts[-1].balance_usd == Decimal("100")
+    assert captured_accounts[-1].allowance_usd == Decimal("100")
+    assert client.posts == len(result.submissions) + 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0030_rebalance_monitor_rejects_independent_remaining_size_mismatch(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, token_id="yes-token", size=5)
+    client = _IndependentCrossModeVenue(scope, [("no-token", Decimal("1.25"))])
+    client.confirmed["yes-token"] = [Decimal("5"), Decimal("2.75")]
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    async def inline_io(fn, *args):
+        return fn(*args)
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    from polymaker.rdp_account import RDPOrderEvidence
+    import polymaker.rdp_runtime as runtime
+    async def independent_capture(_bootstrap, _gateway, signer, funder, *, now):
+        return client.independent_account(signer, funder, now())
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", independent_capture)
+
+    def inconsistent_remaining(account):
+        if client.posts < 1 or not account.selected_open_orders:
+            return account
+        bad = replace(
+            account.selected_open_orders[0],
+            remaining_size=account.selected_open_orders[0].remaining_size + Decimal("0.5"),
+        )
+        all_orders = tuple(
+            bad if row.order_id == bad.order_id else row
+            for row in account.all_open_orders
+        )
+        return SimpleNamespace(**{
+            **vars(account), "selected_open_orders": (bad,), "all_open_orders": all_orders,
+        })
+    client.account_mutator = inconsistent_remaining
+
+    try:
+        result = await asyncio.wait_for(scope.session.continue_rebalance(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 5)
+    finally:
+        gateway.close()
+
+    assert client.posts == 1
+    assert result.outcome == "TERMINAL"
+    assert result.unresolved_exposure
+    assert not any(row[0] == "POST" and row[1] > 1 for row in client.oracle_events)
+    assert any(row[0] == "ACCOUNT_READ" and row[2] > 0 for row in client.oracle_events)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0030_stale_final_account_guard_denies_subsequent_normal_post(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    await _complete_cycle_with_confirmed_fill(scope, token_id="yes-token", size=1.25)
+    service = scope.session.public_session.service
+    # The same subsequent admission path requires current feed evidence and the
+    # existing tick-size warmup before it can reach the final SDK guard.
+    async def process_feed(message):
+        service._processing_receipt_monotonic = time.monotonic()
+        try:
+            await service._process_raw(json.dumps(message))
+        finally:
+            service._processing_receipt_monotonic = None
+
+    await process_feed({
+        "event_type": "tick_size_change",
+        "market": scope.market.condition_id,
+        "asset_id": "yes-token",
+        "new_tick_size": "0.005",
+    })
+    await asyncio.sleep(2.05)
+    await process_feed({
+        "event_type": "book", "market": scope.market.condition_id,
+        "asset_id": "yes-token", "tick_size": "0.005",
+        "bids": [{"price": "0.55", "size": "10"},
+                 {"price": "0.56", "size": "10"}],
+        "asks": [{"price": "0.60", "size": "10"}],
+        "timestamp": "2",
+    })
+    await process_feed({
+        "event_type": "book", "market": scope.market.condition_id,
+        "asset_id": "no-token", "tick_size": "0.01",
+        "bids": [{"price": "0.40", "size": "10"},
+                 {"price": "0.41", "size": "10"}],
+        "asks": [{"price": "0.45", "size": "10"}],
+        "timestamp": "2",
+    })
+    for token, price in (("yes-token", "0.56"), ("no-token", "0.42")):
+        await process_feed({
+            "event_type": "last_trade_price",
+            "market": scope.market.condition_id, "asset_id": token,
+            "price": price, "size": "1", "side": "BUY", "timestamp": "2",
+        })
+    client = _IndependentCrossModeVenue(scope, [("foreign-token", 0)])
+    client.confirmed["yes-token"] = [Decimal("1.25"), Decimal("0.6875")]
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+    async def inline_io(fn, *args):
+        return fn(*args)
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    async def independent_capture(_bootstrap, _gateway, signer, funder, *, now):
+        return client.independent_account(signer, funder, now())
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", independent_capture)
+
+    # This SDK-sign callback changes only future fake account evidence. The
+    # already captured admission remains immutable; the final guard must reread
+    # and refuse the actual gateway POST.
+    fake_now = [time.time()]
+    def make_account_stale_after_signing():
+        # The admission owns the immutable read; advancing its evaluation clock
+        # makes those captured receipts stale at the actual final SDK guard.
+        fake_now[0] += 100
+    client.on_create = make_account_stale_after_signing
+    scope.session._now = lambda: fake_now[0]
+    original_sleep = scope.session._sleep
+    async def end_after_retry(delay):
+        await original_sleep(delay)
+        fake_now[0] = float(scope.bootstrap.end_epoch)
+    scope.session._sleep = end_after_retry
+    try:
+        result = await asyncio.wait_for(scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        ), 5)
+    finally:
+        gateway.close()
+
+    assert client.posts == 0
+    assert result.submissions
+    assert result.submissions[0].outcome == "NO_SEND"
+    assert result.submissions[0].post_started is False
     assert blocked_network == []

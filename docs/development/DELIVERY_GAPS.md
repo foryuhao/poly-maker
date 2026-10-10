@@ -288,11 +288,11 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0030.
-Current Stage: WORKER_PENDING.
+Current Stage: ARCHITECT_REVISION_PENDING.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Explicit human resume authorizes required serial development/repair/review/archive until MICRO_LIVE_READY. ITER-0029 complete DG-004 PASS/archive9034801 and receipt1440a30 are direct-remote verified. No unfinished iteration existed at recovery. ITER-0030 Architect01 approves verification-first complete DG-002 acceptance using existing production and independent fake venue/account oracle. Worker pending; DG-002 remains OPEN. No production changes are authorized by this initial contract. Required production defects return to Architect for additive revision.
+Explicit human resume authorizes required serial development/repair/review/archive until MICRO_LIVE_READY. ITER-0029 complete DG-004 PASS/archive9034801 and receipt1440a30 are direct-remote verified. No unfinished iteration existed at recovery. ITER-0030 Architect01 approves verification-first complete DG-002 acceptance using existing production and independent fake venue/account oracle. Worker02 IMPLEMENTED; affected832 and full1767/2 pass with zero network attempts. Reviewer03 RETURN_TO_ARCHITECT (B1 selected-token foreign-order actual POST both modes; M1 partial monitor projection not reached; M2 claimed account-stale test actually market-status stale). DG-002 remains OPEN. Additive Architect revision04 required before production repair. No production changes are authorized by this initial contract. Required production defects return to Architect for additive revision.
 
 DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. Historical convergence and all failed/pass iteration artifacts remain immutable. research_outputs/ remains preserved and excluded. Continue automatic required serial workflow and verified archival; no real orders/cancels, main merge, strategy extension or safety relaxation authorized.

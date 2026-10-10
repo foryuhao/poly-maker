@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0030`
 
-Current Stage: `WORKER_PENDING`
+Current Stage: `ARCHITECT_REVISION_PENDING`
 
 MICRO_LIVE_READY: `NO`
 
@@ -105,9 +105,9 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-ITER-0030: DG-002 complete cross-mode current capital/inventory acceptance. Architect01 APPROVED_FOR_IMPLEMENTATION after inspection of actual existing components. Verification-first scope: production unchanged; independent scripted fake venue/account evidence through initial NORMAL, subsequent NORMAL, partial REBALANCE and actual resumed NORMAL. Worker pending; no iteration tests executed yet. DG-002 remains OPEN until complete independent acceptance. Recovery base1440a30 exactly matched remote; initialization48a947e records protected research_outputs and authorization. Prior ITER-0029 final09 PASS and archive9034801/receipt1440a30 remain valid.
+ITER-0030 DG-002: Reviewer03 RETURN_TO_ARCHITECT, BLOCKER1/MUST_FIX2. Independent selected-token foreign-order probe demonstrates actual new-risk POST in both NORMAL/REBALANCE (2 failed, zero network); required current-backing scope repair exceeds initial production-unchanged contract. Positive partial scenario bypasses actual monitor capital projection; claimed account-stale guard instead rejects stale market status. All exact findings/evidence are immutable in Reviewer03/review_evidence. Worker02 full1767/2 and independent new18/affected832 passed, but DG-002 remains OPEN and no CODE_READY. Prior closed gaps remain valid.
 
-Next: Worker under frozen Architect01, then independent actual-diff Reviewer, repairs or additive Architect revision if required. Continue required serial iterations until MICRO_LIVE_READY, then stop and create final comparison/PR. Real orders/cancels, main merge and strategy changes remain unauthorized.
+Next: same ITER-0030 additive Architect revision04, then Worker05 and independent Reviewer06. No human strategy change needed for existing selected-scope requirement. Source changes remain forbidden until revised approved contract. Preserve all original failures and research_outputs. Resume authorization continues through MICRO_LIVE_READY; no real orders/cancels or main merge.
 
 ---
 
