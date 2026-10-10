@@ -13,17 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import itertools
-import logging
 import math
-import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
-from concurrent.futures import Future as ConcurrentFuture
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
-from decimal import Decimal, InvalidOperation
-from typing import Any, TypeVar, get_args
+from dataclasses import asdict
+from typing import Any, TypeVar
 
 import httpx
 
@@ -38,94 +34,13 @@ log = get_logger("execution.gateway")
 
 _T = TypeVar("_T")
 
-_SDK_WORKER_CONTEXT = threading.local()
-
-
-class _AccountSDKDiagnosticFilter(logging.Filter):
-    """Drop raw SDK HTTP diagnostics only inside an opt-in account worker call."""
-
-    def filter(self, _record: logging.LogRecord) -> bool:
-        return not getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
-
-
-_sdk_http_logger = logging.getLogger("py_clob_client_v2.http_helpers.helpers")
-if not any(isinstance(item, _AccountSDKDiagnosticFilter) for item in _sdk_http_logger.filters):
-    _sdk_http_logger.addFilter(_AccountSDKDiagnosticFilter())
-
 
 class GatewayReadError(RuntimeError):
     """An authoritative Gateway snapshot could not be fetched or parsed."""
 
 
-@dataclass(frozen=True, slots=True)
-class ExactOpenOrder:
-    """Opt-in exact-decimal account order evidence; legacy OpenOrder stays float."""
-
-    order_id: str
-    token_id: str
-    side: Side
-    price: Decimal
-    remaining_size: Decimal
-
-
-def _exact_order_decimal(value: object) -> Decimal:
-    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
-        raise ValueError("exact order numeric field has unsupported type")
-    if isinstance(value, str) and not value.strip():
-        raise ValueError("exact order numeric field is blank")
-    try:
-        result = value if isinstance(value, Decimal) else Decimal(value)
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError("exact order numeric field is malformed") from exc
-    if not result.is_finite():
-        raise ValueError("exact order numeric field is nonfinite")
-    return result
-
-
-def _exact_decimal_difference(left: Decimal, right: Decimal) -> Decimal:
-    def coefficient(value: Decimal) -> tuple[int, int]:
-        sign, digits, exponent = value.as_tuple()
-        integer = int("".join(str(digit) for digit in digits) or "0")
-        return (-integer if sign else integer), exponent
-
-    left_value, left_exponent = coefficient(left)
-    right_value, right_exponent = coefficient(right)
-    exponent = min(left_exponent, right_exponent)
-    if max(left_exponent, right_exponent) - exponent > 4096:
-        raise ValueError("exact order numeric exponent range is excessive")
-    integer = (left_value * 10 ** (left_exponent - exponent)
-               - right_value * 10 ** (right_exponent - exponent))
-    sign = 1 if integer < 0 else 0
-    digits = tuple(int(digit) for digit in str(abs(integer)))
-    return Decimal((sign, digits, exponent))
-
-
 class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
-
-    def __init__(self, message: str, *, acknowledged_orders: tuple[OpenOrder, ...] = (),
-                 observed_order_ids: tuple[str, ...] = (), reason: str | None = None,
-                 post_attempted: bool = True, error_type: str | None = None) -> None:
-        super().__init__(message)
-        self.acknowledged_orders = tuple(acknowledged_orders)
-        self.observed_order_ids = tuple(observed_order_ids)
-        self.reason = reason
-        self.post_attempted = post_attempted
-        self.error_type = error_type
-
-
-class PlacementNotAttempted(PlacementUnknown):
-    """Typed categorical failure known to precede any order POST."""
-
-    def __init__(self, *, reason: str, error_type: str) -> None:
-        super().__init__(
-            "placement failed before order POST", reason=reason,
-            post_attempted=False, error_type=error_type,
-        )
-
-
-class BatchPlacementIncomplete(PlacementUnknown):
-    """A two-order placement had a known one-leg acceptance."""
 
 
 def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
@@ -137,53 +52,8 @@ def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
     return None
 
 
-_ORDER_ID_FIELDS = ("orderID", "order_id", "orderId", "id")
-_SAFE_PLACEMENT_REASONS = frozenset({
-    "BATCH_POST_EXCEPTION", "BATCH_CARDINALITY_UNKNOWN", "DUPLICATE_ACCEPTED_ID",
-    "UNRESOLVED_BATCH_RESULT", "PARTIAL_ACCEPTANCE", "PLACEMENT_NOT_ATTEMPTED",
-    "PLACEMENT_OUTCOME_UNKNOWN",
-})
-
-
-def _usable_order_ids(row: Mapping[str, Any]) -> tuple[str, ...]:
-    found: list[str] = []
-    for key in _ORDER_ID_FIELDS:
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            normalized = value.strip()
-            if normalized not in found:
-                found.append(normalized)
-    return tuple(found)
-
-
-def _observed_order_ids(raw: Any) -> tuple[str, ...]:
-    """Preserve IDs visible in a response without claiming request attribution."""
-    rows = raw if isinstance(raw, list) else [raw]
-    found: list[str] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            continue
-        for order_id in _usable_order_ids(row):
-            if order_id not in found:
-                found.append(order_id)
-    return tuple(found)
-
-
 def _tick_str(tick: float) -> str:
     return f"{tick:g}"
-
-
-def _safe_gateway_diagnostic(
-    event: str, *, operation: str, error_type: str,
-    **fields: Any,
-) -> None:
-    """Emit categorized gateway diagnostics without retaining SDK exceptions."""
-    try:
-        log.warning(event, operation=operation, error_type=error_type, **fields)
-    except Exception:
-        # A broken log handler must not alter an authoritative read/cancel result.
-        # The caller invokes this only after leaving the SDK exception handler.
-        return
 
 
 class ExecutionGateway:
@@ -197,9 +67,6 @@ class ExecutionGateway:
     ) -> None:
         self._cfg = cfg
         self._paper = paper
-        self._derive_only = False
-        self._account_io: set[ConcurrentFuture[Any]] = set()
-        self._account_io_lock = threading.Lock()
         self._journal = journal
         self._research = research
         self._client: Any = None  # py_clob_client_v2.ClobClient
@@ -230,53 +97,9 @@ class ExecutionGateway:
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
 
-    async def aclose(self) -> None:
-        """Drain account-owned blocking reads without blocking the event loop."""
-        cancelled = False
-        while True:
-            with self._account_io_lock:
-                pending = tuple(self._account_io)
-            if not pending:
-                break
-            try:
-                await asyncio.gather(
-                    *(asyncio.wrap_future(future) for future in pending),
-                    return_exceptions=True,
-                )
-            except asyncio.CancelledError:
-                # Cancellation cannot stop a running concurrent future. Keep
-                # ownership until every account read completes, then propagate.
-                cancelled = True
-        self.close()
-        if cancelled:
-            raise asyncio.CancelledError
-
-    def _error_detail(self, exc: Exception) -> str:
-        """Keep authenticated-read diagnostics credential-safe in derive-only mode."""
-        return type(exc).__name__ if self._derive_only else str(exc)
-
     async def _io(self, fn: Callable[..., _T], *args: Any) -> _T:
         """Run a blocking client call on the dedicated pool."""
         loop = asyncio.get_running_loop()
-        if self._derive_only:
-            def _account_call() -> _T:
-                previous = getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
-                _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = True
-                try:
-                    return fn(*args)
-                finally:
-                    _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = previous
-
-            future = self._pool.submit(_account_call)
-            with self._account_io_lock:
-                self._account_io.add(future)
-
-            def _discard(done: ConcurrentFuture[Any]) -> None:
-                with self._account_io_lock:
-                    self._account_io.discard(done)
-
-            future.add_done_callback(_discard)
-            return await asyncio.wrap_future(future, loop=loop)
         return await loop.run_in_executor(self._pool, fn, *args)
 
     @property
@@ -294,9 +117,8 @@ class ExecutionGateway:
         return self._funder or self._address
 
     # ── lifecycle ───────────────────────────────────────────────────────
-    async def connect(self, *, derive_only: bool = False) -> None:
+    async def connect(self) -> None:
         """Build the client and derive L2 API creds (network). No-op fields in paper."""
-        self._derive_only = derive_only
         sec = self._cfg.secrets
         if self._paper and not sec.has_wallet:
             # paper mode runs the full pipeline without a wallet (no orders posted)
@@ -320,13 +142,7 @@ class ExecutionGateway:
                 signature_type=self._cfg.wallet.signature_type,
                 funder=sec.browser_address,
             )
-            creds = client.derive_api_key() if derive_only else client.create_or_derive_api_key()
-            if derive_only:
-                values = (getattr(creds, "api_key", None),
-                          getattr(creds, "api_secret", None),
-                          getattr(creds, "api_passphrase", None))
-                if not all(isinstance(value, str) and value.strip() for value in values):
-                    raise RuntimeError("derived API credentials are incomplete")
+            creds = client.create_or_derive_api_key()
             client.set_api_creds(creds)
             return client, creds, client.get_address()
 
@@ -350,7 +166,7 @@ class ExecutionGateway:
             else:
                 log.info("clock_ok", drift_s=round(drift, 1))
         except (httpx.HTTPError, ValueError) as exc:
-            log.warning("clock_check_failed", err=self._error_detail(exc))
+            log.warning("clock_check_failed", err=str(exc))
 
     # ── placement ───────────────────────────────────────────────────────
     async def place(
@@ -358,34 +174,7 @@ class ExecutionGateway:
         submit_guard: Callable[[], bool] | None = None,
         force_post_only: bool = False,
         strict_placement: bool = False,
-        allow_two_order_rdp_pair: bool = False,
-        allow_single_order_rdp_rebalance: bool = False,
-        token_ticks: Mapping[str, int | float | Decimal] | None = None,
-        safe_diagnostics: bool = False,
-        on_post_start: Callable[[], None] | None = None,
     ) -> list[OpenOrder]:
-        if not isinstance(safe_diagnostics, bool):
-            raise ValueError("safe_diagnostics must be a boolean")
-        if on_post_start is not None and not callable(on_post_start):
-            raise ValueError("on_post_start must be callable")
-        signing_ticks: dict[str, str] | None = None
-        if token_ticks is not None:
-            quotes, signing_ticks = self._snapshot_token_tick_request(
-                quotes, meta, token_ticks,
-                force_post_only=force_post_only,
-                strict_placement=strict_placement,
-                allow_two_order_rdp_pair=allow_two_order_rdp_pair,
-                allow_single_order_rdp_rebalance=allow_single_order_rdp_rebalance,
-                submit_guard=submit_guard,
-            )
-        if allow_two_order_rdp_pair:
-            self._validate_two_order_rdp_pair(
-                quotes, meta, force_post_only=force_post_only,
-                strict_placement=strict_placement)
-        if allow_single_order_rdp_rebalance:
-            self._validate_single_order_rdp_rebalance(
-                quotes, meta, force_post_only=force_post_only,
-                strict_placement=strict_placement)
         if not quotes:
             return []
         if any(q.size + 1e-9 < meta.min_order_size for q in quotes):
@@ -424,13 +213,9 @@ class ExecutionGateway:
                 PostOrdersV2Args,
             )
 
-            legacy_opts = (PartialCreateOrderOptions(
-                tick_size=_tick_str(meta.tick_size), neg_risk=meta.neg_risk)
-                if signing_ticks is None else None)
+            opts = PartialCreateOrderOptions(tick_size=_tick_str(meta.tick_size), neg_risk=meta.neg_risk)
             args = []
             for q in quotes:
-                opts = (legacy_opts if signing_ticks is None else PartialCreateOrderOptions(
-                    tick_size=signing_ticks[q.token_id], neg_risk=meta.neg_risk))
                 signed = self._client.create_order(
                     OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
                     options=opts,
@@ -440,214 +225,40 @@ class ExecutionGateway:
                 log.info("order_place_aborted_stale_connectivity", cid=meta.condition_id[:8])
                 return []
             attempted = True
-            if on_post_start is not None:
-                on_post_start()
-            post_error_type = None
             try:
                 resp = self._client.post_orders(
                     args, post_only=(True if force_post_only else self._cfg.execution.post_only)
                 )
             except Exception as exc:
-                if not safe_diagnostics:
-                    reason = ("BATCH_POST_EXCEPTION" if (allow_two_order_rdp_pair
-                             or allow_single_order_rdp_rebalance) else None)
-                    raise PlacementUnknown("order POST outcome is unknown", reason=reason) from exc
-                post_error_type = type(exc).__name__
-            if post_error_type is not None:
-                raise PlacementUnknown(
-                    "order POST outcome is unknown", reason="BATCH_POST_EXCEPTION",
-                    post_attempted=True, error_type=post_error_type,
-                )
+                raise PlacementUnknown("order POST outcome is unknown") from exc
             try:
-                if allow_two_order_rdp_pair:
-                    return self._parse_two_order_rdp_pair_response(resp, quotes)
-                if allow_single_order_rdp_rebalance:
-                    return self._parse_single_order_rdp_rebalance_response(resp, quotes)
                 return self._parse_place_response(resp, quotes)
             except PlacementUnknown:
                 raise
             except Exception as exc:
                 raise PlacementUnknown("order POST response could not be parsed") from exc
 
-        def _place_with_safe_diagnostics() -> list[OpenOrder]:
-            previous = getattr(_SDK_WORKER_CONTEXT, "suppress_sdk_diagnostics", False)
-            _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = True
-            try:
-                return _place()
-            finally:
-                _SDK_WORKER_CONTEXT.suppress_sdk_diagnostics = previous
-
-        safe_unknown: PlacementUnknown | None = None
-        safe_failure_type: str | None = None
         try:
-            placed = await self._io(
-                _place_with_safe_diagnostics if safe_diagnostics else _place,
-            )
+            placed = await self._io(_place)
             if request_id is not None:
                 self._order_observe("ORDER_ACK", meta.condition_id,
                     {"request_id": request_id, "order_ids": [o.order_id for o in placed],
                      "outcome": "ACK" if placed else "REJECTED" if attempted else "ABORTED"})
             return placed
-        except PlacementUnknown as exc:
-            if safe_diagnostics:
-                safe_unknown = exc
-            else:
-                payload = {"request_id": request_id, "outcome": "UNKNOWN"}
-                if exc.reason is not None or exc.acknowledged_orders or exc.observed_order_ids:
-                    payload.update({
-                        "reason": exc.reason,
-                        "acknowledged_order_ids": tuple(o.order_id for o in exc.acknowledged_orders),
-                        "observed_order_ids": exc.observed_order_ids,
-                    })
-                self._order_observe("ORDER_ACK", meta.condition_id, payload)
-                if strict_placement:
-                    raise
-                log.error("place_outcome_unknown", n=len(quotes))
-                return []
-        except Exception as exc:  # noqa: BLE001 - legacy preserves its historical diagnostic
-            if safe_diagnostics:
-                safe_failure_type = type(exc).__name__
-            else:
-                self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "FAILED", "error_type": type(exc).__name__})
-                log.error("place_failed", err=str(exc), n=len(quotes))
-                return []
-
-        if safe_unknown is not None:
-            error_type = safe_unknown.error_type
-            if error_type is None and safe_unknown.__cause__ is not None:
-                error_type = type(safe_unknown.__cause__).__name__
-            safe_reason = safe_unknown.reason
-            if safe_reason not in _SAFE_PLACEMENT_REASONS:
-                safe_reason = "PLACEMENT_OUTCOME_UNKNOWN"
-            sanitized = PlacementUnknown(
-                "order placement outcome is unknown",
-                acknowledged_orders=safe_unknown.acknowledged_orders,
-                observed_order_ids=safe_unknown.observed_order_ids,
-                reason=safe_reason, post_attempted=safe_unknown.post_attempted,
-                error_type=error_type,
-            )
-            payload = {
-                "request_id": request_id, "outcome": "UNKNOWN", "reason": safe_reason,
-                "error_type": error_type,
-                "acknowledged_order_ids": tuple(
-                    order.order_id for order in sanitized.acknowledged_orders),
-                "observed_order_ids": sanitized.observed_order_ids,
-            }
-            self._order_observe("ORDER_ACK", meta.condition_id, payload)
-            if error_type is not None:
-                _safe_gateway_diagnostic(
-                    "place_failed", operation="place", error_type=error_type,
-                    post_attempted=sanitized.post_attempted, n=len(quotes),
-                )
+        except PlacementUnknown:
+            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "UNKNOWN"})
             if strict_placement:
-                raise sanitized
+                raise
             log.error("place_outcome_unknown", n=len(quotes))
             return []
-
-        if safe_failure_type is not None:
-            failure = (PlacementUnknown(
-                "order POST outcome is unknown", reason="BATCH_POST_EXCEPTION",
-                post_attempted=True, error_type=safe_failure_type,
-            ) if attempted else PlacementNotAttempted(
-                reason="PLACEMENT_NOT_ATTEMPTED", error_type=safe_failure_type,
-            ))
-            self._order_observe("ORDER_ACK", meta.condition_id, {
-                "request_id": request_id,
-                "outcome": "UNKNOWN" if attempted else "FAILED_BEFORE_POST",
-                "reason": failure.reason, "error_type": safe_failure_type,
-                "post_attempted": attempted,
-            })
-            _safe_gateway_diagnostic(
-                "place_failed", operation="place", error_type=safe_failure_type,
-                post_attempted=attempted, n=len(quotes),
-            )
-            if strict_placement:
-                raise failure
+        except Exception as exc:  # noqa: BLE001 - surface + continue; engine handles error rate
+            self._order_observe("ORDER_ACK", meta.condition_id, {"request_id": request_id, "outcome": "FAILED", "error_type": type(exc).__name__})
+            log.error("place_failed", err=str(exc), n=len(quotes))
             return []
 
     def _paper_order(self, q: Quote) -> OpenOrder:
         oid = f"paper-{next(self._paper_ids)}"
         return OpenOrder(oid, q.token_id, q.side, q.price, q.size, OrderState.LIVE)
-
-    @staticmethod
-    def _snapshot_token_tick_request(
-        quotes: list[Quote], meta: MarketMeta,
-        token_ticks: Mapping[str, int | float | Decimal], *,
-        force_post_only: bool, strict_placement: bool,
-        allow_two_order_rdp_pair: bool,
-        allow_single_order_rdp_rebalance: bool = False,
-        submit_guard: Callable[[], bool] | None,
-    ) -> tuple[list[Quote], dict[str, str]]:
-        """Copy and validate opt-in per-token signing inputs before any await."""
-        if (force_post_only is not True or strict_placement is not True
-                or not callable(submit_guard)):
-            raise ValueError("per-token tick placement requires forced post-only, strict mode, and a submit guard")
-        if not isinstance(meta, MarketMeta) or not isinstance(quotes, list):
-            raise ValueError("per-token tick placement requires market metadata and a quote list")
-        quote_snapshot = list(quotes)
-        if len(quote_snapshot) == 1 and not allow_single_order_rdp_rebalance:
-            quote = quote_snapshot[0]
-            if (not isinstance(quote, Quote) or quote.side is not Side.BUY
-                    or quote.token_id not in (meta.yes.token_id, meta.no.token_id)):
-                raise ValueError("per-token tick single placement requires one market BUY quote")
-        elif len(quote_snapshot) == 1 and allow_single_order_rdp_rebalance is True:
-            ExecutionGateway._validate_single_order_rdp_rebalance(
-                quote_snapshot, meta, force_post_only=force_post_only,
-                strict_placement=strict_placement,
-            )
-        elif len(quote_snapshot) == 2 and allow_two_order_rdp_pair is True:
-            ExecutionGateway._validate_two_order_rdp_pair(
-                quote_snapshot, meta, force_post_only=force_post_only,
-                strict_placement=strict_placement,
-            )
-        else:
-            raise ValueError("per-token tick placement requires one BUY, opted-in rebalance, or opted-in market pair")
-
-        if not isinstance(token_ticks, Mapping):
-            raise ValueError("per-token ticks must be a token-to-tick mapping")
-        try:
-            tick_snapshot = dict(token_ticks)
-        except (RuntimeError, TypeError, ValueError) as exc:
-            raise ValueError("per-token ticks could not be copied") from exc
-        quote_tokens = [quote.token_id for quote in quote_snapshot]
-        if (any(not isinstance(token, str) for token in quote_tokens)
-                or len(set(quote_tokens)) != len(quote_tokens)):
-            raise ValueError("per-token tick quotes must have unique string token ids")
-        if set(tick_snapshot) != set(quote_tokens):
-            raise ValueError("per-token tick keys must exactly match submitted quote tokens")
-
-        from py_clob_client_v2.clob_types import TickSize
-
-        supported_ticks = get_args(TickSize)
-        validated_ticks: dict[str, str] = {}
-        for token, value in tick_snapshot.items():
-            if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
-                raise ValueError(f"invalid tick value for token {token!r}")
-            try:
-                tick = Decimal(str(value))
-            except (InvalidOperation, ValueError) as exc:
-                raise ValueError(f"invalid tick value for token {token!r}") from exc
-            if not tick.is_finite() or tick <= 0:
-                raise ValueError(f"unsupported tick value for token {token!r}")
-            sdk_tick = next((candidate for candidate in supported_ticks
-                             if tick == Decimal(candidate)), None)
-            if sdk_tick is None:
-                raise ValueError(f"unsupported tick value for token {token!r}")
-            validated_ticks[token] = sdk_tick
-
-        for quote in quote_snapshot:
-            if (isinstance(quote.price, bool)
-                    or not isinstance(quote.price, (int, float, Decimal))):
-                raise ValueError(f"invalid quote price for token {quote.token_id!r}")
-            try:
-                price = Decimal(str(quote.price))
-            except (InvalidOperation, ValueError) as exc:
-                raise ValueError(f"invalid quote price for token {quote.token_id!r}") from exc
-            tick = Decimal(validated_ticks[quote.token_id])
-            if (not price.is_finite() or price <= 0 or price >= 1
-                    or price % tick != 0):
-                raise ValueError(f"quote price is invalid or off-grid for token {quote.token_id!r}")
-        return quote_snapshot, validated_ticks
 
     def _parse_place_response(self, resp: Any, quotes: list[Quote]) -> list[OpenOrder]:
         """Map a post_orders response to OpenOrders without guessing on shape."""
@@ -689,147 +300,9 @@ class ExecutionGateway:
         out.append(OpenOrder(oid.strip(), q.token_id, q.side, q.price, q.size, OrderState.LIVE))
         return out
 
-    @staticmethod
-    def _validate_two_order_rdp_pair(
-        quotes: list[Quote], meta: MarketMeta, *, force_post_only: bool,
-        strict_placement: bool,
-    ) -> None:
-        if (not isinstance(quotes, list) or len(quotes) != 2
-                or not isinstance(meta, MarketMeta)
-                or force_post_only is not True or strict_placement is not True):
-            raise ValueError("RDP pair placement requires two quotes, strict mode, and forced post-only")
-        if any(not isinstance(quote, Quote) or quote.side is not Side.BUY for quote in quotes):
-            raise ValueError("RDP pair placement requires BUY quotes")
-        if (not isinstance(meta.yes.token_id, str) or not isinstance(meta.no.token_id, str)
-                or any(not isinstance(quote.token_id, str) for quote in quotes)):
-            raise ValueError("RDP pair placement requires string outcome token ids")
-        tokens = {quote.token_id for quote in quotes}
-        expected = {meta.yes.token_id, meta.no.token_id}
-        if (len(expected) != 2 or tokens != expected):
-            raise ValueError("RDP pair placement requires one quote per market outcome token")
-
-    @staticmethod
-    def _validate_single_order_rdp_rebalance(
-        quotes: list[Quote], meta: MarketMeta, *, force_post_only: bool,
-        strict_placement: bool,
-    ) -> None:
-        if (not isinstance(quotes, list) or len(quotes) != 1
-                or not isinstance(meta, MarketMeta)
-                or force_post_only is not True or strict_placement is not True):
-            raise ValueError("RDP rebalance placement requires one quote, strict mode, and forced post-only")
-        quote = quotes[0]
-        if (not isinstance(quote, Quote) or quote.side is not Side.BUY
-                or quote.token_id not in (meta.yes.token_id, meta.no.token_id)
-                or quote.size != 5 or not 0 < quote.price < 1):
-            raise ValueError("RDP rebalance placement requires a five-share market BUY")
-
-    @staticmethod
-    def _parse_single_order_rdp_rebalance_response(
-        resp: Any, quotes: list[Quote],
-    ) -> list[OpenOrder]:
-        observed = _observed_order_ids(resp)
-        if not isinstance(resp, list) or len(resp) != 1 or len(quotes) != 1:
-            raise PlacementUnknown(
-                "single rebalance POST response did not contain one positional result",
-                observed_order_ids=observed, reason="BATCH_CARDINALITY_UNKNOWN",
-            )
-        row = resp[0]
-        if not isinstance(row, Mapping) or type(row.get("success")) is not bool:
-            raise PlacementUnknown(
-                "single rebalance POST response was malformed",
-                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
-            )
-        aliases = tuple(row.get(key) for key in ("orderID", "order_id", "orderId", "id")
-                        if isinstance(row.get(key), str) and row[key].strip())
-        if len(set(aliases)) > 1:
-            raise PlacementUnknown(
-                "single rebalance POST response contained conflicting ids",
-                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
-            )
-        canonical = row.get("orderID")
-        if row["success"] is False:
-            if aliases:
-                raise PlacementUnknown(
-                    "rejected single rebalance response contained an id",
-                    observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
-                )
-            return []
-        if not isinstance(canonical, str) or not canonical.strip():
-            raise PlacementUnknown(
-                "accepted single rebalance response omitted canonical id",
-                observed_order_ids=observed, reason="UNRESOLVED_BATCH_RESULT",
-            )
-        quote = quotes[0]
-        return [OpenOrder(canonical.strip(), quote.token_id, quote.side,
-                          quote.price, quote.size, OrderState.LIVE)]
-
-    @staticmethod
-    def _parse_two_order_rdp_pair_response(
-        resp: Any, quotes: list[Quote],
-    ) -> list[OpenOrder]:
-        """Parse only the official positional two-result batch envelope."""
-        observed = _observed_order_ids(resp)
-        if not isinstance(resp, list) or len(resp) != 2:
-            raise PlacementUnknown(
-                "two-order POST response did not contain two positional results",
-                observed_order_ids=observed, reason="BATCH_CARDINALITY_UNKNOWN")
-
-        classifications: list[tuple[str, str | None, tuple[str, ...]]] = []
-        for row in resp:
-            if not isinstance(row, Mapping):
-                classifications.append(("unknown", None, ()))
-                continue
-            ids = _usable_order_ids(row)
-            canonical = row.get("orderID")
-            canonical_id = canonical.strip() if isinstance(canonical, str) and canonical.strip() else None
-            if row.get("success") is True and canonical_id is not None and len(ids) <= 1:
-                classifications.append(("accepted", canonical_id, ids))
-            elif row.get("success") is False and not ids:
-                classifications.append(("rejected", None, ()))
-            else:
-                classifications.append(("unknown", None, ids))
-
-        accepted_ids = [order_id for state, order_id, _ids in classifications
-                        if state == "accepted" and order_id is not None]
-        duplicate_ids = {order_id for order_id in accepted_ids if accepted_ids.count(order_id) > 1}
-        unsafe_ids = set(duplicate_ids)
-        for state, _order_id, ids in classifications:
-            if state == "unknown":
-                unsafe_ids.update(ids)
-
-        acknowledged: list[OpenOrder] = []
-        for index, (state, order_id, _ids) in enumerate(classifications):
-            if state == "accepted" and order_id is not None and order_id not in unsafe_ids:
-                quote = quotes[index]
-                acknowledged.append(OpenOrder(order_id, quote.token_id, quote.side,
-                                              quote.price, quote.size, OrderState.LIVE))
-
-        if duplicate_ids:
-            raise PlacementUnknown(
-                "two-order POST response reused an accepted order id",
-                acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
-                reason="DUPLICATE_ACCEPTED_ID")
-        if any(state == "unknown" for state, _order_id, _ids in classifications):
-            raise PlacementUnknown(
-                "two-order POST response contains an unresolved result",
-                acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
-                reason="UNRESOLVED_BATCH_RESULT")
-        accepted_count = sum(state == "accepted" for state, _order_id, _ids in classifications)
-        rejected_count = sum(state == "rejected" for state, _order_id, _ids in classifications)
-        if accepted_count == 2:
-            return acknowledged
-        if rejected_count == 2:
-            return []
-        raise BatchPlacementIncomplete(
-            "two-order POST was partially accepted",
-            acknowledged_orders=tuple(acknowledged), observed_order_ids=observed,
-            reason="PARTIAL_ACCEPTANCE")
-
 
     # ── cancellation ────────────────────────────────────────────────────
-    async def cancel(
-        self, order_ids: list[str], *, safe_diagnostics: bool = False,
-    ) -> bool:
+    async def cancel(self, order_ids: list[str]) -> bool:
         """Cancel by id. Returns True on success — callers must NOT drop the
         orders from local state on failure (they may still be live)."""
         if not order_ids or self._paper:
@@ -840,28 +313,6 @@ class ExecutionGateway:
 
         def _cancel() -> None:
             self._client.cancel_orders(order_ids)
-
-        if safe_diagnostics:
-            error_type = None
-            try:
-                await self._io(_cancel)
-            except Exception as exc:  # noqa: BLE001 - retain only the safe category
-                error_type = type(exc).__name__
-            if error_type is not None:
-                self._order_observe("CANCEL_ACK", "", {
-                    "request_id": request_id, "order_ids": tuple(order_ids),
-                    "outcome": "UNKNOWN", "error_type": error_type,
-                })
-                _safe_gateway_diagnostic(
-                    "cancel_failed", operation="cancel", error_type=error_type,
-                    order_count=len(order_ids),
-                )
-                return False
-            self._order_observe("CANCEL_ACK", "", {
-                "request_id": request_id, "order_ids": tuple(order_ids),
-                "outcome": "ACK",
-            })
-            return True
 
         try:
             await self._io(_cancel)
@@ -1141,20 +592,13 @@ class ExecutionGateway:
         return self._hb_failures
 
     # ── reads ───────────────────────────────────────────────────────────
-    async def open_orders(
-        self, *, strict_account: bool = False, exact_decimal: bool = False,
-        safe_diagnostics: bool = False,
-    ) -> list[OpenOrder] | list[ExactOpenOrder]:
-        if not isinstance(exact_decimal, bool):
-            raise GatewayReadError("exact_decimal must be a boolean")
-        if exact_decimal and strict_account is not True:
-            raise GatewayReadError("exact account order reads require strict cumulative fields")
+    async def open_orders(self) -> list[OpenOrder]:
         if self._paper:
             return []
         if self._client is None:
             raise GatewayReadError("open orders unavailable: CLOB client is not connected")
 
-        def _get() -> list[OpenOrder] | list[ExactOpenOrder]:
+        def _get() -> list[OpenOrder]:
             from polymaker.userstream.parse import strict_number
 
             raw = self._client.get_open_orders()
@@ -1178,65 +622,35 @@ class ExecutionGateway:
                     if not isinstance(asset_id, str) or not asset_id.strip():
                         raise ValueError("order row has no valid asset id")
                     side = Side(str(r["side"]).upper())
-                    if strict_account and ("original_size" not in r or "size_matched" not in r):
-                        raise ValueError("order row omitted authoritative cumulative quantities")
-                    original_raw = (r["original_size"] if strict_account else
-                                    r.get("original_size", r.get("size", 0)))
-                    matched_raw = r["size_matched"] if strict_account else r.get("size_matched", 0)
-                    if exact_decimal:
-                        original_size = _exact_order_decimal(original_raw)
-                        size_matched = _exact_order_decimal(matched_raw)
-                        price_decimal = _exact_order_decimal(r["price"])
-                        if (original_size < 0 or size_matched < 0
-                                or size_matched > original_size):
-                            raise ValueError("order row has invalid cumulative size")
-                        remaining_decimal = _exact_decimal_difference(original_size, size_matched)
-                        out.append(ExactOpenOrder(order_id.strip(), asset_id.strip(), side,
-                                                  price_decimal, remaining_decimal))
-                    else:
-                        original_size = strict_number(original_raw)
-                        size_matched = strict_number(matched_raw)
-                        if original_size < 0 or size_matched < 0 or size_matched > original_size:
-                            raise ValueError("order row has invalid cumulative size")
-                        remaining = original_size - size_matched
-                        price = strict_number(r["price"])
-                        out.append(
-                            OpenOrder(
-                                order_id.strip(),
-                                asset_id.strip(),
-                                side,
-                                price,
-                                remaining,
-                                OrderState.LIVE,
-                            )
+                    original_size = strict_number(r.get("original_size", r.get("size", 0)))
+                    size_matched = strict_number(r.get("size_matched", 0))
+                    if original_size < 0 or size_matched < 0 or size_matched > original_size:
+                        raise ValueError("order row has invalid cumulative size")
+                    remaining = original_size - size_matched
+                    price = strict_number(r["price"])
+                    out.append(
+                        OpenOrder(
+                            order_id.strip(),
+                            asset_id.strip(),
+                            side,
+                            price,
+                            remaining,
+                            OrderState.LIVE,
                         )
+                    )
                 except (KeyError, ValueError, TypeError) as exc:
                     raise GatewayReadError("open orders contained an invalid order row") from exc
             return out
 
-        if safe_diagnostics:
-            error_type = None
-            try:
-                result = await self._io(_get)
-            except Exception as exc:  # noqa: BLE001 - retain only the safe category
-                error_type = type(exc).__name__
-            if error_type is not None:
-                _safe_gateway_diagnostic(
-                    "open_orders_failed", operation="open_orders",
-                    error_type=error_type,
-                )
-                raise GatewayReadError("open orders snapshot failed")
-            return result
-
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
-            log.warning("open_orders_failed", err=self._error_detail(exc))
+            log.warning("open_orders_failed", err=str(exc))
             if isinstance(exc, GatewayReadError):
                 raise
             raise GatewayReadError("open orders snapshot failed") from exc
 
-    async def positions(self, *, strict_account: bool = False) -> dict[str, tuple[float, float]]:
+    async def positions(self) -> dict[str, tuple[float, float]]:
         """{token_id: (size, avg_price)} from the data API (reconcile use).
 
         Queries the FUNDER (where positions live), not the signer EOA.
@@ -1277,10 +691,9 @@ class ExecutionGateway:
                             avg_price = strict_number(row["avg_price"])
                         except (KeyError, TypeError, ValueError) as exc:
                             raise GatewayReadError("positions row omitted valid current_size/avg_price") from exc
-                        if (not math.isfinite(size) or not math.isfinite(avg_price) or size < 0
-                                or (strict_account and not 0 <= avg_price <= 1)):
+                        if not math.isfinite(size) or not math.isfinite(avg_price) or size < 0:
                             raise GatewayReadError("positions row contained invalid position values")
-                        if size > 0 or strict_account:
+                        if size > 0:
                             positions[token_id] = (size, avg_price)
                     next_cursor = pagination["next_cursor"]
                     if next_cursor is None:
@@ -1290,14 +703,12 @@ class ExecutionGateway:
                     seen_cursors.add(next_cursor)
                     cursor = next_cursor
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
-            log.warning("positions_failed", err=self._error_detail(exc))
+            log.warning("positions_failed", err=str(exc))
             raise GatewayReadError("positions snapshot failed") from exc
         except GatewayReadError:
             raise
 
-    async def get_order(
-        self, order_id: str, *, safe_diagnostics: bool = False,
-    ) -> dict[str, Any]:
+    async def get_order(self, order_id: str) -> dict[str, Any]:
         """Strict authenticated CLOB order read; malformed/failed is UNKNOWN."""
         if self._paper or self._client is None:
             raise GatewayReadError("order read unavailable")
@@ -1312,20 +723,6 @@ class ExecutionGateway:
             if normalize_order(row) is None:
                 raise GatewayReadError("order read omitted valid cumulative order fields")
             return row
-        if safe_diagnostics:
-            error_type = None
-            try:
-                result = await self._io(_get)
-            except Exception as exc:  # noqa: BLE001 - retain only the safe category
-                error_type = type(exc).__name__
-            if error_type is not None:
-                _safe_gateway_diagnostic(
-                    "get_order_failed", operation="get_order",
-                    error_type=error_type,
-                )
-                raise GatewayReadError("order read failed")
-            return result
-
         try:
             return await self._io(_get)
         except Exception as exc:
@@ -1333,10 +730,7 @@ class ExecutionGateway:
                 raise
             raise GatewayReadError("order read failed") from exc
 
-    async def get_trades(
-        self, *, market: str | None = None, asset_id: str | None = None,
-        safe_diagnostics: bool = False,
-    ) -> list[dict[str, Any]]:
+    async def get_trades(self, *, market: str | None = None, asset_id: str | None = None) -> list[dict[str, Any]]:
         """Strict authenticated trade history read using supported V2 filters."""
         if self._paper or self._client is None:
             raise GatewayReadError("trade read unavailable")
@@ -1347,20 +741,6 @@ class ExecutionGateway:
             if not isinstance(rows, list) or any(not isinstance(x, dict) for x in rows):
                 raise GatewayReadError("trade history returned malformed data")
             return rows
-        if safe_diagnostics:
-            error_type = None
-            try:
-                result = await self._io(_get)
-            except Exception as exc:  # noqa: BLE001 - retain only the safe category
-                error_type = type(exc).__name__
-            if error_type is not None:
-                _safe_gateway_diagnostic(
-                    "get_trades_failed", operation="get_trades",
-                    error_type=error_type,
-                )
-                raise GatewayReadError("trade history read failed")
-            return result
-
         try:
             return await self._io(_get)
         except Exception as exc:
@@ -1384,7 +764,7 @@ class ExecutionGateway:
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
-            log.warning("balance_allowance_failed", err=self._error_detail(exc))
+            log.warning("balance_allowance_failed", err=str(exc))
             return {}
 
     async def required_collateral_spenders(self, meta: MarketMeta) -> tuple[str, ...]:

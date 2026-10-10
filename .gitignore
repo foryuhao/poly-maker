@@ -483,3 +483,14 @@ session/
 # Generated research observations
 research_data/
 research_audits/
+
+research_outputs/
+
+# Preserved local data links
+/research_data
+/research_outputs
+/research_audits
+/journal
+/logs
+/livecfg/journal
+/livecfg/logs

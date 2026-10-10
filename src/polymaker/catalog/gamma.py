@@ -23,55 +23,12 @@ log = get_logger("catalog.gamma")
 POLITICS_TAG_SLUG = "politics"
 
 
-class _SafeDiagnosticTransport(httpx.AsyncBaseTransport):
-    """Keep HTTPX request logs from copying an untrusted reason phrase."""
-
-    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
-        self._transport = transport
-        self._closed = False
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        response = await self._transport.handle_async_request(request)
-        if "reason_phrase" in response.extensions:
-            response.extensions["reason_phrase"] = b"<redacted>"
-        return response
-
-    async def aclose(self) -> None:
-        if not self._closed:
-            self._closed = True
-            await self._transport.aclose()
-
-
 class GammaClient:
     """Thin async wrapper over the Gamma REST endpoints we use."""
 
-    def __init__(self, host: str = "https://gamma-api.polymarket.com", timeout: float = 20.0,
-                 *, safe_diagnostics: bool = False) -> None:
+    def __init__(self, host: str = "https://gamma-api.polymarket.com", timeout: float = 20.0) -> None:
         self._host = host.rstrip("/")
         self._client = httpx.AsyncClient(base_url=self._host, timeout=timeout)
-        self._safe_diagnostics = safe_diagnostics
-        if safe_diagnostics:
-            self._sanitize_httpx_diagnostics()
-
-    def _sanitize_httpx_diagnostics(self) -> None:
-        """Wrap this client's existing transports without changing their routing."""
-        wrapped: dict[int, _SafeDiagnosticTransport] = {}
-
-        def sanitize(transport: httpx.AsyncBaseTransport) -> _SafeDiagnosticTransport:
-            key = id(transport)
-            adapter = wrapped.get(key)
-            if adapter is None:
-                adapter = _SafeDiagnosticTransport(transport)
-                wrapped[key] = adapter
-            return adapter
-
-        # Keep HTTPX's already-selected direct/proxy transports and mount keys.
-        # Only the response's diagnostic reason phrase is changed before HTTPX logs it.
-        self._client._transport = sanitize(self._client._transport)
-        self._client._mounts = {
-            pattern: (None if transport is None else sanitize(transport))
-            for pattern, transport in self._client._mounts.items()
-        }
 
     async def __aenter__(self) -> GammaClient:
         return self
@@ -104,7 +61,6 @@ class GammaClient:
 
     async def market_by_slug(self, slug: str) -> dict[str, Any] | None:
         """Fetch one exact slug without scanning a tag or paginating the catalog."""
-        safe_error_type: str | None = None
         try:
             r = await self._client.get("/markets", params={"slug": slug, "limit": 1})
             r.raise_for_status()
@@ -112,18 +68,7 @@ class GammaClient:
                 if market.get("slug") == slug:
                     return market
         except (httpx.HTTPError, ValueError, TypeError) as exc:
-            if self._safe_diagnostics:
-                # Defer opted-in logging until after this except block. If a
-                # logging handler fails, its traceback must not chain the raw
-                # upstream exception as the active exception context.
-                safe_error_type = type(exc).__name__
-            else:
-                log.warning("market_by_slug_failed", slug=slug, err=str(exc))
-                return None
-        if safe_error_type is not None:
-            log.warning("market_by_slug_failed", slug=slug,
-                        error_type=safe_error_type)
-            return None
+            log.warning("market_by_slug_failed", slug=slug, err=str(exc))
         return None
 
     async def resolve_tag_id(self, slug: str) -> str | None:

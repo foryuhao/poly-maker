@@ -157,19 +157,6 @@ class StrategyProfile(BaseModel):
     # exits
     exit_urgency_s: float = 900.0
     merge_min_size: float = 20.0
-    # FavoriteFirst entry probability interval (used by the BTC5m live wrapper).
-    favorite_min: float = 0.60
-    favorite_max: float = 0.70
-    entry_start_s: float = 30.0
-    last_new_entry_s: float = 180.0
-
-    @model_validator(mode="after")
-    def _valid_favorite_interval(self) -> StrategyProfile:
-        if not (0.0 <= self.favorite_min <= self.favorite_max <= 1.0):
-            raise ValueError("favorite_min/max must satisfy 0 <= min <= max <= 1")
-        if not (0 <= self.entry_start_s <= self.last_new_entry_s < 300):
-            raise ValueError("entry timing must satisfy 0 <= start <= last new entry < 300")
-        return self
 
     def with_overrides(self, overrides: dict[str, Any]) -> StrategyProfile:
         """Return a copy with per-market override values applied."""
