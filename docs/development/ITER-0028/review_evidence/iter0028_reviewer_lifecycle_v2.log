@@ -1,0 +1,46 @@
+F.FFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_____________________ test_held_subsequent_close[latefill] _____________________
+/tmp/iter0028_reviewer_lifecycle_v2.py:121: in test_held_subsequent_close
+    assert r.outcome=='REBALANCE_HANDOFF' and r.inventory.delta==-5
+E   AssertionError: assert ('TERMINAL' == 'REBALANCE_HANDOFF'
+E     
+E     - REBALANCE_HANDOFF
+E     + TERMINAL)
+_____________________ test_held_subsequent_close[teardown] _____________________
+/tmp/iter0028_reviewer_lifecycle_v2.py:118: in test_held_subsequent_close
+    with pytest.raises(asyncio.CancelledError):await op
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE CancelledError
+__________________ test_later_zero_fill_then_healthy_requote ___________________
+/tmp/iter0028_reviewer_lifecycle_v2.py:155: in test_later_zero_fill_then_healthy_requote
+    book.apply_delta('BUY',.56,0)
+E   TypeError: OrderBook.apply_delta() missing 1 required positional argument: 'ts'
+_______________ test_reliable_no_send_quote_movement_is_not_stop _______________
+/tmp/iter0028_reviewer_lifecycle_v2.py:177: in test_reliable_no_send_quote_movement_is_not_stop
+    assert r.submissions[0].reason=='CONTINUATION_QUOTE_INTENT_CHANGED'
+E   AssertionError: assert 'PLACEMENT_NOT_ATTEMPTED' == 'CONTINUATION...NTENT_CHANGED'
+E     
+E     - CONTINUATION_QUOTE_INTENT_CHANGED
+E     + PLACEMENT_NOT_ATTEMPTED
+_______________ test_subsequent_complete_ack_operation_deadline ________________
+/tmp/iter0028_reviewer_lifecycle_v2.py:206: in test_subsequent_complete_ack_operation_deadline
+    assert r.inventory.qn==1, 'complete-ack interruption result forgets current accepted fill'
+E   AssertionError: complete-ack interruption result forgets current accepted fill
+E   assert 0.0 == 1
+E    +  where 0.0 = RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=1.25...nl=0.0, residual_worst_loss=0.6875, residual_best_pnl=0.5625, worst_settlement_pnl=-0.6875, best_settlement_pnl=0.5625).qn
+E    +    where RDPInventorySnapshot(condition_id='rdp-placement-condition', yes_token_id='yes-token', no_token_id='no-token', qy=1.25...nl=0.0, residual_worst_loss=0.6875, residual_best_pnl=0.5625, worst_settlement_pnl=-0.6875, best_settlement_pnl=0.5625) = RDPNormalContinuationCompletion(outcome='TERMINAL', reason='CONTINUATION_FAILED:RDPPlacementError', mode=None, submiss...orst_settlement_pnl=-0.6875, best_settlement_pnl=0.5625), inventory_cost=Decimal('0.6875'), execution_authorized=False).inventory
+=============================== warnings summary ===============================
+iter0028_reviewer_lifecycle_v2.py::test_held_subsequent_close[latefill]
+  /home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../tmp/iter0028_reviewer_lifecycle_v2.py::test_held_subsequent_close[latefill]
+FAILED ../../../tmp/iter0028_reviewer_lifecycle_v2.py::test_held_subsequent_close[teardown]
+FAILED ../../../tmp/iter0028_reviewer_lifecycle_v2.py::test_later_zero_fill_then_healthy_requote
+FAILED ../../../tmp/iter0028_reviewer_lifecycle_v2.py::test_reliable_no_send_quote_movement_is_not_stop
+FAILED ../../../tmp/iter0028_reviewer_lifecycle_v2.py::test_subsequent_complete_ack_operation_deadline
+5 failed, 1 passed, 3 deselected, 1 warning in 1.92s
+REVIEW_NETWORK_ATTEMPTS []

@@ -1,0 +1,22 @@
+........FF                                                               [100%]
+=================================== FAILURES ===================================
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0-False] _
+tests/test_rdp_placement.py:9221: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert Decimal(str(result.inventory_cost)) == Decimal("2.76875")
+E   AssertionError: assert Decimal('2.7687500000000003') == Decimal('2.76875')
+E    +  where Decimal('2.7687500000000003') = Decimal('2.7687500000000003')
+E    +    where '2.7687500000000003' = str(2.7687500000000003)
+E    +      where 2.7687500000000003 = RDPNormalContinuationCompletion(outcome='REBALANCE_HANDOFF', reason=None, mode=<RDPMode.REBALANCE: 'REBALANCE'>, submi...ope='REGISTERED_ORDERS_CONFIRMED_FILLS', capital_certified=True, unresolved_exposure=False, execution_authorized=False).inventory_cost
+E    +  and   Decimal('2.76875') = Decimal('2.76875')
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True] _
+tests/test_rdp_placement.py:9178: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert result.reason == "TOKEN_TICK_EVIDENCE_CHANGED"
+E   AssertionError: assert 'MARKET_DATA_STALE' == 'TOKEN_TICK_EVIDENCE_CHANGED'
+E     
+E     - TOKEN_TICK_EVIDENCE_CHANGED
+E     + MARKET_DATA_STALE
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0-False]
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True]
+2 failed, 8 passed, 405 deselected in 16.75s
+REVIEW_NETWORK_ATTEMPTS []

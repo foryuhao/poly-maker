@@ -1,0 +1,21 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_iter0028_held_continuation_close_drains_before_releasing_owner[cancel] __
+tests/test_rdp_placement.py:9125: in test_iter0028_held_continuation_close_drains_before_releasing_owner
+    assert terminal.cause == (
+E   AssertionError: assert 'WINDOW_EXPIRED' == 'CALLER_CANCELLED'
+E     
+E     - CALLER_CANCELLED
+E     + WINDOW_EXPIRED
+_ test_iter0028_held_continuation_close_drains_before_releasing_owner[teardown] _
+tests/test_rdp_placement.py:9125: in test_iter0028_held_continuation_close_drains_before_releasing_owner
+    assert terminal.cause == (
+E   AssertionError: assert 'WINDOW_EXPIRED' == 'SESSION_TEARDOWN'
+E     
+E     - SESSION_TEARDOWN
+E     + WINDOW_EXPIRED
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_iter0028_held_continuation_close_drains_before_releasing_owner[cancel]
+FAILED tests/test_rdp_placement.py::test_iter0028_held_continuation_close_drains_before_releasing_owner[teardown]
+2 failed, 1 passed, 415 deselected in 1.93s
+REVIEW_NETWORK_ATTEMPTS []

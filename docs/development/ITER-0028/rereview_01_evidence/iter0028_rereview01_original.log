@@ -1,0 +1,11 @@
+..........F.................                                             [100%]
+=================================== FAILURES ===================================
+_______________ test_reliable_no_send_quote_movement_is_not_stop _______________
+docs/development/ITER-0028/review_evidence/iter0028_reviewer_terminal.py:181: in test_reliable_no_send_quote_movement_is_not_stop
+    assert c.posts==0 and c.cancel_calls==[]
+E   assert (2 == 0)
+E    +  where 2 = <test_rdp_placement.RepeatedNormalSDKClient object at 0x7e1a9d266a80>.posts
+=========================== short test summary info ============================
+FAILED docs/development/ITER-0028/review_evidence/iter0028_reviewer_terminal.py::test_reliable_no_send_quote_movement_is_not_stop
+1 failed, 27 passed in 3.24s
+REVIEW_NETWORK_ATTEMPTS []

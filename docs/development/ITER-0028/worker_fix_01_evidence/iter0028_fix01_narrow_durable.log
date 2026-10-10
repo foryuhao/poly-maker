@@ -1,0 +1,32 @@
+FFF...F                                                                  [100%]
+=================================== FAILURES ===================================
+____________ test_iter0028_clock_failure_latches_before_any_reentry ____________
+tests/test_rdp_placement.py:8852: in test_iter0028_clock_failure_latches_before_any_reentry
+    assert second.outcome == "TERMINAL"
+E   AssertionError: assert 'DENIED' == 'TERMINAL'
+E     
+E     - TERMINAL
+E     + DENIED
+__ test_iter0028_terminal_result_keeps_current_registered_fill_scope[partial] __
+tests/test_rdp_placement.py:8893: in test_iter0028_terminal_result_keeps_current_registered_fill_scope
+    assert result.inventory_order_ids == terminal.inventory_order_ids
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RDPTerminalFailureResult' object has no attribute 'inventory_order_ids'
+__ test_iter0028_terminal_result_keeps_current_registered_fill_scope[unknown] __
+tests/test_rdp_placement.py:8893: in test_iter0028_terminal_result_keeps_current_registered_fill_scope
+    assert result.inventory_order_ids == terminal.inventory_order_ids
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'RDPTerminalFailureResult' object has no attribute 'inventory_order_ids'
+__ test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal ___
+tests/test_rdp_placement.py:9032: in test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal
+    assert result.submissions[0].resolved_attempt.outcome in {"UNKNOWN", "PARTIAL"}
+E   AssertionError: assert 'EMPTY' in {'PARTIAL', 'UNKNOWN'}
+E    +  where 'EMPTY' = RDPPlacementAttempt(attempt_id=2, slug='btc-updown-5m-placement', condition_id='rdp-placement-condition', public_gener...es=(), unresolved=False, replacement_blocked=False, continuation=True, source_attempt_id=1, execution_authorized=False).outcome
+E    +    where RDPPlacementAttempt(attempt_id=2, slug='btc-updown-5m-placement', condition_id='rdp-placement-condition', public_gener...es=(), unresolved=False, replacement_blocked=False, continuation=True, source_attempt_id=1, execution_authorized=False) = RDPInitialSubmissionResult(outcome='FAILURE_PRE_POST', reason='PLACEMENT_NOT_ATTEMPTED', authorization_granted=True, p...TypeError', acknowledged_orders=(), observed_order_ids=(), invalid_acknowledgment_count=0), execution_authorized=False).resolved_attempt
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_iter0028_clock_failure_latches_before_any_reentry
+FAILED tests/test_rdp_placement.py::test_iter0028_terminal_result_keeps_current_registered_fill_scope[partial]
+FAILED tests/test_rdp_placement.py::test_iter0028_terminal_result_keeps_current_registered_fill_scope[unknown]
+FAILED tests/test_rdp_placement.py::test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal
+4 failed, 3 passed, 408 deselected in 2.31s
+REVIEW_NETWORK_ATTEMPTS []

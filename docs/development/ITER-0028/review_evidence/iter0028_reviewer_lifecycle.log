@@ -1,0 +1,71 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_____________________ test_held_subsequent_close[latefill] _____________________
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+/tmp/iter0028_reviewer_lifecycle.py:93: in test_held_subsequent_close
+    await asyncio.wait_for(started.wait(),2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+______________________ test_held_subsequent_close[cancel] ______________________
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+/tmp/iter0028_reviewer_lifecycle.py:93: in test_held_subsequent_close
+    await asyncio.wait_for(started.wait(),2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_____________________ test_held_subsequent_close[teardown] _____________________
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+/tmp/iter0028_reviewer_lifecycle.py:93: in test_held_subsequent_close
+    await asyncio.wait_for(started.wait(),2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+__________________ test_later_zero_fill_then_healthy_requote ___________________
+/tmp/iter0028_reviewer_lifecycle.py:153: in test_later_zero_fill_then_healthy_requote
+    assert w.reliable and not w.started and not w.expired
+                                                ^^^^^^^^^
+E   AttributeError: 'RDPFillWindowDecision' object has no attribute 'expired'
+=============================== warnings summary ===============================
+iter0028_reviewer_lifecycle.py::test_held_subsequent_close[latefill]
+  /home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../tmp/iter0028_reviewer_lifecycle.py::test_held_subsequent_close[latefill]
+FAILED ../../../tmp/iter0028_reviewer_lifecycle.py::test_held_subsequent_close[cancel]
+FAILED ../../../tmp/iter0028_reviewer_lifecycle.py::test_held_subsequent_close[teardown]
+FAILED ../../../tmp/iter0028_reviewer_lifecycle.py::test_later_zero_fill_then_healthy_requote
+4 failed, 3 deselected, 1 warning in 7.75s
+REVIEW_NETWORK_ATTEMPTS []

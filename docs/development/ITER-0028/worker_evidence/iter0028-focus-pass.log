@@ -1,0 +1,14 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0] _
+tests/test_rdp_placement.py:8924: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert result.inventory_cost == pytest.approx(2.76875)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/_pytest/python_api.py:487: in __eq__
+    result: bool = abs(self.expected - actual) <= self.tolerance
+                       ^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: unsupported operand type(s) for -: 'float' and 'decimal.Decimal'
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0]
+1 failed, 2 passed, 480 deselected in 5.92s
+REVIEW_NETWORK_ATTEMPTS []

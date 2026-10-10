@@ -1,0 +1,12 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+______________ test_clock_failure_terminal_cannot_resume_new_risk ______________
+docs/development/ITER-0028/review_evidence/iter0028_reviewer_terminal.py:299: in test_clock_failure_terminal_cannot_resume_new_risk
+    assert c.posts==0, 'reported terminal clock failure permits subsequent new-risk POSTs'
+E   AssertionError: reported terminal clock failure permits subsequent new-risk POSTs
+E   assert 2 == 0
+E    +  where 2 = <test_rdp_placement.RepeatedNormalSDKClient object at 0x737b3856f1d0>.posts
+=========================== short test summary info ============================
+FAILED docs/development/ITER-0028/review_evidence/iter0028_reviewer_terminal.py::test_clock_failure_terminal_cannot_resume_new_risk
+1 failed, 1 passed, 22 deselected in 5.61s
+REVIEW_NETWORK_ATTEMPTS []

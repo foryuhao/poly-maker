@@ -1,0 +1,15 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0] _
+tests/test_rdp_placement.py:8904: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert {quote.token_id: quote.size for quote in second.candidate.quotes} == {
+E   AssertionError: assert {'yes-token':...-token': 7.25} == {'yes-token':...-token': 5.25}
+E     
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'no-token': 7.25} != {'no-token': 5.25}
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills1-5.0]
+1 failed, 2 passed, 480 deselected in 6.21s
+REVIEW_NETWORK_ATTEMPTS []

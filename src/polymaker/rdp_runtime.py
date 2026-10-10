@@ -21,6 +21,7 @@ from polymaker.execution.gateway import (
     PlacementUnknown,
 )
 from polymaker.execution.rdp_fill_window import RDPFillWindow, RDPFillWindowDecision
+from polymaker.execution.filltruth import ReconciliationOutcome
 from polymaker.execution.rdp_lifecycle import RDPCloseResult, close_rdp_cycle
 from polymaker.execution.rdp_placement import (
     RDPPlacementAttempt,
@@ -135,6 +136,7 @@ class RDPNextActionAdmission:
     book_ages: tuple[tuple[str, float | None], ...]
     book_filter: RDPBookFilterResult | None
     token_ticks: tuple[tuple[str, float], ...]
+    token_tick_sources: tuple[tuple[str, str], ...]
     minimum_sizes: tuple[tuple[str, float], ...]
     capital_projection: RDPCapitalProjection | None
     candidate: RDPQuoteDecision | None
@@ -291,12 +293,13 @@ class RDPInitialSubmissionResult:
 
 @dataclass(slots=True)
 class _RDPInitialSubmissionOperation:
-    admission: RDPInitialNormalAdmission
+    admission: Any
     order_budget_s: float
     close_budget_s: float
     order_deadline_monotonic: float
     started_monotonic: float
     market_end_epoch: float
+    initial: bool = True
     post_started: threading.Event = field(default_factory=threading.Event)
     send_revoked: bool = False
     interruption_reason: str | None = None
@@ -396,6 +399,26 @@ class RDPInitialCycleCompletion:
 
 
 @dataclass(frozen=True, slots=True)
+class RDPNormalContinuationCompletion:
+    """Retained result of one owner call that operates successive NORMAL cycles."""
+
+    outcome: str
+    reason: str | None
+    mode: RDPMode | None
+    submissions: tuple[RDPInitialSubmissionResult, ...]
+    cycles: tuple[RDPInitialCycleCompletion, ...]
+    admissions: tuple[RDPNextActionAdmission, ...]
+    run_order_ids: tuple[str, ...]
+    inventory: Any | None
+    inventory_cost: Decimal | None
+    inventory_order_ids: tuple[str, ...] = ()
+    inventory_scope: str = "NONE"
+    capital_certified: bool = False
+    unresolved_exposure: bool = False
+    execution_authorized: bool = field(default=False, init=False)
+
+
+@dataclass(frozen=True, slots=True)
 class RDPTerminalFailureResult:
     """Retained fail-closed STOP evidence for one failed initial attempt."""
 
@@ -483,6 +506,8 @@ class RDPInputSession:
         self._intent_loop_thread_id: int | None = None
         self._issued_initial_admission: RDPInitialNormalAdmission | None = None
         self._issued_initial_account: Any | None = None
+        self._issued_continuation_admission: RDPNextActionAdmission | None = None
+        self._issued_continuation_account: Any | None = None
         self._armed_intent_admission: RDPInitialNormalAdmission | None = None
         self._armed_intent_attempt: RDPPlacementAttempt | None = None
         self._intent_validation_results: list[RDPInitialIntentValidation] = []
@@ -493,6 +518,7 @@ class RDPInputSession:
         self._initial_submission_operation: _RDPInitialSubmissionOperation | None = None
         self._initial_submission_task: asyncio.Task[RDPInitialSubmissionResult] | None = None
         self._initial_submission_result: RDPInitialSubmissionResult | None = None
+        self._submission_results_by_attempt: dict[int, RDPInitialSubmissionResult] = {}
         self._account_read_task: asyncio.Task[Any] | None = None
         self._market_status_read_task: asyncio.Task[Any] | None = None
         self._placement_close_task: asyncio.Task[RDPInitialPlacementClose] | None = None
@@ -501,10 +527,13 @@ class RDPInputSession:
         self._prefill_read_task: asyncio.Task[Any] | None = None
         self._prefill_order_read_started_at: float | None = None
         self._fill_window_result: RDPFillWindowCompletion | None = None
+        self._fill_window_results: dict[int, RDPFillWindowCompletion] = {}
         self._fill_window_cancel_requested: str | None = None
         self._fill_window_wakeup = asyncio.Event()
         self._initial_cycle_task: asyncio.Task[RDPInitialCycleCompletion] | None = None
         self._initial_cycle_result: RDPInitialCycleCompletion | None = None
+        self._cycle_results_by_attempt: dict[int, RDPInitialCycleCompletion] = {}
+        self._cycle_scope_identities: dict[int, tuple[Any, ...]] = {}
         self._initial_cycle_identity: tuple[Any, ...] | None = None
         self._initial_cycle_interrupt_reason: str | None = None
         self._initial_cycle_wakeup = asyncio.Event()
@@ -512,6 +541,9 @@ class RDPInputSession:
         self._next_action_active = False
         self._next_action_task: asyncio.Task[RDPNextActionAdmission] | None = None
         self._next_action_result: RDPNextActionAdmission | None = None
+        self._continuation_active = False
+        self._continuation_task: asyncio.Task[Any] | None = None
+        self._continuation_result: RDPNormalContinuationCompletion | None = None
         self._terminal_stop_latched = False
         self._terminal_stop_cause: str | None = None
         self._terminal_failure_task: asyncio.Task[RDPTerminalFailureResult] | None = None
@@ -1014,6 +1046,10 @@ class RDPInputSession:
             return self._next_action_rejected(
                 "NEXT_ACTION_ADMISSION_IN_PROGRESS", retain=False,
             )
+        # A new read attempt invalidates any prior send candidate immediately;
+        # a failed refresh must not leave an older admission reusable.
+        self._issued_continuation_admission = None
+        self._issued_continuation_account = None
         self._next_action_active = True
         task = asyncio.create_task(
             self._run_post_cycle_next_action_admission(),
@@ -1030,16 +1066,367 @@ class RDPInputSession:
                 self._next_action_task = None
                 self._next_action_active = False
 
+    async def continue_normal(
+        self, *, authorization: Any = False,
+        order_budget_s: object = None, close_budget_s: object = None,
+    ) -> RDPNormalContinuationCompletion:
+        """Automatically operate successive NORMAL cycles from the retained owner."""
+        if authorization is not True:
+            return self._continuation_completion(
+                "DENIED", "HUMAN_AUTHORIZATION_REQUIRED", mode=RDPMode.NORMAL,
+            )
+        if (self._continuation_active or self._closed or self._terminal_stop_latched
+                or self._initial_cycle_result is None
+                or self._initial_cycle_result.close_result.next_mode is not RDPMode.NORMAL
+                or self.placement_owner.current is None
+                or self.placement_owner.current.replacement_blocked):
+            return self._continuation_completion(
+                "DENIED", "INITIAL_NORMAL_CYCLE_NOT_RETAINED", mode=None,
+            )
+        try:
+            order_budget = _positive_finite_seconds(order_budget_s, "order budget")
+            close_budget = _positive_finite_seconds(close_budget_s, "close budget")
+        except RDPPlacementError as exc:
+            return self._continuation_completion("DENIED", exc.category, mode=None)
+        if (self._initial_submission_conflicts_with_current_task()
+                or self._admission_active or self._next_action_active
+                or (self._initial_cycle_task is not None
+                    and not self._initial_cycle_task.done())):
+            return self._continuation_completion(
+                "DENIED", "CONFLICTING_RUNTIME_OPERATION", mode=None,
+            )
+        self._continuation_active = True
+        task = asyncio.create_task(
+            self._run_normal_continuation(order_budget, close_budget),
+            name="rdp-normal-continuation",
+        )
+        self._continuation_task = task
+        try:
+            result = await asyncio.shield(task)
+            self._continuation_result = result
+            return result
+        except asyncio.CancelledError:
+            operation = self._initial_submission_operation
+            if operation is not None and not operation.initial:
+                self._revoke_initial_submission(operation, "CALLER_CANCELLED")
+            if self._initial_cycle_task is not None and not self._initial_cycle_task.done():
+                self._initial_cycle_interrupt_reason = "CALLER_CANCELLED"
+                self._initial_cycle_wakeup.set()
+                self._fill_window_wakeup.set()
+            task.cancel()
+            await _drain_read_task(task)
+            self._latch_terminal_stop("CALLER_CANCELLED")
+            raise
+        finally:
+            if task.done() and self._continuation_task is task:
+                self._continuation_task = None
+                self._continuation_active = False
+
+    async def _run_normal_continuation(
+        self, order_budget_s: float, close_budget_s: float,
+    ) -> RDPNormalContinuationCompletion:
+        submissions: list[RDPInitialSubmissionResult] = []
+        cycles: list[RDPInitialCycleCompletion] = []
+        admissions: list[RDPNextActionAdmission] = []
+        current = self.placement_owner.current
+        if current is not None:
+            initial_cycle = self._cycle_results_by_attempt.get(current.attempt_id)
+            if initial_cycle is not None:
+                cycles.append(initial_cycle)
+        try:
+            while True:
+                if self._terminal_stop_latched:
+                    return self._continuation_completion(
+                        "TERMINAL", self._terminal_stop_cause or "TERMINAL_STOP_LATCHED",
+                        mode=None, submissions=submissions, cycles=cycles,
+                        admissions=admissions,
+                    )
+                try:
+                    raw_now = self._now()
+                    if (isinstance(raw_now, bool)
+                            or not isinstance(raw_now, (int, float, Decimal))):
+                        raise ValueError("invalid operation clock")
+                    now = Decimal(str(raw_now))
+                    if (not now.is_finite()
+                            or now < Decimal(str(self.bootstrap.epoch))):
+                        raise ValueError("invalid operation clock")
+                    remaining = Decimal(str(self.bootstrap.end_epoch)) - now
+                    required = Decimal(str(order_budget_s)) + Decimal(str(close_budget_s))
+                    if not remaining.is_finite() or not required.is_finite():
+                        raise ValueError("invalid operation time budget")
+                except Exception as exc:  # noqa: BLE001
+                    reason = f"OPERATION_CLOCK_FAILED:{type(exc).__name__}"
+                    self._latch_terminal_stop(reason)
+                    return self._continuation_completion(
+                        "TERMINAL", self._terminal_stop_cause or reason,
+                        mode=None, submissions=submissions, cycles=cycles,
+                        admissions=admissions,
+                    )
+                if remaining <= required:
+                    return self._continuation_completion(
+                        "TIME_EXHAUSTED", "INSUFFICIENT_ORDER_CANCEL_RECONCILE_TIME",
+                        mode=RDPMode.NORMAL, submissions=submissions, cycles=cycles,
+                        admissions=admissions,
+                    )
+                admission = await self.post_cycle_next_action_admission()
+                admissions.append(admission)
+                if admission.mode is RDPMode.REBALANCE and admission.eligible:
+                    return self._continuation_completion(
+                        "REBALANCE_HANDOFF", None, mode=RDPMode.REBALANCE,
+                        submissions=submissions, cycles=cycles, admissions=admissions,
+                    )
+                if not admission.eligible:
+                    reason = admission.reason or "NEXT_ACTION_INELIGIBLE"
+                    if _normal_continuation_rejection_retryable(reason):
+                        wait_s = min(self._poll_interval_s, max(0.0, float(remaining)))
+                        if wait_s <= 0:
+                            return self._continuation_completion(
+                                "TIME_EXHAUSTED", reason, mode=RDPMode.NORMAL,
+                                submissions=submissions, cycles=cycles,
+                                admissions=admissions,
+                            )
+                        try:
+                            await self._sleep(wait_s)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001
+                            self._latch_terminal_stop(f"CONTINUATION_WAIT_FAILED:{type(exc).__name__}")
+                            return self._continuation_completion(
+                                "TERMINAL", self._terminal_stop_cause, mode=None,
+                                submissions=submissions, cycles=cycles,
+                                admissions=admissions,
+                            )
+                        continue
+                    self._latch_terminal_stop(reason)
+                    return self._continuation_completion(
+                        "TERMINAL", reason, mode=None, submissions=submissions,
+                        cycles=cycles, admissions=admissions,
+                    )
+                if admission.mode is not RDPMode.NORMAL:
+                    self._latch_terminal_stop("UNEXPECTED_CONTINUATION_MODE")
+                    return self._continuation_completion(
+                        "TERMINAL", self._terminal_stop_cause, mode=None,
+                        submissions=submissions, cycles=cycles, admissions=admissions,
+                    )
+                submission = await self._submit_normal_continuation(
+                    admission, authorization=True, order_budget_s=order_budget_s,
+                    close_budget_s=close_budget_s,
+                )
+                submissions.append(submission)
+                if self._terminal_stop_latched:
+                    return self._continuation_completion(
+                        "TERMINAL", self._terminal_stop_cause or submission.reason,
+                        mode=None, submissions=submissions, cycles=cycles,
+                        admissions=admissions,
+                    )
+                if self._clean_continuation_no_send_retryable(submission):
+                    wait_s = min(self._poll_interval_s, max(0.0, float(remaining)))
+                    if wait_s <= 0:
+                        return self._continuation_completion(
+                            "TIME_EXHAUSTED", "INSUFFICIENT_ORDER_CANCEL_RECONCILE_TIME",
+                            mode=RDPMode.NORMAL, submissions=submissions, cycles=cycles,
+                            admissions=admissions,
+                        )
+                    try:
+                        await self._sleep(wait_s)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        cause = f"CONTINUATION_WAIT_FAILED:{type(exc).__name__}"
+                        self._latch_terminal_stop(cause)
+                        return self._continuation_completion(
+                            "TERMINAL", self._terminal_stop_cause or cause,
+                            mode=None, submissions=submissions, cycles=cycles,
+                            admissions=admissions,
+                        )
+                    continue
+                if submission.outcome != "COMPLETE" or submission.resolved_attempt is None:
+                    reason = submission.reason or submission.outcome
+                    if self._terminal_stop_latched:
+                        state = "TERMINAL"
+                    elif submission.outcome in {"DENIED", "NO_SEND", "FAILURE_PRE_POST"}:
+                        state = "TIME_EXHAUSTED" if reason in {
+                            "INSUFFICIENT_MARKET_TIME", "ORDER_OPERATION_DEADLINE",
+                        } else "TERMINAL"
+                        if state == "TERMINAL":
+                            self._latch_terminal_stop(reason)
+                    else:
+                        state = "TERMINAL"
+                        self._latch_terminal_stop(reason)
+                    return self._continuation_completion(
+                        state, reason, mode=None, submissions=submissions,
+                        cycles=cycles, admissions=admissions,
+                    )
+                attempt = submission.resolved_attempt
+                cycle = await self.complete_initial_normal_cycle(
+                    attempt, close_budget_s=close_budget_s,
+                )
+                cycles.append(cycle)
+                if (not cycle.close_result.barrier_complete
+                        or cycle.close_result.replacement_blocked
+                        or cycle.close_result.capital is None
+                        or not cycle.close_result.capital.certified):
+                    reason = cycle.close_result.reason or "CYCLE_CLOSE_UNRELIABLE"
+                    self._latch_terminal_stop(reason)
+                    return self._continuation_completion(
+                        "TERMINAL", reason, mode=None, submissions=submissions,
+                        cycles=cycles, admissions=admissions,
+                    )
+                if cycle.close_result.next_mode is RDPMode.REBALANCE:
+                    return self._continuation_completion(
+                        "REBALANCE_HANDOFF", None, mode=RDPMode.REBALANCE,
+                        submissions=submissions, cycles=cycles, admissions=admissions,
+                    )
+                if cycle.close_result.next_mode is not RDPMode.NORMAL:
+                    reason = cycle.close_result.reason or "CUMULATIVE_MODE_UNAVAILABLE"
+                    self._latch_terminal_stop(reason)
+                    return self._continuation_completion(
+                        "TERMINAL", reason, mode=None, submissions=submissions,
+                        cycles=cycles, admissions=admissions,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            reason = self._terminal_stop_cause or f"CONTINUATION_FAILED:{type(exc).__name__}"
+            self._latch_terminal_stop(reason)
+            return self._continuation_completion(
+                "TERMINAL", self._terminal_stop_cause or reason, mode=None, submissions=submissions,
+                cycles=cycles, admissions=admissions,
+            )
+
+    def _clean_continuation_no_send_retryable(
+        self, result: RDPInitialSubmissionResult,
+    ) -> bool:
+        """Recognize only a resolved, no-order pre-POST invalidation."""
+        attempt = result.resolved_attempt
+        current = self.placement_owner.current
+        reason = result.reason or ""
+        retryable_reason = (
+            reason in {
+                "CONTINUATION_QUOTE_INTENT_CHANGED",
+                "INTENT_ECONOMICS_OR_SIGNING_TICK_CHANGED",
+                "TOKEN_TICK_EVIDENCE_CHANGED",
+            }
+            or _clean_continuation_quote_filter_reason_retryable(reason)
+        )
+        return bool(
+            result.authorization_granted is True
+            and result.outcome == "NO_SEND" and not result.post_started
+            and result.interruption_reason is None
+            and result.resolution_error_type is None
+            and result.attempt is not None and attempt is not None
+            and attempt is not current and attempt.continuation
+            and attempt.source_attempt_id == getattr(current, "attempt_id", None)
+            and attempt.slug == self.bootstrap.market.slug
+            and attempt.condition_id == self.bootstrap.market.condition_id
+            and attempt.outcome == "EMPTY" and not attempt.unresolved
+            and not attempt.replacement_blocked
+            and not attempt.acknowledged_order_ids
+            and not attempt.observed_order_ids and not attempt.pending_anomalies
+            and current is not None and current.outcome == "COMPLETE"
+            and not current.unresolved and not current.replacement_blocked
+            and set(current.closed_order_ids) == set(current.acknowledged_order_ids)
+            and (current_cycle := self._cycle_results_by_attempt.get(current.attempt_id)) is not None
+            and current_cycle.close_result.barrier_complete
+            and not current_cycle.close_result.replacement_blocked
+            and not self.processor._pending and not self.processor._pending_events
+            and self.processor._owned == set(self.placement_owner.registered_run_order_ids)
+            and retryable_reason
+            and not self._terminal_stop_latched
+        )
+
+    def _continuation_completion(
+        self, outcome: str, reason: str | None, *, mode: RDPMode | None,
+        submissions=(), cycles=(), admissions=(),
+    ) -> RDPNormalContinuationCompletion:
+        projection = None
+        if cycles:
+            projection = cycles[-1].close_result.capital
+        elif self._initial_cycle_result is not None:
+            projection = self._initial_cycle_result.close_result.capital
+        current = self.placement_owner.current
+        inventory, inventory_ids, inventory_scope = (
+            self._capture_terminal_inventory(current) if current is not None
+            else (None, (), "NONE")
+        )
+        # A retained cycle snapshot is useful history, but it cannot certify
+        # the current run after the owner registry or close evidence changes.
+        # Reproject the complete registered scope from the existing processor,
+        # registry and close proofs. This is deliberately in-memory/report-only:
+        # no account read, SDK call, cancellation or owner release occurs here.
+        run_ids = set(self.placement_owner.registered_run_order_ids)
+        attempts = self.placement_owner.attempts
+        proof_attempts = {
+            attempt.attempt_id for attempt in attempts
+            if attempt.acknowledged_order_ids
+        }
+        close_proofs = self.placement_owner.close_proofs
+        current_closed = bool(
+            current is not None and current.outcome == "COMPLETE"
+            and not current.unresolved and not current.replacement_blocked
+            and set(current.closed_order_ids) == set(current.acknowledged_order_ids)
+        )
+        current_projection = None
+        if run_ids and current_closed and len(close_proofs) == len(proof_attempts):
+            current_projection = project_rdp_capital(
+                self.bootstrap.market, self.processor, run_ids, [],
+                market_state_reliable=True, order_state_reliable=True,
+                close_evidence=close_proofs,
+            )
+        snapshot = (
+            current_projection.snapshot
+            if current_projection is not None and current_projection.certified
+            else None
+        )
+        capital_certified = bool(
+            snapshot is not None and inventory is not None
+            and inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
+            and snapshot.inventory == inventory
+            and not self._terminal_stop_latched
+            and self._terminal_failure_result is None
+        )
+        unresolved_exposure = bool(
+            (current is not None and (current.unresolved or current.replacement_blocked))
+            or self._terminal_failure_result is not None
+            and self._terminal_failure_result.unresolved_exposure
+            or inventory_scope not in {"NONE", "REGISTERED_ORDERS_CONFIRMED_FILLS"}
+            or bool(run_ids) and not capital_certified
+        )
+        result = RDPNormalContinuationCompletion(
+            outcome, reason, mode, tuple(submissions), tuple(cycles),
+            tuple(admissions), self.placement_owner.registered_run_order_ids,
+            inventory,
+            (snapshot.inventory_cost if capital_certified else
+             Decimal(str(inventory.inventory_cost)) if inventory is not None else None),
+            inventory_ids, inventory_scope, capital_certified, unresolved_exposure,
+        )
+        self._continuation_result = result
+        log.info(
+            "rdp_normal_continuation_finished", outcome=outcome, reason=reason,
+            mode=mode.value if mode is not None else None,
+            attempt_count=len(submissions), closed_cycle_count=len(cycles),
+            run_order_ids=result.run_order_ids,
+            inventory_delta=(result.inventory.delta if result.inventory else None),
+            inventory_cost=(str(result.inventory_cost) if result.inventory_cost is not None else None),
+            execution_authorized=False,
+        )
+        return result
+
     async def _run_post_cycle_next_action_admission(self) -> RDPNextActionAdmission:
         market = self.bootstrap.market
-        completion = self._initial_cycle_result
         attempt = self.placement_owner.current
-        run_ids = tuple(attempt.acknowledged_order_ids) if attempt is not None else ()
+        completion = (
+            self._initial_cycle_result if attempt is not None and not attempt.continuation
+            else self._cycle_results_by_attempt.get(attempt.attempt_id)
+            if attempt is not None else None
+        )
+        run_ids = self.placement_owner.registered_run_order_sequence
         status: RDPMarketStatusEvidence | None = None
         account = None
         book_ages: tuple[tuple[str, float | None], ...] = ()
         filter_result: RDPBookFilterResult | None = None
         ticks: tuple[tuple[str, float], ...] = ()
+        tick_sources: tuple[tuple[str, str], ...] = ()
         minimums: tuple[tuple[str, float], ...] = ()
         projection: RDPCapitalProjection | None = None
         candidate: RDPQuoteDecision | None = None
@@ -1051,14 +1438,18 @@ class RDPInputSession:
         def rejected(reason: str) -> RDPNextActionAdmission:
             return self._next_action_rejected(
                 reason, attempt=attempt, run_order_ids=run_ids,
-                closed_order_ids=(completion.close_result.closed_order_ids
-                                  if completion is not None else ()),
+                closed_order_ids=tuple(sorted(
+                    order_id for proof in self.placement_owner.close_proofs
+                    for order_id, outcome in proof.reconciliation_outcomes
+                    if outcome is ReconciliationOutcome.COMPLETE
+                )),
                 resting_order_ids=(projection.snapshot.resting_order_ids
                                    if projection is not None and projection.snapshot is not None
                                    else ()), mode=mode,
                 captured_at=captured_at, market_status=status, account=account,
                 book_ages=book_ages, book_filter=filter_result,
                 token_ticks=ticks, minimum_sizes=minimums,
+                token_tick_sources=tick_sources,
                 capital_projection=projection, candidate=candidate,
                 capital_admission=capital, current_backing=backing,
             )
@@ -1184,8 +1575,19 @@ class RDPInputSession:
             ticks = tuple((token, book.tick_size)
                           for token, book in zip(token_ids, books, strict=True))
             minimums = tuple((token, metadata[token][1]) for token in token_ids)
-            if any(not _same_decimal(book.tick_size, metadata[token][0])
-                   for token, book in zip(token_ids, books, strict=True)):
+            tick_source_map = getattr(service, "_tick_source", {})
+            tick_sources = tuple(
+                (token, tick_source_map.get(token, ""))
+                for token in token_ids
+            )
+            if any(
+                tick_source_map.get(token) not in {
+                    "REST_BOOTSTRAP", "WS_BOOK_SNAPSHOT", "WS_TICK_SIZE_CHANGE",
+                }
+                or (tick_source_map.get(token) == "REST_BOOTSTRAP"
+                    and not _same_decimal(tick, metadata[token][0]))
+                for (token, tick) in ticks
+            ):
                 return rejected("TICK_METADATA_MISMATCH")
             if any(size > 5 for _token, size in minimums):
                 return rejected("CLOB_MINIMUM_EXCEEDS_FROZEN_CLIP")
@@ -1200,14 +1602,16 @@ class RDPInputSession:
             projection = project_rdp_capital(
                 decision_market, self.processor, set(run_ids), [],
                 market_state_reliable=True, order_state_reliable=True,
-                close_evidence=close.barrier,
+                close_evidence=self.placement_owner.close_proofs,
             )
             if not projection.certified or projection.snapshot is None:
                 return rejected(projection.reason or "CAPITAL_PROJECTION_REJECTED")
             inventory = projection.snapshot.inventory
             delta = Decimal(str(inventory.delta))
             mode = RDPMode.NORMAL if abs(delta) < Decimal("5") else RDPMode.REBALANCE
-            if close.next_mode is not mode:
+            if (close.next_mode is not mode
+                    and not (attempt.continuation and close.next_mode is RDPMode.NORMAL
+                             and mode is RDPMode.REBALANCE)):
                 return rejected("CLOSE_MODE_INVENTORY_MISMATCH")
 
             if mode is RDPMode.NORMAL:
@@ -1278,17 +1682,24 @@ class RDPInputSession:
 
             result = RDPNextActionAdmission(
                 market.slug, market.condition_id, attempt.attempt_id, run_ids,
-                close.closed_order_ids, projection.snapshot.resting_order_ids,
+                tuple(sorted(
+                    order_id for proof in self.placement_owner.close_proofs
+                    for order_id, outcome in proof.reconciliation_outcomes
+                    if outcome is ReconciliationOutcome.COMPLETE
+                )), projection.snapshot.resting_order_ids,
                 True, None, mode, float(final_now), status,
                 _account_receipt_times(account), backing.read_age_s,
                 backing.account_buy_commitment, backing.observed_cash_backing,
                 backing.observed_allowance_backing, self.public_generation,
-                self.user_generation, book_ages, filter_result, ticks, minimums,
+                self.user_generation, book_ages, filter_result, ticks, tick_sources,
+                minimums,
                 projection, candidate, capital, backing,
                 ("OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
                  "HUMAN_LIVE_AUTHORIZATION"),
             )
             self._next_action_result = result
+            self._issued_continuation_admission = result
+            self._issued_continuation_account = account
             self._log_next_action_result(result)
             return result
         except asyncio.CancelledError:
@@ -1315,7 +1726,14 @@ class RDPInputSession:
             return "PLACEMENT_COORDINATION_IN_PROGRESS", None
         if self._next_action_active and asyncio.current_task() is not self._next_action_task:
             return "NEXT_ACTION_ADMISSION_IN_PROGRESS", None
-        if completion is None or completion is not self._initial_cycle_result:
+        current_for_completion = self.placement_owner.current
+        expected_completion = (
+            self._initial_cycle_result
+            if current_for_completion is not None and not current_for_completion.continuation
+            else (self._cycle_results_by_attempt.get(completion.attempt_id)
+                  if completion is not None else None)
+        )
+        if completion is None or completion is not expected_completion:
             return "COMPLETED_CYCLE_EVIDENCE_UNAVAILABLE", None
         attempt = self.placement_owner.current
         if (expected_attempt is None or attempt is not expected_attempt
@@ -1337,7 +1755,7 @@ class RDPInputSession:
                 or close.replacement_blocked or close.next_mode is None
                 or close.capital is None or not close.capital.certified
                 or close.capital.snapshot is None
-                or close.capital.snapshot.run_order_ids != tuple(sorted(attempt.acknowledged_order_ids))
+                or close.capital.snapshot.run_order_ids != self.placement_owner.registered_run_order_ids
                 or barrier is None or barrier.complete is not True):
             return "COMPLETED_CYCLE_CLOSE_UNRELIABLE", None
         if self._now() >= self.bootstrap.end_epoch:
@@ -1354,7 +1772,7 @@ class RDPInputSession:
             return "INPUT_GENERATION_CHANGED", None
         if _has_public_input_backlog(self.public_session.service.metrics):
             return "PUBLIC_INPUT_BACKLOG", None
-        run_ids = tuple(attempt.acknowledged_order_ids)
+        run_ids = self.placement_owner.registered_run_order_sequence
         try:
             processor_owned = set(self.processor._owned)
             store_owned = tuple(self.processor._store.owned_orders())
@@ -1377,6 +1795,8 @@ class RDPInputSession:
         registry = _placement_registry_snapshot(self.processor, self.bootstrap, attempt)
         if registry is None:
             return "PLACEMENT_REGISTRY_MISMATCH", None
+        if set(completion.acknowledged_order_ids) != set(attempt.acknowledged_order_ids):
+            return "CURRENT_ATTEMPT_REGISTRY_MISMATCH", None
         return None, registry
 
     def _next_action_rejected(
@@ -1385,6 +1805,7 @@ class RDPInputSession:
         resting_order_ids: tuple[str, ...] = (), mode: RDPMode | None = None,
         captured_at: float | None = None, market_status=None, account=None,
         book_ages=(), book_filter=None, token_ticks=(), minimum_sizes=(),
+        token_tick_sources=(),
         capital_projection=None, candidate=None, capital_admission=None,
         current_backing=None, retain: bool = True,
     ) -> RDPNextActionAdmission:
@@ -1399,7 +1820,8 @@ class RDPInputSession:
             current_backing.observed_cash_backing if current_backing is not None else None,
             current_backing.observed_allowance_backing if current_backing is not None else None,
             self.public_generation, self.user_generation, tuple(book_ages),
-            book_filter, tuple(token_ticks), tuple(minimum_sizes), capital_projection,
+            book_filter, tuple(token_ticks), tuple(token_tick_sources),
+            tuple(minimum_sizes), capital_projection,
             candidate, capital_admission, current_backing,
             ("OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
              "HUMAN_LIVE_AUTHORIZATION"),
@@ -1571,6 +1993,36 @@ class RDPInputSession:
         if failure is not None:
             raise RDPPlacementError(failure)
         attempt = self.placement_owner.arm(
+            admission,
+            current_public_generation=self.public_session.service.connection_generation,
+            current_user_generation=(
+                self.user_session.observation.user_channel.connection_generation),
+            session_healthy=self._health_failure() is None,
+            now=self._now(),
+        )
+        self._armed_intent_admission = admission
+        self._armed_intent_attempt = attempt
+        return attempt
+
+    def arm_normal_continuation_placement(
+        self, admission: RDPNextActionAdmission,
+    ) -> RDPPlacementAttempt:
+        """Capture a later NORMAL pair after the retained close proof and fresh admission."""
+        if self._terminal_stop_latched:
+            raise RDPPlacementError("TERMINAL_STOP_LATCHED")
+        if self._initial_submission_conflicts_with_current_task():
+            raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
+        if self._admission_active or self._next_action_active:
+            raise RDPPlacementError("CONTINUATION_ADMISSION_IN_PROGRESS")
+        if admission is not self._issued_continuation_admission:
+            raise RDPPlacementError("CONTINUATION_ADMISSION_PROVENANCE_MISMATCH")
+        current = self.placement_owner.current
+        completion = (self._cycle_results_by_attempt.get(current.attempt_id)
+                      if current is not None else None)
+        failure, _registry = self._post_cycle_scope_failure(completion, current)
+        if failure is not None:
+            raise RDPPlacementError(failure)
+        attempt = self.placement_owner.arm_continuation(
             admission,
             current_public_generation=self.public_session.service.connection_generation,
             current_user_generation=(
@@ -1764,7 +2216,9 @@ class RDPInputSession:
     ) -> str | None:
         if operation is not self._initial_submission_operation:
             return "SUBMISSION_OPERATION_MISMATCH"
-        if operation.admission is not self._issued_initial_admission:
+        issued = (self._issued_initial_admission if operation.initial
+                  else self._issued_continuation_admission)
+        if operation.admission is not issued:
             return "ADMISSION_PROVENANCE_MISMATCH"
         if operation.attempt is None or operation.attempt is not self.placement_owner.current:
             return "ARMED_ATTEMPT_PROVENANCE_MISMATCH"
@@ -1959,6 +2413,64 @@ class RDPInputSession:
             await _drain_read_task(task)
             raise
 
+    async def _submit_normal_continuation(
+        self, admission: RDPNextActionAdmission, *, authorization: Any,
+        order_budget_s: object, close_budget_s: object,
+    ) -> RDPInitialSubmissionResult:
+        if authorization is not True:
+            return RDPInitialSubmissionResult(
+                "DENIED", "HUMAN_AUTHORIZATION_REQUIRED", False, False,
+                None, None, None, None, self.placement_owner.current, (), None, None,
+            )
+        if (admission is not self._issued_continuation_admission
+                or admission.eligible is not True or admission.reason is not None
+                or admission.mode is not RDPMode.NORMAL):
+            return RDPInitialSubmissionResult(
+                "DENIED", "CONTINUATION_ADMISSION_PROVENANCE_MISMATCH", True,
+                False, None, None, None, None, self.placement_owner.current, (), None, None,
+            )
+        try:
+            order_budget = _positive_finite_seconds(order_budget_s, "order budget")
+            close_budget = _positive_finite_seconds(close_budget_s, "close budget")
+            wall_now = self._now()
+            monotonic_now = time.monotonic()
+            remaining = Decimal(str(self.bootstrap.end_epoch)) - Decimal(str(wall_now))
+            required = Decimal(str(order_budget)) + Decimal(str(close_budget))
+            deadline = monotonic_now + order_budget
+        except (RDPPlacementError, InvalidOperation, TypeError, ValueError, OverflowError) as exc:
+            reason = getattr(exc, "category", "INVALID_OPERATION_CLOCK")
+            return RDPInitialSubmissionResult(
+                "DENIED", reason, True, False, None, None, None, None,
+                self.placement_owner.current, (), None, None,
+            )
+        if (self._closed or self._terminal_stop_latched or self._admission_active
+                or self._initial_submission_conflicts_with_current_task()
+                or not isinstance(wall_now, (int, float)) or isinstance(wall_now, bool)
+                or not math.isfinite(wall_now) or not math.isfinite(monotonic_now)
+                or not remaining.is_finite() or not required.is_finite()
+                or remaining <= required):
+            return RDPInitialSubmissionResult(
+                "DENIED", "CONFLICTING_RUNTIME_OPERATION", True, False,
+                order_budget, close_budget, None, None, self.placement_owner.current,
+                (), None, None,
+            )
+        operation = _RDPInitialSubmissionOperation(
+            admission, order_budget, close_budget, float(deadline),
+            float(monotonic_now), float(self.bootstrap.end_epoch), initial=False,
+        )
+        self._initial_submission_operation = operation
+        task = asyncio.create_task(
+            self._run_initial_normal_submission(operation),
+            name="rdp-normal-continuation-submission",
+        )
+        self._initial_submission_task = task
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self._revoke_initial_submission(operation, "CALLER_CANCELLED")
+            await _drain_read_task(task)
+            raise
+
     async def _run_initial_normal_submission(
         self, operation: _RDPInitialSubmissionOperation,
     ) -> RDPInitialSubmissionResult:
@@ -1968,7 +2480,8 @@ class RDPInputSession:
         resolution_error_type: str | None = None
         resolved_attempt: RDPPlacementAttempt | None = None
         try:
-            attempt = self.arm_initial_normal_placement(admission)
+            attempt = (self.arm_initial_normal_placement(admission)
+                       if operation.initial else self.arm_normal_continuation_placement(admission))
             operation.attempt = attempt
         except Exception as exc:  # noqa: BLE001 - categorical rejection only
             result = RDPInitialSubmissionResult(
@@ -1978,7 +2491,8 @@ class RDPInputSession:
                 self.placement_owner.current, tuple(operation.guard_reasons),
                 operation.interruption_reason, None,
             )
-            return self._retain_initial_submission_result(result)
+            return (self._retain_initial_submission_result(result) if operation.initial
+                    else self._retain_continuation_submission_result(result))
 
         gateway = getattr(self.user_session, "gateway", None)
         if gateway is None or not callable(getattr(gateway, "place", None)):
@@ -1986,9 +2500,8 @@ class RDPInputSession:
                 reason="GATEWAY_UNAVAILABLE", error_type="GatewayUnavailable",
             )
         else:
-            guard = self.initial_normal_submit_guard(
-                admission, attempt, _submission_operation=operation,
-            )
+            guard = self.initial_normal_submit_guard(admission, attempt,
+                _submission_operation=operation)
             placement_task = asyncio.create_task(
                 gateway.place(
                     list(attempt.quotes), self.bootstrap.market,
@@ -2100,7 +2613,8 @@ class RDPInputSession:
             guard_reasons, operation.interruption_reason,
             resolution_error_type, operation.gateway_evidence,
         )
-        result = self._retain_initial_submission_result(result)
+        result = (self._retain_initial_submission_result(result) if operation.initial
+                  else self._retain_continuation_submission_result(result))
         if self._submission_requires_terminal_stop(result):
             await self._ensure_terminal_failure(
                 resolved_attempt or attempt,
@@ -2287,7 +2801,11 @@ class RDPInputSession:
         self, attempt: RDPPlacementAttempt,
     ) -> tuple[Any | None, tuple[str, ...], str]:
         current = self.placement_owner.current
-        registered = self._terminal_scope(current) if current is not None else None
+        registered = (
+            self.placement_owner.registered_run_order_ids
+            if current is not None and current.continuation
+            else self._terminal_scope(current) if current is not None else None
+        )
         if current is None or registered is None or not registered:
             return None, (), "NONE"
         inventory_order_ids = tuple(
@@ -2444,6 +2962,28 @@ class RDPInputSession:
         )
         return result
 
+    def _retain_continuation_submission_result(
+        self, result: RDPInitialSubmissionResult,
+    ) -> RDPInitialSubmissionResult:
+        attempt_id = (result.attempt.attempt_id if result.attempt is not None
+                      else (result.resolved_attempt.attempt_id
+                            if result.resolved_attempt is not None else 0))
+        if attempt_id:
+            self._submission_results_by_attempt[attempt_id] = result
+        log.info(
+            "rdp_continuation_submission_result", outcome=result.outcome,
+            reason=result.reason, attempt_id=attempt_id,
+            source_attempt_id=(result.attempt.source_attempt_id
+                               if result.attempt is not None else None),
+            post_started=result.post_started,
+            acknowledged_order_ids=(result.resolved_attempt.acknowledged_order_ids
+                                    if result.resolved_attempt is not None else ()),
+            gateway_result_type=(result.gateway_evidence.result_type
+                                 if result.gateway_evidence is not None else None),
+            guard_reasons=result.guard_reasons, execution_authorized=False,
+        )
+        return result
+
     def _intent_validation_failure(
         self, admission: Any, attempt: Any, reason: str,
     ) -> RDPInitialIntentValidation:
@@ -2505,6 +3045,8 @@ class RDPInputSession:
         self, admission: RDPInitialNormalAdmission,
         attempt: RDPPlacementAttempt,
     ) -> RDPInitialIntentValidation:
+        if isinstance(admission, RDPNextActionAdmission):
+            return self._capture_continuation_normal_intent(admission, attempt)
         market = self.bootstrap.market
         empty_gates = ("FINAL_SUBMIT_REVALIDATION", "HUMAN_LIVE_AUTHORIZATION")
 
@@ -2794,6 +3336,179 @@ class RDPInputSession:
             capital_admission=capital_admission,
         )
 
+    def _capture_continuation_normal_intent(
+        self, admission: RDPNextActionAdmission, attempt: RDPPlacementAttempt,
+    ) -> RDPInitialIntentValidation:
+        """Revalidate a freshly admitted continuation at each existing SDK guard."""
+        market = self.bootstrap.market
+        empty_gates = ("FINAL_SUBMIT_REVALIDATION", "HUMAN_LIVE_AUTHORIZATION")
+
+        def result(reason: str | None, *, at: float | None = None,
+                   status: RDPMarketStatusEvidence | None = None,
+                   ages: tuple[tuple[str, float | None], ...] = (),
+                   filter_result: RDPBookFilterResult | None = None,
+                   candidate: RDPQuoteDecision | None = None,
+                   ticks: tuple[tuple[str, float], ...] = (),
+                   minimums: tuple[tuple[str, float], ...] = (),
+                   projection: RDPCapitalProjection | None = None,
+                   capital: RDPCapitalAdmission | None = None) -> RDPInitialIntentValidation:
+            return RDPInitialIntentValidation(
+                reason is None, reason, at, admission.slug, admission.condition_id,
+                attempt.attempt_id, attempt.public_generation, attempt.user_generation,
+                status, admission.account_receipt_times,
+                (admission.current_backing.read_age_s
+                 if admission.current_backing is not None else None),
+                ages, filter_result, candidate, ticks, minimums, projection, capital,
+                empty_gates,
+            )
+
+        if (admission is not self._issued_continuation_admission
+                or admission is not self._armed_intent_admission
+                or admission.eligible is not True or admission.reason is not None
+                or admission.execution_authorized is not False
+                or admission.mode is not RDPMode.NORMAL
+                or admission.outstanding_execution_gates != (
+                    "OPERATIONAL_TIME_SUFFICIENCY", "FINAL_SUBMIT_REVALIDATION",
+                    "HUMAN_LIVE_AUTHORIZATION")
+                or attempt is not self._armed_intent_attempt
+                or attempt is not self.placement_owner.current
+                or not attempt.continuation or attempt.source_attempt_id != admission.attempt_id
+                or attempt.outcome != "ARMED" or not attempt.replacement_blocked
+                or attempt.execution_authorized):
+            return result("CONTINUATION_PROVENANCE_MISMATCH")
+        if (self._closed or self._terminal_stop_latched
+                or self._admission_active or self._next_action_active):
+            return result("CONTINUATION_RUNTIME_UNAVAILABLE")
+        run_ids = self.placement_owner.registered_run_order_sequence
+        if (run_ids != admission.run_order_ids
+                or len(set(run_ids)) != len(run_ids)
+                or self.processor._owned != set(run_ids)):
+            return result("CUMULATIVE_SCOPE_CHANGED")
+        expected_pending = {(quote.token_id, quote.side) for quote in attempt.quotes}
+        if not _continuation_processor_is_clean_armed_capture(
+            self.processor, expected_pending, set(run_ids),
+        ):
+            return result("PREACK_CAPTURE_NOT_CLEAN")
+        try:
+            now = self._now()
+        except Exception as exc:  # noqa: BLE001
+            return result(f"CAPTURE_CLOCK_FAILED:{type(exc).__name__}")
+        if (isinstance(now, bool) or not isinstance(now, (int, float))
+                or not math.isfinite(now) or now >= self.bootstrap.end_epoch):
+            return result("INVALID_CAPTURE_TIME")
+        now = float(now)
+        if self._health_failure() is not None:
+            return result("INPUT_HEALTH_FAILED", at=now)
+        service = self.public_session.service
+        if (service.connection_generation != self.public_generation
+                or self.user_session.observation.user_channel.connection_generation
+                != self.user_generation or _has_public_input_backlog(service.metrics)):
+            return result("INPUT_GENERATION_OR_BACKLOG_CHANGED", at=now)
+        status = admission.market_status
+        if not isinstance(status, RDPMarketStatusEvidence):
+            return result("MARKET_STATUS_EVIDENCE_UNAVAILABLE", at=now)
+        status, status_failure = self._evaluate_market_status_freshness(status, at=now)
+        if status_failure is not None:
+            return result(status_failure, at=now, status=status)
+        if self._prefill_status_identity_failure(status) is not None:
+            return result("MARKET_STATUS_SCOPE_MISMATCH", at=now, status=status)
+        account = self._issued_continuation_account
+        if (account is None or admission.account_receipt_times != _account_receipt_times(account)):
+            return result("ACCOUNT_PROVENANCE_MISMATCH", at=now, status=status)
+        tick_source_map = getattr(service, "_tick_source", {})
+        token_ids = (market.yes.token_id, market.no.token_id)
+        books = tuple(service.book(token) for token in token_ids)
+        if any(book is None or book.snapshot_generation != self.public_generation
+               for book in books):
+            return result("BOOK_GENERATION_CHANGED", at=now, status=status)
+        ages_list = []
+        for token, book in zip(token_ids, books, strict=True):
+            age, failure = _freshness_age(
+                book.local_ts, now, self._market_data_max_age_s, "MARKET_DATA",
+            )
+            ages_list.append((token, age))
+            if failure is not None:
+                return result(failure, at=now, status=status, ages=tuple(ages_list))
+        ages = tuple(ages_list)
+        metadata = _validated_token_metadata(self.bootstrap)
+        if metadata is None:
+            return result("INVALID_TOKEN_METADATA", at=now, status=status, ages=ages)
+        ticks = tuple((token, book.tick_size) for token, book in zip(token_ids, books, strict=True))
+        minimums = tuple((token, metadata[token][1]) for token in token_ids)
+        for token, tick in ticks:
+            source = tick_source_map.get(token)
+            if (source not in {"REST_BOOTSTRAP", "WS_BOOK_SNAPSHOT",
+                               "WS_TICK_SIZE_CHANGE"}
+                    or source == "REST_BOOTSTRAP" and not _same_decimal(
+                        tick, metadata[token][0])
+                    or not _same_decimal(tick, dict(admission.token_ticks).get(token))
+                    or not _same_decimal(dict(admission.minimum_sizes).get(token),
+                                         dict(minimums).get(token))):
+                return result("TOKEN_TICK_EVIDENCE_CHANGED", at=now, status=status,
+                              ages=ages, ticks=ticks, minimums=minimums)
+        if any(size > 5 for _token, size in minimums):
+            return result("CLOB_MINIMUM_EXCEEDS_FROZEN_CLIP", at=now, status=status,
+                          ages=ages, ticks=ticks, minimums=minimums)
+        filter_result = self.book_filter_result()
+        if not filter_result.ready or filter_result.rejected:
+            return result(_filter_rejection_reason(filter_result), at=now, status=status,
+                          ages=ages, filter_result=filter_result, ticks=ticks,
+                          minimums=minimums)
+        decision_market = replace(market, min_order_size=max(size for _, size in minimums))
+        projection = project_rdp_capital(
+            decision_market, self.processor, set(run_ids), [],
+            market_state_reliable=True, order_state_reliable=True,
+            close_evidence=self.placement_owner.close_proofs,
+        )
+        if (not projection.certified or projection.snapshot is None
+                or admission.capital_projection is None
+                or not admission.capital_projection.certified
+                or projection.snapshot != admission.capital_projection.snapshot):
+            return result(projection.reason or "CUMULATIVE_CAPITAL_CHANGED", at=now,
+                          status=status, ages=ages, filter_result=filter_result,
+                          ticks=ticks, minimums=minimums, projection=projection)
+        inventory = projection.snapshot.inventory
+        if abs(Decimal(str(inventory.delta))) >= Decimal("5"):
+            return result("NORMAL_BOUNDARY_REACHED", at=now, status=status, ages=ages,
+                          filter_result=filter_result, ticks=ticks, minimums=minimums,
+                          projection=projection)
+        candidate = build_normal_quotes(
+            decision_market, inventory, books[0].view(), books[1].view(),
+            books[0].tick_size, books[1].tick_size,
+        )
+        if (candidate.reason is not None
+                or not _same_quote_intent(candidate.quotes, admission.candidate.quotes)
+                or not _same_quote_intent(candidate.quotes, attempt.quotes)):
+            return result(candidate.reason or "CONTINUATION_QUOTE_INTENT_CHANGED", at=now,
+                          status=status, ages=ages, filter_result=filter_result,
+                          candidate=candidate, ticks=ticks, minimums=minimums,
+                          projection=projection)
+        capital = evaluate_rdp_capital_gate(RDPMode.NORMAL, candidate, projection)
+        if not capital.admitted or capital != admission.capital_admission:
+            return result(capital.reason or "CAPITAL_GATE_CHANGED", at=now, status=status,
+                          ages=ages, filter_result=filter_result, candidate=candidate,
+                          ticks=ticks, minimums=minimums, projection=projection,
+                          capital=capital)
+        backing = evaluate_current_rdp_backing(
+            self.bootstrap, account, projection, RDPMode.NORMAL,
+            capital.new_notional or Decimal("0"), run_ids, now=now,
+            max_age_s=self._account_max_age_s,
+        )
+        issued_backing = admission.current_backing
+        if (not backing.eligible or issued_backing is None
+                or not issued_backing.eligible
+                or backing.account_buy_commitment != issued_backing.account_buy_commitment
+                or backing.observed_cash_backing != issued_backing.observed_cash_backing
+                or backing.observed_allowance_backing != issued_backing.observed_allowance_backing
+                or backing.required_backing != issued_backing.required_backing):
+            return result(backing.reason or "CURRENT_BACKING_CHANGED", at=now,
+                          status=status, ages=ages, filter_result=filter_result,
+                          candidate=candidate, ticks=ticks, minimums=minimums,
+                          projection=projection, capital=capital)
+        return result(None, at=now, status=status, ages=ages,
+                      filter_result=filter_result, candidate=candidate, ticks=ticks,
+                      minimums=minimums, projection=projection, capital=capital)
+
     async def complete_initial_normal_cycle(
         self, attempt: RDPPlacementAttempt, *, close_budget_s: float,
     ) -> RDPInitialCycleCompletion:
@@ -2801,14 +3516,17 @@ class RDPInputSession:
         if self._initial_submission_conflicts_with_current_task():
             raise RDPPlacementError("INITIAL_SUBMISSION_IN_PROGRESS")
         budget_s = _positive_finite_seconds(close_budget_s, "close budget")
-        if self._initial_cycle_result is not None:
+        existing_completion = self._cycle_results_by_attempt.get(attempt.attempt_id)
+        if existing_completion is not None:
             current = self.placement_owner.current
             requested_identity = _initial_cycle_scope_identity(attempt)
-            if (requested_identity == self._initial_cycle_identity
+            retained_identity = self._cycle_scope_identities.get(attempt.attempt_id)
+            if (requested_identity == retained_identity
                     and current is not None
-                    and _initial_cycle_scope_identity(current) == self._initial_cycle_identity):
-                return self._initial_cycle_result
-            raise RDPPlacementError("INITIAL_CYCLE_ALREADY_USED")
+                    and _initial_cycle_scope_identity(current) == retained_identity):
+                return existing_completion
+            if not attempt.continuation:
+                raise RDPPlacementError("INITIAL_CYCLE_ALREADY_USED")
         if self._terminal_stop_latched:
             raise RDPPlacementError("TERMINAL_STOP_LATCHED")
         active = self._initial_cycle_task
@@ -3082,7 +3800,10 @@ class RDPInputSession:
             attempt.acknowledged_order_ids, trigger, last_decision,
             fill_completion, close_result, started_at, completed_at,
         )
-        self._initial_cycle_result = result
+        self._cycle_results_by_attempt[attempt.attempt_id] = result
+        self._cycle_scope_identities[attempt.attempt_id] = _initial_cycle_scope_identity(attempt)
+        if not attempt.continuation:
+            self._initial_cycle_result = result
         log.info(
             "rdp_initial_cycle_finished", attempt_id=attempt.attempt_id,
             condition_id=attempt.condition_id,
@@ -3806,9 +4527,12 @@ class RDPInputSession:
             )
 
         inventory = None
+        cumulative_ids = set(self.placement_owner.registered_run_order_ids)
         projection = project_rdp_capital(
-            self.bootstrap.market, self.processor, owned_ids, selected_orders,
+            self.bootstrap.market, self.processor, cumulative_ids, selected_orders,
             market_state_reliable=True, order_state_reliable=True,
+            close_evidence=(self.placement_owner.close_proofs
+                            if attempt.continuation else None),
         )
         if not projection.certified or projection.snapshot is None:
             return self._prefill_decision(
@@ -4133,10 +4857,10 @@ class RDPInputSession:
         active = self._fill_window_task
         if active is not None and not active.done():
             raise RDPPlacementError("FILL_WINDOW_COORDINATOR_IN_PROGRESS")
-        if self._fill_window_result is not None:
-            if (self._fill_window_result.attempt_id == attempt.attempt_id
-                    and self.placement_owner.current is attempt):
-                return self._fill_window_result
+        existing_window = self._fill_window_results.get(attempt.attempt_id)
+        if existing_window is not None:
+            if self.placement_owner.current is attempt:
+                return existing_window
             raise RDPPlacementError("FILL_WINDOW_COORDINATOR_ALREADY_USED")
         current = self.placement_owner.current
         if (self._closed or current is None or attempt is not current
@@ -4292,7 +5016,9 @@ class RDPInputSession:
             close_result=close_result, started_monotonic_ns=started_ns,
             completed_monotonic_ns=self._monotonic_ns(),
         )
-        self._fill_window_result = result
+        self._fill_window_results[attempt.attempt_id] = result
+        if not attempt.continuation:
+            self._fill_window_result = result
         log.info(
             "rdp_fill_window_completion_finished", condition_id=attempt.condition_id,
             attempt_id=attempt.attempt_id,
@@ -4483,11 +5209,13 @@ class RDPInputSession:
             state_reliable = False
             health_reason = health_reason or "FILL_WINDOW_CONTINUATION_UNRELIABLE"
         if barrier.complete and full_pair:
+            cumulative_ids = set(self.placement_owner.registered_run_order_ids)
+            retained_proofs = self.placement_owner.close_proofs + (barrier,)
             capital = project_rdp_capital(
-                self.bootstrap.market, self.processor, set(order_ids), [],
+                self.bootstrap.market, self.processor, cumulative_ids, [],
                 market_state_reliable=state_reliable,
                 order_state_reliable=True,
-                close_evidence=barrier,
+                close_evidence=retained_proofs,
             )
             if capital.certified and state_reliable:
                 delta = capital.snapshot.inventory.delta
@@ -4670,6 +5398,11 @@ class RDPInputSession:
             self._fill_window_cancel_requested = "SESSION_TEARDOWN"
             self._fill_window_wakeup.set()
             interrupted = await _drain_read_task(cycle) or interrupted
+        continuation = self._continuation_task
+        if (continuation is not None and continuation is not asyncio.current_task()
+                and not continuation.done()):
+            continuation.cancel()
+            interrupted = await _drain_read_task(continuation) or interrupted
         next_action = self._next_action_task
         if (next_action is not None and next_action is not asyncio.current_task()
                 and not next_action.done()):
@@ -4802,6 +5535,36 @@ def _initial_processor_is_clean_armed_capture(
     return True
 
 
+def _continuation_processor_is_clean_armed_capture(
+    processor: Any, expected_pending: set[tuple[str, Side]], prior_order_ids: set[str],
+) -> bool:
+    """Allow exactly the new pending pair alongside preserved certified history."""
+    try:
+        if (not prior_order_ids or not expected_pending
+                or processor._pending != expected_pending
+                or processor._pending_remaining != len(expected_pending)
+                or processor._pending_events
+                or processor._pending_malformed_order_ids
+                or processor._pending_overflow
+                or set(processor._owned) != prior_order_ids
+                or processor.quarantined_fill_keys or processor.quarantined_orders):
+            return False
+        if any(order_id not in prior_order_ids for _trade, order_id in processor.fill_records):
+            return False
+        if any(order_id not in prior_order_ids for _trade, order_id in processor.applied_fill_keys):
+            return False
+        store = processor._store
+        rows = store.owned_orders()
+        if ({str(row["order_id"]) for row in rows} != prior_order_ids
+                or getattr(store, "orders", None)):
+            return False
+        if callable(getattr(store, "open_orders", None)) and store.open_orders():
+            return False
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _same_quote_intent(left: Any, right: Any) -> bool:
     if not isinstance(left, tuple) or not isinstance(right, tuple) or len(left) != len(right):
         return False
@@ -4880,6 +5643,25 @@ def _filter_rejection_reason(result: RDPBookFilterResult) -> str:
     if result.reasons:
         return result.reasons[0]
     return "BOOK_FILTER_REJECTED"
+
+
+def _normal_continuation_rejection_retryable(reason: str) -> bool:
+    """Only reliable no-send candidate/capital gates may await fresh evidence."""
+    return reason in {
+        "PRICE_GATE", "ILLEGAL_QUOTE_PRICE", "OFF_TICK", "MIN_ORDER_SIZE",
+        "BOOK_FILTER_UNREADY", "BOOK_FILTER_REJECTED", "INSUFFICIENT_FREE_CASH",
+        "CAPITAL_LIMIT_EXCEEDED", "NORMAL_REPAIR_RESERVE",
+        "INSUFFICIENT_CURRENT_CASH", "INSUFFICIENT_CURRENT_ALLOWANCE",
+        "CURRENT_ACCOUNT_BACKING_REJECTED",
+    } or reason.startswith(("BOOK_FILTER_", "PRICE_GATE_"))
+
+
+def _clean_continuation_quote_filter_reason_retryable(reason: str) -> bool:
+    """Only wait on a clean pre-POST quote, price, or book-filter change."""
+    return reason in {
+        "PRICE_GATE", "ILLEGAL_QUOTE_PRICE", "OFF_TICK", "MIN_ORDER_SIZE",
+        "BOOK_FILTER_UNREADY", "BOOK_FILTER_REJECTED",
+    } or reason.startswith(("BOOK_FILTER_", "PRICE_GATE_"))
 
 
 def _initial_cycle_scope_identity(attempt: RDPPlacementAttempt) -> tuple[Any, ...]:

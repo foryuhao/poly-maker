@@ -367,6 +367,38 @@ async def test_prior_closed_subset_and_subsequent_registered_resting_cycle(ctx):
 
 
 @pytest.mark.asyncio
+async def test_multiple_nonoverlapping_close_proofs_support_cumulative_cost_and_live_pair(ctx):
+    _store, proc, m = ctx
+    first_ids, first = await seed_closed_inventory(m, proc, [
+        ("first", "yes", 1.25, .30, .40),
+    ])
+    second_ids, second = await seed_closed_inventory(m, proc, [
+        ("second", "no", 2.0, .55, .60),
+    ])
+    register(proc, "current-y", "yes", 5, .29)
+    register(proc, "current-n", "no", 6.25, .59)
+    add_fill(proc, "current-y", "yes", 2, .28)
+    current = [
+        OpenOrder("current-y", "yes", Side.BUY, .29, 3),
+        OpenOrder("current-n", "no", Side.BUY, .59, 6.25),
+    ]
+    run_ids = first_ids | second_ids | {"current-y", "current-n"}
+    projected = projection(m, proc, run_ids, current, close=(first, second))
+    assert projected.certified
+    assert projected.snapshot.inventory_cost == Decimal("2.035")
+    assert projected.snapshot.reserved_cash == Decimal("4.5575")
+    assert projected.snapshot.free_cash == Decimal("23.4075")
+    assert projected.snapshot.inventory.qy == pytest.approx(3.25)
+    assert projected.snapshot.inventory.qn == pytest.approx(2.0)
+
+    overlap = projection(m, proc, run_ids, current, close=(first, first, second))
+    assert not overlap.certified and overlap.reason == "CONTRADICTORY_CLOSE_PROOFS"
+    incomplete = replace(second, complete=False)
+    rejected = projection(m, proc, run_ids, current, close=(first, incomplete))
+    assert not rejected.certified and rejected.reason == "INCOMPLETE_CLOSE_EVIDENCE"
+
+
+@pytest.mark.asyncio
 async def test_normal_exact_cash_boundary_passes_and_just_below_fails(ctx):
     store, proc, m = ctx
     ids, close = await seed_closed_inventory(m, proc, [

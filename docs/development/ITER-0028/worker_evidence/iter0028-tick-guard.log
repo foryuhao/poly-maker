@@ -1,0 +1,13 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True] _
+tests/test_rdp_placement.py:8907: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert result.submissions[0].outcome == "FAILURE_PRE_POST"
+E   AssertionError: assert 'NO_SEND' == 'FAILURE_PRE_POST'
+E     
+E     - FAILURE_PRE_POST
+E     + NO_SEND
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True]
+1 failed, 407 deselected in 3.79s
+REVIEW_NETWORK_ATTEMPTS []

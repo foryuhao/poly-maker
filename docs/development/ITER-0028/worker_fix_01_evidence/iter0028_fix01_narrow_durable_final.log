@@ -1,0 +1,96 @@
+....FFFFFFFFF                                                            [100%]
+=================================== FAILURES ===================================
+__ test_iter0028_terminal_result_keeps_current_registered_fill_scope[partial] __
+tests/test_rdp_placement.py:8908: in test_iter0028_terminal_result_keeps_current_registered_fill_scope
+    assert client.posts == 1 and terminal is not None
+E   assert (0 == 1)
+E    +  where 0 = <tests.test_rdp_placement.RepeatedNormalSDKClient object at 0x77b12bd746e0>.posts
+__ test_iter0028_terminal_result_keeps_current_registered_fill_scope[unknown] __
+tests/test_rdp_placement.py:8908: in test_iter0028_terminal_result_keeps_current_registered_fill_scope
+    assert client.posts == 1 and terminal is not None
+E   assert (0 == 1)
+E    +  where 0 = <tests.test_rdp_placement.RepeatedNormalSDKClient object at 0x77b12d702f90>.posts
+_ test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification _
+tests/test_rdp_placement.py:8941: in test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification
+    assert result.reason == "STALE_CLOSE_EVIDENCE"
+E   AssertionError: assert 'OPERATION_CL...ttributeError' == 'STALE_CLOSE_EVIDENCE'
+E     
+E     - STALE_CLOSE_EVIDENCE
+E     + OPERATION_CLOCK_FAILED:AttributeError
+_ test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory _
+tests/test_rdp_placement.py:8974: in test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory
+    assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), 3)
+E   assert False
+__ test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops __
+tests/test_rdp_placement.py:9016: in test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops
+    assert result.submissions[0].outcome == "NO_SEND"
+           ^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: tuple index out of range
+__ test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal ___
+tests/test_rdp_placement.py:9066: in test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal
+    assert result.submissions[0].resolved_attempt.outcome in {"UNKNOWN", "PARTIAL"}
+           ^^^^^^^^^^^^^^^^^^^^^
+E   IndexError: tuple index out of range
+_ test_iter0028_held_continuation_close_drains_before_releasing_owner[latefill] _
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/test_rdp_placement.py:9102: in test_iter0028_held_continuation_close_drains_before_releasing_owner
+    await asyncio.wait_for(started.wait(), 2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_iter0028_held_continuation_close_drains_before_releasing_owner[cancel] __
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/test_rdp_placement.py:9102: in test_iter0028_held_continuation_close_drains_before_releasing_owner
+    await asyncio.wait_for(started.wait(), 2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+_ test_iter0028_held_continuation_close_drains_before_releasing_owner[teardown] _
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:520: in wait_for
+    return await fut
+           ^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/locks.py:212: in wait
+    await fut
+E   asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+tests/test_rdp_placement.py:9102: in test_iter0028_held_continuation_close_drains_before_releasing_owner
+    await asyncio.wait_for(started.wait(), 2)
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+    raise TimeoutError from exc_val
+E   TimeoutError
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_iter0028_terminal_result_keeps_current_registered_fill_scope[partial]
+FAILED tests/test_rdp_placement.py::test_iter0028_terminal_result_keeps_current_registered_fill_scope[unknown]
+FAILED tests/test_rdp_placement.py::test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification
+FAILED tests/test_rdp_placement.py::test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory
+FAILED tests/test_rdp_placement.py::test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops
+FAILED tests/test_rdp_placement.py::test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal
+FAILED tests/test_rdp_placement.py::test_iter0028_held_continuation_close_drains_before_releasing_owner[latefill]
+FAILED tests/test_rdp_placement.py::test_iter0028_held_continuation_close_drains_before_releasing_owner[cancel]
+FAILED tests/test_rdp_placement.py::test_iter0028_held_continuation_close_drains_before_releasing_owner[teardown]
+9 failed, 4 passed, 408 deselected in 10.97s
+REVIEW_NETWORK_ATTEMPTS []

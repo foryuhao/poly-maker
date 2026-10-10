@@ -63,7 +63,7 @@ from polymaker.risk.rdp_capital import (
     project_rdp_capital,
 )
 from polymaker.state.store import StateStore
-from polymaker.state.tracker import TradeEvent, UserEventProcessor
+from polymaker.state.tracker import OrderEvent, TradeEvent, UserEventProcessor
 from polymaker.strategy.rdp_accounting import snapshot_inventory
 from polymaker.strategy.rdp_book_filter import RDPBookFilterResult
 from polymaker.strategy.rdp_quotes import RDPQuoteDecision
@@ -8677,4 +8677,787 @@ async def test_post_cycle_next_action_rejects_status_evidence_during_status_read
     assert not result.eligible
     assert expected_reason in (result.reason or "")
     assert result.execution_authorized is False
+    assert blocked_network == []
+
+
+class RepeatedNormalSDKClient:
+    """Deterministic fake SDK used by the retained multi-cycle integration test."""
+
+    def __init__(self, scope, fills):
+        self.scope = scope
+        self.fills = list(fills)
+        self.created = []
+        self.tick_options = []
+        self.rows = {}
+        self.trades = []
+        self.posts = 0
+        self.events = []
+        self.cancel_calls = []
+        self.on_create = None
+
+    def create_order(self, args, *, options):
+        try:
+            self.created.append(args)
+            self.tick_options.append(options.tick_size)
+            if self.on_create is not None:
+                callback, self.on_create = self.on_create, None
+                callback()
+            return {"token_id": args.token_id, "price": args.price, "size": args.size}
+        except Exception as exc:
+            self.create_error = f"{type(exc).__name__}: {exc}; options={options!r}"
+            raise
+
+    def post_orders(self, orders, *, post_only):
+        assert post_only is True
+        self.posts += 1
+        cycle = self.posts
+        fill_token, fill_qty = self.fills[cycle - 1]
+        acknowledgments = []
+        for row in orders:
+            signed = row.order
+            token = signed["token_id"]
+            order_id = f"cycle-{cycle}-{token}"
+            quantity = float(signed["size"])
+            price = float(signed["price"])
+            matched = min(quantity, fill_qty) if token == fill_token else 0.0
+            status = "MATCHED" if matched >= quantity else "LIVE"
+            exchange_row = {
+                "id": order_id, "asset_id": token, "side": "BUY",
+                "price": str(price), "original_size": str(quantity),
+                "size_matched": str(matched), "status": status,
+                "market": self.scope.market.condition_id,
+            }
+            self.rows[order_id] = exchange_row
+            acknowledgments.append({"success": True, "orderID": order_id})
+            if matched > 0:
+                trade_id = f"cycle-{cycle}-fill-{token}"
+                event = TradeEvent(
+                    token_id=token, our_side=Side.BUY, price=price, size=matched,
+                    trade_id=trade_id, status=TradeState.MATCHED, ts=time.time(),
+                    maker_order_id=order_id,
+                    market_id=self.scope.market.condition_id,
+                )
+                receipt_ns = self.scope.session._monotonic_ns()
+                self.scope.processor.on_trade(
+                    event, self.scope.market.condition_id,
+                    received_at_us=int(time.time() * 1_000_000),
+                    received_monotonic_ns=receipt_ns, connection_generation=4,
+                )
+                self.scope.processor.on_trade(
+                    replace(event, status=TradeState.CONFIRMED),
+                    self.scope.market.condition_id,
+                    received_at_us=int(time.time() * 1_000_000),
+                    received_monotonic_ns=receipt_ns, connection_generation=4,
+                )
+                self.trades.append(_rest_trade(
+                    order_id, token, str(price), str(matched), trade_id=trade_id,
+                ))
+        self.events.append(("POST", cycle))
+        return acknowledgments
+
+    def get_open_orders(self):
+        return [row for row in self.rows.values()
+                if row["status"] not in {"CANCELED", "CANCELLED", "MATCHED"}
+                and Decimal(row["original_size"]) > Decimal(row["size_matched"])]
+
+    def cancel_orders(self, order_ids):
+        self.cancel_calls.append(tuple(order_ids))
+        self.events.append(("CANCEL", tuple(order_ids)))
+        for order_id in order_ids:
+            self.rows[order_id]["status"] = "CANCELED"
+
+    def get_order(self, order_id):
+        return dict(self.rows[order_id])
+
+    def get_trades(self, _params):
+        self.events.append(("TRADES", self.posts))
+        return list(self.trades)
+
+
+async def _prepare_repeated_continuation(scope, monkeypatch, fills=None):
+    """Build a real retained initial close plus deterministic fake SDK owner."""
+    await _complete_cycle_with_confirmed_fill(scope, size=1.25)
+    client = RepeatedNormalSDKClient(
+        scope, fills or [("no-token", 1), ("no-token", 5.25)],
+    )
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+
+    async def inline_io(fn, *args):
+        return fn(*args)
+
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    from polymaker.rdp_account import RDPPositionEvidence
+
+    async def account_snapshot(_bootstrap, _gateway, signer, funder, *, now):
+        inventory = snapshot_inventory(
+            scope.market, scope.processor, set(scope.processor._owned),
+        )
+        cash = Decimal("30") - Decimal(str(inventory.inventory_cost))
+        captured = now()
+        return SimpleNamespace(
+            signer=signer, funder=funder, condition_id=scope.market.condition_id,
+            balance_usd=cash, allowance_usd=cash,
+            required_spenders=("0x" + "a" * 40,),
+            selected_positions=(
+                RDPPositionEvidence("Up", "yes-token", Decimal(str(inventory.qy)), Decimal("0")),
+                RDPPositionEvidence("Down", "no-token", Decimal(str(inventory.qn)), Decimal("0")),
+            ),
+            selected_open_orders=(), total_open_order_count=0, all_open_orders=(),
+            orders_receipt_ts=captured - .002, positions_receipt_ts=captured - .001,
+            collateral_receipt_ts=captured,
+        )
+
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", account_snapshot)
+    return client, gateway
+
+
+@pytest.mark.asyncio
+async def test_iter0028_clock_failure_latches_before_any_reentry(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    original_now = scope.session._now
+
+    def broken_clock():
+        raise RuntimeError("private clock detail")
+
+    scope.session._now = broken_clock
+    try:
+        first = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        scope.session._now = original_now
+        second = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        scope.session._now = original_now
+        gateway.close()
+
+    assert first.outcome == "TERMINAL"
+    assert first.reason == "OPERATION_CLOCK_FAILED:RuntimeError"
+    assert second.outcome in {"DENIED", "TERMINAL"}
+    assert scope.session._terminal_stop_latched
+    assert client.posts == 0 and client.cancel_calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_clock", [True, float("nan"), "123"])
+async def test_iter0028_malformed_clock_values_fail_closed(
+    placement_scope, blocked_network, monkeypatch, invalid_clock,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    original_now = scope.session._now
+    scope.session._now = lambda: invalid_clock
+    try:
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        scope.session._now = original_now
+        gateway.close()
+    assert result.outcome == "TERMINAL"
+    assert result.reason == "OPERATION_CLOCK_FAILED:ValueError"
+    assert scope.session._terminal_stop_latched
+    assert client.posts == 0 and client.cancel_calls == []
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["partial", "unknown"])
+async def test_iter0028_terminal_result_keeps_current_registered_fill_scope(
+    placement_scope, blocked_network, monkeypatch, fault,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(
+        scope, monkeypatch, [("yes-token", 1)],
+    )
+    original_post = client.post_orders
+
+    def uncertain_post(*args, **kwargs):
+        acknowledgements = original_post(*args, **kwargs)
+        if fault == "partial":
+            return [acknowledgements[0], {"success": False, "errorMsg": "rejected"}]
+        raise RuntimeError("private gateway detail")
+
+    client.post_orders = uncertain_post
+    try:
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+
+    terminal = scope.session.terminal_failure_result
+    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
+    assert client.posts == 1 and terminal is not None
+    assert result.inventory is not None
+    assert result.inventory.qy == pytest.approx(
+        2.25 if fault == "partial" else 1.25,
+    )
+    assert Decimal(str(result.inventory_cost)) == Decimal(
+        "1.2375" if fault == "partial" else ".6875",
+    )
+    assert result.inventory_order_ids == terminal.confirmed_inventory_order_ids
+    assert result.inventory_scope == terminal.inventory_scope
+    assert not result.capital_certified and result.unresolved_exposure
+    assert terminal.cleanup.replacement_blocked
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_late_prior_fill_is_reported_without_stale_capital_certification(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    client.on_create = lambda: _send_matched_then_confirmed(
+        scope, "yes-order", trade_id="iter0028-late-prior", size=.25,
+        price=.55, receipt_ns=scope.session._monotonic_ns(),
+    )
+    try:
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.outcome == "TERMINAL"
+    assert result.reason == "STALE_CLOSE_EVIDENCE"
+    assert client.posts == 0 and client.cancel_calls == []
+    assert result.submissions[0].outcome == "NO_SEND"
+    assert "STALE_CLOSE_EVIDENCE" in result.submissions[0].guard_reasons
+    assert result.inventory is not None and result.inventory.qy == pytest.approx(1.5)
+    assert Decimal(str(result.inventory_cost)) == Decimal(".825")
+    assert not result.capital_certified
+    assert result.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_complete_ack_deadline_preserves_primary_stop_and_confirmed_inventory(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    gateway._io = ExecutionGateway._io.__get__(gateway, ExecutionGateway)
+    started, release = threading.Event(), threading.Event()
+    original_post = client.post_orders
+
+    def held_complete_post(*args, **kwargs):
+        acknowledgements = original_post(*args, **kwargs)
+        started.set()
+        if not release.wait(3):
+            raise TimeoutError("fake SDK release timed out")
+        return acknowledgements
+
+    client.post_orders = held_complete_post
+    operation = asyncio.create_task(scope.session.continue_normal(
+        authorization=True, order_budget_s=.08, close_budget_s=2,
+    ))
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 2), 3)
+        await asyncio.sleep(.12)
+        assert not operation.done()
+        release.set()
+        result = await operation
+    finally:
+        release.set()
+        if not operation.done():
+            operation.cancel()
+        gateway.close()
+
+    terminal = scope.session.terminal_failure_result
+    assert result.outcome == "TERMINAL"
+    assert result.reason == "ORDER_OPERATION_DEADLINE"
+    assert result.submissions[0].outcome == "COMPLETE"
+    assert result.submissions[0].interruption_reason == "ORDER_OPERATION_DEADLINE"
+    assert terminal is not None and terminal.cause == "ORDER_OPERATION_DEADLINE"
+    assert terminal.cleanup.replacement_blocked
+    assert client.posts == 1 and len(client.cancel_calls) == 1
+    assert result.inventory is not None
+    assert (result.inventory.qy, result.inventory.qn) == pytest.approx((1.25, 1.0))
+    assert Decimal(str(result.inventory_cost)) == Decimal("1.0975")
+    assert not result.capital_certified and result.unresolved_exposure
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_clean_quote_invalidation_re_admits_but_capture_anomaly_stops(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    client.on_create = lambda: scope.session.public_session.service.book(
+        "yes-token",
+    ).apply_delta(Side.BUY, .56, 0, time.time())
+    try:
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.submissions[0].outcome == "NO_SEND"
+    assert result.submissions[0].reason == "CONTINUATION_QUOTE_INTENT_CHANGED"
+    assert result.admissions[1].eligible
+    assert len(result.submissions) >= 2 and result.submissions[1].outcome == "COMPLETE"
+    assert client.posts >= 1 and not scope.session._terminal_stop_latched
+    empty_attempts = [attempt for attempt in scope.session.placement_owner._attempts.values()
+                      if attempt.outcome == "EMPTY" and not attempt.acknowledged_order_ids]
+    assert len(empty_attempts) == 1
+    fresh = result.admissions[1]
+    first_post_prices = {
+        token: Decimal(row["price"])
+        for token in ("yes-token", "no-token")
+        for row in (client.rows[f"cycle-1-{token}"],)
+    }
+    assert first_post_prices == {
+        quote.token_id: Decimal(str(quote.price)) for quote in fresh.candidate.quotes
+    }
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_empty_wrapper_with_pending_capture_anomaly_remains_terminal(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    def inject_pending_candidate_trade():
+        event = TradeEvent(
+            token_id="yes-token", our_side=Side.BUY, price=.55, size=.1,
+            trade_id="iter0028-pending-capture", status=TradeState.MATCHED,
+            ts=time.time(), maker_order_id="unregistered-continuation-order",
+            market_id=scope.market.condition_id,
+        )
+        scope.processor.on_trade(
+            event, scope.market.condition_id,
+            received_at_us=int(time.time() * 1_000_000),
+            received_monotonic_ns=scope.session._monotonic_ns(),
+            connection_generation=scope.session.user_generation,
+        )
+
+    client.on_create = inject_pending_candidate_trade
+    try:
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+
+    assert result.outcome == "TERMINAL" and scope.session._terminal_stop_latched
+    assert client.posts == 0
+    assert result.submissions[0].resolved_attempt.outcome in {"UNKNOWN", "PARTIAL"}
+    assert result.submissions[0].resolved_attempt.pending_anomalies
+    assert result.unresolved_exposure and not result.capital_certified
+    assert len(result.submissions) == 1
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["latefill", "cancel", "teardown"])
+async def test_iter0028_held_continuation_close_drains_before_releasing_owner(
+    placement_scope, blocked_network, monkeypatch, action,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(
+        scope, monkeypatch, [("no-token", 1), ("no-token", 4.75)],
+    )
+    started, release = asyncio.Event(), asyncio.Event()
+    original_cancel = gateway.cancel
+    held = False
+
+    async def hold_first_cancel(*args, **kwargs):
+        nonlocal held
+        if not held:
+            held = True
+            result = await original_cancel(*args, **kwargs)
+            started.set()
+            await release.wait()
+            return result
+        return await original_cancel(*args, **kwargs)
+
+    gateway.cancel = hold_first_cancel
+    operation = asyncio.create_task(scope.session.continue_normal(
+        authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    shutdown = None
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert client.posts == 1 and scope.owner.current.replacement_blocked
+        competing = await scope.session.post_cycle_next_action_admission()
+        assert not competing.eligible and client.posts == 1
+        if action == "latefill":
+            order_id = "cycle-1-no-token"
+            price = float(client.rows[order_id]["price"])
+            _send_matched_then_confirmed(
+                scope, order_id, trade_id="iter0028-fill-during-close",
+                size=.5, price=price, receipt_ns=scope.session._monotonic_ns(),
+            )
+            client.rows[order_id]["size_matched"] = "1.5"
+            client.trades.append(_rest_trade(
+                order_id, "no-token", str(price), ".5",
+                trade_id="iter0028-fill-during-close",
+            ))
+        elif action == "cancel":
+            operation.cancel()
+            await asyncio.sleep(0)
+            operation.cancel()
+            await asyncio.sleep(0)
+            assert not operation.done()
+        else:
+            shutdown = asyncio.create_task(scope.session.aclose())
+            await asyncio.sleep(0)
+            assert not shutdown.done()
+        release.set()
+        if action == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await operation
+        elif action == "teardown":
+            await shutdown
+            try:
+                result = await operation
+                assert result.outcome == "TERMINAL"
+            except asyncio.CancelledError:
+                pass
+        else:
+            result = await operation
+            assert result.outcome == "REBALANCE_HANDOFF"
+            assert result.inventory.delta == pytest.approx(-5)
+            assert client.posts == 2
+        if action != "latefill":
+            assert scope.session._terminal_stop_latched
+            terminal = scope.session.terminal_failure_result
+            assert terminal is not None
+            assert terminal.cause == "WINDOW_EXPIRED"
+            assert terminal.cleanup.replacement_blocked
+            assert terminal.human_attention_required
+            assert terminal.inventory_scope == "REGISTERED_ORDERS_CONFIRMED_FILLS"
+            assert (terminal.confirmed_inventory.qy, terminal.confirmed_inventory.qn) == pytest.approx(
+                (1.25, 1.0),
+            )
+            assert client.posts == 1
+        assert all(all(order_id.startswith("cycle-") for order_id in ids)
+                   for ids in client.cancel_calls)
+        assert len(client.cancel_calls) == (2 if action == "latefill" else 1)
+        assert blocked_network == []
+    finally:
+        release.set()
+        if not operation.done():
+            operation.cancel()
+        if shutdown is not None and not shutdown.done():
+            await shutdown
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("fills", "expected_delta", "mutate_after_sign"), [
+    ([ ("yes-token", 1.25), ("no-token", 1.0),
+       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, False),
+    ([ ("yes-token", 1.25), ("yes-token", 1.0),
+       ("yes-token", 1.0), ("yes-token", 1.75) ], 5.0, False),
+    ([ ("yes-token", 1.25), ("no-token", 1.0),
+       ("no-token", 1.0), ("no-token", 4.25) ], -5.0, True),
+])
+async def test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively(
+    placement_scope, blocked_network, monkeypatch, fills, expected_delta,
+    mutate_after_sign,
+):
+    scope = placement_scope
+    service, _account_reads = _prepare_real_admission(scope)
+    clock = _DeterministicMonotonicClock(time.monotonic_ns())
+    scope.session._monotonic_ns = clock.read
+    scope.session._sleep = clock.sleep
+
+    client = RepeatedNormalSDKClient(scope, fills)
+    gateway = ExecutionGateway(Config(), paper=False)
+    gateway._client = client
+
+    async def inline_io(fn, *args):
+        return fn(*args)
+
+    async def no_rate_wait(*_args, **_kwargs):
+        return None
+
+    gateway._io = inline_io
+    gateway._order_bucket.acquire = no_rate_wait
+    gateway._cancel_bucket.acquire = no_rate_wait
+    scope.session.user_session.gateway = gateway
+    scope.session.user_session.observation.account = SimpleNamespace(
+        signer="fake-signer", funder="fake-funder",
+    )
+
+    import polymaker.rdp_runtime as runtime
+    from polymaker.rdp_account import RDPPositionEvidence
+
+    async def account_snapshot(_bootstrap, _gateway, signer, funder, *, now):
+        ids = set(scope.processor._owned)
+        inventory = snapshot_inventory(scope.market, scope.processor, ids)
+        cost = Decimal(str(inventory.inventory_cost))
+        cash = Decimal("30") - cost
+        captured = now()
+        return SimpleNamespace(
+            signer=signer, funder=funder, condition_id=scope.market.condition_id,
+            balance_usd=cash, allowance_usd=cash,
+            required_spenders=("0x" + "a" * 40,),
+            selected_positions=(
+                RDPPositionEvidence("Up", "yes-token", Decimal(str(inventory.qy)), Decimal("0")),
+                RDPPositionEvidence("Down", "no-token", Decimal(str(inventory.qn)), Decimal("0")),
+            ),
+            selected_open_orders=(), total_open_order_count=0, all_open_orders=(),
+            orders_receipt_ts=captured - .002, positions_receipt_ts=captured - .001,
+            collateral_receipt_ts=captured,
+        )
+
+    monkeypatch.setattr(runtime, "_capture_account_with_gateway", account_snapshot)
+    try:
+        initial = await scope.session.initial_normal_admission()
+        assert initial.eligible, initial.reason
+        submission = await scope.session.submit_initial_normal(
+            initial, authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+        assert submission.outcome == "COMPLETE", getattr(client, "create_error", None)
+        initial_cycle = await scope.session.complete_initial_normal_cycle(
+            submission.resolved_attempt, close_budget_s=2,
+        )
+        assert initial_cycle.close_result.next_mode is RDPMode.NORMAL
+        cached_initial_submission = scope.session._initial_submission_result
+        cached_initial_cycle = scope.session.initial_cycle_completion_result
+
+        before_denied = (client.posts, tuple(client.cancel_calls))
+        denied = await scope.session.continue_normal()
+        assert denied.outcome == "DENIED"
+        assert denied.reason == "HUMAN_AUTHORIZATION_REQUIRED"
+        assert (client.posts, tuple(client.cancel_calls)) == before_denied
+        assert scope.session._initial_submission_result is cached_initial_submission
+        assert scope.session.initial_cycle_completion_result is cached_initial_cycle
+
+        # A real feed event supersedes bootstrap tick metadata. Let the existing
+        # two-second filter warmup complete before the next factual admission.
+        async def process_feed(message):
+            service._processing_receipt_monotonic = time.monotonic()
+            try:
+                await service._process_raw(json.dumps(message))
+            finally:
+                service._processing_receipt_monotonic = None
+
+        await process_feed({
+            "event_type": "tick_size_change",
+            "market": scope.market.condition_id,
+            "asset_id": "yes-token",
+            "new_tick_size": "0.005",
+        })
+        assert service._tick_source["yes-token"] == "WS_TICK_SIZE_CHANGE"
+        await asyncio.sleep(2.05)
+        await process_feed({
+            "event_type": "book", "market": scope.market.condition_id,
+            "asset_id": "yes-token", "tick_size": "0.005",
+            "bids": [{"price": "0.55", "size": "10"},
+                     {"price": "0.56", "size": "10"}],
+            "asks": [{"price": "0.60", "size": "10"}],
+            "timestamp": "2",
+        })
+        for token, price in (("yes-token", "0.56"), ("no-token", "0.42")):
+            await process_feed({
+                "event_type": "last_trade_price",
+                "market": scope.market.condition_id, "asset_id": token,
+                "price": price, "size": "1", "side": "BUY", "timestamp": "2",
+            })
+        if mutate_after_sign:
+            def change_tick_between_guards():
+                changed_book = service.book("yes-token")
+                changed_book.set_tick_size(.0025)
+                changed_book.local_ts = time.time()
+                service._tick_source["yes-token"] = "WS_TICK_SIZE_CHANGE"
+
+            client.on_create = change_tick_between_guards
+
+        result = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+    finally:
+        gateway.close()
+
+    if mutate_after_sign:
+        assert result.outcome == "TERMINAL"
+        assert result.reason == "MARKET_DATA_STALE"
+        assert len(result.submissions) == 1
+        assert result.submissions[0].outcome == "NO_SEND"
+        assert result.submissions[0].post_started is False
+        assert "TOKEN_TICK_EVIDENCE_CHANGED" in result.submissions[0].guard_reasons
+        assert client.posts == 1  # only the previously completed initial pair
+        assert scope.session._terminal_stop_latched
+        assert blocked_network == []
+        return
+
+    assert result.outcome == "REBALANCE_HANDOFF"
+    assert result.mode is RDPMode.REBALANCE
+    assert len(result.submissions) == 3
+    assert len(result.cycles) == 4  # initial plus three automatically owned cycles
+    assert client.posts == 4  # no REBALANCE POST at either exact +/-5 boundary
+    assert [row.outcome for row in result.submissions] == ["COMPLETE"] * 3
+    assert [row.mode for row in result.admissions] == [RDPMode.NORMAL] * 3
+
+    first, second, third = result.admissions
+    assert dict(first.token_ticks)["yes-token"] == pytest.approx(.005)
+    assert dict(first.token_tick_sources)["yes-token"] == "WS_BOOK_SNAPSHOT"
+    assert {quote.token_id: quote.size for quote in first.candidate.quotes} == {
+        "yes-token": 5, "no-token": 6.25,
+    }
+    assert {quote.token_id: quote.size for quote in second.candidate.quotes} == (
+        {"yes-token": 5, "no-token": 5.25} if expected_delta < 0 else
+        {"yes-token": 5, "no-token": 7.25}
+    )
+    third_projection = third.capital_projection.snapshot
+    if expected_delta < 0:
+        assert third_projection.inventory.qy == pytest.approx(1.25)
+        assert third_projection.inventory.qn == pytest.approx(2.0)
+        assert third_projection.inventory_cost == Decimal("1.5075")
+        assert {quote.token_id: quote.size for quote in third.candidate.quotes} == {
+            "yes-token": 5.75, "no-token": 5,
+        }
+        assert result.inventory_cost == pytest.approx(3.25)
+    else:
+        assert third_projection.inventory.qy == pytest.approx(3.25)
+        assert third_projection.inventory.qn == pytest.approx(0.0)
+        assert third_projection.inventory_cost == Decimal("1.7975")
+        assert {quote.token_id: quote.size for quote in third.candidate.quotes} == {
+            "yes-token": 5, "no-token": 8.25,
+        }
+        assert Decimal(str(result.inventory_cost)) == Decimal("2.76875")
+    assert result.inventory.delta == pytest.approx(expected_delta)
+    assert len(scope.session.placement_owner.close_proofs) == 4
+    assert all(cycle.close_result.barrier_complete for cycle in result.cycles)
+    assert all(cycle.close_result.capital.certified for cycle in result.cycles)
+    assert all(validation.factual_valid
+               for validation in scope.session.initial_intent_validation_results)
+    assert len(scope.session.initial_intent_validation_results) == 8
+    assert client.tick_options[0] == "0.01"
+    assert "0.005" in client.tick_options[2::2]
+
+    post_positions = [index for index, row in enumerate(client.events) if row[0] == "POST"]
+    assert len(post_positions) == 4
+    for previous_post, next_post in zip(post_positions, post_positions[1:]):
+        between = client.events[previous_post + 1:next_post]
+        assert any(row[0] == "CANCEL" for row in between)
+        assert any(row[0] == "TRADES" for row in between)
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_m3_concurrent_denial_requires_current_cumulative_scope(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(
+        scope, monkeypatch, [("no-token", 0)],
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    old_sleep = scope.session._sleep
+
+    async def hold_after_first_post(delay):
+        await old_sleep(delay)
+        if client.posts == 1:
+            entered.set()
+            await release.wait()
+
+    scope.session._sleep = hold_after_first_post
+    running = asyncio.create_task(scope.session.continue_normal(
+        authorization=True, order_budget_s=2, close_budget_s=2,
+    ))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        current = scope.owner.current
+        prior_snapshot = scope.session._initial_cycle_result.close_result.capital.snapshot
+        run_ids = set(scope.owner.registered_run_order_ids)
+        live = (scope.store.orders_for("yes-token")
+                + scope.store.orders_for("no-token"))
+        current_projection = project_rdp_capital(
+            scope.market, scope.processor, run_ids, live,
+            market_state_reliable=True, order_state_reliable=True,
+            close_evidence=scope.owner.close_proofs,
+        )
+        denied = await scope.session.continue_normal(
+            authorization=True, order_budget_s=2, close_budget_s=2,
+        )
+
+        assert current is not None and current.replacement_blocked
+        assert current.closed_order_ids == ()
+        assert len(run_ids) == 4 and len(prior_snapshot.run_order_ids) == 2
+        assert prior_snapshot.reserved_cash == 0
+        assert current_projection.certified
+        assert current_projection.snapshot.reserved_cash == Decimal("5.3125")
+        assert denied.outcome == "DENIED" and not denied.execution_authorized
+        assert not denied.capital_certified and denied.unresolved_exposure
+        assert client.posts == 1 and client.cancel_calls == []
+    finally:
+        release.set()
+        running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            pass
+        scope.session._sleep = old_sleep
+        gateway.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_m3_local_order_resurrection_invalidates_completion_capital(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    try:
+        scope.processor.on_order(OrderEvent(
+            "no-order", "no-token", Side.BUY, .41, 5, False, 5, 0,
+            "LIVE", (), scope.market.condition_id,
+        ), scope.market.condition_id)
+        fresh = project_rdp_capital(
+            scope.market, scope.processor,
+            set(scope.owner.registered_run_order_ids), [],
+            market_state_reliable=True, order_state_reliable=True,
+            close_evidence=scope.owner.close_proofs,
+        )
+        denied = await scope.session.continue_normal()
+        assert not fresh.certified and fresh.reason == "CLOSED_ORDER_LOCAL_OPEN"
+        assert denied.outcome == "DENIED" and denied.reason == "HUMAN_AUTHORIZATION_REQUIRED"
+        assert not denied.capital_certified and denied.unresolved_exposure
+        assert denied.inventory is not None and denied.inventory.qy == pytest.approx(1.25)
+        assert client.posts == 0 and client.cancel_calls == []
+    finally:
+        gateway.close()
+    assert blocked_network == []
+
+
+@pytest.mark.asyncio
+async def test_iter0028_m3_clean_current_close_remains_certifiable(
+    placement_scope, blocked_network, monkeypatch,
+):
+    scope = placement_scope
+    client, gateway = await _prepare_repeated_continuation(scope, monkeypatch)
+    try:
+        result = await scope.session.continue_normal()
+    finally:
+        gateway.close()
+    assert result.outcome == "DENIED" and result.reason == "HUMAN_AUTHORIZATION_REQUIRED"
+    assert result.capital_certified and not result.unresolved_exposure
+    assert result.inventory is not None and result.inventory.qy == pytest.approx(1.25)
+    assert client.posts == 0 and client.cancel_calls == []
     assert blocked_network == []

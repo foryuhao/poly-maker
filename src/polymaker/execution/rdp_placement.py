@@ -47,6 +47,8 @@ class RDPPlacementAttempt:
     pending_anomalies: tuple[str, ...]
     unresolved: bool
     replacement_blocked: bool
+    continuation: bool = False
+    source_attempt_id: int | None = None
     execution_authorized: bool = field(default=False, init=False)
 
 
@@ -61,10 +63,27 @@ class RDPPlacementOwner:
         self._initial_scope_empty = initial_scope_empty
         self._next_attempt_id = 1
         self._current: RDPPlacementAttempt | None = None
+        self._attempts: dict[int, RDPPlacementAttempt] = {}
+        self._close_proofs: dict[int, RDPCloseResult] = {}
 
     @property
     def current(self) -> RDPPlacementAttempt | None:
         return self._current
+
+    @property
+    def attempts(self) -> tuple[RDPPlacementAttempt, ...]:
+        return tuple(self._attempts[key] for key in sorted(self._attempts))
+
+    @property
+    def registered_run_order_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._registered_run_ids()))
+
+    @property
+    def registered_run_order_sequence(self) -> tuple[str, ...]:
+        return tuple(
+            order_id for attempt_id in sorted(self._attempts)
+            for order_id in self._attempts[attempt_id].acknowledged_order_ids
+        )
 
     @property
     def blocks_initial_admission(self) -> bool:
@@ -120,6 +139,7 @@ class RDPPlacementOwner:
         )
         self._next_attempt_id += 1
         self._current = attempt
+        self._attempts[attempt.attempt_id] = attempt
         log.info("rdp_placement_capture_armed", condition_id=attempt.condition_id,
                  public_generation=attempt.public_generation,
                  user_generation=attempt.user_generation, outcome=attempt.outcome,
@@ -199,7 +219,9 @@ class RDPPlacementOwner:
                     self._store.upsert_order(order)
                     self._processor.register_order(
                         order.order_id, current.condition_id, order.token_id,
-                        order.side, order.size, order.price, "rdp_initial",
+                        order.side, order.size, order.price,
+                        ("rdp_normal_continuation" if current.continuation
+                         else "rdp_initial"),
                     )
                 except Exception as exc:  # noqa: BLE001 - retain safe partial ownership
                     register_anomalies.append(f"REGISTRATION_FAILED:{type(exc).__name__}")
@@ -244,7 +266,26 @@ class RDPPlacementOwner:
             unresolved=unresolved,
             replacement_blocked=blocked,
         )
-        self._current = final
+        self._attempts[final.attempt_id] = final
+        # A reliably empty continuation capture creates no new ownership. Keep
+        # that immutable attempt in history, while restoring its fully closed
+        # source as the current cumulative anchor for a fresh admission. This
+        # lets the caller wait and re-admit after a clean pre-POST invalidation
+        # without dropping prior close proofs or treating EMPTY as an order.
+        if (final.continuation and final.outcome == "EMPTY"
+                and not final.unresolved and not final.replacement_blocked
+                and not final.acknowledged_order_ids and not final.observed_order_ids
+                and not final.pending_anomalies):
+            source = self._attempts.get(final.source_attempt_id)
+            if (source is not None and source.outcome == "COMPLETE"
+                    and not source.unresolved and not source.replacement_blocked
+                    and set(source.closed_order_ids) == set(source.acknowledged_order_ids)
+                    and source.attempt_id in self._close_proofs):
+                self._current = source
+            else:
+                self._current = final
+        else:
+            self._current = final
         log.info("rdp_placement_capture_resolved", condition_id=final.condition_id,
                  public_generation=final.public_generation,
                  user_generation=final.user_generation, outcome=final.outcome,
@@ -254,6 +295,85 @@ class RDPPlacementOwner:
                  replacement_blocked=final.replacement_blocked,
                  execution_authorized=False)
         return final
+
+    def arm_continuation(
+        self, admission: Any, *, current_public_generation: int,
+        current_user_generation: int, session_healthy: bool, now: float,
+    ) -> RDPPlacementAttempt:
+        """Capture the next NORMAL pair only after this owner's prior proof."""
+        previous = self._current
+        if (previous is None or previous.replacement_blocked or previous.unresolved
+                or previous.outcome != "COMPLETE"
+                or set(previous.closed_order_ids) != set(previous.acknowledged_order_ids)):
+            raise RDPPlacementError("PRIOR_PLACEMENT_NOT_CLOSED")
+        if not session_healthy:
+            raise RDPPlacementError("INPUT_SESSION_UNHEALTHY")
+        if now >= self._bootstrap.end_epoch:
+            raise RDPPlacementError("MARKET_EXPIRED")
+        market = self._bootstrap.market
+        if (getattr(admission, "eligible", False) is not True
+                or getattr(admission, "execution_authorized", True) is not False
+                or getattr(admission, "condition_id", None) != market.condition_id
+                or getattr(admission, "slug", None) != market.slug
+                or getattr(admission, "attempt_id", None) != previous.attempt_id
+                or getattr(admission, "public_generation", None) != current_public_generation
+                or getattr(admission, "user_generation", None) != current_user_generation
+                or getattr(getattr(admission, "mode", None), "value", None) != "NORMAL"):
+            raise RDPPlacementError("CONTINUATION_ADMISSION_SCOPE_MISMATCH")
+        candidate = getattr(admission, "candidate", None)
+        quotes = getattr(candidate, "quotes", None)
+        run_ids = self._registered_run_ids()
+        proof_ids = set(self._close_proofs)
+        expected_proof_ids = {
+            attempt_id for attempt_id, attempt in self._attempts.items()
+            if attempt.acknowledged_order_ids
+        }
+        harmless_empty_ids = {
+            attempt_id for attempt_id, attempt in self._attempts.items()
+            if (attempt.outcome == "EMPTY" and not attempt.unresolved
+                and not attempt.replacement_blocked
+                and not attempt.acknowledged_order_ids
+                and not attempt.observed_order_ids and not attempt.pending_anomalies)
+        }
+        if (not isinstance(quotes, tuple) or not _valid_continuation_pair(
+                    market, quotes, run_ids, self._processor)
+                or self.registered_run_order_sequence
+                != tuple(getattr(admission, "run_order_ids", ()))
+                or proof_ids != expected_proof_ids
+                or set(self._attempts) != proof_ids | harmless_empty_ids):
+            # The admission can cover only prior attempts, all of which must
+            # already have independent retained close results.
+            raise RDPPlacementError("CONTINUATION_SCOPE_OR_QUOTE_INVALID")
+        if self._processor._pending or self._processor._pending_events:
+            raise RDPPlacementError("PENDING_CAPTURE_ALREADY_ACTIVE")
+        self._processor.arm_pending_many([(quote.token_id, quote.side) for quote in quotes])
+        attempt = RDPPlacementAttempt(
+            attempt_id=self._next_attempt_id, slug=market.slug,
+            condition_id=market.condition_id,
+            public_generation=current_public_generation,
+            user_generation=current_user_generation, quotes=quotes,
+            outcome="ARMED", reason=None, acknowledged_order_ids=(),
+            observed_order_ids=(), closed_order_ids=(), pending_anomalies=(),
+            unresolved=True, replacement_blocked=True, continuation=True,
+            source_attempt_id=previous.attempt_id,
+        )
+        self._next_attempt_id += 1
+        self._current = attempt
+        self._attempts[attempt.attempt_id] = attempt
+        log.info("rdp_continuation_capture_armed", condition_id=attempt.condition_id,
+                 attempt_id=attempt.attempt_id, source_attempt_id=attempt.source_attempt_id,
+                 acknowledged_order_ids=tuple(sorted(run_ids)), execution_authorized=False)
+        return attempt
+
+    def _registered_run_ids(self) -> set[str]:
+        return {
+            order_id for attempt in self._attempts.values()
+            for order_id in attempt.acknowledged_order_ids
+        }
+
+    @property
+    def close_proofs(self) -> tuple[RDPCloseResult, ...]:
+        return tuple(self._close_proofs[key] for key in sorted(self._close_proofs))
 
     def record_close(
         self, attempt: RDPPlacementAttempt, barrier: RDPCloseResult,
@@ -280,19 +400,26 @@ class RDPPlacementOwner:
         market_tokens = {self._bootstrap.market.yes.token_id,
                          self._bootstrap.market.no.token_id}
         quote_tokens = {quote.token_id for quote in current.quotes}
-        full_initial_pair = (
+        valid_pair = (
             current.outcome == "COMPLETE" and not current.unresolved
             and len(current.acknowledged_order_ids) == 2
-            and len(acknowledged) == 2 and quote_tokens == market_tokens
-            and acknowledged == closed
+            and quote_tokens == market_tokens and acknowledged == closed
+            and (not current.continuation and len(acknowledged) == 2
+                 or current.continuation and _valid_continuation_pair(
+                     self._bootstrap.market, current.quotes,
+                     self._registered_run_ids() - acknowledged, self._processor,
+                 ))
         )
         capital_snapshot = getattr(capital, "snapshot", None)
+        cumulative_ids = self._registered_run_ids()
+        prior_proofs = self.close_proofs
+        proofs = prior_proofs + (barrier,)
         fresh_capital = (
             project_rdp_capital(
-                self._bootstrap.market, self._processor, acknowledged, [],
+                self._bootstrap.market, self._processor, cumulative_ids, [],
                 market_state_reliable=True, order_state_reliable=True,
-                close_evidence=barrier,
-            ) if full_initial_pair and _registry_matches_attempt(
+                close_evidence=proofs,
+            ) if valid_pair and _registry_matches_attempt(
                 self._bootstrap, self._processor, current,
             ) else None
         )
@@ -314,7 +441,7 @@ class RDPPlacementOwner:
             for order_id in acknowledged
         )
         can_release = (
-            full_initial_pair and barrier.complete is True and barrier.reason is None
+            valid_pair and barrier.complete is True and barrier.reason is None
             and barrier.inventory is not None and not barrier.affected_order_ids
             and current_inventory == barrier.inventory and not current_local_open
             and not current_unresolved
@@ -322,10 +449,10 @@ class RDPPlacementOwner:
             and capital.certified and capital_snapshot is not None
             and isinstance(fresh_capital, RDPCapitalProjection)
             and fresh_capital.certified and fresh_capital.snapshot == capital_snapshot
-            and set(capital_snapshot.run_order_ids) == acknowledged
+            and set(capital_snapshot.run_order_ids) == cumulative_ids
             and not capital_snapshot.resting_order_ids
             and capital_snapshot.reserved_cash == 0
-            and capital_snapshot.inventory == barrier.inventory
+            and (current.continuation or capital_snapshot.inventory == barrier.inventory)
         )
         updated = replace(
             current,
@@ -333,6 +460,9 @@ class RDPPlacementOwner:
             replacement_blocked=False if can_release else current.replacement_blocked,
         )
         self._current = updated
+        self._attempts[updated.attempt_id] = updated
+        if can_release:
+            self._close_proofs[updated.attempt_id] = barrier
         return updated
 
     def _validate_acknowledgements(
@@ -406,6 +536,34 @@ def _valid_initial_pair(market: Any, quotes: tuple[Any, ...]) -> bool:
             return False
         by_token[quote.token_id] = quote
     return set(by_token) == {market.yes.token_id, market.no.token_id}
+
+
+def _valid_continuation_pair(
+    market: Any, quotes: tuple[Any, ...], prior_ids: set[str], processor: Any,
+) -> bool:
+    """Validate the exact Frozen NORMAL inventory skew against prior fills."""
+    if len(quotes) != 2 or not prior_ids:
+        return False
+    try:
+        inventory = snapshot_inventory(market, processor, set(prior_ids))
+        delta = Decimal(str(inventory.delta))
+        expected = {
+            market.yes.token_id: Decimal("5") + max(-delta, Decimal("0")),
+            market.no.token_id: Decimal("5") + max(delta, Decimal("0")),
+        }
+        if not delta.is_finite() or abs(delta) >= Decimal("5"):
+            return False
+    except (DecimalException, TypeError, ValueError, OverflowError):
+        return False
+    by_token: dict[str, Any] = {}
+    for quote in quotes:
+        if (not isinstance(quote, Quote) or quote.side is not Side.BUY
+                or quote.token_id in by_token or not 0 < quote.price < 1):
+            return False
+        if not _same_number(quote.size, expected.get(quote.token_id)):
+            return False
+        by_token[quote.token_id] = quote
+    return set(by_token) == set(expected)
 
 
 def _registry_matches_attempt(

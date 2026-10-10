@@ -7,7 +7,7 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest reviewed implementation: ITER-0027, CODE_READY, final Reviewer04 PASS; final archive verification is recorded in ITER-0027/05_ARCHIVE_RECEIPT.md. DG-002 remains OPEN after that necessary factual-admission prerequisite.
+Latest reviewed implementation: ITER-0028, CODE_READY, final Reviewer09 PASS closes full DG-003; archive verification follows in ITER-0028/10_ARCHIVE_RECEIPT.md. DG-002/004 remain OPEN for operating REBALANCE.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
 Implementation resume authorization: GRANTED by explicit human resume for automatic required serial iterations and repairs until MICRO_LIVE_READY. No real-money/main merge/strategy-semantic change is authorized.
@@ -93,7 +93,7 @@ Verified partial prerequisite: ITER-0027/01_ARCHITECT.md, 03_WORKER.md and indep
 
 ### DG-003 — Repeated NORMAL Operation in One Market
 
-Status: OPEN.
+Status: CLOSED.
 
 Sources: Frozen §§14–22; single-market deliverable.
 
@@ -102,6 +102,8 @@ Evidence: complete_initial_normal_cycle finishes an already acknowledged initial
 Missing behavior: After successful reconciliation with abs(Delta)<5, the same market runtime must re-enter NORMAL, apply inventory size skew and current gates, and operate another cycle without manual code intervention. Valid zero-fill quotes may rest; invalidation must close before requoting.
 
 Closure: An offline market scenario completes more than one NORMAL cycle, including fractional residual inventory and changed dynamic ticks. No replacement is submitted before authoritative closure; no quote quota, zero-fill timeout or new stop condition is introduced.
+
+Closure evidence: ITER-0028 frozen01, Worker02/Fix04/Addendum05/Fix08, immutable findings03/06 and final independent09_REVIEWER_REREVIEW_02.md PASS. All11 criteria independently verified through actual consecutive fake-SDK cycles, cumulative fractional quantities/cost, multiple scoped proofs, official-format dynamic tick, strict final guards, rest/window/invalidation ordering, later partial/unknown/interrupted exposure, drain and both +/-5 closed handoffs. B1/M1/M2/M3 fixed; full1703 passed /2 skipped and45 additional probe executions passed, zero network. Evidence/Missing paragraphs above describe the prior baseline and are superseded for this behavior only. Operating REBALANCE and complete DG-002 remain OPEN.
 
 ### DG-004 — Operating REBALANCE and Return to NORMAL
 
@@ -282,13 +284,13 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 ## Resume and Current Action
 
-CONVERGENCE-0001 remains immutable reviewed historical evidence. ITER-0025 is archived and DG-001 CLOSED. ITER-0026 final Reviewer12 PASS closes DG-006 for the implemented runtime; final receipt records archival. DG-002–DG-005 and DG-007–DG-012 remain OPEN.
+CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; archive/remote verification follows. DG-002/004/005/007–012 remain OPEN.
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0028.
-Current Stage: WORKER.
+Current Stage: ARCHIVE_PENDING.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 independent PASS and verified archive deliver the necessary integrated post-cycle factual admission prerequisite under DG-002. ITER-0028 Architect01 is frozen for full DG-003 retained repeated NORMAL operation, preserving cumulative inventory/cost and existing gateway/lifecycle safety. DG-002 stays OPEN for REBALANCE successive-order coverage; DG-004 stays OPEN. Continue serial Architect → Worker → independent Reviewer and repairs, archive and exactly verify each iteration before the next. Stop at MICRO_LIVE_READY, create the required final PR/comparison and wait for human live authorization. No real orders/cancels, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 delivered the necessary DG-002 factual-admission prerequisite. ITER-0028 final independent PASS closes full DG-003 using cumulative inventory/cost and existing gateway/lifecycle. Complete its normal archive/remote verification, then automatically dispatch the next Architect. DG-002/004 stay OPEN for operating REBALANCE and its cumulative capital consumption. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extensions or safety relaxation are authorized.

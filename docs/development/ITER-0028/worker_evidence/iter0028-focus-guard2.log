@@ -1,0 +1,13 @@
+..F                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True] _
+tests/test_rdp_placement.py:8905: in test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively
+    assert result.reason == "TOKEN_TICK_EVIDENCE_CHANGED"
+E   AssertionError: assert 'BOOK_FILTER_UNREADY' == 'TOKEN_TICK_EVIDENCE_CHANGED'
+E     
+E     - TOKEN_TICK_EVIDENCE_CHANGED
+E     + BOOK_FILTER_UNREADY
+=========================== short test summary info ============================
+FAILED tests/test_rdp_placement.py::test_one_normal_continuation_call_operates_real_fake_sdk_cycles_cumulatively[fills2--5.0-True]
+1 failed, 2 passed, 405 deselected in 7.98s
+REVIEW_NETWORK_ATTEMPTS []

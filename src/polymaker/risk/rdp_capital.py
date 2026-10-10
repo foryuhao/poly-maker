@@ -451,7 +451,7 @@ def project_rdp_capital(
     *,
     market_state_reliable: bool,
     order_state_reliable: bool,
-    close_evidence: RDPCloseResult | None = None,
+    close_evidence: RDPCloseResult | tuple[RDPCloseResult, ...] | None = None,
 ) -> RDPCapitalProjection:
     """Certify capital from confirmed fills, live reservations and close proof.
 
@@ -536,11 +536,19 @@ def project_rdp_capital(
 
     close_ids: set[str] = set()
     if close_evidence is not None:
-        evidence_result = _validate_close_evidence(
-            market, processor, run_order_ids, open_by_id, close_evidence)
-        if isinstance(evidence_result, tuple):
-            return _projection_failure(*evidence_result)
-        close_ids = evidence_result
+        proofs = (close_evidence,) if isinstance(close_evidence, RDPCloseResult) else close_evidence
+        if not isinstance(proofs, tuple) or not proofs:
+            return _projection_failure("INVALID_CLOSE_EVIDENCE")
+        for proof in proofs:
+            evidence_result = _validate_close_evidence(
+                market, processor, run_order_ids, open_by_id, proof)
+            if isinstance(evidence_result, tuple):
+                return _projection_failure(*evidence_result)
+            if close_ids & evidence_result:
+                return _projection_failure(
+                    "CONTRADICTORY_CLOSE_PROOFS", tuple(sorted(close_ids & evidence_result)),
+                )
+            close_ids.update(evidence_result)
 
     missing = run_order_ids - set(open_by_id) - close_ids
     if missing:
