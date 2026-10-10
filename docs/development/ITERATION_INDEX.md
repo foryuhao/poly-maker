@@ -52,9 +52,9 @@ Baseline details:
 
 Development Status: `IN_PROGRESS`
 
-Current Iteration: `ITER-0029`
+Current Iteration: `ITER-0030`
 
-Current Stage: `ARCHIVED`
+Current Stage: `ARCHITECT_PENDING`
 
 MICRO_LIVE_READY: `NO`
 
@@ -104,6 +104,8 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 ---
 
 ## Current Iteration
+
+ITER-0030 initialized after explicit human resume and direct local/remote1440a30 verification. No unfinished iteration existed. Architect pending: inspect actual code and dependencies, with DG-002 complete cross-mode acceptance as priority candidate; implementation scope is not approved yet. See ITER-0030/00_INITIALIZATION.md. Prior closed gaps/reviews remain valid.
 
 Explicit human resume authorizes automatic required iterations/repairs until MICRO_LIVE_READY. ITER-0029 final Reviewer09 PASS closes full DG-004 (all11 criteria); Worker08 plus corrective addendum are immutable. Independent full1749/2, final fault/executor5, P2/E3 12 and runtime/capture/fault91 passed, zero network. Three repair rounds, all failed logs, usage interruption and /tmp quota observations remain preserved. Historic NORMAL cause is unproven; current independent disposition and usable diagnostics are in final09. Implementation/PASS archive9034801 is pushed and exact remote verified; additive10_ARCHIVE_RECEIPT.md records evidence. Next: receipt push/verify, then automatically initialize ITER-0030 for one minimal remaining Gap ID through Architect. DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. No real orders/cancels, main merge or strategy revision authorized.
 
