@@ -7,7 +7,7 @@ Status: IN_PROGRESS.
 Implementation baseline: 7aa329e02bc5708bc5c2f5df956c9e5036085a07.
 Root: /home/ubuntu/poly-maker.
 Branch: rdp-phase0-dev.
-Latest reviewed implementation: ITER-0029, CODE_READY, final Reviewer09 PASS closes full DG-004; archive/remote verification will be recorded in ITER-0029/10_ARCHIVE_RECEIPT.md. DG-002 remains OPEN pending complete cross-mode capital acceptance.
+Latest reviewed implementation: ITER-0029, CODE_READY, final Reviewer09 PASS closes full DG-004; archive9034801 is pushed and exact remote verified, recorded in ITER-0029/10_ARCHIVE_RECEIPT.md. DG-002 remains OPEN pending complete cross-mode capital acceptance.
 MICRO_LIVE_READY: NO.
 Real-money authorization: NOT_GRANTED.
 Implementation resume authorization: GRANTED by explicit human resume for automatic required serial iterations and repairs until MICRO_LIVE_READY. No real-money/main merge/strategy-semantic change is authorized.
@@ -290,9 +290,9 @@ CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITE
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0029.
-Current Stage: ARCHIVAL.
+Current Stage: ARCHIVED.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic required development. ITER-0027 delivered a DG-002 prerequisite; ITER-0028 closed DG-003; ITER-0029 final independent09 PASS closes complete DG-004. Complete RESULT/index/archive commit, push and exact remote verification, then automatically dispatch Architect for one minimal remaining stable Gap ID. DG-002 remains OPEN until complete cross-mode acceptance is independently verified. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extension or safety relaxation is authorized.
+Human explicitly resumed automatic required development. ITER-0027 delivered a DG-002 prerequisite; ITER-0028 closed DG-003; ITER-0029 final independent09 PASS closes complete DG-004. Implementation/PASS/RESULT archive9034801 is pushed and exact remote verified. Complete receipt archival/verification, then automatically initialize ITER-0030 and dispatch Architect for one minimal remaining stable Gap ID. DG-002 remains OPEN until complete cross-mode acceptance is independently verified. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extension or safety relaxation is authorized.

@@ -32,7 +32,7 @@ Current RDP development branch:
 
 Latest archived implementation HEAD:
 
-`9f3ad272b7447219d18ae50b2fbb03b3095ebe4e`
+`9034801d7bb59fcdcaefabca55a3cf597ca93bf4`
 
 IM preservation state:
 
@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0029`
 
-Current Stage: `ARCHIVAL`
+Current Stage: `ARCHIVED`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0029 | DG-004 operating REBALANCE and return to NORMAL | APPROVED | IMPLEMENTED_FIX_03 | PASS | CODE_READY | PENDING_ARCHIVE | NOT_RUN | KEEP |
+| ITER-0029 | DG-004 operating REBALANCE and return to NORMAL | APPROVED | IMPLEMENTED_FIX_03 | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0028 | DG-003: retained automatic repeated NORMAL operation | APPROVED | IMPLEMENTED_FIX_02 | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0027 | DG-002 prerequisite: current post-cycle next-action admission | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -105,7 +105,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-Explicit human resume authorizes automatic required iterations/repairs until MICRO_LIVE_READY. ITER-0029 final Reviewer09 PASS closes full DG-004 (all11 criteria); Worker08 plus corrective addendum are immutable. Independent full1749/2, final fault/executor5, P2/E3 12 and runtime/capture/fault91 passed, zero network. Three repair rounds, all failed logs, usage interruption and /tmp quota observations remain preserved. Historic NORMAL cause is unproven; current independent disposition and usable diagnostics are in final09. Next: normal archive/push/exact remote verification, then one minimal remaining Gap ID through Architect. DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. No real orders/cancels, main merge or strategy revision authorized.
+Explicit human resume authorizes automatic required iterations/repairs until MICRO_LIVE_READY. ITER-0029 final Reviewer09 PASS closes full DG-004 (all11 criteria); Worker08 plus corrective addendum are immutable. Independent full1749/2, final fault/executor5, P2/E3 12 and runtime/capture/fault91 passed, zero network. Three repair rounds, all failed logs, usage interruption and /tmp quota observations remain preserved. Historic NORMAL cause is unproven; current independent disposition and usable diagnostics are in final09. Implementation/PASS archive9034801 is pushed and exact remote verified; additive10_ARCHIVE_RECEIPT.md records evidence. Next: receipt push/verify, then automatically initialize ITER-0030 for one minimal remaining Gap ID through Architect. DG-001/003/004/006 CLOSED; DG-002/005/007–012 OPEN. No real orders/cancels, main merge or strategy revision authorized.
 
 Prior ITER-0025/0026/0027 archives remain preserved. Current ITER-0028 Reviewer09 verifies the extended runtime and full DG-003 delivery. No prior completed functionality was reimplemented. See ITER-0028/00_INITIALIZATION.md for base evidence/authorization and iteration reports for the two repair rounds.
 
