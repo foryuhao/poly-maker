@@ -287,8 +287,8 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; archive/remote verification follows. DG-002/004/005/007–012 remain OPEN.
 
 Development Status: IN_PROGRESS.
-Current Iteration: ITER-0028.
-Current Stage: ARCHIVED.
+Current Iteration: ITER-0029.
+Current Stage: ARCHITECT.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
