@@ -284,13 +284,13 @@ Safe unknown-state handling, required metrics and final resolved accounting are 
 
 ## Resume and Current Action
 
-CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; archive/remote verification follows. DG-002/004/005/007–012 remain OPEN.
+CONVERGENCE-0001 remains immutable historical evidence. ITER-0025/DG-001 and ITER-0026/DG-006 are archived. ITER-0028 final Reviewer09 PASS closes DG-003; implementation9f3ad27 and receipt6b74bca are archived and remote verified. DG-002/004/005/007–012 remain OPEN.
 
 Development Status: IN_PROGRESS.
 Current Iteration: ITER-0029.
-Current Stage: ARCHITECT.
+Current Stage: WORKER.
 MICRO_LIVE_READY: NO.
 Real-Money Trading Authorization: NOT_GRANTED.
 Main Merge Authorization: NOT_GRANTED.
 
-Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 delivered the necessary DG-002 factual-admission prerequisite. ITER-0028 final independent PASS closes full DG-003 using cumulative inventory/cost and existing gateway/lifecycle. Complete its normal archive/remote verification, then automatically dispatch the next Architect. DG-002/004 stay OPEN for operating REBALANCE and its cumulative capital consumption. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extensions or safety relaxation are authorized.
+Human explicitly resumed automatic continuation after verified ITER-0026 archival. ITER-0027 delivered the necessary DG-002 factual-admission prerequisite. ITER-0028 final independent PASS closes full DG-003 using cumulative inventory/cost and existing gateway/lifecycle. ITER-0029 Architect01 is frozen and approves complete DG-004 operating REBALANCE through actual NORMAL resumption. Dispatch configured Worker within this contract, then independent Reviewer. DG-002/004 stay OPEN for operating REBALANCE and its cumulative capital consumption. Continue serial implementation/repair/review and verified archival until MICRO_LIVE_READY, then stop and create the final PR/comparison. No real orders/cancels, main merge, strategy extensions or safety relaxation are authorized.

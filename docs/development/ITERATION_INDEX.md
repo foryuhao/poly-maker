@@ -54,7 +54,7 @@ Development Status: `IN_PROGRESS`
 
 Current Iteration: `ITER-0029`
 
-Current Stage: `ARCHITECT`
+Current Stage: `WORKER`
 
 MICRO_LIVE_READY: `NO`
 
@@ -70,7 +70,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 | Iteration | Problem | Architect | Worker | Reviewer | Code Status | Remote Status | Live Status | Decision |
 |---|---|---|---|---|---|---|---|---|
-| ITER-0029 | One remaining required delivery behavior; Architect inspecting | PENDING | NOT_STARTED | NOT_STARTED | NOT_READY | PENDING | NOT_RUN | PENDING |
+| ITER-0029 | DG-004 operating REBALANCE and return to NORMAL | APPROVED | PENDING | NOT_STARTED | NOT_READY | CONTRACT_FROZEN | NOT_RUN | PENDING |
 | ITER-0028 | DG-003: retained automatic repeated NORMAL operation | APPROVED | IMPLEMENTED_FIX_02 | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0027 | DG-002 prerequisite: current post-cycle next-action admission | APPROVED | IMPLEMENTED | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
 | ITER-0026 | DG-006: partial/unknown and unreliable-state terminal closure | APPROVED | IMPLEMENTED_FIX | PASS | CODE_READY | ARCHIVED | NOT_RUN | KEEP |
@@ -105,7 +105,7 @@ Main Branch Merge Authorization: `NOT_GRANTED`
 
 ## Current Iteration
 
-Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0029 Architect is inspecting current code/tests and remaining requirements; no contract/Worker implementation claimed. Initialization00 records startupHEAD/origin6b74bca9c6ccb600d4427ea936a0bd8e67cc2ac7. ITER-0028 implementation9f3ad27/receipt6b74bca are archived/verified; Reviewer09 full DG-003 PASS, full1703/2 and45 additional probe executions, zero network. All failed/repair evidence retained. DG-001/003/006 CLOSED; DG-002/004/005/007–012 OPEN.
+Explicit human resume authorizes automatic required delivery iterations and repairs until MICRO_LIVE_READY; live trading, main merge, strategy revision and unapproved runtime interfaces remain denied. ITER-0029 Architect01 is APPROVED_FOR_IMPLEMENTATION for complete DG-004; verbatim contract SHA256 fa2c9fab2346b94de58353c5564e9dbe6cc85bc6a6d34d01a0859c4ceb62423c. Next is configured Worker, then independent actual-diff review; DG-004 remains OPEN until complete acceptance PASS. Initialization00 records startupHEAD/origin6b74bca9c6ccb600d4427ea936a0bd8e67cc2ac7. ITER-0028 implementation9f3ad27/receipt6b74bca are archived/verified; Reviewer09 full DG-003 PASS, full1703/2 and45 additional probe executions, zero network. All failed/repair evidence retained. DG-001/003/006 CLOSED; DG-002/004/005/007–012 OPEN.
 
 Prior ITER-0025/0026/0027 archives remain preserved. Current ITER-0028 Reviewer09 verifies the extended runtime and full DG-003 delivery. No prior completed functionality was reimplemented. See ITER-0028/00_INITIALIZATION.md for base evidence/authorization and iteration reports for the two repair rounds.
 
