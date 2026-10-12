@@ -37,6 +37,48 @@ def version() -> None:
     console.print(f"polymaker {__version__}")
 
 
+@app.command("rdp-sm-preflight")
+def rdp_sm_preflight(
+    slug: str = typer.Argument(..., help="exact btc-updown-5m-<start_epoch> slug"),
+    config_dir: str = typer.Option("config", help="existing FL config directory"),
+) -> None:
+    """RDP-SM READ_ONLY safety snapshot; READY never authorizes trading."""
+    import json
+
+    from polymaker.logging import configure
+    from polymaker.rdp_sm import Check, PreflightResult, SessionStatus, run_preflight
+
+    configure(console=True)  # stderr only; no logs/database/artifacts on disk
+    try:
+        result = asyncio.run(run_preflight(Config.load(config_dir), slug))
+    except Exception as exc:
+        result = PreflightResult(checks=[Check(
+            "configuration", "BLOCKED", f"INITIALIZATION_FAILED:{type(exc).__name__}")])
+    typer.echo(json.dumps(result.to_dict(), allow_nan=False))
+    raise typer.Exit(0 if result.status is SessionStatus.READY
+                     else 1 if result.status is SessionStatus.REJECTED else 2)
+
+
+@app.command("rdp-sm-run")
+def rdp_sm_run(
+    config_dir: str = typer.Option("config", help="existing FL config directory"),
+) -> None:
+    """Run one current BTC 5m market through M1/M3/M2, close and exit."""
+    import json
+
+    from polymaker.logging import configure
+    from polymaker.rdp_sm_entry import run_current_market
+    from polymaker.rdp_sm_loop import RunResult
+
+    configure(console=True)
+    try:
+        result = asyncio.run(run_current_market(Config.load(config_dir)))
+    except Exception as exc:
+        result = RunResult(None, "", stop_reason=f"INITIALIZATION_FAILED:{type(exc).__name__}")
+    typer.echo(json.dumps(result.to_dict(), allow_nan=False))
+    raise typer.Exit(0 if result.execution_status == "COMPLETED" else 2)
+
+
 @app.command("research-audit")
 def research_audit(
     input_path: Path = typer.Argument(..., help="completed Research session or dataset directory"),  # noqa: B008
