@@ -37,6 +37,77 @@ def version() -> None:
     console.print(f"polymaker {__version__}")
 
 
+@app.command("rdp-sm-preflight")
+def rdp_sm_preflight(
+    slug: str = typer.Argument(..., help="exact btc-updown-5m-<start_epoch> slug"),
+    config_dir: str = typer.Option("config", help="existing FL config directory"),
+) -> None:
+    """RDP-SM READ_ONLY safety snapshot; READY never authorizes trading."""
+    import json
+
+    from polymaker.logging import configure
+    from polymaker.rdp_sm import Check, PreflightResult, SessionStatus, run_preflight
+
+    configure(console=True)  # stderr only; no logs/database/artifacts on disk
+    try:
+        result = asyncio.run(run_preflight(Config.load(config_dir), slug))
+    except Exception as exc:
+        result = PreflightResult(checks=[Check(
+            "configuration", "BLOCKED", f"INITIALIZATION_FAILED:{type(exc).__name__}")])
+    typer.echo(json.dumps(result.to_dict(), allow_nan=False))
+    raise typer.Exit(0 if result.status is SessionStatus.READY
+                     else 1 if result.status is SessionStatus.REJECTED else 2)
+
+
+@app.command("rdp-sm-run")
+def rdp_sm_run(
+    config_dir: str = typer.Option("config", help="existing FL config directory"),
+    human: bool = typer.Option(True, "--human/--json-only", help="human logs on stderr; JSON stays on stdout"),
+    http_info: bool = typer.Option(False, "--http-info", help="show raw HTTP/component INFO logs for diagnosis"),
+) -> None:
+    """Run one current BTC 5m market through M1/M3/M2, close and exit."""
+    import json
+    import logging
+
+    from polymaker.logging import configure
+    from polymaker.rdp_sm_entry import run_current_market
+    from polymaker.rdp_sm_logging import HumanRunLog, redact_credentials
+    from polymaker.rdp_sm_loop import RunResult
+
+    configure(console=True)
+    if not http_info:
+        # Console only. Preserve WARNING/ERROR, other loggers and file logs.
+        quiet_names = {"httpx", "httpcore"}
+        if human:
+            quiet_names.update({"execution.filltruth", "state.tracker", "state.store"})
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(lambda record: record.levelno >= logging.WARNING
+                              or (record.name not in quiet_names
+                                  and record.name.split(".")[0] not in quiet_names))
+    observer = None
+    secrets = ()
+    try:
+        cfg = Config.load(config_dir)
+        secrets = (cfg.secrets.pk, cfg.secrets.builder_key,
+                   cfg.secrets.builder_secret, cfg.secrets.builder_passphrase)
+        if human:
+            observer = HumanRunLog(signature_type=cfg.wallet.signature_type,
+                                   secrets=secrets, console_handlers=logging.getLogger().handlers[:])
+        result = asyncio.run(run_current_market(cfg, observer=observer))
+    except Exception as exc:
+        import time
+
+        result = RunResult(None, "", stop_time=time.time(),
+                           stop_reason=f"INITIALIZATION_FAILED:{type(exc).__name__}")
+    if human:
+        if observer is None:
+            observer = HumanRunLog(console_handlers=logging.getLogger().handlers[:])
+        observer.emit("summary", result.to_dict())
+        observer.close()  # Execution resources already closed; bounded display drain.
+    typer.echo(json.dumps(redact_credentials(result.to_dict(), secrets), allow_nan=False))
+    raise typer.Exit(0 if result.execution_status == "COMPLETED" else 2)
+
+
 @app.command("research-audit")
 def research_audit(
     input_path: Path = typer.Argument(..., help="completed Research session or dataset directory"),  # noqa: B008

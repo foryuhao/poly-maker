@@ -174,6 +174,8 @@ class ExecutionGateway:
         submit_guard: Callable[[], bool] | None = None,
         force_post_only: bool = False,
         strict_placement: bool = False,
+        tick_sizes: dict[str, float] | None = None,
+        placement_parser: Callable[[Any, list[Quote]], list[OpenOrder]] | None = None,
     ) -> list[OpenOrder]:
         if not quotes:
             return []
@@ -216,9 +218,12 @@ class ExecutionGateway:
             opts = PartialCreateOrderOptions(tick_size=_tick_str(meta.tick_size), neg_risk=meta.neg_risk)
             args = []
             for q in quotes:
+                quote_opts = (PartialCreateOrderOptions(
+                    tick_size=_tick_str(tick_sizes[q.token_id]), neg_risk=meta.neg_risk
+                ) if tick_sizes is not None else opts)
                 signed = self._client.create_order(
                     OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
-                    options=opts,
+                    options=quote_opts,
                 )
                 args.append(PostOrdersV2Args(order=signed, orderType=OrderType.GTC))
             if submit_guard is not None and not submit_guard():
@@ -232,7 +237,8 @@ class ExecutionGateway:
             except Exception as exc:
                 raise PlacementUnknown("order POST outcome is unknown") from exc
             try:
-                return self._parse_place_response(resp, quotes)
+                return (placement_parser(resp, quotes) if placement_parser is not None
+                        else self._parse_place_response(resp, quotes))
             except PlacementUnknown:
                 raise
             except Exception as exc:
