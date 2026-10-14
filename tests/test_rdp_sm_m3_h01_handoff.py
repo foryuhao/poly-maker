@@ -102,7 +102,8 @@ async def test_original_preflight_risk_survives_waiting_and_missing_listings(
     assert not placements and not v.posts and not v.cancels
     assert result.execution_status == "BLOCKED"
     assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
-    assert result.total_windows == result.blocked_windows == 1
+    assert result.total_windows == result.blocked_windows and result.total_windows > 1
+    assert result.stop_elapsed_s == 300
     assert result.windows[0]["result"]["close_barrier"] == "BLOCKED"
     assert result.windows[0]["elapsed_s"] == (jump or max(start, 15))
     assert snapshots and all(a["execution_reserved_usd"] == 4.5 for a in snapshots)

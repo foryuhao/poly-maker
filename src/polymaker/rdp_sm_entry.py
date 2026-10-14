@@ -31,6 +31,7 @@ from polymaker.rdp_sm import (
     _require,
 )
 from polymaker.rdp_sm_loop import RunResult, SMTradingLoop
+from polymaker.rdp_sm_recovery import reason_code, retry_read
 from polymaker.userstream.parse import parse_trade, strict_number
 
 
@@ -48,12 +49,14 @@ async def exact_market(gamma, **query):
         response = await gamma._client.get("/markets", params={**params, "closed": "false"})
         response.raise_for_status()
         rows = response.json()
+    _require(rows != [], "MARKET_IDENTITY_AMBIGUOUS" if "condition_ids" in query
+             else "MARKET_NOT_AVAILABLE")
     _require(isinstance(rows, list) and len(rows) == 1, "MARKET_IDENTITY_AMBIGUOUS")
     _require(isinstance(rows[0], dict), "MARKET_RESPONSE_INVALID")
     return rows[0]
 
 
-async def discover_current_market(cfg, *, observer=None):
+async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotonic=time.monotonic):
     _require(
         all(getattr(cfg.wallet, k).rstrip("/") == v for k, v in OFFICIAL_HOSTS.items())
         and cfg.wallet.chain_id == 137,
@@ -64,10 +67,19 @@ async def discover_current_market(cfg, *, observer=None):
     # Public official time; credentials are unnecessary before the startup rule.
     now = strict_number(await asyncio.to_thread(client.get_server_time))
     _require(now > 0, "OFFICIAL_TIME_INVALID")
-    slug = slug_for_epoch(current_epoch(now))
+    slug = (_pinned or {}).get("slug") or slug_for_epoch(current_epoch(now))
+    if _pinned is not None:
+        start = int(slug.rsplit("-", 1)[1])
+        _pinned.setdefault("slug", slug)
+        _pinned.setdefault("deadline", _monotonic() + start + 300 - now)
+        _require(now < start + 300, "DISCOVERY_MARKET_EXPIRED")
     async with GammaClient(cfg.wallet.gamma_host) as gamma:
         raw = await exact_market(gamma, slug=slug)
     meta, start = _market(raw, slug)
+    if _pinned is not None:
+        previous = _pinned.setdefault("meta", meta)
+        _require(previous.condition_id == meta.condition_id and previous.tokens == meta.tokens,
+                 "DISCOVERED_MARKET_CHANGED")
     elapsed = now - start
     if observer is not None:
         observer.emit("discovery", {"slug": meta.slug, "condition_id": meta.condition_id,
@@ -231,19 +243,50 @@ class AccountRiskPolicy:
 
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None):
-    """Called once by the dedicated CLI. No retries or next-market selection."""
+    """Retry read failures within one pinned market; never select a next market."""
     sleep = asyncio.sleep if sleep is None else sleep
     monotonic = time.monotonic if monotonic is None else monotonic
     session = uuid.uuid4().hex
+    pinned = {}
+    discovery_attempts = 0
+    discovery_error = None
     try:
-        meta, start, now, _ = await discover_current_market(cfg, observer=observer)
+        while True:
+            if (discovery_error is not None and "deadline" in pinned
+                    and monotonic() >= pinned["deadline"]):
+                raise discovery_error
+            try:
+                meta, start, now, _ = await discover_current_market(
+                    cfg, observer=observer, _pinned=pinned, _monotonic=monotonic)
+                break
+            except Exception as exc:
+                discovery_error = exc
+                discovery_attempts += 1
+                deadline = pinned.get("deadline")
+                if (not retry_read(exc) or deadline is not None and monotonic() >= deadline
+                        or deadline is None and discovery_attempts >= 3):
+                    raise
+                if observer is not None:
+                    observer.emit("recovery", {"status": "PAUSED", "stage": "discovery",
+                        "reason": reason_code(exc), "context": getattr(exc, "context", None),
+                        "elapsed_s": 300 - (deadline - monotonic()) if deadline is not None else None})
+                await sleep(min(2, max(0, deadline - monotonic())) if deadline is not None else 2)
         # Pin discovery to this market while waiting; never select the next one.
         clock = ReadOnlyClobClient(host=cfg.wallet.clob_host, chain_id=137)
         if now - start < TRADING_START_S and observer is not None:
             observer.emit("phase", {"elapsed_s": now - start, "state": "WAIT_UNTIL_T15"})
         while now - start < TRADING_START_S:
             await sleep(min(1, TRADING_START_S - (now - start)))
-            latest = strict_number(await asyncio.to_thread(clock.get_server_time))
+            try:
+                latest = strict_number(await asyncio.to_thread(clock.get_server_time))
+            except Exception as exc:
+                if not retry_read(exc) or monotonic() >= pinned["deadline"]:
+                    raise
+                if observer is not None:
+                    observer.emit("recovery", {"status": "PAUSED", "stage": "wait_until_t15",
+                        "reason": reason_code(exc), "elapsed_s": 300 - (pinned["deadline"] - monotonic())})
+                await sleep(min(2, pinned["deadline"] - monotonic()))
+                continue
             _require(latest >= now, "OFFICIAL_TIME_INVALID")
             now = latest
         if now - start >= TRADING_END_S:
@@ -258,6 +301,7 @@ async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None):
             )
         loop = SMTradingLoop(cfg, meta.slug, session, sleep=sleep, monotonic=monotonic,
                              observer=observer)
+        loop.market_deadline = pinned["deadline"]
         return await loop.run_production(expected_market=meta,
             account_policy=AccountRiskPolicy(use_starting_balance=True))
     except Exception as exc:
@@ -266,9 +310,10 @@ async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None):
                                          else f"ENTRY_FAILED:{type(exc).__name__}",
                                          "context": getattr(exc, "context", None)})
         return RunResult(
-            None,
+            pinned["meta"].condition_id if "meta" in pinned else None,
             session,
             stop_time=time.time(),
+            stop_elapsed_s=300 - (pinned["deadline"] - monotonic()) if "deadline" in pinned else None,
             stop_reason=str(exc)
             if isinstance(exc, _Issue)
             else f"ENTRY_FAILED:{type(exc).__name__}",

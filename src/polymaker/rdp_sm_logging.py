@@ -16,6 +16,8 @@ from logging.handlers import QueueHandler
 from queue import SimpleQueue
 from threading import Thread
 
+from polymaker.rdp_sm import TEST_CAPITAL_LIMIT_USDC
+
 NA = "NOT_AVAILABLE"
 
 
@@ -128,6 +130,7 @@ class HumanRunLog:
         self.window_number = 0
         self.submitted = 0
         self.fills = {}
+        self.merged_cost = 0
         self.maximum_committed = None
         self.planned = None
         self.decision = {}
@@ -206,7 +209,7 @@ class HumanRunLog:
                  f"Account Type: signature_type={value(account.get('signature_type', self.signature_type))}",
                  f"Wallet: {shortened(account.get('funder'))}",
                  f"Available Capital: {value(account.get('available_balance_usd'))} USDC | "
-                 f"Spendable Budget (cap 30): {value(account.get('basic_spendable_budget_usd'))} USDC",
+                 f"Spendable Budget (cap {TEST_CAPITAL_LIMIT_USDC:g}): {value(account.get('basic_spendable_budget_usd'))} USDC",
                  f"Current Inventory: YES={value(account.get('yes_inventory'))} "
                  f"NO={value(account.get('no_inventory'))}", f"Preflight Status: {status}"]
         if account.get("capital_basis") == "OFFICIAL_BALANCE_AT_SESSION_START":
@@ -217,8 +220,16 @@ class HumanRunLog:
         if failures:
             lines.append("Trading Was Attempted: NO (preflight did not open this executor)")
         for diagnostic in p.get("diagnostics", []):
-            lines.extend(self._book_failure(diagnostic))
+            lines.extend(self._tick_failure(diagnostic) if diagnostic.get("tick_check")
+                         else self._book_failure(diagnostic))
         return lines
+
+    def _tick_failure(self, d):
+        return ["Tick Check: BLOCKED | DYNAMIC_TICK_UNKNOWN_OR_CHANGED",
+                f"Exact Market: {value(d.get('slug'))} | Market ID: {value(d.get('condition_id'))}",
+                f"Outcome: {value(d.get('outcome'))} | Token ID: {value(d.get('token_id'))}",
+                f"Official Tick={value(d.get('official_tick'))} | Book Tick={value(d.get('book_tick'))} | "
+                f"Supported Ticks={value(d.get('supported_ticks'))}"]
 
     def _book_failure(self, d):
         d = resolve_book_context(d)
@@ -276,7 +287,7 @@ class HumanRunLog:
             self.fills[key] = f
         deadline, t0 = w.get("fill_deadline_monotonic"), w.get("t0_monotonic")
         duration = deadline - t0 if deadline is not None and t0 is not None else None
-        used = sum(f["price"] * f["size"] for f in self.fills.values())
+        used = sum(f["price"] * f["size"] for f in self.fills.values()) - self.merged_cost
         barrier = w.get("close_barrier", "BLOCKED")
         reason_label = ("Quote Skip Reason" if barrier == "SAFE_TO_CONTINUE" and not attempts
                         and w.get("block_reason") in {"QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
@@ -295,7 +306,7 @@ class HumanRunLog:
             f"Updated Inventory: YES={value(w.get('yes_inventory'))} NO={value(w.get('no_inventory'))} | Updated Delta={value(w.get('delta'))}",
             f"Capital Used (confirmed cost): {used:g} USDC | Capital Committed (M2): {value(w.get('capital_committed'))} USDC",
             f"Close Barrier Result: {barrier} | {reason_label}: {value(w.get('block_reason'))}",
-            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' else 'NORMAL' if abs(w.get('delta', 0)) < 5 else 'REBALANCE'} "
+            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else 'NORMAL' if abs(w.get('delta', 0)) < 5 else 'REBALANCE'} "
             "(inventory state; next market/time check still required)",
         ])
         self.cancel_events, self.reconciliations, self.planned, self.decision = [], [], None, {}
@@ -313,6 +324,21 @@ class HumanRunLog:
         if kind == "phase":
             return [f"Trading Phase: {value(payload.get('state'))} | "
                     f"Market Elapsed Seconds: {value(payload.get('elapsed_s'))}"]
+        if kind == "inventory_check":
+            return self._inventory_check(payload)
+        if kind == "recovery":
+            action = {"PAUSED": "No new BUY; retry reads and close verification",
+                      "RESUMED": "Continue with fresh inventory, account and book checks",
+                      "MERGE_DISABLED": "Keep inventory cost reserved; continue safe trading"}.get(
+                          payload.get("status"), "Consult failure reason")
+            lines = [f"Trading Recovery: {value(payload.get('status'))} | "
+                    f"T+{value(payload.get('elapsed_s'))}s | Stage={value(payload.get('stage'))} | "
+                    f"Reason={value(payload.get('reason'))} | "
+                    f"{action} | Order and fill records retained"]
+            context = payload.get("context") or {}
+            if context.get("tick_check"):
+                lines.extend(self._tick_failure(context))
+            return lines
         if kind == "diagnostic":
             context = payload.get("context") or {}
             lines = [f"Stop Diagnostic: {value(payload.get('reason'))} | BLOCKED"]
@@ -320,6 +346,8 @@ class HumanRunLog:
                 lines.extend(self._preflight(context["preflight"]))
             elif "missing_side" in context:
                 lines.extend(self._book_failure(context))
+            elif context.get("tick_check"):
+                lines.extend(self._tick_failure(context))
             else:
                 lines.append(f"Actual Failed Check / Failure Detail: {NA}")
             return lines
@@ -340,7 +368,15 @@ class HumanRunLog:
                     committed = float(p["capital_committed_usd"])
                     self.maximum_committed = max(self.maximum_committed or 0, committed)
                 elif name == "sm_diagnostic":
-                    lines.extend(self._book_failure(p))
+                    lines.extend(self._inventory_check(p) if "inventory" in p else
+                                 self._tick_failure(p) if p.get("tick_check") else self._book_failure(p))
+                elif name.startswith("sm_merge_"):
+                    lines.append(f"Merge: {name.removeprefix('sm_merge_').upper()} | "
+                                 f"Pairs={value(p.get('amount_raw', 0) / 1_000_000)} | "
+                                 f"Status={value(p.get('status'))} | Transaction={shortened(p.get('tx_hash') or p.get('tx_id'))}")
+                    if name == "sm_merge_result" and p.get("status") == "CONFIRMED":
+                        self.merged_cost += float(p["released_cost_usdc"])
+                        lines.append(f"Merge Recovered: {p['amount_raw'] / 1_000_000:g} USDC (verified)")
                 elif name == "sm_quote_skipped":
                     lines.append(f"Quote Skipped: T+{value(p.get('elapsed_s'))}s | {value(p.get('reason'))} | NOT SUBMITTED")
                 elif name == "sm_window_result":
@@ -360,9 +396,20 @@ class HumanRunLog:
                     f"Total Windows: {r['total_windows']} | NORMAL Windows: {r['normal_windows']} | REBALANCE Windows: {r['rebalance_windows']}",
                     f"ActiveCycles: {r['active_cycles']} | Submitted Orders: {self.submitted} | Confirmed Fills: {r['confirmed_fills']} (records)",
                     f"YES Inventory: {value(yes)} | NO Inventory: {value(no)} | Delta: {value(delta)}",
-                    f"Completed Pairs: {value(min(yes, no) if delta is not None else None)} | Residual Shares: {value(abs(delta) if delta is not None else None)}",
-                    f"Maximum Capital Utilization (observed M2 commitment / 30 USDC cap): {value(maximum)} USDC | "
-                    f"{value(maximum / 30 * 100 if maximum is not None else None)}%",
+                    f"Completed Pairs: {value(r.get('completed_pairs') if delta is not None else None)} | Residual Shares: {value(abs(delta) if delta is not None else None)}",
+                    f"Merged Pairs: {value(r.get('merged_pairs', 0))} | Recovered Collateral: {value(r.get('recovered_collateral_usdc', 0))} USDC",
+                    f"Maximum Capital Utilization (observed M2 commitment / {TEST_CAPITAL_LIMIT_USDC:g} USDC cap): {value(maximum)} USDC | "
+                    f"{value(maximum / TEST_CAPITAL_LIMIT_USDC * 100 if maximum is not None else None)}%",
                     f"Maximum Residual Exposure: {NA} | Exposure Duration: {NA}",
                     f"Close Barrier Result: {r['final_close_barrier']}"]
         return []
+
+    def _inventory_check(self, payload):
+        lines = [f"Inventory Check: {payload.get('status', 'BLOCKED_WAIT_UNTIL_300')} | "
+                 f"T+{value(payload.get('elapsed_s'))}s | Source=DATA_API | "
+                 f"Tolerance={value(payload.get('tolerance_shares'))} shares"]
+        for side, values in payload.get("inventory", {}).items():
+            lines.append(f"{side}: Expected={value(values.get('expected'))} "
+                         f"Actual={value(values.get('actual'))} "
+                         f"Difference={value(values.get('difference'))} shares")
+        return lines

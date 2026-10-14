@@ -32,7 +32,7 @@ from polymaker.marketdata.orderbook import OrderBook
 from polymaker.marketdata.parse import parse_book
 from polymaker.userstream.parse import strict_number
 
-TEST_CAPITAL_LIMIT_USDC = 30.0
+TEST_CAPITAL_LIMIT_USDC = 20.0
 TRADING_START_S = 15
 NORMAL_END_S = 180
 TRADING_END_S = PERIOD_S
@@ -304,11 +304,23 @@ def _book(raw: Any, tick_raw: Any, token: str, meta: MarketMeta) -> dict[str, An
         and raw.get("market") == meta.condition_id,
         "BOOK_IDENTITY_INVALID",
     )
-    tick = strict_number(tick_raw)
-    _require(
-        f"{tick:g}" in ROUNDING_CONFIG and strict_number(raw.get("tick_size")) == tick,
-        "DYNAMIC_TICK_UNKNOWN_OR_CHANGED",
-    )
+    book_tick_raw = raw.get("tick_size")
+    try:
+        tick, book_tick = strict_number(tick_raw), strict_number(book_tick_raw)
+        valid_tick = f"{tick:g}" in ROUNDING_CONFIG and book_tick == tick
+    except (ValueError, TypeError):
+        tick, book_tick, valid_tick = tick_raw, book_tick_raw, False
+    if not valid_tick:
+        # Only the rejected reads are observed; diagnostics issue no HTTP calls.
+        def display_tick(value):
+            return value if type(value) in (int, float) and math.isfinite(value) else str(value)[:64]
+
+        raise _Issue(SessionStatus.BLOCKED, "DYNAMIC_TICK_UNKNOWN_OR_CHANGED", context={
+            "tick_check": True, "slug": meta.slug, "condition_id": meta.condition_id,
+            "token_id": token, "outcome": "YES" if token == meta.yes.token_id else "NO",
+            "official_tick": display_tick(tick), "book_tick": display_tick(book_tick),
+            "supported_ticks": sorted(ROUNDING_CONFIG),
+        })
     # FL parser intentionally skips bad levels; validate first so SM cannot
     # report READY from an incomplete/malformed official snapshot.
     for side in ("bids", "asks"):
@@ -482,7 +494,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check(
                 "capital",
                 "PASS" if eligible else "REJECTED",
-                "basic venue minimum within available balance, allowance and $30 cap",
+                f"basic venue minimum within available balance, allowance and ${TEST_CAPITAL_LIMIT_USDC:g} cap",
             )
         )
         stage = "freshness"

@@ -1,4 +1,4 @@
-"""MATCHED remaining <0.1 shares; actual confirmed inventory and M2 gates stay exact."""
+"""MATCHED remainder <=0.01 shares; actual fills and unresolved lifecycle stay intact."""
 
 from decimal import Decimal
 
@@ -24,13 +24,13 @@ def cancel_rows(venue):
 
 
 @pytest.mark.parametrize("status,matched,terminal", [
-    ("MATCHED", "5", True), ("MATCHED", "4.98410", True),
-    ("MATCHED", "4.90001", True), ("MATCHED", "4.9", False),
-    ("MATCHED", "4.89999", False), ("MATCHED", "4", False),
-    ("LIVE", "4.98410", False), ("UNKNOWN", "4.98410", False),
+    ("MATCHED", "5", True), ("MATCHED", "4.99410", True),
+    ("MATCHED", "4.99001", True), ("MATCHED", "4.99", True),
+    ("MATCHED", "4.98999", False), ("MATCHED", "4.9841", False), ("MATCHED", "4", False),
+    ("LIVE", "4.99410", False), ("UNKNOWN", "4.99410", False),
     ("CANCELED", "0", True),
 ])
-def test_terminal_uses_decimal_strict_less_than_point_one(status, matched, terminal):
+def test_terminal_uses_inclusive_point_zero_one(status, matched, terminal):
     row = {"id": "test", "asset_id": "1", "market": CID, "side": "BUY",
            "price": ".49", "original_size": "5", "size_matched": matched,
            "status": status, "associate_trades": []}
@@ -42,7 +42,7 @@ async def test_dust_matched_waits_for_confirmed_without_inventing_remaining_fill
     v.cancel_terminal = False
     def cancel(venue):
         cancel_rows(venue)
-        venue.fill("o-1", "near-full", 4.9841, "MINED")
+        venue.fill("o-1", "near-full", 4.9941, "MINED")
         venue.rows["o-1"]["status"] = "MATCHED"
     v.on_cancel = cancel
     pending = []
@@ -56,9 +56,9 @@ async def test_dust_matched_waits_for_confirmed_without_inventing_remaining_fill
     result = await executor.execute_window("w1", quotes())
     assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
     assert pending == [(0, False, Decimal("2.45")), (0, False, Decimal("2.45"))]
-    assert result.yes_inventory == 4.9841 and result.no_inventory == 0
-    assert result.capital_committed == pytest.approx(4.9841 * .49)
-    assert len(result.confirmed_fills) == 1 and result.confirmed_fills[0]["size"] == 4.9841
+    assert result.yes_inventory == 4.9941 and result.no_inventory == 0
+    assert result.capital_committed == pytest.approx(4.9941 * .49)
+    assert len(result.confirmed_fills) == 1 and result.confirmed_fills[0]["size"] == 4.9941
     assert result.fill_deadline_monotonic - result.t0_monotonic == 3
     assert result.close_monotonic == 7 and len(v.post_requests) == 1
     # Even below the dust threshold, a later LIVE state still invalidates the proof.
@@ -73,12 +73,13 @@ async def test_tolerance_cannot_bypass_terminal_or_trade_evidence(env, fault):
     v.cancel_terminal = False
     def cancel(venue):
         cancel_rows(venue)
-        venue.fill("o-1", "observed", 4.9 if fault == "boundary" else 4.9841)
+        venue.fill("o-1", "observed", 4.98999 if fault == "boundary" else
+                   4.98 if fault == "fill_mismatch" else 4.9941)
         venue.rows["o-1"]["status"] = "LIVE" if fault == "live" else "MATCHED"
         if fault == "missing_trade":
             venue.rows["o-1"]["associate_trades"].append("unrecovered")
         elif fault == "fill_mismatch":
-            venue.rows["o-1"]["size_matched"] = "4.99"
+            venue.rows["o-1"]["size_matched"] = "5"
     v.on_cancel = cancel
     result = await executor.execute_window("w1", quotes())
     assert result.close_barrier == "BLOCKED"
@@ -91,7 +92,7 @@ async def test_dust_mined_timeout_remains_blocked_with_full_commitment(env):
     v.cancel_terminal = False
     def cancel(venue):
         cancel_rows(venue)
-        venue.fill("o-1", "pending", 4.9841, "MINED")
+        venue.fill("o-1", "pending", 4.9941, "MINED")
         venue.rows["o-1"]["status"] = "MATCHED"
     v.on_cancel = cancel
     result = await executor.execute_window("w1", quotes())
@@ -111,20 +112,21 @@ async def test_actual_fractional_fill_rebalance_closes_and_next_normal_uses_lega
             venue.fill(ids["NO"], "initial-no", 5)
         elif index == 2:
             oid = ids["YES"]
-            venue.fill(oid, "repair-yes", 4.9841)
+            venue.fill(oid, "repair-yes", 4.9941)
             venue.rows[oid]["status"] = "MATCHED"
     on_windows(v, fills, stop_after=3)
     result = await runner(env).run(offline=True)
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     pair = result.windows[2]["result"]["requested_quotes"]
-    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 5.02, "NO": 5}
-    assert result.confirmed_yes == 4.9841 and result.confirmed_no == 5
-    assert result.delta == pytest.approx(-.0159)
+    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 5.01, "NO": 5}
+    assert result.confirmed_yes == 4.9941 and result.confirmed_no == 5
+    assert result.merged_pairs == 0
+    assert result.delta == pytest.approx(-.0059)
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert [len(p) for p in v.post_requests] == [2, 1, 2]
     signed_yes = next(p["order"] for p in v.post_requests[2] if p["order"]["tokenId"] == "1")
-    assert Decimal(signed_yes["takerAmount"]) == Decimal("5.02") * 1_000_000
+    assert Decimal(signed_yes["takerAmount"]) == Decimal("5.01") * 1_000_000
 
 
 async def test_production_mixed_confirmed_mined_dust_waits_then_resumes_normal(env):
@@ -146,7 +148,7 @@ async def test_production_mixed_confirmed_mined_dust_waits_then_resumes_normal(e
             venue.books["1"]["asks"][0]["price"] = ".23"
         elif index == 2:
             for n, (qty, status) in enumerate(((2.4, "CONFIRMED"), (.01, "CONFIRMED"),
-                                             (1.28205, "MINED"), (1.28205, "MINED"), (.01, "MINED"))):
+                                             (1.28705, "MINED"), (1.28705, "MINED"), (.01, "MINED"))):
                 trade = venue.fill(ids["YES"], f"repair-{n}", qty, status)
                 trade["trader_side"] = "MAKER"
                 trade["maker_orders"][0]["maker_address"] = venue.funder
@@ -160,7 +162,7 @@ async def test_production_mixed_confirmed_mined_dust_waits_then_resumes_normal(e
                             venue.executor.safe_to_continue, venue.executor.committed()))
             for trade in venue.trades:
                 trade["status"] = "CONFIRMED"
-            venue.positions = [{"token_id": "1", "current_size": 4.9841, "avg_price": .22},
+            venue.positions = [{"token_id": "1", "current_size": 4.9941, "avg_price": .22},
                                {"token_id": "2", "current_size": 5, "avg_price": .71}]
     v.on_sleep = settle
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
@@ -168,5 +170,6 @@ async def test_production_mixed_confirmed_mined_dust_waits_then_resumes_normal(e
     assert pending[0] == (Decimal("2.41"), False, Decimal("4.65"))
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     assert [len(p) for p in v.post_requests] == [2, 1, 2]
-    assert result.confirmed_yes == 4.9841 and result.confirmed_no == 5
-    assert result.delta == pytest.approx(-.0159) and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert result.confirmed_yes == 0 and result.confirmed_no == pytest.approx(.0059)
+    assert result.merged_pairs == 4.9941
+    assert result.delta == pytest.approx(-.0059) and result.final_close_barrier == "SAFE_TO_CONTINUE"

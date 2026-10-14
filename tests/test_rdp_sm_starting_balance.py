@@ -21,7 +21,7 @@ def env(monkeypatch, tmp_path):
     yield from loop_env.__wrapped__(monkeypatch, tmp_path)
 
 
-@pytest.mark.parametrize("balance,expected", [("6000000", 6), ("33464169", 30), ("100000000", 30)])
+@pytest.mark.parametrize("balance,expected", [("6000000", 6), ("33464169", 20), ("100000000", 20)])
 async def test_starting_budget_uses_official_balance_not_old_matched_cost(env, monkeypatch, balance, expected):
     v, cfg = env
     v.capital["balance"] = balance
@@ -86,7 +86,9 @@ async def test_new_external_order_after_startup_still_reserves_collateral(env):
     on_windows(v, introduce)
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
-    assert len(v.posts) == 2 and result.total_windows == 2
+    assert len(v.posts) == 2 and result.total_windows > 2
+    assert result.stop_elapsed_s == 300
+    assert all(w["result"]["placement_results"] == [] for w in result.windows[1:])
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 

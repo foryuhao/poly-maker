@@ -41,6 +41,9 @@ def env(monkeypatch, tmp_path):
         return executor
 
     monkeypatch.setattr(SMWindowExecutor, "open", classmethod(observe_open))
+    from rdp_sm_merge_sdk import install
+
+    install(monkeypatch, venue, cfg)
     yield venue, cfg
     client.close()
     if venue.executor and venue.executor.closed:
@@ -74,8 +77,9 @@ def on_windows(venue, action, *, stop_after=None):
                 size = float(leg["matched_amount"])
                 totals[leg["asset_id"]] = (qty + size, cost + size * float(leg["price"]))
         v.positions = [
-            {"token_id": token, "current_size": qty, "avg_price": cost / qty}
+            {"token_id": token, "current_size": qty - float(v.chain_merged), "avg_price": cost / qty}
             for token, (qty, cost) in totals.items()
+            if qty > float(v.chain_merged)
         ]
         if index == stop_after:
             # Force test shutdown at market end, regardless of inventory state.
@@ -148,9 +152,14 @@ async def test_m3_15_full_market_type2_real_execution_timeline(env):
     )
     assert result.active_cycles == 3 and result.confirmed_fills == 3
     assert result.confirmed_yes == result.confirmed_no == result.completed_pairs == 5
+    assert result.merged_pairs == result.recovered_collateral_usdc == 0
+    assert not v.merge_submissions  # Offline strategy mode cannot reach a new SDK/RPC transport.
     assert result.delta == result.residual_shares == 0
-    assert result.average_yes_cost == 0.48 and result.average_no_cost == pytest.approx(0.4796)
-    assert result.theoretical_pair_pnl == pytest.approx(0.202)
+    assert result.average_yes_cost == .48 and result.average_no_cost == pytest.approx(.4796)
+    assert result.theoretical_pair_pnl == pytest.approx(.202)
+    fills = result.windows[-1]["result"]["confirmed_fills"]
+    assert sum(f["price"] * f["size"] for f in fills if f["token_id"] == "1") / 5 == .48
+    assert sum(f["price"] * f["size"] for f in fills if f["token_id"] == "2") / 5 == pytest.approx(.4796)
     assert min(v.post_times) == 15 and max(v.post_times) == 177
     assert all(15 <= stamp < 180 for stamp in v.post_times)
     assert len(v.posts) == 109 and all(row["status"] == "CANCELED" for row in v.rows.values())
@@ -228,7 +237,8 @@ async def test_m3_09_capital_cannot_be_bypassed(env):
     v, _ = env
     v.capital["balance"] = "3000000"
     result = await runner(env).run(offline=True)
-    assert result.total_windows == result.blocked_windows == 1 and not v.posts
+    assert result.total_windows == result.blocked_windows and result.total_windows > 1 and not v.posts
+    assert result.stop_elapsed_s == 300
     assert result.windows[0]["result"]["close_barrier"] == "BLOCKED"
     assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
     assert result.execution_status == "BLOCKED" and not v.cancels
@@ -249,6 +259,7 @@ async def test_m3_10_active_cycle_counts_windows_not_fills(env):
     result = await runner(env).run(offline=True)
     assert result.total_windows == 3 and result.active_cycles == 2 and result.confirmed_fills == 3
     assert result.confirmed_yes == result.confirmed_no == 2 and result.delta == 0
+    assert result.merged_pairs == 0
 
 
 async def test_m3_11_cancel_ack_without_terminal_is_incomplete(env):
@@ -305,7 +316,7 @@ async def test_normal_pair_cost_over_one_is_allowed(env):
     assert result.execution_status == "COMPLETED"
 
 
-async def test_invalid_known_quote_is_skipped_not_rounded_or_submitted(env):
+async def test_invalid_price_is_skipped_and_fractional_rebalance_size_is_rounded(env):
     v, _ = env
     v.time = START + 170
     v.books["1"]["bids"][0]["price"] = ".01"
@@ -314,8 +325,12 @@ async def test_invalid_known_quote_is_skipped_not_rounded_or_submitted(env):
     assert result.execution_status == "COMPLETED" and result.stop_elapsed_s == 300
     meta, _ = _market(v.raw, SLUG)
     books = {"1": {"best_bid": 0.49, "best_ask": 0.51, "tick": 0.01}}
+    state, single = make_quotes(meta, books, Decimal(0), Decimal("5.001"), "w")
+    assert state == "REBALANCE" and len(single) == 1
+    assert single[0].outcome == "YES" and single[0].size == 5.01 and single[0].price == .49
+    books["1"]["best_bid"] = .485
     with pytest.raises(QuoteUnavailable):
-        make_quotes(meta, books, Decimal(0), Decimal("5.001"), "w")
+        make_quotes(meta, books, Decimal(0), Decimal("5.001"), "invalid-price")
 
 
 async def test_default_entry_and_nonfake_transport_cannot_trade(env, monkeypatch):
@@ -342,7 +357,7 @@ async def test_unknown_placement_stops_without_retry_and_retains_commitment(env)
 
 async def test_new_official_inventory_between_quote_and_submit_blocks_stale_state(env):
     v, _ = env
-    on_windows(v, lambda *_: None)
+    on_windows(v, lambda *_: None, stop_after=2)
     real_execute = SMWindowExecutor.execute_window
 
     async def observed(executor, window_id, quotes, **kw):
@@ -360,7 +375,12 @@ async def test_new_official_inventory_between_quote_and_submit_blocks_stale_stat
         result = await runner(env).run(offline=True)
     finally:
         env_monkeypatch.undo()
-    assert len(v.posts) == 2 and result.total_windows == 2 and result.blocked_windows == 1
-    assert result.stop_reason == "PREVIOUS_WINDOW_TRADE_EVIDENCE_CHANGED"
+    assert len(v.posts) == 3 and result.total_windows == 3 and result.blocked_windows == 1
+    assert result.stop_reason == "MARKET_CUTOFF" and result.stop_elapsed_s == 300
+    stale = result.windows[1]["result"]
+    assert stale["block_reason"] == "PREVIOUS_WINDOW_TRADE_EVIDENCE_CHANGED" and stale["placement_results"] == []
+    assert result.windows[2]["state"] == "REBALANCE"
+    assert len(result.windows[2]["result"]["requested_quotes"]) == 1
+    assert result.windows[2]["result"]["requested_quotes"][0]["outcome"] == "NO"
     assert result.confirmed_yes == 5 and result.confirmed_no == 0 and result.active_cycles == 1
-    assert result.execution_status == "BLOCKED"
+    assert result.execution_status == "COMPLETED"

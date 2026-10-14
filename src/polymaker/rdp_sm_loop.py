@@ -24,12 +24,21 @@ from polymaker.rdp_sm import (
 )
 from polymaker.rdp_sm_execution import (
     MIN_MAKER_BUY_NOTIONAL,
+    MIN_MAKER_BUY_SHARES,
     SAFE_QUOTE_SKIP_REASONS,
+    InventoryMismatch,
     SMWindowExecutor,
     WindowQuote,
     _execution_identity,
     _ExecutionReads,
     maker_buy_size,
+)
+from polymaker.rdp_sm_recovery import (
+    UNCERTAIN_MUTATIONS,
+    pause_reason,
+    preflight_pause,
+    reason_code,
+    retry_read,
 )
 
 
@@ -60,14 +69,15 @@ def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str):
             or not tick <= price <= 1 - tick
             or price % tick != 0
             or price >= ask
-            or size < Decimal(str(meta.min_order_size))
-            or size % Decimal(".01") != 0
         ):
+            raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
+        if state == "REBALANCE":
+            size = maker_buy_size(price, size, Decimal(str(meta.min_order_size)))
+        if (size < max(MIN_MAKER_BUY_SHARES, Decimal(str(meta.min_order_size)))
+                or size % Decimal(".01") != 0):
             raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
         if state == "NORMAL" and price * size < MIN_MAKER_BUY_NOTIONAL:
             raise QuoteUnavailable("NORMAL_LEG_NOTIONAL_BELOW_MINIMUM")
-        if state == "REBALANCE":
-            size = maker_buy_size(price, size)
         quotes.append(
             WindowQuote(
                 meta.condition_id, token, outcome, Side.BUY, float(price), float(size), window_id
@@ -88,6 +98,8 @@ class RunResult:
     rebalance_windows: int = 0
     active_cycles: int = 0
     confirmed_fills: int = 0
+    merged_pairs: float = 0
+    recovered_collateral_usdc: float = 0
     blocked_windows: int = 0
     confirmed_yes: float = 0
     confirmed_no: float = 0
@@ -133,6 +145,61 @@ class SMTradingLoop:
         self.production = False
         self.expected_market = None
         self.observer = observer
+        self.market_deadline = None
+        self.pause_reason = None
+        self.pause_stage = None
+        self.merge_disabled_reason = None
+
+    def _estimated_elapsed(self):
+        return 300 - (self.market_deadline - self.monotonic()) if self.market_deadline is not None else None
+
+    async def _pause(self, result, reason, stage, *, elapsed=None, context=None):
+        elapsed = self._estimated_elapsed() if elapsed is None else elapsed
+        _require(elapsed is not None, "RECOVERY_TIME_UNAVAILABLE")
+        self.pause_reason, self.pause_stage = reason, stage
+        result.stop_elapsed_s = elapsed
+        if self.executor is not None and self.executor.meta is not None:
+            self._inventory(result)
+        if self.observer is not None:
+            self.observer.emit("recovery", {"status": "PAUSED", "reason": reason,
+                                           "elapsed_s": elapsed, "stage": stage,
+                                           "context": context})
+        if elapsed < TRADING_END_S:
+            await self.sleep(min(2, TRADING_END_S - elapsed))
+
+    def _resume(self, stage):
+        if self.pause_reason is not None and self.pause_stage == stage:
+            if self.observer is not None:
+                self.observer.emit("recovery", {"status": "RESUMED", "reason": self.pause_reason,
+                    "elapsed_s": self._estimated_elapsed(), "stage": stage})
+            self.pause_reason = self.pause_stage = None
+
+    async def _merge(self, result, elapsed=None):
+        if not self.production or self.merge_disabled_reason is not None:
+            return False
+        from polymaker.rdp_sm_merge import merge_confirmed_pairs
+
+        try:
+            merged = await merge_confirmed_pairs(self.executor, elapsed_s=elapsed,
+                                                on_progress=self._display_events)
+        except Exception as exc:
+            reason = str(exc)
+            if (self.executor.fatal in UNCERTAIN_MUTATIONS or pause_reason(reason)
+                    or not self.executor.merge_pending and retry_read(exc)):
+                await self._pause(result, self.executor.fatal or reason_code(exc), "close")
+                return False
+            if reason.startswith("MERGE_PREPARE_FAILED:") or reason in {"MERGE_FAILED", "MERGE_NOT_SUBMITTED"}:
+                # No accepted unknown mutation. Keep the actual inventory cost,
+                # disable settlement for this run, and let safe REBALANCE proceed.
+                self.merge_disabled_reason = reason
+                if self.observer is not None:
+                    self.observer.emit("recovery", {"status": "MERGE_DISABLED", "reason": reason,
+                                                   "elapsed_s": self._estimated_elapsed(), "stage": "merge"})
+                return False
+            raise
+        if merged:
+            self._resume("capital")
+        return merged
 
     def _display_events(self, decision=None, window=None):
         if self.observer is not None and self.executor is not None:
@@ -169,8 +236,11 @@ class SMTradingLoop:
             (Decimal(str(f.size)) for f in fills if f.token_id == executor.meta.no.token_id),
             Decimal(0),
         )
+        yes -= executor.merged_pairs
+        no -= executor.merged_pairs
+        result.merged_pairs = result.recovered_collateral_usdc = float(executor.merged_pairs)
         result.confirmed_yes, result.confirmed_no = float(yes), float(no)
-        result.delta, result.completed_pairs = float(yes - no), float(min(yes, no))
+        result.delta, result.completed_pairs = float(yes - no), float(min(yes, no) + executor.merged_pairs)
         result.residual_shares, result.confirmed_fills = float(abs(yes - no)), len(fills)
         owners = {a.order_id: a.quote.window_id for a in executor.attempts if a.order_id}
         result.active_cycles = len({owners[f.maker_order_id] for f in fills})
@@ -181,6 +251,7 @@ class SMTradingLoop:
                 costs.append(None)
             else:
                 cost = sum((Decimal(str(f.price)) * Decimal(str(f.size)) for f in legs), Decimal(0))
+                cost -= executor.merged_cost.get(token, Decimal(0))
                 costs.append(cost / qty if qty else None)
         result.average_yes_cost, result.average_no_cost = (
             float(cost) if cost is not None else None for cost in costs
@@ -202,31 +273,73 @@ class SMTradingLoop:
         while True:
             if not self.production:
                 await self._offline_boundary()
-            if executor.attempts:
-                _require(executor.safe_to_continue, "M2_PREVIOUS_WINDOW_BLOCKED")
-                # M2 closed and reconciled at the preceding window's end.
-                # Its revision-bound proof remains valid until evidence changes.
-            now = await executor._await_owned(executor.reads.server_time())
+            try:
+                now = await executor._await_owned(executor.reads.server_time())
+            except Exception as exc:
+                if not retry_read(exc):
+                    raise
+                if self._estimated_elapsed() is not None and self._estimated_elapsed() >= TRADING_END_S:
+                    failed, result.stop_reason = True, reason_code(exc)
+                    result.stop_elapsed_s = self._estimated_elapsed()
+                    break
+                await self._pause(result, reason_code(exc), "read")
+                continue
+            result.stop_elapsed_s = now - market_start
             if now - market_start >= TRADING_END_S:
-                result.stop_elapsed_s = now - market_start
-                result.stop_reason = "MARKET_CUTOFF"
+                failed = executor.inventory_mismatch is not None or self.pause_reason is not None
+                result.stop_reason = ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM" if executor.inventory_mismatch
+                                      else self.pause_reason or "MARKET_CUTOFF")
                 break
+            if executor.fatal is not None and executor.fatal not in UNCERTAIN_MUTATIONS:
+                _require(False, executor.fatal)
+            if (executor.attempts or self.pause_stage == "close") and not executor.safe_to_continue:
+                safe = await executor.verify_close(cancel=True)
+                if not safe:
+                    if executor.fatal not in UNCERTAIN_MUTATIONS and not pause_reason(executor.reason):
+                        _require(False, executor.fatal or executor.reason or "M2_PREVIOUS_WINDOW_BLOCKED")
+                    await self._pause(result, executor.fatal or executor.reason, "close")
+                    continue
+                self._resume("close")
             # Reuse M2's official market/account/freshness snapshot and managed SDK reads.
-            async with executor.lock:
-                meta, start, books, _account = await executor._await_owned(
-                    executor._snapshot(include_books=False))
+            inventory_waiting = executor.inventory_mismatch is not None
+            try:
+                async with executor.lock:
+                    meta, start, books, _account = await executor._await_owned(
+                        executor._snapshot(include_books=False))
+            except InventoryMismatch:
+                await self._wait_for_inventory(result)
+                continue
+            except Exception as exc:
+                if not retry_read(exc):
+                    raise
+                await self._pause(result, reason_code(exc), "close" if not executor.safe_to_continue else "read")
+                continue
+            self._resume("read")
             if self.expected_market is not None:
                 _require(meta.condition_id == self.expected_market.condition_id
                          and meta.tokens == self.expected_market.tokens, "DISCOVERED_MARKET_CHANGED")
-            if executor.attempts:
-                _require(executor.safe_to_continue, "M2_PREVIOUS_EVIDENCE_CHANGED")
+            if executor.attempts and not executor.safe_to_continue:
+                if executor.fatal is not None and executor.fatal not in UNCERTAIN_MUTATIONS:
+                    _require(False, executor.fatal)
+                await self._pause(result, executor.reason or "M2_PREVIOUS_EVIDENCE_CHANGED", "close")
+                continue
             elapsed = executor.official_time + executor.monotonic() - executor.time_anchor - start
             result.stop_elapsed_s = elapsed
+            if inventory_waiting and self.observer is not None:
+                self.observer.emit("inventory_check", {**executor.inventory_observation,
+                    "status": "RESUMED", "elapsed_s": elapsed})
             yes, no = self._inventory(result)
             normal = abs(yes - no) < 5
             if elapsed >= TRADING_END_S:
                 result.stop_reason = "MARKET_CUTOFF"
                 break
+            if await self._merge(result, elapsed):
+                self._inventory(result)
+                self._display_events()
+                # Reread the Data API after a burn before planning another BUY.
+                continue
+            if executor.fatal in UNCERTAIN_MUTATIONS or self.pause_stage == "close":
+                continue
             if elapsed < TRADING_START_S or (normal and elapsed >= NORMAL_END_S):
                 # Hold balanced inventory until market end without requiring a
                 # quotable late-market book or creating any planned order.
@@ -237,8 +350,15 @@ class SMTradingLoop:
                 await self.sleep(1)
                 continue
             waiting = False
-            async with executor.lock:
-                books = await executor._await_owned(executor._read_books(meta))
+            try:
+                async with executor.lock:
+                    books = await executor._await_owned(executor._read_books(meta))
+            except Exception as exc:
+                if not retry_read(exc):
+                    raise
+                await self._pause(result, reason_code(exc), "books", context=getattr(exc, "context", None))
+                continue
+            self._resume("books")
             window_id = f"{self.session_id}:w{result.total_windows + 1}"
             try:
                 state, quotes = make_quotes(meta, books, yes, no, window_id)
@@ -292,9 +412,19 @@ class SMTradingLoop:
                                      result.windows[-1]["result"])
             if window.close_barrier != "SAFE_TO_CONTINUE":
                 result.blocked_windows += 1
-                result.stop_reason = window.block_reason or "M2_WINDOW_BLOCKED"
-                failed = True
-                break
+                reason = window.block_reason or "M2_WINDOW_BLOCKED"
+                if executor.fatal not in UNCERTAIN_MUTATIONS and not pause_reason(reason):
+                    result.stop_reason, failed = reason, True
+                    break
+                stage = "capital" if reason in {"OFFICIAL_CAPITAL_INSUFFICIENT", "TEST_CAPITAL_LIMIT_EXCEEDED"} else "close"
+                await self._pause(result, executor.fatal or reason, stage)
+                continue
+            if (not window.placement_results and executor.inventory_mismatch is not None
+                    and window.block_reason == "ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM"):
+                await self._wait_for_inventory(result)
+                continue
+            if window.placement_results:
+                self._resume("capital")
             if (not window.placement_results
                     and window.block_reason in SAFE_QUOTE_SKIP_REASONS):
                 result.skipped_quotes.append({"elapsed_s": elapsed, "reason": window.block_reason})
@@ -302,11 +432,29 @@ class SMTradingLoop:
                 # closed; the next iteration takes a new decision snapshot.
                 await self.sleep(1)
         safe = await executor.verify_close(cancel=True)
+        if safe and self.production and executor.inventory_mismatch is None:
+            await self._merge(result)
+            safe = executor.safe_to_continue
         result.final_close_barrier = "SAFE_TO_CONTINUE" if safe else "BLOCKED"
         if not safe:
             result.stop_reason = executor.reason or executor.fatal or "M2_CLOSE_BARRIER_BLOCKED"
+        elif self.merge_disabled_reason is not None:
+            failed, result.stop_reason = True, self.merge_disabled_reason
         self._inventory(result)
         result.execution_status = "INCOMPLETE" if not safe else "BLOCKED" if failed else "COMPLETED"
+
+    async def _wait_for_inventory(self, result):
+        """No BUY or Merge while Data API inventory is unexplained; retry until T=300."""
+        executor = self.executor
+        now = await executor._await_owned(executor.reads.server_time())
+        elapsed = now - int(self.slug.rsplit("-", 1)[1])
+        result.stop_elapsed_s = elapsed
+        self._inventory(result)
+        if self.observer is not None:
+            self.observer.emit("inventory_check", {**executor.inventory_mismatch,
+                "status": "BLOCKED_WAIT_UNTIL_300", "elapsed_s": elapsed})
+        if elapsed < TRADING_END_S:
+            await self.sleep(min(1, TRADING_END_S - elapsed))
 
     async def run(self, *, offline: bool = False, fill_window_sec: float = 3.0) -> RunResult:
         return await self._run(offline=offline, fill_window_sec=fill_window_sec)
@@ -341,6 +489,8 @@ class SMTradingLoop:
                     self.observer.emit("preflight", preflight.to_dict())
                 if preflight.account is not None:
                     result.live_authority = _execution_identity(startup_reads)
+                if preflight.market and "elapsed_s" in preflight.market:
+                    self.market_deadline = self.monotonic() + TRADING_END_S - preflight.market["elapsed_s"]
                 if preflight.market:
                     result.market_id = preflight.market["condition_id"]
                     if expected_market is not None:
@@ -349,6 +499,7 @@ class SMTradingLoop:
                                  and preflight.market['no']['token_id'] == expected_market.no.token_id,
                                  'DISCOVERED_MARKET_CHANGED')
                 if preflight.status is SessionStatus.READY:
+                    self._resume("startup")
                     break
                 time_only = (
                     preflight.market is not None
@@ -358,6 +509,11 @@ class SMTradingLoop:
                     )
                 )
                 if not time_only:
+                    if (preflight_pause(preflight) and self.market_deadline is not None
+                            and self._estimated_elapsed() < TRADING_END_S):
+                        await self._pause(result, "M1_SESSION_NOT_READY", "startup")
+                        continue
+                    result.stop_elapsed_s = self._estimated_elapsed()
                     raise _Issue(SessionStatus.BLOCKED, "M1_SESSION_NOT_READY",
                                  context={"preflight": preflight.to_dict()})
                 elapsed = preflight.market["elapsed_s"]
@@ -375,15 +531,21 @@ class SMTradingLoop:
                     result.final_close_barrier = "SAFE_TO_CONTINUE"
                     return result
                 await self.sleep(min(1, max(0.01, 15 - elapsed)))
-            self.executor = await SMWindowExecutor.open(
-                self.cfg,
-                self.slug,
-                self.session_id,
-                risk_reads=startup_reads,
-                sleep=self.sleep,
-                monotonic=self.monotonic,
-                display_events=[] if self.observer is not None else None,
-            )
+            while True:
+                try:
+                    self.executor = await SMWindowExecutor.open(
+                        self.cfg, self.slug, self.session_id, risk_reads=startup_reads,
+                        sleep=self.sleep, monotonic=self.monotonic,
+                        display_events=[] if self.observer is not None else None)
+                    self._resume("startup")
+                    break
+                except Exception as exc:
+                    preflight_detail = (getattr(exc, "context", None) or {}).get("preflight")
+                    retry = (str(exc) == "M1_SESSION_NOT_READY" and preflight_detail
+                             and preflight_pause(preflight_detail)) or retry_read(exc)
+                    if not retry or self.market_deadline is None or self._estimated_elapsed() >= TRADING_END_S:
+                        raise
+                    await self._pause(result, reason_code(exc), "startup")
             result.live_authority = (
                 "NOT_VERIFIED_FOR_LIVE"
                 if self.cfg.wallet.signature_type == 2

@@ -816,7 +816,7 @@ def test_connect_validates_safe_owner_and_sdk_identity(tmp_path, monkeypatch):
         PolymarketSettlementBackend(config).connect()
 
 
-def test_cli_preflight_cannot_reach_live_sweep(monkeypatch):
+def test_cli_preflight_cannot_reach_live_sweep(monkeypatch, tmp_path):
     from typer.testing import CliRunner
 
     from polymaker.cli import app
@@ -825,6 +825,8 @@ def test_cli_preflight_cannot_reach_live_sweep(monkeypatch):
         pytest.fail("--preflight-only reached live sweep")
 
     monkeypatch.setattr(module, "sweep", forbidden)
+    # This CLI routing test must not read a developer's workspace credentials.
+    monkeypatch.setattr("polymaker.cli.Config.load", lambda *_args, **_kwargs: cfg(tmp_path))
     monkeypatch.setattr(module, "preflight", lambda *args, **kwargs: {
         "status": "PREFLIGHT_PASS", "artifact_dir": "/tmp/preflight-test"})
     result = CliRunner().invoke(app, ["settlement-sweep", "--preflight-only"])

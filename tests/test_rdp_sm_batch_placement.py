@@ -51,7 +51,7 @@ async def test_normal_rebalance_normal_request_sizes_are_two_one_two(env):
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     assert [len(request) for request in v.post_requests] == [2, 1, 2]
     assert v.post_requests[1][0]["order"]["tokenId"] == "2"
-    assert result.confirmed_yes == result.confirmed_no == 5
+    assert result.confirmed_yes == result.confirmed_no == 5 and result.merged_pairs == 0
 
 
 async def test_slow_presubmit_reads_cannot_consume_gap_between_sides(env, monkeypatch):

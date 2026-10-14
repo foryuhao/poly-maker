@@ -297,7 +297,9 @@ async def test_t01_production_composition_reopens_safe_history_zero_posts(env, m
     def missing_book_after_m1(request):
         if request.url.path == "/book":
             calls[0] += 1
-            if calls[0] == 7:  # discovery 2 + loop M1 2 + executor M1 2
+            if calls[0] >= 7 and request.url.params["token_id"] == "1":
+                # Persistent failure keeps this zero-POST history test scoped
+                # to admission and safe close, while the loop now retries.
                 book = deepcopy(v.books["1"])
                 book["bids"] = []
                 return httpx.Response(200, json=book, request=request)
@@ -306,6 +308,7 @@ async def test_t01_production_composition_reopens_safe_history_zero_posts(env, m
     with boundary(monkeypatch, v, missing_book_after_m1):
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.stop_reason == "BOOK_SIDE_MISSING", result.stop_reason
+    assert result.stop_elapsed_s == 300
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert result.total_windows == result.confirmed_fills == 0
     assert not v.posts and not v.cancels
@@ -351,7 +354,7 @@ async def test_t10_historical_evidence_preserved_without_m1_m2_startup_deduction
     account = snapshots[-1]
     assert account["historical_pending_cost_reserved_usd"] == 0
     assert account["execution_reserved_usd"] == 0
-    assert account["basic_spendable_budget_usd"] == 30
+    assert account["basic_spendable_budget_usd"] == 20
     reopened = RiskJournal(cfg.paths.journal_dir, ADDRESS, current_slug=f"btc-updown-5m-{int(SLUG.rsplit('-', 1)[1]) + 300}",
                            official_time=int(SLUG.rsplit('-', 1)[1]) + 360)
     assert sum(reopened.historical_reserve.values()) == Decimal("10.15")

@@ -171,7 +171,7 @@ async def test_repaired_inventory_after_240_waits_to_300_without_new_normal_wind
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE"]
     assert [len(p) for p in v.post_requests] == [2, 1]
     assert v.post_requests[1][0]["order"]["tokenId"] == ("2" if initial_side == "YES" else "1")
-    assert result.confirmed_yes == result.confirmed_no == 5
+    assert result.confirmed_yes == result.confirmed_no == 0 and result.merged_pairs == 5
     assert result.stop_elapsed_s == 300
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 

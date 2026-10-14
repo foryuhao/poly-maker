@@ -38,6 +38,7 @@ from polymaker.journal import Journal
 from polymaker.rdp_sm import (
     NORMAL_END_S,
     OFFICIAL_HOSTS,
+    TEST_CAPITAL_LIMIT_USDC,
     TRADING_END_S,
     TRADING_START_S,
     ReadOnlyClobClient,
@@ -52,12 +53,21 @@ from polymaker.rdp_sm import (
     run_preflight,
 )
 from polymaker.state.store import StateStore
-from polymaker.state.tracker import OrderEvent, TradeEvent, UserEventProcessor
+from polymaker.state.tracker import (
+    OrderEvent,
+    TradeEvent,
+    UserEventProcessor,
+    exceeds_tolerance,
+    within_tolerance,
+)
 from polymaker.userstream.parse import normalize_order, parse_trade, strict_number
 
-CAPITAL_LIMIT = Decimal("30")
+CAPITAL_LIMIT = Decimal(int(TEST_CAPITAL_LIMIT_USDC))
 MIN_MAKER_BUY_NOTIONAL = Decimal("1")
-MATCHED_REMAINING_TOLERANCE_SHARES = Decimal(".1")
+MIN_MAKER_BUY_SHARES = Decimal("5")
+RDP_TOLERANCE = Decimal(".01")
+MATCHED_REMAINING_TOLERANCE_SHARES = RDP_TOLERANCE
+INVENTORY_TOLERANCE_SHARES = RDP_TOLERANCE
 SAFE_QUOTE_SKIP_REASONS = frozenset({
     "QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
     "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM", "MAKER_BUY_NOTIONAL_BELOW_MINIMUM",
@@ -67,10 +77,19 @@ SAFE_QUOTE_SKIP_REASONS = frozenset({
 CANCEL_BUFFER_S = 15.0
 
 
-def maker_buy_size(price: Decimal, inventory_gap: Decimal) -> Decimal:
-    """Smallest 0.01-share quantity covering the gap and the minimum BUY amount."""
-    return max(inventory_gap, (MIN_MAKER_BUY_NOTIONAL / price).quantize(
-        Decimal(".01"), rounding=ROUND_CEILING))
+class InventoryMismatch(_Issue):
+    """A Data API inventory discrepancy pauses admission without losing order proofs."""
+
+    def __init__(self, context):
+        super().__init__(SessionStatus.BLOCKED, "ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM",
+                         context=context)
+
+
+def maker_buy_size(price: Decimal, inventory_gap: Decimal,
+                   min_order_size: Decimal = MIN_MAKER_BUY_SHARES) -> Decimal:
+    """Round up the gap, share minimum and BUY notional to the SDK quantity grid."""
+    return max(inventory_gap, MIN_MAKER_BUY_SHARES, min_order_size,
+               MIN_MAKER_BUY_NOTIONAL / price).quantize(Decimal(".01"), rounding=ROUND_CEILING)
 
 
 def _explicit_maker_rejection(item, notional) -> bool:
@@ -357,7 +376,10 @@ class RiskJournal(Journal):
             seen.add(sid)
             session, result = group[0]["data"]["payload"], payload
             check(set(session) in (session_keys, session_keys | {
-                "capital_basis", "historical_pending_cost_observed_usd"}) and set(result) == result_keys)
+                "capital_basis", "historical_pending_cost_observed_usd"})
+                and set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"}))
+            check(all(type(result.get(k, 0)) in (int, float) and result.get(k, 0) == 0
+                      for k in ("merged_pairs", "recovered_collateral_usdc")))
             check(session["session_id"] == result["session_id"] == sid)
             check(isinstance(session["slug"], str)
                   and re.fullmatch(r"btc-updown-5m-[0-9]+", session["slug"]) is not None)
@@ -374,7 +396,7 @@ class RiskJournal(Journal):
                 session["signature_type"]]
                   and result["live_authority"] == session["live_authority"])
             RiskJournal._check_starting_observations(session, check)
-            check(session["test_capital_limit_usdc"] == str(CAPITAL_LIMIT))
+            check(session["test_capital_limit_usdc"] in {"20", "30"})
             for key in ("starting_spendable_usdc", "starting_official_balance_usdc",
                         "historical_pending_cost_reserved_usd"):
                 check(number(session[key]))
@@ -404,9 +426,13 @@ class RiskJournal(Journal):
             check(result["average_yes_cost"] is None and result["average_no_cost"] is None)
             check(result["final_close_barrier"] == "SAFE_TO_CONTINUE"
                   and result["execution_status"] in {"BLOCKED", "COMPLETED"})
+            from polymaker.rdp_sm_recovery import pause_reason
+
             check((result["stop_reason"], result["execution_status"]) in {
                 ("BOOK_SIDE_MISSING", "BLOCKED"), ("MARKET_CUTOFF", "COMPLETED"),
-                ("OFFICIAL_CAPITAL_INSUFFICIENT", "BLOCKED")})
+                ("OFFICIAL_CAPITAL_INSUFFICIENT", "BLOCKED"),
+                ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", "BLOCKED")}
+                or result["execution_status"] == "BLOCKED" and pause_reason(result["stop_reason"]))
             check(isinstance(result["market_id"], str)
                   and re.fullmatch(r"0x[0-9a-fA-F]{64}", result["market_id"]) is not None)
             slug, market = session["slug"], result["market_id"].lower()
@@ -458,7 +484,8 @@ class RiskJournal(Journal):
                    "sm_placement_result", "sm_cancel_ack", "sm_trade", "sm_order",
                    "sm_official_reconciliation", "sm_close_barrier", "sm_window_result",
                    "sm_run_result", "sm_quote_skipped", "sm_placement_unknown",
-                   "sm_unknown_official_lookup", "sm_quote_refreshed"}
+                   "sm_unknown_official_lookup", "sm_quote_refreshed",
+                   "sm_merge_intent", "sm_merge_submitted", "sm_merge_result"}
         for line in lines:
             check(line.endswith("\n"))
             row = json.loads(line, object_pairs_hook=unique, parse_constant=invalid)
@@ -481,6 +508,9 @@ class RiskJournal(Journal):
             check(sid not in seen)
             seen.add(sid)
             session, result = group[0]["data"]["payload"], data["payload"]
+            from polymaker.rdp_sm_merge import validate_merge_history
+
+            validate_merge_history(group, session, result, check)
             try:
                 _, costs, who, _ = RiskJournal._read_zero_history(
                     io.StringIO("".join(json.dumps(r) + "\n" for r in group)), funder)
@@ -500,7 +530,7 @@ class RiskJournal(Journal):
                 who = (session["signer"].lower(), mode)
                 check(session["live_authority"] == result["live_authority"]
                       == {0: "LOCAL_EOA_KEY_VERIFIED", 2: "NOT_VERIFIED_FOR_LIVE"}[mode]
-                      and session["test_capital_limit_usdc"] == str(CAPITAL_LIMIT))
+                      and session["test_capital_limit_usdc"] in {"20", "30"})
                 RiskJournal._check_starting_observations(session, check)
                 cid = result["market_id"]
                 check(isinstance(cid, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", cid) is not None)
@@ -933,7 +963,14 @@ def _execution_identity(reads: _ExecutionReads) -> str:
 
 
 class _SMProcessor(UserEventProcessor):
-    """Intercept proof invalidation; all economic/lifecycle processing stays FL."""
+    """Intercept proof invalidation; economic/lifecycle processing stays FL."""
+
+    quantity_tolerance = RDP_TOLERANCE
+    price_tolerance = RDP_TOLERANCE
+    single_fill_tolerance = RDP_TOLERANCE
+
+    def tracked_trade_qty(self, order_id):
+        return float(sum((Decimal(str(f.size)) for f in self.economic_fills_for_order(order_id)), Decimal(0)))
 
     def __init__(self, executor: SMWindowExecutor, store: StateStore):
         super().__init__(store)
@@ -989,9 +1026,15 @@ def _terminal(event: OrderEvent) -> bool:
     original, matched = Decimal(str(event.original_size)), Decimal(str(event.size_matched))
     if not original.is_finite() or not matched.is_finite():
         return False
-    # Decimal subtraction keeps exactly 0.1 outside the strict '< 0.1' rule.
-    # This is an order-close tolerance; inventory still uses actual confirmed fills.
-    return 0 <= original - matched < MATCHED_REMAINING_TOLERANCE_SHARES
+    # Inclusive Decimal boundary; inventory still uses actual confirmed fills.
+    return within_tolerance(original, matched, MATCHED_REMAINING_TOLERANCE_SHARES)
+
+
+def _same_fill_economics(left, right):
+    """Keep identity/lifecycle exact; compare only quantity and price with tolerance."""
+    return (left[:-2] == right[:-2]
+            and within_tolerance(left[-2], right[-2], RDP_TOLERANCE)
+            and within_tolerance(left[-1], right[-1], RDP_TOLERANCE))
 
 
 class SMWindowExecutor:
@@ -1024,6 +1067,11 @@ class SMWindowExecutor:
         self.terminal: dict[str, OrderEvent] = {}
         self.proofs: dict[str, dict[str, Any]] = {}
         self.pending_confirmations: set[str] = set()
+        self.merged_pairs = Decimal(0)
+        self.merged_cost: dict[str, Decimal] = {}
+        self.merge_pending = False
+        self.inventory_mismatch = None
+        self.inventory_observation = None
         self.revision = 0
         self.external_revision = 0
         self.proof_revision = -1
@@ -1134,6 +1182,7 @@ class SMWindowExecutor:
     def safe_to_continue(self) -> bool:
         return (
             not self.closed
+            and not self.merge_pending
             and self.fatal is None
             and self.gateway._client.pagination_failure is None
             and self.reason is None
@@ -1171,7 +1220,7 @@ class SMWindowExecutor:
                 # Full limit-price exposure covers fills + remaining + uncertainty
                 # once, even if cancellation returned ACK or a WS fill was seen.
                 total += attempt.maximum
-        return total
+        return max(Decimal(0), total - sum(self.merged_cost.values(), Decimal(0)))
 
     async def _read_books(self, meta):
         books = {}
@@ -1241,8 +1290,8 @@ class SMWindowExecutor:
                 _require(
                     order.token_id == owned["token_id"]
                     and order.side is Side.BUY
-                    and order.price == float(owned["submitted_price"])
-                    and order.size <= float(owned["submitted_qty"]),
+                    and within_tolerance(order.price, owned["submitted_price"], RDP_TOLERANCE)
+                    and not exceeds_tolerance(order.size, owned["submitted_qty"], RDP_TOLERANCE),
                     "OPEN_ORDER_ECONOMICS_CONTRADICT_OWNERSHIP",
                 )
         _require(
@@ -1275,7 +1324,8 @@ class SMWindowExecutor:
                 side = Side(row["side"].upper())
                 identity = (_token_id(row["asset_id"]), side, price, size)
                 _require(
-                    oid not in identities or identities[oid] == identity,
+                    oid not in identities or identities[oid] == identity
+                    or (oid in self.known and _same_fill_economics(identities[oid], identity)),
                     "OPEN_ORDER_SNAPSHOTS_CONFLICT",
                 )
                 identities[oid] = identity
@@ -1284,13 +1334,12 @@ class SMWindowExecutor:
                 if oid in self.known:
                     owned = self.processor.owned_record(oid)
                     _require(
-                        identity
-                        == (
+                        _same_fill_economics(identity, (
                             owned["token_id"],
                             Side.BUY,
                             Decimal(str(owned["submitted_price"])),
                             Decimal(str(owned["submitted_qty"])),
-                        ),
+                        )),
                         "OPEN_ORDER_ECONOMICS_CONTRADICT_OWNERSHIP",
                     )
                 if oid in self.terminal:
@@ -1302,7 +1351,7 @@ class SMWindowExecutor:
                         and oid in policy.starting_order_ids and oid not in self.known):
                     continue  # The operator manages orders present at session startup.
                 if side is Side.BUY:
-                    reservations[oid] = price * size
+                    reservations[oid] = max(reservations.get(oid, Decimal(0)), price * size)
         listed = {
             next(
                 row[k].strip()
@@ -1358,16 +1407,25 @@ class SMWindowExecutor:
                 ),
             )
         )
+        inventory = {}
+        consistent = True
         for token, name in ((meta.yes.token_id, "yes"), (meta.no.token_id, "no")):
             owned_qty = sum(
-                ev.size
+                (Decimal(str(ev.size))
                 for ev in self.processor.economic_fills_for_orders(self.known)
-                if ev.token_id == token
-            )
-            _require(
-                abs(account[f"{name}_inventory"] - owned_qty) <= 1e-6,
-                "ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM",
-            )
+                if ev.token_id == token), Decimal(0)
+            ) - self.merged_pairs
+            actual = Decimal(str(account[f"{name}_inventory"]))
+            consistent = consistent and abs(actual - owned_qty) <= INVENTORY_TOLERANCE_SHARES
+            inventory[name.upper()] = {"expected": float(owned_qty), "actual": float(actual),
+                                       "difference": float(actual - owned_qty)}
+        context = {"source": "DATA_API", "tolerance_shares": float(INVENTORY_TOLERANCE_SHARES),
+                   "inventory": inventory}
+        self.inventory_observation = context
+        if not consistent:
+            self.inventory_mismatch = context
+            raise InventoryMismatch(context)
+        self.inventory_mismatch = None
         _require(client._ClobClient__resolve_version() == 2, "M2_ORDER_VERSION_UNSUPPORTED")
         now = await self.reads.server_time()
         self.official_time, self.time_anchor = now, self.monotonic()
@@ -1467,7 +1525,8 @@ class SMWindowExecutor:
         )
         _require(tick <= price <= 1 - tick and price % tick == 0, "QUOTE_PRICE_TICK_INVALID")
         _require(
-            size >= Decimal(str(meta.min_order_size)) and size % Decimal(".01") == 0,
+            size >= max(MIN_MAKER_BUY_SHARES, Decimal(str(meta.min_order_size)))
+            and size % Decimal(".01") == 0,
             "QUOTE_SIZE_INVALID",
         )
         _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
@@ -1488,8 +1547,8 @@ class SMWindowExecutor:
             and ev.token_id == owned["token_id"]
             and ev.side.value == owned["side"]
             and ev.market_id == self.meta.condition_id
-            and ev.original_size == float(owned["submitted_qty"])
-            and ev.price == float(owned["submitted_price"]),
+            and within_tolerance(ev.original_size, owned["submitted_qty"], RDP_TOLERANCE)
+            and within_tolerance(ev.price, owned["submitted_price"], RDP_TOLERANCE),
             "FINAL_ORDER_IDENTITY_UNKNOWN",
         )
         UserEventProcessor.on_order(self.processor, ev, self.meta.condition_id)
@@ -1497,19 +1556,21 @@ class SMWindowExecutor:
             self.fatal = "TERMINAL_LIVE_CONTRADICTION"
         _require(_terminal(ev), "ORDER_NOT_TERMINAL")
         _require(outcome is ReconciliationOutcome.COMPLETE, "FILLTRUTH_NOT_COMPLETE")
-        fills = self.processor.economic_fills_for_order(oid)
         official = self._official_fills(trades, {oid})
         local = self._local_fills({oid})
         _require(
             all(
                 key in official
-                and official[key][1:] == (leg.asset_id, leg.side, leg.price, leg.matched_amount)
+                and _same_fill_economics(official[key][1:],
+                                         (leg.asset_id, leg.side, leg.price, leg.matched_amount))
                 for key, (_, leg) in self.gateway._client.observed_trade_legs.items()
                 if key[1] == oid
             ),
             "OBSERVED_PAGE_FILL_NOT_RECONCILED",
         )
-        _require(official == local, "TRADE_CONFIRMATION_UNRESOLVED")
+        _require(set(official) == set(local)
+                 and all(_same_fill_economics(official[k], local[k]) for k in official),
+                 "TRADE_CONFIRMATION_UNRESOLVED")
         if not all(v[0] is TradeState.CONFIRMED for v in official.values()):
             # Only complete, consistent economics on verified terminal orders
             # qualify for waiting. Unknown placement/terminal/fill facts do not.
@@ -1517,7 +1578,7 @@ class SMWindowExecutor:
                     for v in official.values())
                     and "associate_trades" in row
                     and set(ev.associate_trades) == {key[0] for key in official}
-                    and abs(ev.size_matched - sum(f.size for f in fills)) <= 1e-6
+                    and within_tolerance(ev.size_matched, self.processor.tracked_trade_qty(oid), RDP_TOLERANCE)
                     and not self.processor.has_unresolved_fill_key(oid)
                     and oid not in self.processor.quarantined_orders):
                 self.pending_confirmations.add(oid)
@@ -1535,7 +1596,7 @@ class SMWindowExecutor:
         _require(
             "associate_trades" in row
             and set(ev.associate_trades) == {key[0] for key in official}
-            and abs(ev.size_matched - sum(f.size for f in fills)) <= 1e-6,
+            and within_tolerance(ev.size_matched, self.processor.tracked_trade_qty(oid), RDP_TOLERANCE),
             "FINAL_FILL_SET_NOT_PROVEN",
         )
         self.terminal[oid] = ev
@@ -1554,7 +1615,7 @@ class SMWindowExecutor:
                     key = (parsed.trade_id, leg.order_id)
                     value = (parsed.status, leg.asset_id, leg.side, leg.price, leg.matched_amount)
                     _require(
-                        key not in official or official[key] == value, "OFFICIAL_TRADE_CONFLICT"
+                        key not in official or _same_fill_economics(official[key], value), "OFFICIAL_TRADE_CONFLICT"
                     )
                     official[key] = value
         return official
@@ -1674,6 +1735,7 @@ class SMWindowExecutor:
                 "UNKNOWN_PLACEMENT_EXPOSURE",
             )
             _require(self.fatal is None, self.fatal or "FATAL_EXECUTION_STATE")
+            _require(not self.merge_pending, "MERGE_PENDING")
             _require(
                 self.gateway._client.pagination_failure is None,
                 self.gateway._client.pagination_failure or "ACCOUNT_PAGINATION_UNRESOLVED",
@@ -1805,7 +1867,7 @@ class SMWindowExecutor:
                 _require(quote_revision is not None, "STRATEGY_QUOTE_REVISION_REQUIRED")
                 fresh = quote_factory(meta, books, window_id)
                 # Keep the revision-bound side and inventory decision. A single
-                # REBALANCE leg may resize only by the minimum-notional rule.
+                # REBALANCE leg may resize only by the legal BUY size rules.
                 def identity(q):
                     return q.market_id, q.token_id, q.outcome, q.side, q.window_id
                 _require([identity(q) for q in fresh] == [identity(q) for q in quotes],
@@ -1816,8 +1878,10 @@ class SMWindowExecutor:
                         gap = abs(sum((Decimal(str(f.size)) * (1 if f.token_id == meta.yes.token_id else -1)
                                        for f in fills), Decimal(0)))
                         _require(len(quotes) == 1 and gap >= 5
-                                 and Decimal(str(old.size)) == maker_buy_size(Decimal(str(old.price)), gap)
-                                 and Decimal(str(new.size)) == maker_buy_size(Decimal(str(new.price)), gap),
+                                 and Decimal(str(old.size)) == maker_buy_size(
+                                     Decimal(str(old.price)), gap, Decimal(str(meta.min_order_size)))
+                                 and Decimal(str(new.size)) == maker_buy_size(
+                                     Decimal(str(new.price)), gap, Decimal(str(meta.min_order_size))),
                                  "STRATEGY_QUOTE_SIZE_CHANGED")
                 changed = quotes != fresh
                 quotes = list(fresh)
@@ -1865,7 +1929,7 @@ class SMWindowExecutor:
                     _require(len(quotes) == 1
                              and quotes[0].outcome == ("NO" if delta > 0 else "YES")
                              and Decimal(str(quotes[0].size)) == maker_buy_size(
-                                 Decimal(str(quotes[0].price)), abs(delta)),
+                                 Decimal(str(quotes[0].price)), abs(delta), Decimal(str(meta.min_order_size))),
                              "LATE_REBALANCE_QUOTE_INVALID")
                 _require(account["applicable_spenders"], "SPENDER_UNKNOWN")
                 _require(self.revision == account["capital_evidence_revision"],
@@ -1974,11 +2038,15 @@ class SMWindowExecutor:
                     and len(self.attempts) == first_attempt
                     and self.fatal is None
                     and self.reason in SAFE_QUOTE_SKIP_REASONS)
-                if self.known or quote_moved:
+                inventory_wait = (isinstance(exc, InventoryMismatch)
+                                  and len(self.attempts) == first_attempt and self.fatal is None)
+                if self.known or quote_moved or inventory_wait:
                     # Close known exposure even when second pre-submit validation fails.
                     original_reason = self.reason
                     safe = await self._await_owned(self._verify_close(cancel=True), propagate_cancel=False)
-                    if quote_moved and safe and self.safe_to_continue:
+                    if inventory_wait and safe and self.safe_to_continue:
+                        skipped_quote_reason = original_reason
+                    elif quote_moved and safe and self.safe_to_continue:
                         skipped_quote_reason = original_reason
                         self.record("sm_quote_skipped", {
                             "window_id": window_id,
@@ -2007,10 +2075,10 @@ class SMWindowExecutor:
             if self.meta is not None:
                 result.yes_inventory = sum(
                     f.size for f in self.confirmed() if f.token_id == self.meta.yes.token_id
-                )
+                ) - float(self.merged_pairs)
                 result.no_inventory = sum(
                     f.size for f in self.confirmed() if f.token_id == self.meta.no.token_id
-                )
+                ) - float(self.merged_pairs)
             result.delta = result.yes_inventory - result.no_inventory
             result.capital_committed = float(self.committed())
             result.close_barrier = "SAFE_TO_CONTINUE" if self.safe_to_continue else "BLOCKED"

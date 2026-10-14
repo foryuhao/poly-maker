@@ -82,4 +82,5 @@ async def test_delayed_confirmations_allow_normal_rebalance_normal(env):
     assert [len(request) for request in v.post_requests] == [2, 1, 2]
     assert v.post_requests[1][0]["order"]["tokenId"] == "2"
     assert result.confirmed_yes == result.confirmed_no == 5
+    assert result.merged_pairs == 0
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"

@@ -10,7 +10,7 @@ from typing import Any
 from polymaker.execution.gateway import GatewayReadError
 from polymaker.logging import get_logger
 from polymaker.research.capture import clock
-from polymaker.state.tracker import TradeEvent, UserEventProcessor
+from polymaker.state.tracker import TradeEvent, UserEventProcessor, within_tolerance
 from polymaker.userstream.parse import (
     MalformedMakerLeg,
     maker_order_id_evidence,
@@ -85,8 +85,8 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
         if order_ev is None or order_ev.order_id != order_id:
             raise GatewayReadError("order snapshot malformed or mismatched")
         if (order_ev.token_id != owned["token_id"] or order_ev.side.value != owned["side"]
-                or abs(order_ev.original_size-float(owned["submitted_qty"])) > 1e-6
-                or abs(order_ev.price-float(owned["submitted_price"])) > 1e-6):
+                or not within_tolerance(order_ev.original_size, owned["submitted_qty"], processor.quantity_tolerance)
+                or not within_tolerance(order_ev.price, owned["submitted_price"], processor.price_tolerance)):
             processor.quarantine_order(order_id, "authoritative order economics contradict registry", notify=False)
             return ReconciliationOutcome.UNRESOLVED
         rest_fills: dict[tuple[str, str], float] = {}
@@ -166,7 +166,7 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                 log.error("order_reconcile_unresolved", order_id=order_id,
                           missing_associate_trades=sorted(missing))
                 return ReconciliationOutcome.UNRESOLVED
-        if abs(order_ev.size_matched - qty) <= 1e-6:
+        if within_tolerance(order_ev.size_matched, qty, processor.quantity_tolerance):
             # The final gate is immediately before every state transition that
             # would report authoritative completion or clear recovery.
             _check_active_order_deadline(active_order_deadline)
@@ -185,9 +185,10 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
         for index, event in enumerate(processor.economic_fills_for_order(order_id)):
             await _processing_checkpoint(active_order_deadline, index)
             tracked_keys.add((event.trade_id, order_id))
-        if (qty > 0 and order_ev.size_matched < qty - 1e-6
+        if (qty > 0 and order_ev.size_matched < qty
+                and not within_tolerance(order_ev.size_matched, qty, processor.quantity_tolerance)
                 and set(rest_fills) == tracked_keys
-                and abs(rest_trade_qty - qty) <= 1e-6):
+                and within_tolerance(rest_trade_qty, qty, processor.quantity_tolerance)):
             _check_active_order_deadline(active_order_deadline)
             processor.quarantine_order(order_id, "REST order cumulative state lags exact maker trades",
                                        notify=False)

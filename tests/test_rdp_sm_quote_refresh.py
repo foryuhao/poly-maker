@@ -90,5 +90,5 @@ async def test_rebalance_refreshes_moved_quote_without_bypassing_close(env, monk
     assert len(repair) == 1 and repair[0]["outcome"] == "NO" and repair[0]["size"] == 5
     assert repair[0]["price"] == (0.48 if change == "tick" else 0.46)
     assert [len(request) for request in v.post_requests] == [2, 1, 2]
-    assert result.confirmed_yes == result.confirmed_no == 5
+    assert result.confirmed_yes == result.confirmed_no == 5 and result.merged_pairs == 0
     assert result.blocked_windows == 0 and result.final_close_barrier == "SAFE_TO_CONTINUE"

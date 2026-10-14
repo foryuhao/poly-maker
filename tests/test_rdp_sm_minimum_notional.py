@@ -8,7 +8,7 @@ import pytest
 
 from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_entry import run_current_market
-from polymaker.rdp_sm_execution import RiskJournal
+from polymaker.rdp_sm_execution import RiskJournal, maker_buy_size
 from polymaker.rdp_sm_loop import QuoteUnavailable, make_quotes
 from test_rdp_sm_entry import boundary
 from test_rdp_sm_m1 import ADDRESS, SLUG, START, Venue
@@ -64,6 +64,65 @@ def test_rebalance_tops_up_only_short_side_to_smallest_legal_size(delta, price, 
     assert qty == Decimal(size) and qty * Decimal(price) >= 1
     if qty > abs(delta):
         assert (qty - Decimal(".01")) * Decimal(price) < 1
+
+
+@pytest.mark.parametrize("gap,price,minimum,expected", [
+    ("4.99", ".49", "5", "5.00"),
+    ("5", ".49", "5", "5.00"),
+    ("5.003207", ".49", "5", "5.01"),
+    ("5.010001", ".49", "5", "5.02"),
+    ("5.003207", ".15", "5", "6.67"),
+    ("5.003207", ".49", "6.001", "6.01"),
+])
+def test_legal_buy_size_covers_share_minimum_precision_and_notional(gap, price, minimum, expected):
+    assert maker_buy_size(Decimal(price), Decimal(gap), Decimal(minimum)) == Decimal(expected)
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+@pytest.mark.parametrize("late", [False, True])
+async def test_actual_fractional_gap_submits_rounded_single_maker_and_preserves_inventory(env, sign, late):
+    v, cfg = env
+    first, second = ("NO", "YES") if sign > 0 else ("YES", "NO")
+
+    def fills(venue, index):
+        ids = current_orders(venue)
+        if index == 1:
+            venue.fill(ids[first], "fractional-first", 4.996793)
+        elif index == 2:
+            venue.fill(ids[second], "ten-second", 10)
+            if late:
+                venue.time = START + 200
+        elif index == 3:
+            assert set(ids) == {first}
+            venue.fill(ids[first], "rounded-repair", 5.01)
+
+    on_windows(v, fills, stop_after=3)
+    result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
+    assert result.execution_status == "COMPLETED", result.stop_reason
+    assert [w["state"] for w in result.windows] == ["NORMAL", "NORMAL", "REBALANCE"]
+    assert [len(p) for p in v.post_requests] == [2, 2, 1]
+    repair = result.windows[2]["result"]
+    q = repair["requested_quotes"][0]
+    assert q["outcome"] == first and q["size"] == 5.01 and q["side"] == "BUY"
+    signed = v.post_requests[2][0]
+    assert signed["postOnly"] is True and signed["orderType"] == "GTC"
+    assert Decimal(signed["order"]["takerAmount"]) == Decimal("5010000")
+    assert result.delta == (-sign) * .006793 and result.residual_shares == .006793
+    assert result.confirmed_yes == (0 if sign > 0 else .006793)
+    assert result.confirmed_no == (.006793 if sign > 0 else 0)
+    assert result.merged_pairs == 10 and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert result.skipped_quotes == []
+    assert repair["fill_deadline_monotonic"] - repair["t0_monotonic"] == 3
+
+
+@pytest.mark.parametrize("size", [4.99, 5.001])
+async def test_m2_rejects_below_minimum_or_off_grid_quantity_before_post(env, size):
+    v, ex = await open_executor(env)
+    result = await ex.execute_window("invalid-size", quotes("invalid-size", size=size))
+    assert result.block_reason == "QUOTE_SIZE_INVALID"
+    assert result.placement_results == [] and not v.post_requests
+    assert result.capital_committed == 0 and result.t0_monotonic is None
+    assert result.close_barrier == "BLOCKED" and not ex.safe_to_continue
 
 
 @pytest.mark.parametrize("final_only", [False, True])
@@ -129,7 +188,8 @@ async def test_topped_up_confirmed_fill_recomputes_next_normal_sizes(env):
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     pair = result.windows[2]["result"]["requested_quotes"]
     assert {q["outcome"]: q["size"] for q in pair} == {"YES": 6.67, "NO": 5}
-    assert result.confirmed_yes == 5 and result.confirmed_no == 6.67
+    assert result.confirmed_yes == 0 and result.confirmed_no == pytest.approx(1.67)
+    assert result.merged_pairs == 5
     assert result.delta == pytest.approx(-1.67) and result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
@@ -173,7 +233,8 @@ async def test_rebalance_minimum_size_refresh_fill_and_capital_safety(env, monke
         assert signed["postOnly"] is True and signed["orderType"] == "GTC"
         assert Decimal(signed["order"]["makerAmount"]) >= 1_000_000
         assert Decimal(signed["order"]["takerAmount"]) == Decimal(str(q["size"])) * 1_000_000
-        assert result.confirmed_yes == 5 and result.confirmed_no == q["size"]
+        assert result.confirmed_yes == 0 and result.confirmed_no == pytest.approx(q["size"] - 5)
+        assert result.merged_pairs == 5
         assert result.delta == pytest.approx(5 - q["size"])
         assert repair["fill_deadline_monotonic"] - repair["t0_monotonic"] == 3
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"

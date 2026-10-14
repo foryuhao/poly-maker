@@ -83,7 +83,7 @@ class ExecutionVenue(Venue):
             self.post_requests.append(deepcopy(body))
             attempts = self.executor.gateway._client.batch_attempts
             assert len(attempts) == len(body)
-            assert self.executor.committed() <= Decimal("30")
+            assert self.executor.committed() <= Decimal("20")
             lines = journal_records(self.executor.journal.path)
             replies = []
             for row, attempt in zip(body, attempts, strict=True):
@@ -357,7 +357,7 @@ async def test_e07_h01_terminal_then_live_blocks_even_old_official_terminal(env)
     assert any(c[1] == "/data/order/o-1" for c in v.calls)
 
 
-async def test_e09_thirty_dollar_cap_checked_before_any_submit(env):
+async def test_e09_twenty_dollar_cap_checked_before_any_submit(env):
     v, executor = await open_executor(env)
     result = await executor.execute_window("w1", quotes(size=40))
     assert (
@@ -368,14 +368,14 @@ async def test_e09_thirty_dollar_cap_checked_before_any_submit(env):
 
 async def test_e09_confirmed_cost_counts_in_later_window_cap(env):
     v, executor = await open_executor(env)
-    v.on_cancel = lambda venue: venue.fill("o-1", qty=30)
-    first = await executor.execute_window("w1", quotes(size=30))
-    assert first.close_barrier == "SAFE_TO_CONTINUE" and first.capital_committed == 14.7
+    v.on_cancel = lambda venue: venue.fill("o-1", qty=20)
+    first = await executor.execute_window("w1", quotes(size=20))
+    assert first.close_barrier == "SAFE_TO_CONTINUE" and first.capital_committed == 9.8
     v.on_cancel = None
-    v.positions = [{"token_id": "1", "current_size": 30, "avg_price": 0.49}]
+    v.positions = [{"token_id": "1", "current_size": 20, "avg_price": 0.49}]
     second = await executor.execute_window("w2", quotes("w2", size=20))
     assert second.close_barrier == "BLOCKED" and len(v.posts) == 2
-    assert executor.committed() >= Decimal("14.7")
+    assert executor.committed() >= Decimal("9.8")
 
 
 @pytest.mark.parametrize("elapsed", [14, 180, 222, 239, 240, 260, 300])
@@ -690,11 +690,11 @@ async def test_two_owned_maker_legs_share_trade_id_without_deduplication_loss(en
     assert len(executor.confirmed()) == 2
 
 
-async def test_exact_thirty_dollar_single_order_is_allowed(env):
+async def test_exact_twenty_dollar_single_order_is_allowed(env):
     v, executor = await open_executor(env)
-    result = await executor.execute_window("w1", [replace(quotes()[0], price=0.5, size=60)])
+    result = await executor.execute_window("w1", [replace(quotes()[0], price=0.5, size=40)])
     assert result.close_barrier == "SAFE_TO_CONTINUE" and len(v.posts) == 1
-    assert executor.attempts[0].maximum == Decimal("30")
+    assert executor.attempts[0].maximum == Decimal("20")
 
 
 async def test_journal_failure_after_ack_stops_new_requests_but_closes_entire_batch(env, monkeypatch):

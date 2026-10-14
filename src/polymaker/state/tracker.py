@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from decimal import Decimal
 
 from polymaker.domain import Fill, OpenOrder, OrderState, Side, TradeState
 from polymaker.logging import get_logger
@@ -22,6 +23,17 @@ from polymaker.research.capture import CausalCapture, exchange_us
 from polymaker.state.store import StateStore
 
 log = get_logger("state.tracker")
+
+
+def within_tolerance(left, right, tolerance: Decimal) -> bool:
+    left, right = Decimal(str(left)), Decimal(str(right))
+    return left.is_finite() and right.is_finite() and abs(left - right) <= tolerance
+
+
+def exceeds_tolerance(actual, expected, tolerance: Decimal) -> bool:
+    actual, expected = Decimal(str(actual)), Decimal(str(expected))
+    return (not actual.is_finite() or not expected.is_finite()
+            or actual - expected > tolerance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +66,11 @@ class OrderEvent:
 
 class UserEventProcessor:
     """Applies normalized trade/order events to the store."""
+
+    # RDP overrides these; other strategies keep their existing precision.
+    quantity_tolerance = Decimal("0.000001")
+    price_tolerance = Decimal("0.000001")
+    single_fill_tolerance = Decimal(0)
 
     def __init__(
         self,
@@ -213,7 +230,7 @@ class UserEventProcessor:
             expected_price = float(owned["submitted_price"])
         except (ValueError, TypeError, KeyError):
             expected_side, expected_qty, expected_price = None, -1.0, float("nan")
-        observed_prior = sum(event.size for prior_key, event in self.fill_records.items()
+        observed_prior = sum(Decimal(str(event.size)) for prior_key, event in self.fill_records.items()
                              if prior_key[1] == oid and prior_key in self.applied_fill_keys
                              and prior_key not in self.quarantined_fill_keys
                              and event.status is not TradeState.FAILED and prior_key != key)
@@ -222,15 +239,15 @@ class UserEventProcessor:
             or ev.our_side is not expected_side
             or condition_id != owned["condition_id"]
             or (ev.market_id is not None and ev.market_id != owned["condition_id"])
-            or not (0 <= ev.size <= expected_qty)
-            or (ev.our_side is Side.BUY and ev.price > expected_price + 1e-6)
-            or (ev.our_side is Side.SELL and ev.price < expected_price - 1e-6)
-            or observed_prior + ev.size > expected_qty + 1e-6
+            or ev.size < 0 or exceeds_tolerance(ev.size, expected_qty, self.single_fill_tolerance)
+            or (ev.our_side is Side.BUY and exceeds_tolerance(ev.price, expected_price, self.price_tolerance))
+            or (ev.our_side is Side.SELL and exceeds_tolerance(expected_price, ev.price, self.price_tolerance))
+            or exceeds_tolerance(observed_prior + Decimal(str(ev.size)), expected_qty, self.quantity_tolerance)
         )
         prior = self.fill_records.get(key)
         if prior is not None and (prior.token_id != ev.token_id or prior.our_side is not ev.our_side
-                                  or abs(prior.price-ev.price) > 1e-6
-                                  or abs(prior.size-ev.size) > 1e-6):
+                                  or not within_tolerance(prior.price, ev.price, self.price_tolerance)
+                                  or not within_tolerance(prior.size, ev.size, self.quantity_tolerance)):
             mismatch = True
         if mismatch:
             self.fill_records.setdefault(key, ev)
@@ -336,12 +353,12 @@ class UserEventProcessor:
                 or ev.side.value != owned["side"]
                 or condition_id != owned["condition_id"]
                 or (ev.market_id is not None and ev.market_id != owned["condition_id"])
-                or abs(ev.original_size - float(owned["submitted_qty"])) > 1e-6
-                or abs(ev.price - float(owned["submitted_price"])) > 1e-6):
+                or not within_tolerance(ev.original_size, owned["submitted_qty"], self.quantity_tolerance)
+                or not within_tolerance(ev.price, owned["submitted_price"], self.price_tolerance)):
             self.quarantine_order(ev.order_id, "order event economics contradict registry")
             return
         qty = self.tracked_trade_qty(ev.order_id)
-        gap = ev.size_matched > qty + 1e-6 or qty > ev.size_matched + 1e-6
+        gap = not within_tolerance(ev.size_matched, qty, self.quantity_tolerance)
         missing_assoc = bool(ev.associate_trades) and not set(ev.associate_trades).issubset(
             {tid for tid, oid in self.applied_fill_keys if oid == ev.order_id
              and (tid, oid) not in self.quarantined_fill_keys

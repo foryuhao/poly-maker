@@ -161,7 +161,8 @@ async def test_capital_failure_zero_post_safe_close_allows_same_market_restart(e
     with monkeypatch.context() as scoped, boundary(scoped, v, capital_drops):
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
-    assert result.total_windows == result.blocked_windows == 1 and not v.posts
+    assert result.total_windows == result.blocked_windows and result.total_windows > 1 and not v.posts
+    assert result.stop_elapsed_s == 300
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     path = v.executor.journal.path
     before = journal_bytes(path)
@@ -170,6 +171,9 @@ async def test_capital_failure_zero_post_safe_close_allows_same_market_restart(e
     assert journal.historical_orders == {} and journal_bytes(path) == before
     journal.close()
     v.capital["balance"] = "6000000"
+    # A separate offline invocation exercises same-market journal admission;
+    # the first invocation has already waited through its complete market.
+    v.time = START + 60
     on_windows(v, lambda *_: None, stop_after=1)
     again = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert again.execution_status == "COMPLETED", again.stop_reason

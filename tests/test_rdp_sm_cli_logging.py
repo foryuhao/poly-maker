@@ -78,7 +78,8 @@ def test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary(env, monkeypatch
     assert "Planned Quote: NO" in second and "Planned Quote: YES" not in second
     assert DUMMY_KEY not in output.output and cfg.secrets.browser_address not in human
     assert "HTTP Request:" not in human and "RealizedPnL" not in human
-    assert r["confirmed_yes"] == r["confirmed_no"] == 5
+    assert r["confirmed_yes"] == r["confirmed_no"] == 0
+    assert r["merged_pairs"] == 5 and "Merge Recovered: 5 USDC (verified)" in human
     rows = journal_records(v.executor.journal.path)
     assert {"sm_strategy_window", "sm_placement_intent", "sm_close_barrier", "sm_run_result"} <= {x["kind"] for x in rows}
     final = next(x["data"]["payload"] for x in rows if x["kind"] == "sm_run_result")

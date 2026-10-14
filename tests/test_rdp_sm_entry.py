@@ -135,7 +135,8 @@ async def test_r03_production_path_normal_rebalance_normal(env):
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
-    assert result.confirmed_yes == result.confirmed_no == 5 and result.active_cycles == 2
+    assert result.confirmed_yes == result.confirmed_no == 0 and result.active_cycles == 2
+    assert result.merged_pairs == 5
     assert len(v.posts) == 5 and result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
@@ -237,7 +238,7 @@ async def test_r09_pending_appears_after_batch_blocks_next_window(env, monkeypat
     assert not any(r["status"] == "LIVE" for r in v.rows.values())
 
 
-async def test_r10_capital_exhaustion_safe_close_reason_retained(env):
+async def test_r10_capital_exhaustion_waits_and_verified_merge_recovers_cost(env):
     v, cfg = env
 
     def fills(v, index):
@@ -246,10 +247,13 @@ async def test_r10_capital_exhaustion_safe_close_reason_retained(env):
 
     on_windows(v, fills)
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
-    assert result.stop_reason == "TEST_CAPITAL_LIMIT_EXCEEDED"
-    assert result.execution_status == "BLOCKED" and result.final_close_barrier == "SAFE_TO_CONTINUE"
-    assert v.executor.committed() <= 30 and all(r["status"] != "LIVE" for r in v.rows.values())
-    assert result.total_windows == 7 and len(v.posts) == 12
+    assert result.stop_reason == "MARKET_CUTOFF" and result.stop_elapsed_s == 300
+    assert result.execution_status == "COMPLETED" and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert v.executor.committed() <= 20 and all(r["status"] != "LIVE" for r in v.rows.values())
+    assert len(v.posts) == 8 and result.merged_pairs == 20
+    assert result.confirmed_yes == result.confirmed_no == 0
+    denied = [w["result"] for w in result.windows if w["result"]["block_reason"] == "TEST_CAPITAL_LIMIT_EXCEEDED"]
+    assert denied and all(w["placement_results"] == [] for w in denied)
 
 
 def cli_config(monkeypatch, tmp_path, v, cfg):
@@ -298,7 +302,8 @@ def test_r11_r12_full_cli_single_market_and_exit(env, monkeypatch, tmp_path):
     assert result["final_close_barrier"] == "SAFE_TO_CONTINUE" and result["stop_elapsed_s"] == 300
     assert all(15 <= stamp < 240 for stamp in v.post_times)
     assert all(params.get("slug", SLUG) == SLUG for _, _, params in v.calls)
-    assert result["confirmed_yes"] == result["confirmed_no"] == 5
+    assert result["confirmed_yes"] == result["confirmed_no"] == 0
+    assert result["merged_pairs"] == 5
     assert v.executor.closed and all(r["status"] != "LIVE" for r in v.rows.values())
 
 
@@ -345,12 +350,12 @@ async def test_r14_actual_journal_reconstructs_minimal_metrics(env, monkeypatch)
         return [r["data"]["payload"] for r in rows if r["kind"] == kind]
 
     session, final = payloads("sm_session")[0], payloads("sm_run_result")[0]
-    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "30"
+    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "20"
     intents = payloads("sm_placement_intent")
     maximum_committed = max(float(p["capital_committed_usd"]) for p in intents)
     assert (
-        maximum_committed <= 30
-        and maximum_committed > final["confirmed_yes"] * final["average_yes_cost"]
+        maximum_committed <= 20
+        and maximum_committed > final["confirmed_yes"]
     )
     assert final["stop_reason"] == "MARKET_CUTOFF"  # exhaustion = NOT_REACHED
     windows = payloads("sm_window_result")
@@ -399,8 +404,11 @@ async def test_r14_actual_journal_reconstructs_minimal_metrics(env, monkeypatch)
             opened = None
     assert maximum_residual == 5 and maximum_residual_cost == pytest.approx(2.4)
     assert len(intervals) == 1 and intervals[0][1] - intervals[0][0] == 6
-    assert final["residual_shares"] == 0 and final["confirmed_yes"] == final["confirmed_no"] == 5
-    assert final["completed_pairs"] == 5 and final["theoretical_pair_pnl"] == pytest.approx(0.202)
+    assert final["residual_shares"] == 0 and final["confirmed_yes"] == final["confirmed_no"] == 0
+    assert final["completed_pairs"] == final["merged_pairs"] == final["recovered_collateral_usdc"] == 5
+    assert final["theoretical_pair_pnl"] == 0
+    merge = payloads("sm_merge_result")[-1]
+    assert merge["status"] == "CONFIRMED" and float(merge["released_cost_usdc"]) == pytest.approx(4.798)
     assert (
         final["execution_status"] == "COMPLETED"
         and final["final_close_barrier"] == "SAFE_TO_CONTINUE"
