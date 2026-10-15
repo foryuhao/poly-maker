@@ -205,12 +205,9 @@ async def test_r08_resolved_unrelated_matched_archived_without_startup_deduction
     records = journal_records(v.executor.journal.path)
     session = next(r["data"]["payload"] for r in records if r["kind"] == "sm_session")
     assert session["historical_pending_cost_reserved_usd"] == 0
-    assert session["historical_pending_cost_observed_usd"] == 1
+    assert session["historical_pending_cost_observed_usd"] == 0
     assert session["capital_basis"] == "OFFICIAL_BALANCE_AT_SESSION_START"
-    assert (
-        session["historical_matched"]["old-trade"]["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
-    )
-    assert session["historical_matched"]["old-trade"]["status"] == "MATCHED"
+    assert session["historical_matched"] == {}
 
 
 @pytest.mark.parametrize("current,resolved", [(True, True), (False, False)])
@@ -219,9 +216,14 @@ async def test_r09_current_or_unresolved_other_market_pending_blocks(
 ):
     v, cfg = env
     v.trades = [old_trade(v, current=current)]
+    if not current:
+        on_windows(v, lambda *_: None, stop_after=1)
     with history_boundary(monkeypatch, v, resolved=resolved)[0]:
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
-    assert result.execution_status == "BLOCKED" and not v.posts
+    if current:
+        assert result.execution_status == "BLOCKED" and not v.posts
+    else:
+        assert result.execution_status == "COMPLETED" and len(v.posts) == 2
 
 
 async def test_r09_pending_appears_after_batch_blocks_next_window(env, monkeypatch):
@@ -424,7 +426,7 @@ async def test_official_balance_below_actual_pair_cost_denies_submission(env, mo
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert not v.posts and result.execution_status == "BLOCKED"
     assert v.executor is not None and v.executor.closed
-    assert v.executor.reads.account_policy.pending["old-trade"]["status"] == "MATCHED"
+    assert v.executor.reads.account_policy.pending == {}
     assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
 
 

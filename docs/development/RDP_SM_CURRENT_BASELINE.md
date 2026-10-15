@@ -47,3 +47,11 @@ Shadow 不初始化、调用或扩展 Merge/RPC。
 
 以上历史限制及缺少自动多市场调度已经人工接受，不阻塞独立只读 Shadow。
 本轮没有真实订单授权；OBSERVATION_ONLY 可使用无账户的官方公共 HTTP/WS。
+
+2026-10-15 人工新边界：**每个 Session 是独立单元，不依赖其他 Session**。
+移除钱包历史日志准入、旧订单启动查询、旧市场结算查证、恢复归档及历史资金预留导入。
+新 Session 仅按当前市场和实时账户状态执行原 M1/M2；本轮订单、pending、资金、撤单、
+确认与关闭保护保持。同一 Session 内暂时漏页仍保留风险观察；不跨 Session 继承状态。
+日志改为 `rdp_sm_<funder>_<session_id>.jsonl`，Shadow读取对应当前文件。
+旧日志保留但不读取或修改，旧历史/恢复 SOP 的跨轮要求由该人工新边界覆盖。
+详见 [ITER-0033](ITER-0033/RESULT.md)。本轮按用户要求不调用 Architect/Reviewer。

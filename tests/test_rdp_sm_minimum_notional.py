@@ -149,8 +149,8 @@ async def test_normal_small_leg_skips_both_at_decision_or_final_admission(env, m
     if final_only:
         assert result.windows[0]["result"]["placement_results"] == []
         assert result.windows[0]["result"]["t0_monotonic"] is None
-    j = RiskJournal(cfg.paths.journal_dir, ADDRESS, current_slug=SLUG, official_time=START + 240)
-    assert j.historical_orders == {}
+    j = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert j.sequence == 0
     j.close()
 
 

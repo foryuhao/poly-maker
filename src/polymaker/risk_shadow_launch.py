@@ -14,7 +14,7 @@ from threading import Thread
 def launch_shadow(cfg, meta, session_id):
     # No key/SDK/Gateway object is retained by the worker or child.
     journal = (
-        Path(cfg.paths.journal_dir) / f"rdp_sm_{cfg.secrets.browser_address.lower()}.jsonl"
+        Path(cfg.paths.journal_dir) / f"rdp_sm_{cfg.secrets.browser_address.lower()}_{session_id}.jsonl"
     ).absolute()
     output = Path("research_outputs/rdp_risk_shadow").absolute()
     argv = [

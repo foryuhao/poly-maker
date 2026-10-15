@@ -399,16 +399,12 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
             and order.size >= 0,
             "OPEN_ORDER_COMMITMENT_UNKNOWN",
         )
-    historical_reserved = Decimal(0)
     policy = getattr(reads, 'account_policy', None)
     if policy is not None:
-        historical_reserved = await policy.inspect(reads, meta, positions, orders)
+        await policy.inspect(reads, meta, positions, orders)
     balance_basis = policy is not None and policy.use_starting_balance
-    historical_observed = float(historical_reserved)
-    if balance_basis:
-        historical_reserved = Decimal(0)
     reserved = sum(o.notional for o in orders if o.side is Side.BUY
-                   and not (balance_basis and o.order_id in policy.starting_order_ids)) + float(historical_reserved)
+                   and not (balance_basis and o.order_id in policy.starting_order_ids))
     _require(math.isfinite(reserved), "OPEN_ORDER_COMMITMENT_UNKNOWN")
     available = max(0.0, balance - reserved)
     spendable = max(0.0, allowance - reserved)
@@ -431,8 +427,9 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
         "applicable_allowance_usd": allowance,
         "applicable_spenders": list(spenders),
         "existing_buy_commitment_usd": reserved,
-        "historical_pending_cost_reserved_usd": float(historical_reserved),
-        "historical_pending_cost_observed_usd": historical_observed,
+        # Retain report keys for consumers; no cross-Session history is read.
+        "historical_pending_cost_reserved_usd": 0.0,
+        "historical_pending_cost_observed_usd": 0.0,
         "capital_basis": "OFFICIAL_BALANCE_AT_SESSION_START" if balance_basis else "BALANCE_MINUS_COMMITMENTS",
         "available_balance_usd": available,
         "available_balance_source": ("official CLOB balance; pre-existing commitments managed by operator"

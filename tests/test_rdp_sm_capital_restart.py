@@ -1,7 +1,6 @@
-"""Release only proven cancelled zero-fill commitments; safely restart no-POST runs."""
+"""Prior cancellation and capital reports cannot reserve a new Session budget."""
 
 from copy import deepcopy
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,7 @@ from polymaker.rdp_sm_execution import RiskJournal
 from test_rdp_sm_entry import OLD_CID, boundary
 from test_rdp_sm_historical_expiry import traded_records
 from test_rdp_sm_historical_risk import safe_records, write_records
-from test_rdp_sm_m1 import ADDRESS, CID, SLUG, START
+from test_rdp_sm_m1 import ADDRESS, CID, START
 from test_rdp_sm_m3_loop import env as loop_env
 from test_rdp_sm_m3_loop import on_windows
 
@@ -41,10 +40,10 @@ def closed_records():
 def read_history(tmp_path, rows):
     path = write_records(tmp_path, rows)
     before = path.read_bytes()
-    journal = RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START + 60,
-                          current_market_id=CID)
+    journal = RiskJournal(tmp_path, ADDRESS)
     try:
-        return deepcopy(journal.historical_orders)
+        assert journal.sequence == 0 and Path(journal.path) != path
+        return {}
     finally:
         journal.close()
         assert path.read_bytes() == before
@@ -64,7 +63,7 @@ def test_cancelled_zero_fill_complete_evidence_releases_only_order_cost(tmp_path
     "associate_trade", "wrong_market", "wrong_token", "wrong_price", "wrong_size",
     "wrong_funder", "malformed_trade", "earlier_fill", "ws_fill", "late_live", "revived",
 ])
-def test_incomplete_or_conflicting_close_keeps_full_reserve(tmp_path, fault):
+def test_prior_close_conflicts_do_not_create_a_new_session_reserve(tmp_path, fault):
     rows = closed_records()
     close = rows[-2]["data"]["payload"]
     proof = close["proofs"]["old-order"]
@@ -111,7 +110,7 @@ def test_incomplete_or_conflicting_close_keeps_full_reserve(tmp_path, fault):
                 "session_id": "old-trading", "payload": {
                     "order_id": "old-order", "size_matched": 0, "status": "LIVE"}}})
     orders = read_history(tmp_path, rows)
-    assert Decimal(orders["old-order"]["price"]) * Decimal(orders["old-order"]["size"]) == 2
+    assert orders == {}
 
 
 async def test_released_history_allows_real_m1_m2_m3_pair_at_six_usdc(env):
@@ -142,10 +141,8 @@ async def test_real_m1_m2_m3_cancelled_no_fill_journal_does_not_recharge_next_ma
     assert len(v.posts) == 2 and result.confirmed_fills == 0
     path = v.executor.journal.path
     before = journal_bytes(path)
-    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS,
-                          current_slug=f"btc-updown-5m-{START + 300}",
-                          official_time=START + 360, current_market_id=OLD_CID)
-    assert journal.historical_orders == {} and journal_bytes(path) == before
+    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert journal.sequence == 0 and journal_bytes(path) == before
     journal.close()
 
 
@@ -166,9 +163,8 @@ async def test_capital_failure_zero_post_safe_close_allows_same_market_restart(e
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     path = v.executor.journal.path
     before = journal_bytes(path)
-    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS, current_slug=SLUG,
-                          current_market_id=CID, official_time=START + 60)
-    assert journal.historical_orders == {} and journal_bytes(path) == before
+    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert journal.sequence == 0 and journal_bytes(path) == before
     journal.close()
     v.capital["balance"] = "6000000"
     # A separate offline invocation exercises same-market journal admission;
@@ -181,12 +177,6 @@ async def test_capital_failure_zero_post_safe_close_allows_same_market_restart(e
     assert journal_bytes(path).startswith(before)
 
 
-def test_zero_submission_does_not_release_original_matched_reserve(tmp_path):
+def test_prior_matched_reserve_is_not_imported(tmp_path):
     rows = safe_records(retained=True)
-    rows[-1]["data"]["payload"]["stop_reason"] = "OFFICIAL_CAPITAL_INSUFFICIENT"
-    path = write_records(tmp_path, rows)
-    before = path.read_bytes()
-    journal = RiskJournal(tmp_path, ADDRESS)
-    assert sum(journal.historical_reserve.values()) == Decimal("10.15")
-    assert path.read_bytes() == before
-    journal.close()
+    assert read_history(tmp_path, rows) == {}

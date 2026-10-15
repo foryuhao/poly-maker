@@ -108,11 +108,11 @@ async def test_postonly_rejection_continues_next_normal_window(env, monkeypatch)
 
 
 @pytest.mark.parametrize("fault", [None, "other_error", "missing_status", "tradeIDs", "short"])
-def test_expired_history_only_reclassifies_proven_raw_rejection(tmp_path, fault):
+def test_prior_rejection_evidence_does_not_gate_new_session(tmp_path, fault):
     from polymaker.rdp_sm_execution import RiskJournal
     from test_rdp_sm_historical_expiry import traded_records
     from test_rdp_sm_historical_risk import write_records
-    from test_rdp_sm_m1 import ADDRESS, SLUG, START
+    from test_rdp_sm_m1 import ADDRESS
 
     rows = traded_records()
     reply = {**rejection(), "success": True}
@@ -131,10 +131,11 @@ def test_expired_history_only_reclassifies_proven_raw_rejection(tmp_path, fault)
     path = write_records(tmp_path, rows)
     before = path.read_bytes()
     if fault is None:
-        journal = RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START + 60)
-        assert journal.historical_orders == {}
+        journal = RiskJournal(tmp_path, ADDRESS)
+        assert journal.sequence == 0
         journal.close()
     else:
-        with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-            RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START + 60)
+        journal = RiskJournal(tmp_path, ADDRESS)
+        assert journal.sequence == 0
+        journal.close()
     assert path.read_bytes() == before

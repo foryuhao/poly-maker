@@ -8,17 +8,13 @@ starting capital; the operator manages pre-existing account commitments.
 from __future__ import annotations
 
 import asyncio
-import json
 import math
-import re
 import time
 import uuid
-from datetime import datetime
-from decimal import Decimal
 
 from polymaker.btc5m import current_epoch, slug_for_epoch
 from polymaker.catalog.gamma import GammaClient
-from polymaker.domain import Side, TradeState
+from polymaker.domain import TradeState
 from polymaker.rdp_sm import (
     NORMAL_END_S,
     OFFICIAL_HOSTS,
@@ -35,22 +31,12 @@ from polymaker.rdp_sm_recovery import reason_code, retry_read
 from polymaker.userstream.parse import parse_trade, strict_number
 
 
-async def exact_market(gamma, **query):
-    """Use the existing Gamma transport, retaining conflicting rows for rejection."""
-    # Gamma defaults to closed=false. Historical condition-ID lookups must
-    # explicitly include closed markets; an expired market may also still be
-    # awaiting closure/resolution, so try the open set only on an empty result.
-    historical = "condition_ids" in query and "closed" not in query
-    params = {**query, **({"closed": "true"} if historical else {}), "limit": 2}
-    response = await gamma._client.get("/markets", params=params)
+async def exact_market(gamma, *, slug):
+    """Read only the selected market; reject ambiguous discovery responses."""
+    response = await gamma._client.get("/markets", params={"slug": slug, "limit": 2})
     response.raise_for_status()
     rows = response.json()
-    if historical and rows == []:
-        response = await gamma._client.get("/markets", params={**params, "closed": "false"})
-        response.raise_for_status()
-        rows = response.json()
-    _require(rows != [], "MARKET_IDENTITY_AMBIGUOUS" if "condition_ids" in query
-             else "MARKET_NOT_AVAILABLE")
+    _require(rows != [], "MARKET_NOT_AVAILABLE")
     _require(isinstance(rows, list) and len(rows) == 1, "MARKET_IDENTITY_AMBIGUOUS")
     _require(isinstance(rows[0], dict), "MARKET_RESPONSE_INVALID")
     return rows[0]
@@ -107,17 +93,14 @@ async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotoni
 
 
 class AccountRiskPolicy:
-    """Retained read evidence for the existing M1/M2 collateral calculation.
+    """Current-market pending protection and existing startup funding basis.
 
-    This adds neither inventory nor order ownership. M2 remains the only executor.
-    The CLI explicitly uses startup balance without pre-existing deductions.
-    Library callers retain conservative accounting by default. Both paths
-    keep current-market pending exposure and account identity checks.
+    Observations live only for this Session. Other markets are never queried
+    for history or resolution. M2 retains ownership and confirmed-fill checks.
     """
 
     def __init__(self, *, use_starting_balance=False):
         self.pending = {}
-        self.historical = {}
         self.use_starting_balance = use_starting_balance
         self.starting_order_ids = None
 
@@ -125,121 +108,32 @@ class AccountRiskPolicy:
         client, gateway = reads.gateway._client, reads.gateway
         if self.starting_order_ids is None:
             self.starting_order_ids = {o.order_id for o in orders}
-        rows = await gateway.get_trades()  # SDK complete pagination, sticky failures
+        rows = await gateway.get_trades(market=meta.condition_id)
         seen = set()
         for row in rows:
             trade = parse_trade(row)
+            # The official query is scoped to this market. Unrelated account
+            # history does not become a Session dependency or pending reserve.
+            if trade.market != meta.condition_id:
+                continue
             _require(trade.trade_id not in seen, "ACCOUNT_TRADE_ID_CONFLICT")
             seen.add(trade.trade_id)
             if trade.status in (TradeState.CONFIRMED, TradeState.FAILED):
                 continue
-            # Owned pending economics belong to M2's confirmed-only close barrier.
             ids = {leg.order_id for leg in trade.maker_legs}
             if ids & client.known_ids:
                 ours = {
-                    leg.order_id
-                    for leg in trade.maker_legs
+                    leg.order_id for leg in trade.maker_legs
                     if leg.maker_address and leg.maker_address.lower() == gateway.funder.lower()
                 }
-                _require(
-                    row.get("trader_side") == "MAKER" and bool(ours) and ours <= client.known_ids,
-                    "OWNED_TRADE_ROLE_UNKNOWN",
-                )
+                _require(row.get("trader_side") == "MAKER" and bool(ours) and ours <= client.known_ids,
+                         "OWNED_TRADE_ROLE_UNKNOWN")
                 continue
             prior = self.pending.setdefault(trade.trade_id, row)
             _require(prior == row, "PENDING_TRADE_EVIDENCE_CHANGED")
-        reserved = Decimal(0)
-        async with GammaClient(reads.cfg.wallet.gamma_host) as gamma:
-            for tid, row in self.pending.items():
-                trade = parse_trade(row)
-                _require(
-                    re.fullmatch(r"0x[0-9a-fA-F]{64}", trade.market) is not None,
-                    "PENDING_MARKET_IDENTITY_UNKNOWN",
-                )
-                _require(trade.market != meta.condition_id, "CURRENT_MARKET_PENDING_EXPOSURE")
-                stamp = strict_number(row.get("match_time", row.get("timestamp")))
-                _require(stamp > 0, "PENDING_TRADE_TIME_UNKNOWN")
-                raw = await exact_market(gamma, condition_ids=trade.market)
-                historical_slug = raw.get("slug", "")
-                btc5m = re.fullmatch(r"btc-updown-5m-([0-9]+)", historical_slug)
-                previous_btc5m = (
-                    btc5m is not None and int(btc5m[1]) > 0 and int(btc5m[1]) % 300 == 0
-                    and int(btc5m[1]) <= stamp <= int(btc5m[1]) + 300
-                    and int(btc5m[1]) + 300 <= int(meta.slug.rsplit("-", 1)[1]))
-                _require(
-                    raw.get("conditionId") == trade.market
-                    and (previous_btc5m or (raw.get("closed") is True
-                         and raw.get("acceptingOrders") is False
-                         and raw.get("umaResolutionStatus") == "resolved")),
-                    "ACCOUNT_PENDING_EXPOSURE_UNRESOLVED",
-                )
-                end = datetime.fromisoformat(raw["endDate"].replace("Z", "+00:00"))
-                _require(
-                    end.tzinfo is not None
-                    and stamp <= end.timestamp() <= int(meta.slug.rsplit("-", 1)[1])
-                    and (not previous_btc5m or end.timestamp() == int(btc5m[1]) + 300),
-                    "HISTORICAL_MARKET_TIME_UNPROVEN",
-                )
-                if row.get("trader_side") == "MAKER":
-                    legs = [
-                        leg
-                        for leg in trade.maker_legs
-                        if leg.maker_address and leg.maker_address.lower() == gateway.funder.lower()
-                    ]
-                    _require(bool(legs), "PENDING_ACCOUNT_ATTRIBUTION_UNKNOWN")
-                    _require(all(leg.side is Side.BUY for leg in legs), "PENDING_SIDE_UNSUPPORTED")
-                    ids = {leg.order_id for leg in legs}
-                    tokens = {leg.asset_id for leg in legs}
-                    cost = sum(
-                        (
-                            Decimal(str(leg.price)) * Decimal(str(leg.matched_amount))
-                            for leg in legs
-                        ),
-                        Decimal(0),
-                    )
-                elif row.get("trader_side") == "TAKER":
-                    _require(
-                        row.get("side") == "BUY"
-                        and bool(trade.taker_order_id)
-                        and bool(trade.taker_asset_id),
-                        "PENDING_ACCOUNT_ATTRIBUTION_UNKNOWN",
-                    )
-                    ids, tokens = {trade.taker_order_id}, {trade.taker_asset_id}
-                    cost = Decimal(str(strict_number(row.get("price")))) * Decimal(
-                        str(strict_number(row.get("size")))
-                    )
-                else:
-                    _require(False, "PENDING_ACCOUNT_ATTRIBUTION_UNKNOWN")
-                market_tokens = raw.get("clobTokenIds")
-                market_tokens = (
-                    json.loads(market_tokens) if isinstance(market_tokens, str) else market_tokens
-                )
-                _require(
-                    isinstance(market_tokens, list)
-                    and len(market_tokens) == 2
-                    and tokens <= set(market_tokens)
-                    and not tokens & {meta.yes.token_id, meta.no.token_id},
-                    "HISTORICAL_TOKEN_IDENTITY_UNPROVEN",
-                )
-                _require(cost.is_finite() and cost > 0, "PENDING_COMMITMENT_UNKNOWN")
-                _require(
-                    not any((o.order_id in ids or o.token_id in tokens)
-                            and not (self.use_starting_balance and o.order_id in self.starting_order_ids)
-                            for o in orders)
-                    and (self.use_starting_balance or previous_btc5m or not any(t in positions for t in tokens))
-                    and not (ids & (client.observed_open_rows.keys() -
-                                    (self.starting_order_ids if self.use_starting_balance else set()))),
-                    "HISTORICAL_CURRENT_COMMITMENT_OBSERVED",
-                )
-                # Retain the cost even if the next trade snapshot omits this row.
-                reserved += cost
-                self.historical[tid] = {
-                    "status": row["status"],
-                    "decision": "HISTORICAL_MATCHED_NONBLOCKING",
-                    "pending_cost_reserved_usd": str(cost),
-                    "redeem": "NOT_VERIFIED",
-                }
-        return reserved
+        # Unknown pending exposure in the current market remains fail-closed,
+        # even when a later page omits it. Owned fills use the original M2 gate.
+        _require(not self.pending, "CURRENT_MARKET_PENDING_EXPOSURE")
 
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):

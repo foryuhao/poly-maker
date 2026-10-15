@@ -1,4 +1,4 @@
-"""Time-based historical admission, real Journal/M1/M2/M3 and fake HTTP only."""
+"""Prior Session time and order evidence are independent from new admission."""
 
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -11,7 +11,7 @@ from polymaker.rdp_sm_execution import RiskJournal
 from test_rdp_sm_entry import OLD_CID, boundary, old_trade
 from test_rdp_sm_historical_risk import env as history_env
 from test_rdp_sm_historical_risk import safe_records, write_records
-from test_rdp_sm_m1 import ADDRESS, SLUG, START
+from test_rdp_sm_m1 import ADDRESS, START
 from test_rdp_sm_m3_loop import on_windows
 
 
@@ -80,35 +80,32 @@ def traded_records(*, start=START - 300, outcome="ACK"):
 def test_previous_market_known_order_nonblocking_and_bytes_unchanged(tmp_path):
     path = write_records(tmp_path, traded_records())
     before = path.read_bytes()
-    j = RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START + 60)
-    assert j.historical_orders["old-order"]["price"] == "0.4"
-    assert j.sequence == 6 and path.read_bytes() == before
+    j = RiskJournal(tmp_path, ADDRESS)
+    assert j.sequence == 0 and path.read_bytes() == before
     j.close()
 
 
 @pytest.mark.parametrize(
     "fault", ["current", "future", "unknown", "incomplete", "missing_intent", "wrong_funder"]
 )
-def test_time_does_not_allow_unproven_or_current_orders(tmp_path, fault):
-    rows = traded_records(
-        start=START if fault == "current" else START + 300 if fault == "future" else START - 300,
-        outcome="UNKNOWN" if fault == "unknown" else "ACK",
-    )
+def test_old_session_time_and_orders_do_not_gate_new_journal(tmp_path, fault):
+    rows = traded_records(start=START if fault == "current" else START+300,
+                          outcome="UNKNOWN" if fault == "unknown" else "ACK")
     if fault == "incomplete":
         rows.pop()
-    if fault == "missing_intent":
+    elif fault == "missing_intent":
         rows.pop(1)
-    if fault == "wrong_funder":
-        rows[0]["data"]["payload"]["funder"] = "0x" + "02" * 20
+    elif fault == "wrong_funder":
+        rows[0]["data"]["payload"]["funder"] = "0x"+"02"*20
     path = write_records(tmp_path, rows)
     before = path.read_bytes()
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-        RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START + 60)
-    assert path.read_bytes() == before
+    j = RiskJournal(tmp_path, ADDRESS)
+    assert j.sequence == 0 and path.read_bytes() == before
+    j.close()
 
 
 @pytest.mark.parametrize("balance,expected", [("100000000", True), ("6000000", True), ("3000000", False)])
-async def test_expired_journal_order_is_archived_not_deducted_from_starting_balance(env, balance, expected):
+async def test_prior_journal_order_is_not_imported_into_starting_balance(env, balance, expected):
     v, cfg = env
     v.capital["balance"] = balance
     path = write_records(cfg.paths.journal_dir, traded_records())
@@ -124,7 +121,7 @@ async def test_expired_journal_order_is_archived_not_deducted_from_starting_bala
     assert path.read_bytes().startswith(before)
 
 
-async def test_previous_btc_market_matched_needs_time_not_resolution(env, monkeypatch):
+async def test_previous_market_matched_needs_no_time_or_resolution_lookup(env, monkeypatch):
     v, cfg = env
     trade = old_trade(v)
     trade["match_time"] = trade["timestamp"] = str(START - 100)
@@ -161,19 +158,16 @@ async def test_previous_btc_market_matched_needs_time_not_resolution(env, monkey
     assert v.trades[0]["status"] == "MATCHED"
 
 
-def test_old_timestamp_cannot_disguise_current_market_id(tmp_path):
-    write_records(tmp_path, traded_records())
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-        RiskJournal(
-            tmp_path,
-            ADDRESS,
-            current_slug=SLUG,
-            official_time=START + 60,
-            current_market_id=OLD_CID,
-        )
+def test_previous_journal_market_id_is_not_an_admission_input(tmp_path):
+    path = write_records(tmp_path, traded_records())
+    before = path.read_bytes()
+    j = RiskJournal(tmp_path, ADDRESS)
+    j.close()
+    assert path.read_bytes() == before
 
 
-def test_expiry_requires_official_time_in_selected_current_market(tmp_path):
-    write_records(tmp_path, traded_records())
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-        RiskJournal(tmp_path, ADDRESS, current_slug=SLUG, official_time=START - 1)
+def test_journal_creation_does_not_require_prior_market_expiry(tmp_path):
+    path = write_records(tmp_path, traded_records())
+    j = RiskJournal(tmp_path, ADDRESS)
+    j.close()
+    assert path.exists()

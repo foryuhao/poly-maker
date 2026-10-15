@@ -1,0 +1,103 @@
+{
+  "iteration_id": "ITER-0033",
+  "base_commit": "a1613f3cf5e5c1b108b6ed5b8919356ac6d5b614",
+  "removal_status": "COMPLETE",
+  "original_full_test_acceptance": "BLOCKED_BASELINE_13_FAILURES",
+  "architect_used": false,
+  "reviewer_used": false,
+  "reason": "Explicit user instruction",
+  "full_suite": {
+    "passed": 1544,
+    "failed": 13,
+    "skipped": 2,
+    "runtime_s": 116.69
+  },
+  "targeted_suite": {
+    "passed": 277,
+    "failed": 0,
+    "skipped": 0,
+    "deselected": 0,
+    "runtime_s": 19.47
+  },
+  "session_independence_tests": 44,
+  "failure_set_exactly_matches_base": true,
+  "existing_failed_tests": [
+    "test_config_aliases.py::test_cli_conflict_stops_before_settlement_preflight",
+    "test_rdp_sm_cli_logging.py::test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MATCHED]",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MINED]",
+    "test_rdp_sm_cli_logging.py::test_l09_secrets_are_redacted_and_raw_responses_not_rendered",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--json-only]",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--http-info]",
+    "test_rdp_sm_entry.py::test_r11_r12_full_cli_single_market_and_exit",
+    "test_rdp_sm_inventory_wait.py::test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[decision]",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[admission]",
+    "test_risk_shadow.py::test_baseline_01_and_protected_sources_identical",
+    "test_risk_shadow_cli.py::test_execution_strategy_and_entry_control_flow_preserved"
+  ],
+  "ruff": "PASS",
+  "compile": "PASS",
+  "git_diff_check": "PASS",
+  "protected_sources_unchanged": [
+    "rdp_sm_loop.py",
+    "rdp_sm_sizing.py",
+    "rdp_sm_merge.py",
+    "execution/gateway.py",
+    "config.py",
+    "rdp_sm_logging.py"
+  ],
+  "changed_executor_methods": {
+    "SMWindowExecutor": [
+      "open",
+      "_snapshot"
+    ],
+    "ExecutionClobClient": [
+      "_get"
+    ]
+  },
+  "cross_session_history_reader_removed": true,
+  "old_order_recovery_queries_removed": true,
+  "historical_market_resolution_queries_removed": true,
+  "historical_reserve_carryover_removed": true,
+  "session_scoped_journal": true,
+  "shadow_journal_path_updated": true,
+  "current_account_and_own_session_safety_preserved": true,
+  "legacy_report_compatibility_fields": "EMPTY_OR_ZERO_NO_DEPENDENCY",
+  "network_dns_attempts": 0,
+  "real_credentials_accessed": false,
+  "real_account_queries_executed": false,
+  "real_orders_submitted": 0,
+  "real_merge_executed": false,
+  "real_history_files_modified_by_task": false,
+  "micro_live_executed": false,
+  "user_target_delta_config": "1 retained in both config directories; not part of commit",
+  "changed_files": [
+    "docs/development/ITER-0033/RESULT.md",
+    "docs/development/ITER-0033/evidence/full-tests.txt",
+    "docs/development/ITER-0033/evidence/targeted-tests.txt",
+    "docs/development/ITER-0033/evidence/verification.json",
+    "docs/development/RDP_SM_CURRENT_BASELINE.md",
+    "src/polymaker/rdp_sm.py",
+    "src/polymaker/rdp_sm_entry.py",
+    "src/polymaker/rdp_sm_execution.py",
+    "src/polymaker/rdp_sm_restart.py",
+    "src/polymaker/risk_shadow_launch.py",
+    "tests/test_rdp_sm_capital_restart.py",
+    "tests/test_rdp_sm_entry.py",
+    "tests/test_rdp_sm_historical_expiry.py",
+    "tests/test_rdp_sm_historical_risk.py",
+    "tests/test_rdp_sm_history_lookup.py",
+    "tests/test_rdp_sm_inventory_wait.py",
+    "tests/test_rdp_sm_latest_quotes.py",
+    "tests/test_rdp_sm_m2_execution.py",
+    "tests/test_rdp_sm_merge.py",
+    "tests/test_rdp_sm_minimum_notional.py",
+    "tests/test_rdp_sm_postonly_response.py",
+    "tests/test_rdp_sm_restart.py",
+    "tests/test_rdp_sm_sizing.py",
+    "tests/test_rdp_sm_starting_balance.py",
+    "tests/test_rdp_sm_tick_recovery.py",
+    "tests/test_risk_shadow_cli.py"
+  ]
+}

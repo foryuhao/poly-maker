@@ -124,7 +124,7 @@ async def test_merge_identity_or_missing_builder_auth_blocks_before_submission(e
 
 
 @pytest.mark.parametrize("corrupt", [None, "incomplete", "cash", "summary"])
-async def test_completed_merge_history_reopens_but_unknown_or_conflicting_proofs_block(env, corrupt):
+async def test_prior_merge_history_does_not_gate_another_session(env, corrupt):
     v, cfg = env
     def fill(venue, index):
         ids = current_orders(venue)
@@ -147,18 +147,18 @@ async def test_completed_merge_history_reopens_but_unknown_or_conflicting_proofs
         else:
             rows[-1]["data"]["payload"]["merged_pairs"] = 0
         await asyncio.to_thread(path.write_text, "".join(json.dumps(r) + "\n" for r in rows))
-    args = dict(current_slug=f"btc-updown-5m-{START + 300}", official_time=START + 360)
     if corrupt:
-        with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-            RiskJournal(cfg.paths.journal_dir, ADDRESS, **args)
+        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+        assert journal.sequence == 0
+        journal.close()
     else:
-        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS, **args)
+        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
         journal.close()
         assert await asyncio.to_thread(path.read_bytes) == original
 
 
 @pytest.mark.parametrize("corrupt", [None, "price", "maker", "side", "matched", "cost"])
-async def test_fractional_merge_history_accepts_tracker_price_precision_only(env, corrupt):
+async def test_fractional_merge_records_are_not_next_session_inputs(env, corrupt):
     """A real producer's fractional fills/Merge must pass its next-session reader."""
     v, cfg = env
 
@@ -195,8 +195,8 @@ async def test_fractional_merge_history_accepts_tracker_price_precision_only(env
             fill["status"] = "MATCHED"
         else:
             merge["released_cost_usdc"] = str(Decimal(merge["released_cost_usdc"]) + Decimal(".000001"))
-        # Corrupt every close proof consistently to ensure the Merge validator
-        # sees the injected evidence, regardless of which proof is latest.
+        # Even consistently altered old close proofs must stay confined to
+        # that Session's audit file; a new Journal never imports them.
         if corrupt != "cost":
             for row in rows:
                 if row["kind"] == "sm_close_barrier":
@@ -205,12 +205,12 @@ async def test_fractional_merge_history_accepts_tracker_price_precision_only(env
                             proof_fill.update(fill)
         await asyncio.to_thread(path.write_text, "".join(json.dumps(r) + "\n" for r in rows))
     original = await asyncio.to_thread(path.read_bytes)
-    args = dict(current_slug=f"btc-updown-5m-{START + 300}", official_time=START + 360)
     if corrupt:
-        with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-            RiskJournal(cfg.paths.journal_dir, ADDRESS, **args)
+        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+        assert journal.sequence == 0
+        journal.close()
     else:
-        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS, **args)
+        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
         journal.close()
     assert await asyncio.to_thread(path.read_bytes) == original
 

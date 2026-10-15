@@ -281,15 +281,14 @@ async def test_base_seven_does_not_bypass_capital_gate(env):
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
-async def test_new_zero_attempt_report_keeps_historical_close_proof(env):
+async def test_new_zero_attempt_report_is_independent_of_next_session(env):
     v, cfg = configure(env, target=0, p=".5")
     v.capital["balance"] = "6000000"
     on_windows(v, lambda *_: None, stop_after=1)
     result = await runner(env).run(offline=True)
     assert result.execution_status == "BLOCKED" and not v.post_requests
-    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS,
-        current_slug=f"btc-updown-5m-{START + 300}", official_time=START + 360)
-    assert journal.historical_orders == {}
+    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert journal.sequence == 0
     journal.close()
 
 
@@ -404,7 +403,7 @@ def test_normal_maximum_chooses_closest_target_by_reducing_risk(side, p):
 
 
 @pytest.mark.parametrize("fault", ["unknown_field", "claimed_fill", "claimed_intentional", "false_barrier"])
-def test_new_report_metadata_cannot_release_unproven_history(tmp_path, fault):
+def test_prior_sizing_report_cannot_gate_new_session(tmp_path, fault):
     from test_rdp_sm_historical_risk import safe_records, write_records
 
     rows = safe_records()
@@ -418,5 +417,6 @@ def test_new_report_metadata_cannot_release_unproven_history(tmp_path, fault):
     else:
         report["safe_exit_status"] = "BLOCKED"
     write_records(tmp_path, rows)
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-        RiskJournal(tmp_path, ADDRESS)
+    journal = RiskJournal(tmp_path, ADDRESS)
+    assert journal.sequence == 0
+    journal.close()

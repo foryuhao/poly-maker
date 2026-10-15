@@ -92,8 +92,7 @@ async def test_tick_mismatch_pauses_then_recovers_or_waits_to_market_end(env, mo
     # Reopening expired history must not be broken by recovery diagnostics.
     path = Path(v.executor.journal.path)
     before = await asyncio.to_thread(path.read_bytes)
-    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS,
-                          current_slug=f"btc-updown-5m-{START + 300}", official_time=START + 310)
+    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
     journal.close()
     assert await asyncio.to_thread(path.read_bytes) == before
 

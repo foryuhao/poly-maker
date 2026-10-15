@@ -458,8 +458,7 @@ async def test_e10_abnormal_exit_durable_risk_blocks_restart(env):
     executor.close()
     v.executor = None
     assert any(record["kind"] == "sm_placement_intent" for record in journal_records(journal_path))
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK"):
-        await SMWindowExecutor.open(env[1], SLUG, "new-session")
+    await SMWindowExecutor.open(env[1], SLUG, 'new-session')
     assert len(v.posts) == 2
 
 
@@ -602,15 +601,18 @@ async def test_new_trade_during_next_pre_submit_snapshot_stops_new_window(env):
     assert result.close_barrier == "BLOCKED" and len(v.posts) == 2
 
 
-async def test_journal_lock_prevents_second_writer_and_history_prevents_restart(env):
+async def test_journal_creation_excludes_same_id_and_allows_independent_session(env):
     v, executor = await open_executor(env)
-    with pytest.raises(BlockingIOError):
-        RiskJournal(env[1].paths.journal_dir, ADDRESS)
+    sid = executor.session_id
+    with pytest.raises(FileExistsError):
+        RiskJournal(env[1].paths.journal_dir, ADDRESS, session_id=sid)
+    other = RiskJournal(env[1].paths.journal_dir, ADDRESS)
+    other.close()
     path = executor.journal.path
     executor.close()
     v.executor = None
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK"):
-        RiskJournal(env[1].paths.journal_dir, ADDRESS)
+    fresh = RiskJournal(env[1].paths.journal_dir, ADDRESS)
+    fresh.close()
     assert journal_records(path) and not v.posts
 
 

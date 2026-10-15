@@ -1,6 +1,5 @@
-"""Historical risk: actual Journal/M1/M2/M3, external HTTP/time fixtures only."""
+"""Legacy history variations cannot gate an independent Session."""
 
-import io
 import json
 from copy import deepcopy
 from decimal import Decimal
@@ -9,7 +8,6 @@ from pathlib import Path
 import httpx
 import pytest
 
-from polymaker.rdp_sm import _Issue
 from polymaker.rdp_sm_entry import run_current_market
 from polymaker.rdp_sm_execution import RiskJournal, SMWindowExecutor
 from polymaker.rdp_sm_loop import RunResult
@@ -70,62 +68,42 @@ def write_records(directory, records):
     return path
 
 
-def rejected(directory, path):
+def assert_history_ignored(directory, path):
+    # These legacy history fixtures now prove isolation, including malformed
+    # or unfinished previous runs. No prior file is read or appended.
     before = path.read_bytes()
-    with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-        RiskJournal(directory, ADDRESS)
+    journal = RiskJournal(directory, ADDRESS)
+    try:
+        assert Path(journal.path) != path and journal.sequence == 0
+    finally:
+        journal.close()
     assert path.read_bytes() == before
-    # Constructor failure must close/release its handle and lock.
-    with path.open("a") as handle:
-        import fcntl
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def test_t01_equivalent_actual_history_nonblocking(tmp_path):
     path = write_records(tmp_path, safe_records(retained=True))
-    before = path.read_bytes()
-    journal = RiskJournal(tmp_path, ADDRESS)
-    try:
-        assert journal.sequence == 3
-        assert sum(journal.historical_reserve.values()) == Decimal("10.15")
-        assert path.read_bytes() == before
-    finally:
-        journal.close()
+    assert_history_ignored(tmp_path, path)
 
 
 def test_t02_multiple_complete_sessions_and_append_preserves_bytes(tmp_path):
-    records = safe_records("first", retained=True) + safe_records("second", retained=True, offset=5)
-    path = write_records(tmp_path, records)
+    path = write_records(tmp_path, safe_records("first", retained=True) + safe_records("second", offset=5))
     before = path.read_bytes()
-    journal = RiskJournal(tmp_path, ADDRESS)
-    try:
-        assert journal.sequence == 6
-        assert sum(journal.historical_reserve.values()) == Decimal("10.15")
-        for row in safe_records("third", retained=True, offset=10):
-            journal.write(row["kind"], row["data"], row["ts"])
-        assert path.read_bytes().startswith(before)
-        assert journal.sequence == 9
-    finally:
-        journal.close()
-    reopened = RiskJournal(tmp_path, ADDRESS)
-    assert reopened.sequence == 9
-    reopened.close()
+    for sid in ("third", "fourth"):
+        journal = RiskJournal(tmp_path, ADDRESS, session_id=sid)
+        try:
+            assert journal.sequence == 0
+            for row in safe_records(sid, offset=10):
+                journal.write(row["kind"], row["data"], row["ts"])
+            assert journal.sequence == 3
+        finally:
+            journal.close()
+    assert path.read_bytes() == before
 
 
 def test_t02_existing_float_budget_rounding_does_not_create_false_risk(tmp_path):
-    records = safe_records(retained=True)
-    session = records[0]["data"]["payload"]
-    session["historical_matched"] = {"one-trade": {
-        "status": "MATCHED", "decision": "HISTORICAL_MATCHED_NONBLOCKING",
-        "pending_cost_reserved_usd": "1.2", "redeem": "NOT_VERIFIED"}}
-    session["historical_pending_cost_reserved_usd"] = 1.2
-    session["starting_official_balance_usdc"] = 1.57
-    session["starting_spendable_usdc"] = 1.57 - 1.2
-    write_records(tmp_path, records)
-    journal = RiskJournal(tmp_path, ADDRESS)
-    assert journal.historical_reserve == {"one-trade": Decimal("1.2")}
-    journal.close()
+    rows = safe_records(retained=True)
+    rows[0]["data"]["payload"]["starting_spendable_usdc"] = 1.57 - 1.2
+    assert_history_ignored(tmp_path, write_records(tmp_path, rows))
 
 
 @pytest.mark.parametrize("kind,payload", [
@@ -140,12 +118,12 @@ def test_t02_existing_float_budget_rounding_does_not_create_false_risk(tmp_path)
     ("sm_unknown_official_lookup", {"resolution": "unknown"}),
     ("unexpected_kind", {}),
 ])
-def test_t03_t04_t05_t07_t08_any_attempt_or_risk_event_blocks(tmp_path, kind, payload):
+def test_t03_t04_t05_t07_t08_prior_attempts_are_not_session_inputs(tmp_path, kind, payload):
     records = safe_records()
     records.insert(1, {"ts": records[0]["ts"], "kind": kind,
                        "data": {"session_id": records[0]["data"]["session_id"], "payload": payload}})
     path = write_records(tmp_path, records)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
 @pytest.mark.parametrize("record,key,value", [
@@ -179,11 +157,11 @@ def test_t03_t04_t05_t07_t08_any_attempt_or_risk_event_blocks(tmp_path, kind, pa
     (2, "capital_committed", 2.5),
     (2, "submitted_orders", 0),  # an extra counter cannot override event semantics
 ])
-def test_t05_t06_t07_conflicting_states_and_unknown_fields_block(tmp_path, record, key, value):
+def test_t05_t06_t07_prior_conflicting_states_and_unknown_fields_are_ignored(tmp_path, record, key, value):
     records = safe_records()
     records[record]["data"]["payload"][key] = value
     path = write_records(tmp_path, records)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
 @pytest.mark.parametrize("fault", [
@@ -192,7 +170,7 @@ def test_t05_t06_t07_conflicting_states_and_unknown_fields_block(tmp_path, recor
     "missing_field", "duplicate_json_key", "nan", "infinity", "bad_utf8", "backward_time",
     "extra_envelope_field", "nonobject", "bad_payload",
 ])
-def test_t06_corrupt_or_incomplete_history_blocks(tmp_path, fault):
+def test_t06_corrupt_or_incomplete_prior_history_is_ignored(tmp_path, fault):
     records = safe_records()
     if fault == "missing_session":
         records = records[1:]
@@ -232,18 +210,18 @@ def test_t06_corrupt_or_incomplete_history_blocks(tmp_path, fault):
     if fault == "bad_utf8":
         raw += b"\xff\n"
     path.write_bytes(raw)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
-def test_t09_safe_and_risky_sessions_mixed_blocks(tmp_path):
+def test_t09_mixed_prior_sessions_do_not_gate_new_session(tmp_path):
     records = safe_records("safe") + safe_records("risky", offset=5)
     records[-1]["data"]["payload"]["confirmed_fills"] = 1
     path = write_records(tmp_path, records)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
 @pytest.mark.parametrize("conflict", ["market", "slug", "signer"])
-def test_t09_cross_session_identity_conflicts_block(tmp_path, conflict):
+def test_t09_prior_identity_conflicts_are_not_imported(tmp_path, conflict):
     records = safe_records("first") + safe_records("second", offset=5)
     if conflict == "market":
         records[-1]["data"]["payload"]["market_id"] = "0x" + "ef" * 32
@@ -252,11 +230,11 @@ def test_t09_cross_session_identity_conflicts_block(tmp_path, conflict):
     if conflict == "signer":
         records[3]["data"]["payload"]["signer"] = "0x" + "02" * 20
     path = write_records(tmp_path, records)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
 @pytest.mark.parametrize("fault", ["missing", "cost_changed", "bad_total", "redeemed", "confirmed", "bad_cost"])
-def test_t10_historical_reserve_cannot_disappear_or_conflict(tmp_path, fault):
+def test_t10_old_reserve_metadata_is_not_imported(tmp_path, fault):
     records = safe_records("first", retained=True) + safe_records("second", retained=True, offset=5)
     session = records[3]["data"]["payload"]
     evidence = session["historical_matched"]["historical-0"]
@@ -275,7 +253,7 @@ def test_t10_historical_reserve_cannot_disappear_or_conflict(tmp_path, fault):
     if fault == "bad_cost":
         evidence["pending_cost_reserved_usd"] = "NaN"
     path = write_records(tmp_path, records)
-    rejected(tmp_path, path)
+    assert_history_ignored(tmp_path, path)
 
 
 def historical_trades(v):
@@ -313,13 +291,13 @@ async def test_t01_production_composition_reopens_safe_history_zero_posts(env, m
     assert result.total_windows == result.confirmed_fills == 0
     assert not v.posts and not v.cancels
     assert path.read_bytes().startswith(before)
-    assert len(journal_records(path)) == 6
+    assert len(journal_records(path)) == 3
     again = RiskJournal(cfg.paths.journal_dir, ADDRESS)
-    assert again.sequence == 6
+    assert again.sequence == 0
     again.close()
 
 
-async def test_t10_historical_evidence_preserved_without_m1_m2_startup_deduction(env, monkeypatch):
+async def test_t10_historical_evidence_is_not_imported_into_m1_m2(env, monkeypatch):
     v, cfg = env
     v.capital["balance"] = "36064169"
     v.trades = historical_trades(v)
@@ -342,22 +320,21 @@ async def test_t10_historical_evidence_preserved_without_m1_m2_startup_deduction
     assert all(row["status"] == "MATCHED" for row in v.trades)
     assert result.confirmed_fills == result.confirmed_yes == result.confirmed_no == 0
     assert path.read_bytes().startswith(before)
-    session = [r["data"]["payload"] for r in journal_records(path) if r["kind"] == "sm_session"][-1]
+    session = [r["data"]["payload"] for r in journal_records(v.executor.journal.path) if r["kind"] == "sm_session"][-1]
     assert session["starting_official_balance_usdc"] == 36.064169
     assert session["historical_pending_cost_reserved_usd"] == 0
-    assert session["historical_pending_cost_observed_usd"] == 10.15
+    assert session["historical_pending_cost_observed_usd"] == 0
     assert session["capital_basis"] == "OFFICIAL_BALANCE_AT_SESSION_START"
     assert session["starting_spendable_usdc"] == 36.064169
-    assert all(e["redeem"] == "NOT_VERIFIED" for e in session["historical_matched"].values())
+    assert session["historical_matched"] == {}
     assert all(s["historical_pending_cost_reserved_usd"] == 0 for s in snapshots)
-    assert all(s["historical_pending_cost_observed_usd"] == 10.15 for s in snapshots)
+    assert all(s["historical_pending_cost_observed_usd"] == 0 for s in snapshots)
     account = snapshots[-1]
     assert account["historical_pending_cost_reserved_usd"] == 0
     assert account["execution_reserved_usd"] == 0
     assert account["basic_spendable_budget_usd"] == 20
-    reopened = RiskJournal(cfg.paths.journal_dir, ADDRESS, current_slug=f"btc-updown-5m-{int(SLUG.rsplit('-', 1)[1]) + 300}",
-                           official_time=int(SLUG.rsplit('-', 1)[1]) + 360)
-    assert sum(reopened.historical_reserve.values()) == Decimal("10.15")
+    reopened = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert reopened.sequence == 0
     reopened.close()
     w = result.windows[0]["result"]
     assert w["fill_deadline_monotonic"] - w["t0_monotonic"] == 3
@@ -378,25 +355,27 @@ async def test_t10_starting_balance_does_not_depend_on_old_trade_snapshot(env, m
         v.trades.pop()
     path = write_records(cfg.paths.journal_dir, safe_records(retained=True))
     before = path.read_bytes()
-    archived = deepcopy(safe_records(retained=True)[0]["data"]["payload"]["historical_matched"])
     on_windows(v, lambda *_: None, stop_after=1)
     with history_boundary(monkeypatch, v)[0]:
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert len(v.posts) == 2 and result.confirmed_fills == 0
     assert path.read_bytes().startswith(before)
-    session = [r["data"]["payload"] for r in journal_records(path) if r["kind"] == "sm_session"][-1]
-    assert session["historical_matched"] == archived
+    session = [r["data"]["payload"] for r in journal_records(v.executor.journal.path) if r["kind"] == "sm_session"][-1]
+    assert session["historical_matched"] == {}
     assert session["historical_pending_cost_reserved_usd"] == 0
 
 
-async def test_t10_no_policy_cannot_bypass_retained_reserve(env):
+async def test_t10_library_startup_has_no_retained_reserve_dependency(env):
     v, cfg = env
     path = write_records(cfg.paths.journal_dir, safe_records(retained=True))
     before = path.read_bytes()
-    with pytest.raises(_Issue, match="HISTORICAL_SM_RESERVE_EVIDENCE_MISSING"):
-        await SMWindowExecutor.open(cfg, SLUG, "new-session", sleep=v.sleep, monotonic=lambda: v.mono)
-    assert not v.posts and path.read_bytes() == before
+    ex = await SMWindowExecutor.open(cfg, SLUG, "new-session", sleep=v.sleep, monotonic=lambda: v.mono)
+    try:
+        assert ex.confirmed() == [] and ex.committed() == 0
+        assert Path(ex.journal.path) != path and path.read_bytes() == before
+    finally:
+        ex.close()
 
 
 async def test_reused_session_id_cannot_append_conflicting_history(env):
@@ -404,34 +383,36 @@ async def test_reused_session_id_cannot_append_conflicting_history(env):
     sid = "78f615c16be44892874bb33b30e44fd5"
     path = write_records(cfg.paths.journal_dir, safe_records(sid))
     before = path.read_bytes()
-    with pytest.raises(_Issue, match="HISTORICAL_SM_SESSION_ID_REUSED"):
-        await SMWindowExecutor.open(cfg, SLUG, sid, sleep=v.sleep, monotonic=lambda: v.mono)
-    assert not v.posts and path.read_bytes() == before
-
-
-def test_lock_still_excludes_second_writer(tmp_path):
-    path = write_records(tmp_path, safe_records())
-    before = path.read_bytes()
-    first = RiskJournal(tmp_path, ADDRESS)
+    ex = await SMWindowExecutor.open(cfg, SLUG, sid, sleep=v.sleep, monotonic=lambda: v.mono)
     try:
-        with pytest.raises(BlockingIOError):
-            RiskJournal(tmp_path, ADDRESS)
-        assert path.read_bytes() == before
+        assert Path(ex.journal.path) != path and path.read_bytes() == before
+    finally:
+        ex.close()
+    with pytest.raises(FileExistsError):
+        RiskJournal(cfg.paths.journal_dir, ADDRESS, session_id=sid)
+
+
+def test_each_journal_excludes_duplicate_session_writer_only(tmp_path):
+    first = RiskJournal(tmp_path, ADDRESS, session_id="first")
+    second = RiskJournal(tmp_path, ADDRESS, session_id="second")
+    try:
+        with pytest.raises(FileExistsError):
+            RiskJournal(tmp_path, ADDRESS, session_id="first")
+        assert second.path != first.path
     finally:
         first.close()
+        second.close()
 
 
 def test_completed_zero_attempt_cutoff_is_nonblocking(tmp_path):
     records = safe_records()
-    result = records[-1]["data"]["payload"]
-    result.update(stop_reason="MARKET_CUTOFF", execution_status="COMPLETED", stop_elapsed_s=240)
+    records[-1]["data"]["payload"].update(stop_reason="MARKET_CUTOFF", execution_status="COMPLETED")
     path = write_records(tmp_path, records)
-    journal = RiskJournal(tmp_path, ADDRESS)
-    journal.close()
+    assert_history_ignored(tmp_path, path)
     assert len(journal_records(path)) == 3
 
 
-def test_history_parser_rejects_duplicate_nested_keys_without_rewriting():
-    text = '{"ts": 1, "kind": "sm_session", "data": {"session_id": "s", "session_id": "other", "payload": {}}}\n'
-    with pytest.raises(ValueError):
-        RiskJournal._read_history(io.StringIO(text), ADDRESS)
+def test_duplicate_keys_in_prior_journal_are_never_parsed(tmp_path):
+    path = write_records(tmp_path, [])
+    path.write_text('{"data": {"session_id": "s", "session_id": "other"}}\n')
+    assert_history_ignored(tmp_path, path)

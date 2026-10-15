@@ -136,8 +136,7 @@ def test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference(
     assert "YES: Expected=5 Actual=4.98 Difference=-0.02 shares" in output.stderr
     path = Path(v.executor.journal.path)
     original = path.read_bytes()
-    journal = RiskJournal(cfg.paths.journal_dir, v.funder,
-                          current_slug=f"btc-updown-5m-{START + 300}", official_time=START + 360)
+    journal = RiskJournal(cfg.paths.journal_dir, v.funder)
     journal.close()
     assert path.read_bytes() == original
 

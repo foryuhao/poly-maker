@@ -93,17 +93,13 @@ async def test_unquotable_final_book_skips_without_post_or_history_block(env, mo
     # Full, safely closed all-skipped history must not become a permanent block.
     if fault:
         corrupt_summary(v.executor.journal.path, fault)
-    future = f"btc-updown-5m-{START + 300}"
     if fault:
-        with pytest.raises(RuntimeError, match="HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW"):
-            RiskJournal(
-                cfg.paths.journal_dir, ADDRESS, current_slug=future, official_time=START + 360
-            )
+        journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+        assert journal.sequence == 0
+        journal.close()
         return
-    journal = RiskJournal(
-        cfg.paths.journal_dir, ADDRESS, current_slug=future, official_time=START + 360
-    )
-    assert journal.historical_orders == {}
+    journal = RiskJournal(cfg.paths.journal_dir, ADDRESS)
+    assert journal.sequence == 0
     journal.close()
 
 

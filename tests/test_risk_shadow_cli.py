@@ -97,7 +97,7 @@ def test_launch_detached_process_has_only_public_identity_no_credentials(
     assert argv[argv.index("--session-id") + 1] == "session"
     assert argv[argv.index("--slug") + 1] == MARKET.slug
     assert argv[argv.index("--expected-condition-id") + 1] == MARKET.condition_id
-    assert argv[argv.index("--journal") + 1] == str(tmp_path / "journal/rdp_sm_0xabc.jsonl")
+    assert argv[argv.index("--journal") + 1] == str(tmp_path / "journal/rdp_sm_0xabc_session.jsonl")
     assert "--journal-from-start" in argv
     assert kwargs["start_new_session"] is True and kwargs["close_fds"] is True
     assert kwargs["stdin"] == subprocess.DEVNULL

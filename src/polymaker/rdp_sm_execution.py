@@ -1,18 +1,16 @@
 """Single-market SM execution composition; no strategy or Engine replacement.
 
 Only this opt-in library path can write orders. M1 and FL entry points are unchanged.
-An executor is single-use after unresolved exposure. Only complete, safely closed
-zero-attempt history or time-expired known orders permit a new market session.
-Library callers reserve expired order costs unless M2 proved zero-fill cancellation.
-The CLI instead starts from official balance under the operator-managed funding
-policy; historical events remain intact and no trading session is resumed.
+Each executor and its Journal belong to one independent Session. Startup never
+reads another Session's Journal, orders, recovery markers or settlement state.
+The CLI uses the existing official starting-balance funding policy; current
+Session placement, reconciliation, capital and close barriers remain enforced.
 Time and HTTP/WS boundaries may be replaced in offline tests.
 """
 
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import json
 import math
@@ -173,573 +171,28 @@ class WindowResult:
 
 
 class RiskJournal(Journal):
-    """Locked risk evidence, compatible with conservative and startup-balance funding."""
+    """Durable append-only records for one independent Session; no history reads."""
 
-    @staticmethod
-    def _history_cost_total(session, check):
-        # New CLI accounting preserves the old evidence without charging it.
-        if "capital_basis" not in session:
-            check("historical_pending_cost_observed_usd" not in session)
-            return Decimal(str(session["historical_pending_cost_reserved_usd"]))
-        check(session["capital_basis"] == "OFFICIAL_BALANCE_AT_SESSION_START"
-              and type(session["historical_pending_cost_reserved_usd"]) in (int, float)
-              and session["historical_pending_cost_reserved_usd"] == 0)
-        observed = session["historical_pending_cost_observed_usd"]
-        check(type(observed) in (int, float) and math.isfinite(observed) and observed >= 0)
-        return Decimal(str(observed))
-
-    @staticmethod
-    def _check_starting_observations(session, check):
-        check(session["preflight_account_incomplete"] is None)
-        for key in ("preflight_observed_order_ids", "preflight_observed_trade_ids"):
-            ids = session[key]
-            if "capital_basis" not in session:
-                check(ids == [])
-            else:
-                check(isinstance(ids, list) and all(isinstance(i, str) and bool(i)
-                      and i.strip() == i for i in ids) and len(ids) == len(set(ids)))
-
-    @staticmethod
-    def _check_session_header(session, check):
-        """Shared strict schema and funding facts, including interrupted runs."""
-        keys = {
-            "session_id", "slug", "signer", "funder", "signature_type", "live_authority",
-            "starting_spendable_usdc", "starting_official_balance_usdc", "test_capital_limit_usdc",
-            "historical_pending_cost_reserved_usd", "historical_matched",
-            "preflight_observed_order_ids", "preflight_observed_trade_ids", "preflight_account_incomplete",
-        }
-        check(set(session) in (keys, keys | {"capital_basis", "historical_pending_cost_observed_usd"}))
-        RiskJournal._check_starting_observations(session, check)
-        check(session["test_capital_limit_usdc"] in {"20", "30"})
-        for key in ("starting_spendable_usdc", "starting_official_balance_usdc",
-                    "historical_pending_cost_reserved_usd"):
-            check(type(session[key]) in (int, float) and math.isfinite(session[key]) and session[key] >= 0)
-        reserve = session["historical_pending_cost_reserved_usd"]
-        check(session["starting_spendable_usdc"] <= max(0.0, session["starting_official_balance_usdc"] - reserve))
-        matched = session["historical_matched"]
-        check(isinstance(matched, dict))
-        for tid, evidence in matched.items():
-            check(isinstance(tid, str) and bool(tid) and tid.strip() == tid)
-            check(isinstance(evidence, dict) and set(evidence) == {
-                "status", "decision", "pending_cost_reserved_usd", "redeem"})
-            check(evidence["status"] in {"MATCHED", "MINED", "RETRYING"}
-                  and evidence["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
-                  and evidence["redeem"] == "NOT_VERIFIED")
-            check(isinstance(evidence["pending_cost_reserved_usd"], str))
-            amount = Decimal(evidence["pending_cost_reserved_usd"])
-            check(amount.is_finite() and amount > 0)
-        check(sum((Decimal(e["pending_cost_reserved_usd"]) for e in matched.values()), Decimal(0))
-              == RiskJournal._history_cost_total(session, check))
-
-    @staticmethod
-    def _check_zero_windows(group, result, check):
-        """Prove absence of execution from events, including pre-submit failures."""
-        check(all(e["kind"] in {
-            "sm_session", "sm_strategy_window", "sm_quote_skipped", "sm_quote_refreshed",
-            "sm_window_result", "sm_close_barrier", "sm_run_result"} for e in group))
-        check(result["final_close_barrier"] == "SAFE_TO_CONTINUE"
-              and result["execution_status"] in {"COMPLETED", "BLOCKED"})
-        check(all(type(result[k]) is int and result[k] == 0
-                  for k in ("confirmed_fills", "active_cycles")))
-        check(all(type(result[k]) in (int, float) and result[k] == 0 for k in (
-            "confirmed_yes", "confirmed_no", "delta", "completed_pairs",
-            "residual_shares", "theoretical_pair_pnl")))
-        check(all(type(result[k]) is int and result[k] >= 0 for k in (
-            "total_windows", "normal_windows", "rebalance_windows", "blocked_windows")))
-        windows = [e["data"]["payload"] for e in group if e["kind"] == "sm_window_result"]
-        decisions = [e["data"]["payload"] for e in group if e["kind"] == "sm_strategy_window"]
-        check(result["total_windows"] == result["normal_windows"] + result["rebalance_windows"]
-              and isinstance(result["windows"], list)
-              and len(result["windows"]) == len(windows) == len(decisions) == result["total_windows"])
-        check([w["result"] for w in result["windows"]] == windows)
-        check(len({w["window_id"] for w in windows}) == len(windows))
-        blocked = 0
-        for window, decision, summary in zip(windows, decisions, result["windows"], strict=True):
-            check(set(window) == set(WindowResult.__dataclass_fields__))
-            check(window["session_id"] == result["session_id"]
-                  and window["market_id"] == result["market_id"]
-                  and window["window_id"] == decision["window_id"]
-                  and summary["state"] == decision["state"] == "NORMAL"
-                  and Decimal(decision["delta"]) == 0)
-            check(window["placement_results"] == window["known_order_ids"]
-                  == window["confirmed_fills"] == [])
-            check(all(type(window[k]) in (int, float) and window[k] == 0 for k in (
-                "capital_committed", "yes_inventory", "no_inventory", "delta")))
-            check(window["t0_monotonic"] is None and window["fill_deadline_monotonic"] is None)
-            if window["close_barrier"] == "BLOCKED":
-                check(window["block_reason"] == "OFFICIAL_CAPITAL_INSUFFICIENT")
-                blocked += 1
-            else:
-                check(window["close_barrier"] == "SAFE_TO_CONTINUE")
-        check(result["blocked_windows"] == blocked and result["rebalance_windows"] == 0)
-        closes = [e for e in group if e["kind"] == "sm_close_barrier"]
-        check(bool(closes) and closes[-1]["ts"] >= max(
-            (e["ts"] for e in group if e["kind"] == "sm_window_result"), default=group[0]["ts"]))
-        for event in closes:
-            p = event["data"]["payload"]
-            check(set(p) == {"result", "proofs", "confirmed_fills"}
-                  and p["result"] == "SAFE_TO_CONTINUE" and p["proofs"] == {}
-                  and p["confirmed_fills"] == [])
-        check(isinstance(result["skipped_quotes"], list))
-        for skip in result["skipped_quotes"]:
-            check(set(skip) == {"elapsed_s", "reason"}
-                  and skip["reason"] in SAFE_QUOTE_SKIP_REASONS)
-
-    @staticmethod
-    def _historical_no_fill_closed(group, oid, quote, funder):
-        """A final M2 proof plus matching REST evidence, never a cancel ACK alone."""
-        try:
-            closes = [e for e in group if e["kind"] == "sm_close_barrier"]
-            final_close_index = max(i for i, e in enumerate(group) if e["kind"] == "sm_close_barrier")
-            final = closes[-1]["data"]["payload"]
-            if (group[-1]["data"]["payload"]["final_close_barrier"] != "SAFE_TO_CONTINUE"
-                    or final["result"] != "SAFE_TO_CONTINUE"):
-                return False
-            proof = final["proofs"][oid]
-            row, trades = proof["order"], proof["trades"]
-            ev = normalize_order(row)
-            if not (set(proof) == {"order", "trades", "outcome"}
-                    and proof["outcome"] == "COMPLETE" and ev is not None
-                    and ev.order_id == oid and ev.market_id == quote["market_id"]
-                    and ev.token_id == quote["token_id"] and ev.side is Side.BUY
-                    and row["maker_address"].lower() == funder.lower()
-                    and Decimal(str(row["price"])) == Decimal(quote["price"])
-                    and Decimal(str(row["original_size"])) == Decimal(quote["size"])
-                    and ev.status in {"CANCELED", "CANCELLED"} and ev.size_matched == 0
-                    and row["associate_trades"] == [] and isinstance(trades, list)):
-                return False
-            evidence = [e for e in group if e["kind"] == "sm_official_reconciliation"
-                        and e["data"]["payload"].get("order_id") == oid]
-            latest = evidence[-1]["data"]["payload"]
-            if (latest != {"order_id": oid, "order": row, "trades": trades, "filltruth": "COMPLETE"}
-                    or evidence[-1]["ts"] > closes[-1]["ts"]):
-                return False
-            # Any fill evidence conflicts with release, even if a later summary says zero.
-            terminal_seen = False
-            for index, event in enumerate(group):
-                p = event["data"]["payload"]
-                if event["kind"] == "sm_trade" and p.get("maker_order_id") == oid:
-                    return False
-                if event["kind"] == "sm_order" and p.get("order_id") == oid:
-                    if (p.get("size_matched") != 0 or index > final_close_index
-                            or (terminal_seen and p.get("status") not in {"CANCELED", "CANCELLED"})):
-                        return False
-                    terminal_seen |= p.get("status") in {"CANCELED", "CANCELLED"}
-                if event["kind"] == "sm_official_reconciliation":
-                    if p.get("order_id") == oid:
-                        if index > final_close_index:
-                            return False
-                        observed = normalize_order(p["order"])
-                        if not (observed is not None and observed.order_id == oid
-                                and observed.market_id == quote["market_id"]
-                                and observed.token_id == quote["token_id"] and observed.side is Side.BUY
-                                and observed.original_size == ev.original_size and observed.price == ev.price
-                                and observed.size_matched == 0):
-                            return False
-                        if terminal_seen and observed.status not in {"CANCELED", "CANCELLED"}:
-                            return False
-                        terminal_seen |= observed.status in {"CANCELED", "CANCELLED"}
-                    for raw in p["trades"]:
-                        parsed = parse_trade(raw)
-                        if parsed.taker_order_id == oid or any(leg.order_id == oid for leg in parsed.maker_legs):
-                            return False
-            return not any(f.get("maker_order_id") == oid for f in final["confirmed_fills"])
-        except (KeyError, TypeError, ValueError, ArithmeticError, IndexError, AttributeError):
-            return False  # Missing, malformed or contradictory evidence retains the reserve.
-
-    @staticmethod
-    def _read_zero_history(history, funder):
-        # Planning is allowed; any placement, order or trade event still blocks.
-        def check(condition):
-            if not condition:
-                raise ValueError("unproven zero-attempt history")
-
-        def number(value):
-            return type(value) in (int, float) and math.isfinite(value) and value >= 0
-
-        def unique_object(pairs):
-            result = {}
-            for key, value in pairs:
-                check(key not in result)
-                result[key] = value
-            return result
-
-        def invalid_constant(_value):
-            raise ValueError("nonfinite JSON")
-
-        counts = ["total_windows", "normal_windows", "rebalance_windows", "active_cycles",
-                  "confirmed_fills", "blocked_windows"]
-        economics = ["confirmed_yes", "confirmed_no", "delta", "completed_pairs",
-                     "residual_shares", "theoretical_pair_pnl"]
-        result_keys = set(counts + economics) | {
-            "market_id", "session_id", "start_time", "stop_time", "stop_reason",
-            "average_yes_cost", "average_no_cost", "final_close_barrier", "execution_status",
-            "live_authority", "windows", "skipped_quotes", "stop_elapsed_s",
-        }
-        seen, retained, group = set(), {}, []
-        slug_markets, market_slugs = {}, {}
-        identity, previous_ts, sequence = None, 0, 0
-        for line in history:
-            check(line.endswith("\n"))
-            row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
-            check(isinstance(row, dict) and set(row) == {"ts", "kind", "data"})
-            check(number(row["ts"]) and row["ts"] >= previous_ts)
-            previous_ts = row["ts"]
-            check(row["kind"] in {"sm_session", "sm_strategy_window", "sm_quote_skipped",
-                                  "sm_quote_refreshed", "sm_window_result", "sm_close_barrier", "sm_run_result"})
-            check((not group and row["kind"] == "sm_session")
-                  or (bool(group) and row["kind"] != "sm_session"))
-            data = row["data"]
-            check(isinstance(data, dict) and set(data) == {"session_id", "payload"})
-            sid, payload = data["session_id"], data["payload"]
-            check(isinstance(sid, str) and sid.strip() == sid and bool(sid))
-            check(isinstance(payload, dict))
-            check(not group or sid == group[0]["data"]["session_id"])
-            group.append(row)
-            sequence += 1
-            if row["kind"] != "sm_run_result":
-                continue
-            check(sid not in seen)
-            seen.add(sid)
-            session, result = group[0]["data"]["payload"], payload
-            RiskJournal._check_session_header(session, check)
-            check(set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"},
-                    result_keys | {"sizing_report"}, result_keys | {
-                        "merged_pairs", "recovered_collateral_usdc", "sizing_report"}))
-            if "sizing_report" in result:
-                from polymaker.rdp_sm_sizing import validate_zero_sizing_report
-
-                validate_zero_sizing_report(result["sizing_report"], check, result["final_close_barrier"])
-            check(all(type(result.get(k, 0)) in (int, float) and result.get(k, 0) == 0
-                      for k in ("merged_pairs", "recovered_collateral_usdc")))
-            check(session["session_id"] == result["session_id"] == sid)
-            check(isinstance(session["slug"], str)
-                  and re.fullmatch(r"btc-updown-5m-[0-9]+", session["slug"]) is not None)
-            check(int(session["slug"].rsplit("-", 1)[1]) % 300 == 0)
-            for key in ("signer", "funder"):
-                check(isinstance(session[key], str)
-                      and re.fullmatch(r"0x[0-9a-fA-F]{40}", session[key]) is not None)
-            check(session["funder"].lower() == funder.lower())
-            check(type(session["signature_type"]) is int and session["signature_type"] in (0, 2))
-            current_identity = (session["signer"].lower(), session["signature_type"])
-            check(identity is None or identity == current_identity)
-            identity = current_identity
-            check(session["live_authority"] == {0: "LOCAL_EOA_KEY_VERIFIED", 2: "NOT_VERIFIED_FOR_LIVE"}[
-                session["signature_type"]]
-                  and result["live_authority"] == session["live_authority"])
-            RiskJournal._check_starting_observations(session, check)
-            check(session["test_capital_limit_usdc"] in {"20", "30"})
-            for key in ("starting_spendable_usdc", "starting_official_balance_usdc",
-                        "historical_pending_cost_reserved_usd"):
-                check(number(session[key]))
-            reserve = Decimal(str(session["historical_pending_cost_reserved_usd"]))
-            available = max(0.0, session["starting_official_balance_usdc"] - float(reserve))
-            check(session["starting_spendable_usdc"] <= available)
-            matched = session["historical_matched"]
-            check(isinstance(matched, dict))
-            cost = Decimal(0)
-            for tid, evidence in matched.items():
-                check(isinstance(tid, str) and bool(tid) and tid.strip() == tid)
-                check(isinstance(evidence, dict) and set(evidence) == {
-                    "status", "decision", "pending_cost_reserved_usd", "redeem"})
-                check(evidence["status"] in {"MATCHED", "MINED", "RETRYING"}
-                      and evidence["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
-                      and evidence["redeem"] == "NOT_VERIFIED")
-                check(isinstance(evidence["pending_cost_reserved_usd"], str))
-                amount = Decimal(evidence["pending_cost_reserved_usd"])
-                check(amount.is_finite() and amount > 0)
-                cost += amount
-                # Same trade across sessions is one retained commitment.
-                check(tid not in retained or retained[tid] == amount)
-                retained[tid] = amount
-            check(cost == RiskJournal._history_cost_total(session, check))
-            check(set(retained) <= set(matched))  # no disappearance across sessions
-            RiskJournal._check_zero_windows(group, result, check)
-            check(result["average_yes_cost"] is None and result["average_no_cost"] is None)
-            check(result["final_close_barrier"] == "SAFE_TO_CONTINUE"
-                  and result["execution_status"] in {"BLOCKED", "COMPLETED"})
-            from polymaker.rdp_sm_recovery import pause_reason
-
-            check((result["stop_reason"], result["execution_status"]) in {
-                ("BOOK_SIDE_MISSING", "BLOCKED"), ("MARKET_CUTOFF", "COMPLETED"),
-                ("OFFICIAL_CAPITAL_INSUFFICIENT", "BLOCKED"),
-                ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", "BLOCKED")}
-                or result["execution_status"] == "BLOCKED" and pause_reason(result["stop_reason"]))
-            check(isinstance(result["market_id"], str)
-                  and re.fullmatch(r"0x[0-9a-fA-F]{64}", result["market_id"]) is not None)
-            slug, market = session["slug"], result["market_id"].lower()
-            check(slug not in slug_markets or slug_markets[slug] == market)
-            check(market not in market_slugs or market_slugs[market] == slug)
-            slug_markets[slug], market_slugs[market] = market, slug
-            check(number(result["start_time"]) and number(result["stop_time"]))
-            check(result["start_time"] <= group[0]["ts"]
-                  <= group[-2]["ts"] <= result["stop_time"] <= group[-1]["ts"])
-            check(result["stop_elapsed_s"] is None or number(result["stop_elapsed_s"]))
-            group = []
-        check(not group)
-        return sequence, retained, identity, seen
-
-    @staticmethod
-    def _read_history(history, funder, *, current_slug=None, official_time=None,
-                      current_market_id=None, expired_orders=None, interrupted=None):
-        import io
-
-        from polymaker.rdp_sm_restart import (
-            ARCHIVE_EVENT,
-            pending_archive,
-            validate_archive,
-            validate_bound_events,
-        )
-
-        lines = list(history)
-        pending = pending_archive(lines, official_time) if interrupted is not None else None
-        original_count = len(lines)
-        if pending is not None:
-            lines.append(json.dumps({"ts": pending["summary"]["stop_time"], "kind": ARCHIVE_EVENT,
-                "data": {"session_id": pending["summary"]["session_id"], "payload": pending}}) + "\n")
-        try:
-            return RiskJournal._read_zero_history(lines, funder)
-        except (ValueError, TypeError, KeyError, ArithmeticError):
-            if current_slug is None or official_time is None:
-                raise
-
-        def check(condition):
-            if not condition:
-                raise ValueError("unproven expired-market history")
-
-        def unique(pairs):
-            obj = {}
-            for key, value in pairs:
-                check(key not in obj)
-                obj[key] = value
-            return obj
-
-        def invalid(_):
-            raise ValueError("nonfinite JSON")
-
-        check(re.fullmatch(r"btc-updown-5m-[0-9]+", current_slug) is not None)
-        current_start = int(current_slug.rsplit("-", 1)[1])
-        check(current_start > 0 and current_start % 300 == 0
-              and math.isfinite(official_time) and current_start <= official_time < current_start + 300)
-        seen, retained, orders, group = set(), {}, {}, []
-        identity, previous_ts = None, 0
-        slug_markets, market_slugs = {}, {}
-        allowed = {"sm_session", "sm_strategy_window", "sm_placement_intent", "sm_placement_ack",
-                   "sm_placement_result", "sm_cancel_ack", "sm_trade", "sm_order",
-                   "sm_official_reconciliation", "sm_close_barrier", "sm_window_result",
-                   "sm_run_result", "sm_quote_skipped", "sm_placement_unknown",
-                   "sm_unknown_official_lookup", "sm_quote_refreshed",
-                   "sm_merge_intent", "sm_merge_submitted", "sm_merge_result", ARCHIVE_EVENT}
-        prefix = hashlib.sha256()
-        for index, line in enumerate(lines):
-            check(line.endswith("\n"))
-            row = json.loads(line, object_pairs_hook=unique, parse_constant=invalid)
-            check(isinstance(row, dict) and set(row) == {"ts", "kind", "data"})
-            check(type(row["ts"]) in (int, float) and math.isfinite(row["ts"])
-                  and row["ts"] >= previous_ts)
-            previous_ts = row["ts"]
-            check(row["kind"] in allowed)
-            data = row["data"]
-            check(isinstance(data, dict) and set(data) == {"session_id", "payload"}
-                  and isinstance(data["payload"], dict))
-            sid = data["session_id"]
-            check(isinstance(sid, str) and bool(sid) and sid.strip() == sid)
-            check((not group and row["kind"] == "sm_session")
-                  or (bool(group) and row["kind"] != "sm_session"
-                      and sid == group[0]["data"]["session_id"]))
-            group.append(row)
-            prefix_before = prefix.hexdigest()
-            prefix.update(line.encode())
-            archived = row["kind"] == ARCHIVE_EVENT
-            if row["kind"] not in {"sm_run_result", ARCHIVE_EVENT}:
-                continue
-            check(sid not in seen)
-            seen.add(sid)
-            session = group[0]["data"]["payload"]
-            if archived:
-                RiskJournal._check_session_header(session, check)
-                if pending is not None and index == original_count:
-                    validate_bound_events(group[:-1], check)
-                    interrupted.update(payload=pending, group=group[:-1])
-                else:
-                    validate_archive(data["payload"], group[:-1], prefix_before, check)
-                result = data["payload"]["summary"]
-            else:
-                result = data["payload"]
-            from polymaker.rdp_sm_merge import validate_merge_history
-
-            validate_merge_history(group, session, result, check)
-            try:
-                _, costs, who, _ = RiskJournal._read_zero_history(
-                    io.StringIO("".join(json.dumps(r) + "\n" for r in group)), funder)
-            except (ValueError, TypeError, KeyError, ArithmeticError):
-                check(session["session_id"] == result["session_id"] == sid)
-                slug = session["slug"]
-                check(isinstance(slug, str) and re.fullmatch(r"btc-updown-5m-[0-9]+", slug) is not None)
-                start = int(slug.rsplit("-", 1)[1])
-                check(start > 0 and start % 300 == 0
-                      and start + 300 <= current_start and start + 300 <= official_time)
-                for key in ("signer", "funder"):
-                    check(isinstance(session[key], str)
-                          and re.fullmatch(r"0x[0-9a-fA-F]{40}", session[key]) is not None)
-                check(session["funder"].lower() == funder.lower())
-                mode = session["signature_type"]
-                check(type(mode) is int and mode in (0, 2))
-                who = (session["signer"].lower(), mode)
-                check(session["live_authority"] == result["live_authority"]
-                      == {0: "LOCAL_EOA_KEY_VERIFIED", 2: "NOT_VERIFIED_FOR_LIVE"}[mode]
-                      and session["test_capital_limit_usdc"] in {"20", "30"})
-                RiskJournal._check_starting_observations(session, check)
-                cid = result["market_id"]
-                # An interrupted session with no intent binds its historical
-                # condition through official metadata before the marker is saved.
-                check((pending is not None and index == original_count and cid is None)
-                      or isinstance(cid, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", cid) is not None)
-                check(cid is None or current_market_id is None or cid.lower() != current_market_id.lower())
-                check(result["execution_status"] in {"INCOMPLETE", "BLOCKED", "COMPLETED"}
-                      and result["final_close_barrier"] in {"BLOCKED", "SAFE_TO_CONTINUE"})
-                check(type(result["start_time"]) in (int, float)
-                      and type(result["stop_time"]) in (int, float)
-                      and 0 <= result["start_time"] <= group[0]["ts"]
-                      <= result["stop_time"] <= row["ts"])
-                costs = {}
-                for tid, evidence in session["historical_matched"].items():
-                    amount = Decimal(evidence["pending_cost_reserved_usd"])
-                    check(amount.is_finite() and amount > 0
-                          and evidence["status"] in {"MATCHED", "MINED", "RETRYING"}
-                          and evidence["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
-                          and evidence["redeem"] == "NOT_VERIFIED")
-                    costs[tid] = amount
-                check(sum(costs.values(), Decimal(0))
-                      == RiskJournal._history_cost_total(session, check))
-                intents, completed, acknowledged = {}, {}, {}
-                order_attempts = {}
-                rejected_unknown = set()
-                submitted = [e["data"]["payload"]["quote"] for e in group
-                             if e["kind"] == "sm_placement_intent"]
-                for event in group[1:-1]:
-                    kind, payload = event["kind"], event["data"]["payload"]
-                    if kind not in {"sm_placement_intent", "sm_placement_ack", "sm_placement_result",
-                                    "sm_placement_unknown"}:
-                        continue
-                    aid, quote = payload["attempt_id"], payload["quote"]
-                    check(isinstance(aid, str) and bool(aid))
-                    check(quote["market_id"] == cid and quote["side"] == "BUY"
-                          and quote["outcome"] in {"YES", "NO"})
-                    _token_id(quote["token_id"])
-                    price, size = Decimal(str(quote["price"])), Decimal(str(quote["size"]))
-                    check(price.is_finite() and size.is_finite() and 0 < price < 1 and size > 0)
-                    if kind == "sm_placement_intent":
-                        check(aid not in intents and payload["outcome"] == "INTENT"
-                              and payload["post_started"] is False and payload["order_id"] is None)
-                        intents[aid] = quote
-                        continue
-                    check(aid in intents and quote == intents[aid])
-                    outcome, oid = payload["outcome"], payload["order_id"]
-                    if outcome == "UNKNOWN":
-                        raw = payload.get("raw_response")
-                        batch = [q for q in submitted if q["window_id"] == quote["window_id"]]
-                        if isinstance(raw, dict) and len(batch) == 1:
-                            raw = [raw]
-                        check(isinstance(raw, list) and len(raw) == len(batch)
-                              and 1 <= len(batch) <= 2 and batch.count(quote) == 1
-                              and _explicit_maker_rejection(raw[batch.index(quote)], price * size)
-                              and oid is None and payload["post_started"] is True)
-                        rejected_unknown.add(aid)
-                        outcome = "REJECTED"
-                        if kind == "sm_placement_unknown":
-                            continue
-                    check(outcome in {"ACK", "REJECTED", "ABORTED"})
-                    if outcome == "ACK":
-                        check(payload["post_started"] is True and isinstance(oid, str)
-                              and re.fullmatch(r"[A-Za-z0-9_-]+", oid) is not None)
-                        check(kind != "sm_placement_result" or acknowledged.get(aid) == oid)
-                        if kind == "sm_placement_ack":
-                            check(aid not in acknowledged and oid not in order_attempts)
-                            acknowledged[aid] = oid
-                            order_attempts[oid] = aid
-                        commitment = {"market_id": cid, "slug": slug, "token_id": quote["token_id"],
-                                      "price": str(price), "size": str(size)}
-                        check(oid not in orders or orders[oid] == commitment)
-                        orders[oid] = commitment
-                    else:
-                        check(kind == "sm_placement_result" and oid is None
-                              and aid not in acknowledged)
-                        check((outcome == "ABORTED" and payload["post_started"] is False)
-                              or (outcome == "REJECTED" and payload["post_started"] is True))
-                    if kind == "sm_placement_result":
-                        check(aid not in completed)
-                        completed[aid] = outcome
-                # A durable ACK already binds a known exchange ID. Ctrl+C can
-                # prevent its redundant placement_result write; fresh recovery
-                # proofs must cover that ID before the archive is persisted.
-                check(set(intents) == (set(completed) | set(acknowledged)
-                                      if archived else set(completed)))
-                if not intents and not archived:
-                    RiskJournal._check_zero_windows(group, result, check)
-                for oid in acknowledged.values():
-                    if RiskJournal._historical_no_fill_closed(group, oid, orders[oid], funder):
-                        del orders[oid]
-                check(not any(e["kind"] == "sm_unknown_official_lookup" for e in group)
-                      or bool(rejected_unknown))
-            slug = session["slug"]
-            if result["market_id"] is not None:
-                market = result["market_id"].lower()
-                check(slug not in slug_markets or slug_markets[slug] == market)
-                check(market not in market_slugs or market_slugs[market] == slug)
-                slug_markets[slug], market_slugs[market] = market, slug
-            check(identity is None or identity == who)
-            identity = who
-            check(set(retained) <= set(costs))
-            for tid, cost in costs.items():
-                check(tid not in retained or retained[tid] == cost)
-                retained[tid] = cost
-            group = []
-        check(not group)
-        if expired_orders is not None:
-            expired_orders.update(orders)
-        return original_count, retained, identity, seen
-
-    def __init__(self, directory: str | Path, funder: str, *, current_slug=None,
-                 official_time=None, current_market_id=None, recover_interrupted=False):
+    def __init__(self, directory: str | Path, funder: str, *, session_id=None):
+        session_id = uuid.uuid4().hex if session_id is None else session_id
+        _require(isinstance(session_id, str)
+                 and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id) is not None,
+                 "SESSION_ID_INVALID")
+        _require(isinstance(funder, str)
+                 and re.fullmatch(r"0x[0-9a-fA-F]{40}", funder) is not None,
+                 "ACCOUNT_IDENTITY_MISMATCH")
+        super().__init__(directory, enabled=False)
         directory = Path(directory).resolve()
-        # A session/market UUID cannot select a different ledger to bypass risk.
-        super().__init__(directory, day=f"rdp_sm_{funder.lower()}")
+        directory.mkdir(parents=True, exist_ok=True)
+        self.session_id, self.sequence = session_id, 0
+        self.path = str(directory / f"rdp_sm_{funder.lower()}_{session_id}.jsonl")
+        # Exclusive creation prevents a second writer/reused ID from appending
+        # to this Session. Other Sessions' paths are never opened or parsed.
+        self._fh = Path(self.path).open("x", buffering=1, encoding="utf-8")  # noqa: SIM115 - Session owns the handle.
+        self.enabled = True
         try:
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            locked = os.fstat(self._fh.fileno())
-            try:
-                with Path(self._fh.name).open(encoding="utf-8") as history:
-                    opened = os.fstat(history.fileno())
-                    if (locked.st_dev, locked.st_ino) != (opened.st_dev, opened.st_ino):
-                        raise ValueError("journal identity changed")
-                    self.historical_orders = {}
-                    pending = {} if recover_interrupted else None
-                    (self.sequence, self.historical_reserve, self.historical_identity,
-                     self.historical_session_ids) = self._read_history(
-                        history, funder, current_slug=current_slug, official_time=official_time,
-                        current_market_id=current_market_id,
-                        expired_orders=self.historical_orders, interrupted=pending)
-                    self.interrupted_session = pending or None
-                    # Preserve validated historical payloads byte-for-byte in
-                    # meaning when the CLI changes its funding basis. This is
-                    # archival evidence, not confirmed inventory or a reserve.
-                    self.historical_evidence = {}
-                    self.historical_pending_rows = []
-                    history.seek(0)
-                    for line in history:
-                        row = json.loads(line)
-                        if row["kind"] == "sm_session":
-                            self.historical_evidence.update(row["data"]["payload"]["historical_matched"])
-                        elif row["kind"] == "sm_session_interrupted_reconciled":
-                            self.historical_pending_rows.extend(
-                                raw for raw in row["data"]["payload"]["trades"]
-                                if parse_trade(raw).status not in {TradeState.CONFIRMED, TradeState.FAILED})
-            except (ValueError, TypeError, KeyError, ArithmeticError, UnicodeError, RecursionError) as exc:
-                raise RuntimeError("HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW") from exc
             self._fh.flush()
             os.fsync(self._fh.fileno())
-            # Persist the directory entry as well as subsequent file contents.
             for parent in (directory, directory.parent):
                 fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
                 try:
@@ -749,42 +202,11 @@ class RiskJournal(Journal):
         except BaseException:
             self.close()
             raise
-        self.path = str(directory / f"rdp_sm_{funder.lower()}.jsonl")
-
-    def verify_retained_reserve(self, reads, account):
-        _require(self.interrupted_session is None, "INTERRUPTED_SESSION_NOT_RECONCILED")
-        if self.historical_identity is not None:
-            _require(self.historical_identity == (reads.gateway.address.lower(),
-                                                 reads.cfg.wallet.signature_type),
-                     "HISTORICAL_SM_ACCOUNT_IDENTITY_CONFLICT")
-        if not self.historical_reserve:
-            return
-        policy = reads.account_policy
-        if policy is not None and policy.use_starting_balance:
-            _require(account["capital_basis"] == "OFFICIAL_BALANCE_AT_SESSION_START",
-                     "STARTING_CAPITAL_BASIS_CHANGED")
-            # Old statuses/costs remain in the Journal; they do not reduce the
-            # operator-funded balance or require old fills to become CONFIRMED.
-            policy.historical.update(self.historical_evidence)
-            return
-        _require(policy is not None, "HISTORICAL_SM_RESERVE_EVIDENCE_MISSING")
-        for tid, cost in self.historical_reserve.items():
-            fresh = policy.historical.get(tid)
-            _require(fresh is not None and fresh["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
-                     and fresh["redeem"] == "NOT_VERIFIED"
-                     and Decimal(fresh["pending_cost_reserved_usd"]) == cost,
-                     "HISTORICAL_SM_RESERVE_EVIDENCE_MISSING_OR_CHANGED")
-        _require(Decimal(str(account.get("historical_pending_cost_reserved_usd", 0)))
-                 >= sum(self.historical_reserve.values(), Decimal(0)),
-                 "HISTORICAL_SM_RESERVE_DECREASED")
 
     def write(self, kind: str, payload: Any, ts: float) -> None:
         if self._fh is None:
             raise RuntimeError("SM_JOURNAL_CLOSED")
-        if self.interrupted_session is not None:
-            from polymaker.rdp_sm_restart import ARCHIVE_EVENT
-
-            _require(kind == ARCHIVE_EVENT, "INTERRUPTED_SESSION_NOT_RECONCILED")
+        _require(payload["session_id"] == self.session_id, "SESSION_JOURNAL_IDENTITY_CONFLICT")
         super().write(kind, payload, ts)
         self._fh.flush()
         os.fsync(self._fh.fileno())
@@ -812,7 +234,6 @@ class ExecutionClobClient(ReadOnlyClobClient):
             f"/data/order/{oid}"
             for oid in getattr(self, "known_ids", set())
             | getattr(self, "observed_open_rows", {}).keys()
-            | getattr(self, "historical_read_ids", set())
         }
         if not extra:
             raw = super()._get(endpoint, headers=headers, params=params)
@@ -1196,18 +617,7 @@ class SMWindowExecutor:
         try:
             await reads.connect_account()
             authority = _execution_identity(reads)
-            journal = RiskJournal(
-                cfg.paths.journal_dir, reads.gateway.funder, current_slug=slug,
-                current_market_id=preflight.market["condition_id"],
-                official_time=preflight.market["start"] + preflight.market["elapsed_s"],
-                recover_interrupted=True)
-            from polymaker.rdp_sm_restart import reconcile_interrupted
-
-            _require(session_id not in journal.historical_session_ids, "HISTORICAL_SM_SESSION_ID_REUSED")
-            account = await reconcile_interrupted(journal, reads, preflight.market)
-            if account is not None:
-                preflight.account = account
-            journal.verify_retained_reserve(reads, preflight.account)
+            journal = RiskJournal(cfg.paths.journal_dir, reads.gateway.funder, session_id=session_id)
             executor = cls(cfg, slug, session_id, reads, journal, **clock)
             executor.record(
                 "sm_session",
@@ -1223,14 +633,11 @@ class SMWindowExecutor:
                         preflight.account['existing_buy_commitment_usd']),
                     "starting_official_balance_usdc": preflight.account['official_balance_usd'],
                     "test_capital_limit_usdc": str(CAPITAL_LIMIT),
-                    "historical_pending_cost_reserved_usd": preflight.account.get(
-                        'historical_pending_cost_reserved_usd', 0),
-                    "historical_matched": (reads.account_policy.historical
-                                           if reads.account_policy is not None else {}),
+                    # Compatibility fields only; no prior Session evidence.
+                    "historical_pending_cost_reserved_usd": 0,
+                    "historical_matched": {},
                     **({"capital_basis": "OFFICIAL_BALANCE_AT_SESSION_START",
-                        "historical_pending_cost_observed_usd": float(sum(
-                            (Decimal(e["pending_cost_reserved_usd"])
-                             for e in reads.account_policy.historical.values()), Decimal(0)))}
+                        "historical_pending_cost_observed_usd": 0}
                        if reads.account_policy is not None and reads.account_policy.use_starting_balance else {}),
                     "preflight_observed_order_ids": sorted(
                         reads.gateway._client.observed_open_rows
@@ -1461,31 +868,7 @@ class SMWindowExecutor:
                 continue  # Reconciled confirmed inventory is already spent collateral.
             key = oid or f"unknown:{attempt.attempt_id}"
             reservations[key] = max(reservations.get(key, Decimal(0)), attempt.maximum)
-        reserved = sum(reservations.values(), Decimal(0)) + Decimal(str(
-            account.get('historical_pending_cost_reserved_usd', 0)))
-        # Conservative library funding also reserves expired BUY envelopes.
-        # The operator-managed CLI does not charge pre-session obligations.
-        pending_costs = {}
-        policy = self.reads.account_policy
-        balance_basis = policy is not None and policy.use_starting_balance
-        for row in (policy.pending.values() if policy is not None else ()):
-            trade = parse_trade(row)
-            if row.get("trader_side") == "MAKER":
-                for leg in trade.maker_legs:
-                    if leg.maker_address and leg.maker_address.lower() == self.gateway.funder.lower():
-                        pending_costs[leg.order_id] = pending_costs.get(leg.order_id, Decimal(0)) + (
-                            Decimal(str(leg.price)) * Decimal(str(leg.matched_amount)))
-            elif row.get("trader_side") == "TAKER":
-                pending_costs[trade.taker_order_id] = pending_costs.get(trade.taker_order_id, Decimal(0)) + (
-                    Decimal(str(strict_number(row.get("price"))))
-                    * Decimal(str(strict_number(row.get("size")))))
-        journal_reserved = Decimal(0)
-        for oid, quote in (self.journal.historical_orders.items() if not balance_basis else ()):
-            maximum = Decimal(quote["price"]) * Decimal(quote["size"])
-            journal_reserved += max(Decimal(0), maximum - pending_costs.get(oid, Decimal(0))
-                                    - reservations.get(oid, Decimal(0)))
-        reserved += journal_reserved
-        account["historical_order_cost_reserved_usd"] = float(journal_reserved)
+        reserved = sum(reservations.values(), Decimal(0))
         account["execution_reserved_usd"] = float(reserved)
         account["basic_spendable_budget_usd"] = float(
             max(
