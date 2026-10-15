@@ -51,6 +51,7 @@ from polymaker.rdp_sm import (
     inventory_trading_state,
     run_preflight,
 )
+from polymaker.rdp_sm_recovery import pause_reason, reason_code, retry_read
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import (
     OrderEvent,
@@ -71,6 +72,7 @@ SAFE_QUOTE_SKIP_REASONS = frozenset({
     "QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
     "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM", "MAKER_BUY_NOTIONAL_BELOW_MINIMUM",
     "MARKET_SUBMISSION_CUTOFF",
+    "MINIMUM_ORDER_EXCEEDS_MAXIMUM",
 })
 # Same conservative fixed shutdown buffer used by the existing BTC5m runner.
 CANCEL_BUFFER_S = 15.0
@@ -1519,11 +1521,16 @@ class SMWindowExecutor:
                     self.display_events.append(("sm_diagnostic", exc.context))
                 if any(a.outcome == "INTENT" for a in self.attempts):
                     self.fatal = self.fatal or "UNRESOLVED_PLACEMENT_INTENT"
-                quote_moved = (
+                pre_submit = (
                     quote_revision is not None
                     and len(self.attempts) == first_attempt
-                    and self.fatal is None
-                    and self.reason in SAFE_QUOTE_SKIP_REASONS)
+                    and self.fatal is None)
+                # Reuse the loop's read classification before any placement
+                # intent exists. Never retry a POST or mask a hard failure.
+                read_retry = pre_submit and not pause_reason(self.reason) and retry_read(exc)
+                if read_retry:
+                    self.reason = reason_code(exc)
+                quote_moved = pre_submit and (self.reason in SAFE_QUOTE_SKIP_REASONS or read_retry)
                 inventory_wait = (isinstance(exc, InventoryMismatch)
                                   and len(self.attempts) == first_attempt and self.fatal is None)
                 if self.known or quote_moved or inventory_wait:

@@ -1,0 +1,3 @@
+...............                                                          [100%]
+15 passed in 4.45s
+M0 offline guard: 0 network/DNS attempts; workspace credentials denied

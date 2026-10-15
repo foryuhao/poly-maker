@@ -1,0 +1,656 @@
+{
+  "baseline": "2898f8f",
+  "production_function_changes": {
+    "src/polymaker/rdp_sm_execution.py": {
+      "changed_functions": [
+        "execute_window"
+      ],
+      "removed_functions": []
+    },
+    "src/polymaker/rdp_sm_loop.py": {
+      "changed_functions": [
+        "_run_session"
+      ],
+      "removed_functions": []
+    },
+    "src/polymaker/rdp_sm_recovery.py": {
+      "changed_functions": [],
+      "removed_functions": []
+    }
+  },
+  "unchanged": [
+    "Sizing公式与Favorite判定",
+    "25 USDC资本上限",
+    "15股数量上限",
+    "1 USDC最低BUY金额",
+    "状态判定和NORMAL/REBALANCE截止时间",
+    "Gateway与WebSocket",
+    "Merge",
+    "确认成交Ledger"
+  ],
+  "audit": [
+    {
+      "category": "MINIMUM_ORDER_EXCEEDS_MAXIMUM",
+      "before": "M3初次决策跳过，但M2最后刷新变成BLOCKED并终止",
+      "after": "仅策略调用、无本轮Placement且fatal为空；复用取消与完整关闭证明，成功后跳过。失败仍阻止新单。"
+    },
+    {
+      "category": "提交前ReadTimeout/429/5xx等临时GET错误",
+      "before": "M2丢失异常类型，只保留str(exc)，已有M3恢复分类无法识别",
+      "after": "复用retry_read与reason_code，仅在本轮Placement intent尚未创建时识别；安全关闭后重新读取，绝不重发旧POST。已有资金及订单PAUSE分支保持。"
+    },
+    {
+      "category": "OFFICIAL_TIME_INVALID",
+      "before": "已运行Session收到无效官方时间直接终止",
+      "after": "加入既有PAUSE_CODES，已有可信截止时间下等待恢复或到T300，恢复前不发BUY。未能建立初始可信市场时间仍拒绝准入。"
+    },
+    {
+      "category": "已有价格/Tick/名义金额/截止变化",
+      "after": "继续使用SAFE_QUOTE_SKIP_REASONS及原完整关闭证明，不改价格、3秒Fill Window或截止。"
+    },
+    {
+      "category": "已有资金不足、盘口缺失/过期、确认等待、订单读失败、分页未完成、当前库存不一致",
+      "after": "保留现有暂停与核对恢复流程；未获安全关闭证明时不下新单。"
+    },
+    {
+      "category": "鉴权401/403、身份/市场/Token不一致、非法配置、未知代码异常、数量/签名内部契约错误",
+      "after": "保留拒绝启动/终止，不以“重试”掩盖错误。"
+    },
+    {
+      "category": "UNKNOWN Placement/Merge、未关闭订单",
+      "after": "保留原不可重复提交与关闭屏障；不因新增跳过处理授权下一BUY。"
+    },
+    {
+      "category": "成交证据永久矛盾、Journal写失败、人工取消、Session重复使用",
+      "after": "保留硬失败及当前生命周期。"
+    }
+  ],
+  "static_scope_check": "PASS: only execute_window and _run_session function AST changed; shared PAUSE set gains OFFICIAL_TIME_INVALID. No other existing function definitions changed.",
+  "reviewed_static_require_codes": {
+    "rdp_sm.py": [
+      {
+        "line": 96,
+        "code": "TOKEN_IDENTITY_INVALID"
+      },
+      {
+        "line": 124,
+        "code": "UNAPPROVED_CLOB_READ"
+      },
+      {
+        "line": 133,
+        "code": "OPEN_ORDER_PAGINATION_UNRESOLVED"
+      },
+      {
+        "line": 139,
+        "code": "OPEN_ORDER_PAGE_UNKNOWN"
+      },
+      {
+        "line": 148,
+        "code": "OPEN_ORDER_SIZE_UNKNOWN"
+      },
+      {
+        "line": 170,
+        "code": "VERSION_UNKNOWN"
+      },
+      {
+        "line": 186,
+        "code": "ACCOUNT_CONFIGURATION_UNKNOWN"
+      },
+      {
+        "line": 190,
+        "code": "FUNDER_IDENTITY_INVALID"
+      },
+      {
+        "line": 192,
+        "code": "FUNDER_IDENTITY_INVALID"
+      },
+      {
+        "line": 194,
+        "code": "EOA_FUNDER_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 207,
+        "code": "AUTH_IDENTITY_UNKNOWN"
+      },
+      {
+        "line": 215,
+        "code": "ACCOUNT_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 238,
+        "code": "OFFICIAL_TIME_INVALID"
+      },
+      {
+        "line": 247,
+        "code": "BTC5M_SLUG_INVALID"
+      },
+      {
+        "line": 249,
+        "code": "BTC5M_INTERVAL_INVALID"
+      },
+      {
+        "line": 253,
+        "code": "MARKET_IDENTITY_UNKNOWN"
+      },
+      {
+        "line": 255,
+        "code": "CONDITION_ID_INVALID"
+      },
+      {
+        "line": 268,
+        "code": "MARKET_END_UNKNOWN"
+      },
+      {
+        "line": 270,
+        "code": "MARKET_DURATION_NOT_300S"
+      },
+      {
+        "line": 277,
+        "code": "MARKET_START_CONTRADICTION"
+      },
+      {
+        "line": 283,
+        "code": "TOKEN_MAPPING_UNKNOWN"
+      },
+      {
+        "line": 290,
+        "code": "MARKET_METADATA_INVALID"
+      },
+      {
+        "line": 292,
+        "code": "UP_DOWN_MAPPING_UNKNOWN"
+      },
+      {
+        "line": 295,
+        "code": "TOKEN_IDS_INVALID"
+      },
+      {
+        "line": 300,
+        "code": "VENUE_MINIMUM_UNKNOWN"
+      },
+      {
+        "line": 307,
+        "code": "BOOK_IDENTITY_INVALID"
+      },
+      {
+        "line": 341,
+        "code": "BOOK_LEVEL_INVALID"
+      },
+      {
+        "line": 343,
+        "code": "BOOK_LEVEL_INVALID"
+      },
+      {
+        "line": 346,
+        "code": "BOOK_TIMESTAMP_UNKNOWN"
+      },
+      {
+        "line": 350,
+        "code": "BOOK_INVALID_OR_CROSSED"
+      },
+      {
+        "line": 377,
+        "code": "APPLICABLE_SPENDER_UNKNOWN"
+      },
+      {
+        "line": 379,
+        "code": "CAPITAL_READ_UNKNOWN"
+      },
+      {
+        "line": 384,
+        "code": "ALLOWANCE_ALIASES_CONFLICT"
+      },
+      {
+        "line": 389,
+        "code": "CAPITAL_MICRO_UNITS_INVALID"
+      },
+      {
+        "line": 391,
+        "code": "CAPITAL_READ_UNKNOWN"
+      },
+      {
+        "line": 393,
+        "code": "OPEN_ORDER_IDENTITY_CONFLICT"
+      },
+      {
+        "line": 395,
+        "code": "OPEN_ORDER_COMMITMENT_UNKNOWN"
+      },
+      {
+        "line": 408,
+        "code": "OPEN_ORDER_COMMITMENT_UNKNOWN"
+      },
+      {
+        "line": 414,
+        "code": "VENUE_MINIMUM_INVALID"
+      },
+      {
+        "line": 449,
+        "code": "OFFICIAL_ENDPOINT_CONFIGURATION_REQUIRED"
+      },
+      {
+        "line": 457,
+        "code": "FRESHNESS_POLICY_INVALID"
+      },
+      {
+        "line": 508,
+        "code": "PREFLIGHT_SNAPSHOT_EXPIRED"
+      },
+      {
+        "line": 510,
+        "code": "BOOK_STALE_OR_FUTURE"
+      }
+    ],
+    "rdp_sm_execution.py": [
+      {
+        "line": 180,
+        "code": "SESSION_ID_INVALID"
+      },
+      {
+        "line": 183,
+        "code": "ACCOUNT_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 211,
+        "code": "SESSION_JOURNAL_IDENTITY_CONFLICT"
+      },
+      {
+        "line": 245,
+        "code": "UNAPPROVED_EXECUTION_READ"
+      },
+      {
+        "line": 252,
+        "code": "TRADE_PAGINATION_UNRESOLVED"
+      },
+      {
+        "line": 256,
+        "code": "TRADE_PAGE_UNKNOWN"
+      },
+      {
+        "line": 269,
+        "code": "TRADE_PAGE_UNKNOWN"
+      },
+      {
+        "line": 274,
+        "code": "ORDER_STATE_UNKNOWN"
+      },
+      {
+        "line": 308,
+        "code": "OPEN_ORDER_CUMULATIVE_UNKNOWN"
+      },
+      {
+        "line": 321,
+        "code": "SM_POST_NOT_PERMITTED"
+      },
+      {
+        "line": 330,
+        "code": "SM_MAKER_ONLY"
+      },
+      {
+        "line": 337,
+        "code": "SIGNED_QUOTE_ECONOMICS_CHANGED"
+      },
+      {
+        "line": 357,
+        "code": "SM_CANCEL_SCOPE_INVALID"
+      },
+      {
+        "line": 392,
+        "code": "ACCOUNT_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 403,
+        "code": "PREFLIGHT_RISK_ACCOUNT_MISMATCH"
+      },
+      {
+        "line": 445,
+        "code": "ACCOUNT_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 453,
+        "code": "EOA_FUNDER_IDENTITY_MISMATCH"
+      },
+      {
+        "line": 460,
+        "code": "M2_REQUIRES_PROVEN_EOA_OR_DERIVED_SAFE"
+      },
+      {
+        "line": 465,
+        "code": "M2_ACCOUNT_SIGNATURE_TYPE_UNSUPPORTED"
+      },
+      {
+        "line": 606,
+        "code": "SESSION_ID_INVALID"
+      },
+      {
+        "line": 731,
+        "code": "EXECUTION_DATA_STALE"
+      },
+      {
+        "line": 741,
+        "code": "OFFICIAL_ENDPOINT_CONFIGURATION_REQUIRED"
+      },
+      {
+        "line": 750,
+        "code": "PRE_SUBMIT_FILL_FACTS_UNRESOLVED"
+      },
+      {
+        "line": 758,
+        "code": "SESSION_MARKET_CHANGED"
+      },
+      {
+        "line": 777,
+        "code": "PREVIOUS_WINDOW_TRADE_EVIDENCE_CHANGED"
+      },
+      {
+        "line": 790,
+        "code": "OPEN_ORDER_ECONOMICS_CONTRADICT_OWNERSHIP"
+      },
+      {
+        "line": 797,
+        "code": "EXTERNAL_TARGET_ORDER"
+      },
+      {
+        "line": 820,
+        "code": "OPEN_ORDER_IDENTITY_CONFLICT"
+      },
+      {
+        "line": 826,
+        "code": "OPEN_ORDER_SNAPSHOTS_CONFLICT"
+      },
+      {
+        "line": 832,
+        "code": "OPEN_ORDER_COMMITMENT_UNKNOWN"
+      },
+      {
+        "line": 833,
+        "code": "EXTERNAL_TARGET_ORDER"
+      },
+      {
+        "line": 836,
+        "code": "OPEN_ORDER_ECONOMICS_CONTRADICT_OWNERSHIP"
+      },
+      {
+        "line": 905,
+        "code": "M2_ORDER_VERSION_UNSUPPORTED"
+      },
+      {
+        "line": 919,
+        "code": "CAPITAL_EVIDENCE_CHANGED_DURING_READ"
+      },
+      {
+        "line": 923,
+        "code": "EXECUTION_DATA_STALE"
+      },
+      {
+        "line": 982,
+        "code": "QUOTE_SESSION_IDENTITY_INVALID"
+      },
+      {
+        "line": 988,
+        "code": "QUOTE_BUY_TOKEN_INVALID"
+      },
+      {
+        "line": 994,
+        "code": "QUOTE_NUMBER_INVALID"
+      },
+      {
+        "line": 1004,
+        "code": "QUOTE_PRICE_TICK_INVALID"
+      },
+      {
+        "line": 1005,
+        "code": "QUOTE_SIZE_INVALID"
+      },
+      {
+        "line": 1011,
+        "code": "QUOTE_WOULD_TAKE"
+      },
+      {
+        "line": 1024,
+        "code": "FINAL_ORDER_IDENTITY_UNKNOWN"
+      },
+      {
+        "line": 1036,
+        "code": "ORDER_NOT_TERMINAL"
+      },
+      {
+        "line": 1037,
+        "code": "FILLTRUTH_NOT_COMPLETE"
+      },
+      {
+        "line": 1040,
+        "code": "OBSERVED_PAGE_FILL_NOT_RECONCILED"
+      },
+      {
+        "line": 1050,
+        "code": "TRADE_CONFIRMATION_UNRESOLVED"
+      },
+      {
+        "line": 1064,
+        "code": "TRADE_CONFIRMATION_UNRESOLVED"
+      },
+      {
+        "line": 1065,
+        "code": "TRACKER_UNRESOLVED"
+      },
+      {
+        "line": 1075,
+        "code": "FINAL_FILL_SET_NOT_PROVEN"
+      },
+      {
+        "line": 1091,
+        "code": "OFFICIAL_TRADE_MARKET_UNKNOWN"
+      },
+      {
+        "line": 1096,
+        "code": "OFFICIAL_TRADE_CONFLICT"
+      },
+      {
+        "line": 1198,
+        "code": "EVENT_DURING_CLOSE_REQUIRES_RECHECK"
+      },
+      {
+        "line": 1201,
+        "code": "CLOSE_EVIDENCE_INVALIDATED"
+      },
+      {
+        "line": 1207,
+        "code": "CROSS_ORDER_TRADE_SET_CHANGED"
+      },
+      {
+        "line": 1212,
+        "code": "UNKNOWN_PLACEMENT_EXPOSURE"
+      },
+      {
+        "line": 1217,
+        "code": "MERGE_PENDING"
+      },
+      {
+        "line": 1300,
+        "code": "ORDER_ID_NOT_OPAQUE"
+      },
+      {
+        "line": 1301,
+        "code": "DUPLICATE_ORDER_ID"
+      },
+      {
+        "line": 1303,
+        "code": "PLACEMENT_QUOTE_IDENTITY_CHANGED"
+      },
+      {
+        "line": 1359,
+        "code": "STRATEGY_QUOTE_REVISION_REQUIRED"
+      },
+      {
+        "line": 1365,
+        "code": "STRATEGY_QUOTE_IDENTITY_CHANGED"
+      },
+      {
+        "line": 1368,
+        "code": "STRATEGY_QUOTE_SIZE_CHANGED"
+      },
+      {
+        "line": 1378,
+        "code": "WINDOW_ID_ALREADY_USED"
+      },
+      {
+        "line": 1379,
+        "code": "WINDOW_ID_INVALID"
+      },
+      {
+        "line": 1382,
+        "code": "WINDOW_QUOTE_COUNT_INVALID"
+      },
+      {
+        "line": 1386,
+        "code": "FILL_WINDOW_INVALID"
+      },
+      {
+        "line": 1390,
+        "code": "PREVIOUS_WINDOW_UNRESOLVED"
+      },
+      {
+        "line": 1396,
+        "code": "PREVIOUS_WINDOW_EVIDENCE_CHANGED"
+      },
+      {
+        "line": 1401,
+        "code": "MAKER_BUY_NOTIONAL_BELOW_MINIMUM"
+      },
+      {
+        "line": 1404,
+        "code": "TEST_CAPITAL_LIMIT_EXCEEDED"
+      },
+      {
+        "line": 1405,
+        "code": "OFFICIAL_CAPITAL_INSUFFICIENT"
+      },
+      {
+        "line": 1411,
+        "code": "MARKET_SUBMISSION_CUTOFF"
+      },
+      {
+        "line": 1414,
+        "code": "LATE_REBALANCE_QUOTE_INVALID"
+      },
+      {
+        "line": 1419,
+        "code": "SPENDER_UNKNOWN"
+      },
+      {
+        "line": 1420,
+        "code": "CAPITAL_EVIDENCE_CHANGED_BEFORE_SUBMIT"
+      },
+      {
+        "line": 1424,
+        "code": "STRATEGY_QUOTE_EVIDENCE_CHANGED"
+      }
+    ],
+    "rdp_sm_loop.py": [
+      {
+        "line": 217,
+        "code": "RECOVERY_TIME_UNAVAILABLE"
+      },
+      {
+        "line": 277,
+        "code": "M3_LIVE_EXECUTION_NOT_AUTHORIZED"
+      },
+      {
+        "line": 282,
+        "code": "M3_LIVE_EXECUTION_NOT_AUTHORIZED"
+      },
+      {
+        "line": 380,
+        "code": "DISCOVERED_MARKET_CHANGED"
+      },
+      {
+        "line": 441,
+        "code": "STRATEGY_ORDER_SIDES_INVALID"
+      },
+      {
+        "line": 464,
+        "code": "STRATEGY_STATE_CHANGED"
+      },
+      {
+        "line": 553,
+        "code": "M3_LIVE_EXECUTION_NOT_AUTHORIZED"
+      },
+      {
+        "line": 555,
+        "code": "FILL_WINDOW_INVALID"
+      },
+      {
+        "line": 572,
+        "code": "DISCOVERED_MARKET_CHANGED"
+      },
+      {
+        "line": 600,
+        "code": "PREFLIGHT_RISK_UNRESOLVED_AT_CUTOFF"
+      }
+    ],
+    "rdp_sm_merge.py": [
+      {
+        "line": 42,
+        "code": "MERGE_QUANTITY_PRECISION_INVALID"
+      },
+      {
+        "line": 56,
+        "code": "MERGE_MARKET_IDENTITY_CHANGED"
+      },
+      {
+        "line": 67,
+        "code": "MERGE_SDK_MARKET_CHANGED"
+      },
+      {
+        "line": 75,
+        "code": "MERGE_SDK_CONTEXT_CHANGED"
+      },
+      {
+        "line": 88,
+        "code": "MERGE_BALANCE_NOT_EXPLAINED_BY_SESSION"
+      },
+      {
+        "line": 97,
+        "code": "MERGE_TRANSACTION_HASH_UNKNOWN"
+      },
+      {
+        "line": 101,
+        "code": "MERGE_RECEIPT_UNKNOWN"
+      },
+      {
+        "line": 103,
+        "code": "MERGE_TERMINAL_STATUS_CONFLICT"
+      },
+      {
+        "line": 109,
+        "code": "MERGE_POST_STATE_NOT_VERIFIED"
+      },
+      {
+        "line": 123,
+        "code": "MERGE_CLOSE_BARRIER_REQUIRED"
+      },
+      {
+        "line": 130,
+        "code": "MERGE_CLOSE_BARRIER_REQUIRED"
+      },
+      {
+        "line": 144,
+        "code": "MERGE_EVIDENCE_CHANGED_BEFORE_SUBMIT"
+      },
+      {
+        "line": 146,
+        "code": "MERGE_ACCOUNT_IDENTITY_CHANGED"
+      },
+      {
+        "line": 154,
+        "code": "MERGE_NO_CONFIRMED_PAIRS"
+      },
+      {
+        "line": 193,
+        "code": "MERGE_CLOSE_RECHECK_BLOCKED"
+      }
+    ]
+  },
+  "static_scan_limit": "Dynamic reason strings and wrapped SDK exceptions are covered by the classification audit and integration tests, not inferred from this literal-only scan."
+}

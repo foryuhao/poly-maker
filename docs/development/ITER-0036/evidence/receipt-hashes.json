@@ -1,0 +1,26 @@
+{
+  "normalization": "Only trim trailing whitespace from console receipt lines; preserve all content and test results.",
+  "receipts": [
+    {
+      "file": "repro-before.txt",
+      "raw_bytes": 96071,
+      "raw_sha256": "1824417fae13e2e1a2d553a4754e65d8873a03bc7c9beec8303cc7541560a081",
+      "stored_bytes": 95827,
+      "stored_sha256": "0132128e076cbf6e63f0fd54b37ed756156e1350c54b8d992d1036b836573b1b"
+    },
+    {
+      "file": "initial-15-tests.txt",
+      "raw_bytes": 170,
+      "raw_sha256": "365fe3e1c0cc96e3f5c68b394b537c7f2450d49e6e2398a70c80f9945598971e",
+      "stored_bytes": 170,
+      "stored_sha256": "365fe3e1c0cc96e3f5c68b394b537c7f2450d49e6e2398a70c80f9945598971e"
+    },
+    {
+      "file": "full-tests.txt",
+      "raw_bytes": 32166,
+      "raw_sha256": "bbf27ff81751a4b416119c16cfd4aa2e6e2f97bafaa6456a3c5e421ac559bdaf",
+      "stored_bytes": 32021,
+      "stored_sha256": "8faa0d3d061950f3514ecc5f16c1203b4e2197acbee93df141dd9ea028358a7e"
+    }
+  ]
+}

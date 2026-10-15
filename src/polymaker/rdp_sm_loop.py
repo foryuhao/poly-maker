@@ -26,7 +26,6 @@ from polymaker.rdp_sm import (
 from polymaker.rdp_sm_execution import (
     MIN_MAKER_BUY_NOTIONAL,
     MIN_MAKER_BUY_SHARES,
-    SAFE_QUOTE_SKIP_REASONS,
     InventoryMismatch,
     SMWindowExecutor,
     WindowQuote,
@@ -502,10 +501,10 @@ class SMTradingLoop:
             if window.placement_results:
                 self._resume("capital")
             if (not window.placement_results
-                    and window.block_reason in SAFE_QUOTE_SKIP_REASONS):
+                    and window.block_reason is not None):
                 result.skipped_quotes.append({"elapsed_s": elapsed, "reason": window.block_reason})
-                # No HTTP submission occurred. M2 freshly proved the old orders
-                # closed; the next iteration takes a new decision snapshot.
+                # Only M2 can return a SAFE zero-placement skip, after fresh
+                # close proof. Include classified transient admission reads.
                 await self.sleep(1)
         safe = await executor.verify_close(cancel=True)
         if safe and self.production and executor.inventory_mismatch is None:
