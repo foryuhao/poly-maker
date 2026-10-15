@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from dataclasses import asdict, dataclass, field
-from decimal import ROUND_CEILING, Decimal
+from dataclasses import asdict, dataclass, field, replace
+from decimal import Decimal
 
 import httpx
 from py_clob_client_v2.http_helpers import helpers
 
-from polymaker.config import Config
+from polymaker.config import Config, RDPSMConfig
 from polymaker.domain import Side
 from polymaker.rdp_sm import (
     NORMAL_END_S,
@@ -32,7 +32,6 @@ from polymaker.rdp_sm_execution import (
     WindowQuote,
     _execution_identity,
     _ExecutionReads,
-    maker_buy_size,
 )
 from polymaker.rdp_sm_recovery import (
     UNCERTAIN_MUTATIONS,
@@ -41,21 +40,47 @@ from polymaker.rdp_sm_recovery import (
     reason_code,
     retry_read,
 )
+from polymaker.rdp_sm_sizing import (
+    adjust_normal_pair,
+    adjusted_normal_size,
+    calculate_rebalance_size,
+    empty_sizing_report,
+    normal_sizes,
+    resolve_favorite_target,
+    summarize_sizing,
+    validate_market_sizing,
+)
 
 
 class QuoteUnavailable(ValueError):
     """Known quote illegality; no placement or exposure was created."""
 
 
-def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str):
+def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str,
+                sizing: RDPSMConfig | None = None, *, now=None, max_age=10, evidence=None):
+    cfg = sizing if sizing is not None else RDPSMConfig()
+    validate_market_sizing(cfg, Decimal(str(meta.min_order_size)))
     delta = yes - no
     state = inventory_trading_state(delta)
+    favorite = resolve_favorite_target(meta, books, cfg, now=now, max_age=max_age)
+    target = Decimal(favorite["signed_target_delta"])
+    details = {"base_size": str(cfg.base_size), "configured_target_delta": str(cfg.target_delta),
+               "favorite_threshold": str(cfg.favorite_threshold), **favorite,
+               "actual_delta_before": str(delta), "sizing_adjustment_reason":
+               "FAVORITE_TARGET" if target else "LEGACY_INVENTORY_SKEW",
+               "sizing_constraint_reason": [], "minimum_order_size": str(meta.min_order_size),
+               "favorite_at_decision": favorite["favorite_side"],
+               "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN",
+               "target_sizing_applied": False,
+               "planned_yes_size": "0", "planned_no_size": "0",
+               "submitted_yes_size": "0", "submitted_no_size": "0",
+               "confirmed_yes_fill": "0", "confirmed_no_fill": "0",
+               "actual_delta_after": str(delta)}
+    if evidence is not None:
+        evidence.clear()
+        evidence.update(details)
     if state == "NORMAL":
-        sizes = {"YES": Decimal(5) + max(-delta, 0), "NO": Decimal(5) + max(delta, 0)}
-        # Confirmed fills may carry finer precision (e.g. 4.98410 shares).
-        # Preserve inventory exactly; round only submitted sizes to the SDK grid.
-        sizes = {side: size.quantize(Decimal(".01"), rounding=ROUND_CEILING)
-                 for side, size in sizes.items()}
+        sizes = normal_sizes(delta, cfg.base_size)
     else:
         sizes = {"NO" if delta > 0 else "YES": abs(delta)}
     quotes = []
@@ -73,7 +98,23 @@ def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str):
         ):
             raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
         if state == "REBALANCE":
-            size = maker_buy_size(price, size, Decimal(str(meta.min_order_size)))
+            try:
+                ideal, size, reasons = calculate_rebalance_size(
+                    delta, target, price, Decimal(str(meta.min_order_size)), cfg.max_order_size)
+            except ValueError as exc:
+                raise QuoteUnavailable(str(exc)) from exc
+            details.update(current_delta=str(delta), ideal_repair_size=str(ideal),
+                           actual_repair_size=str(size), repair_side=outcome,
+                           repair_sizing_fallback=reasons or ["NONE"])
+            neutral_size = calculate_rebalance_size(delta, Decimal(0), price,
+                Decimal(str(meta.min_order_size)), cfg.max_order_size)[1]
+        else:
+            neutral_size = adjusted_normal_size(outcome, size, Decimal(0), price,
+                Decimal(str(meta.min_order_size)), cfg.max_order_size)[0]
+            size, reasons = adjusted_normal_size(outcome, size, target, price,
+                                                Decimal(str(meta.min_order_size)), cfg.max_order_size)
+        details["target_sizing_applied"] |= size != neutral_size
+        details["sizing_constraint_reason"].extend(reasons)
         if (size < max(MIN_MAKER_BUY_SHARES, Decimal(str(meta.min_order_size)))
                 or size % Decimal(".01") != 0):
             raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
@@ -84,6 +125,19 @@ def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str):
                 meta.condition_id, token, outcome, Side.BUY, float(price), float(size), window_id
             )
         )
+    if state == "NORMAL" and cfg.target_delta != 0:
+        current = {q.outcome: Decimal(str(q.size)) for q in quotes}
+        closest = adjust_normal_pair(current, {q.outcome: Decimal(str(q.price)) for q in quotes},
+                                     delta, target, Decimal(str(meta.min_order_size)))
+        if closest != current:
+            details["sizing_constraint_reason"].append("TARGET_AFTER_CONSTRAINTS")
+            quotes = [replace(q, size=float(closest[q.outcome])) for q in quotes]
+            details["target_sizing_applied"] = True
+    details.update(planned_yes_size=str(next((q.size for q in quotes if q.outcome == "YES"), 0)),
+                   planned_no_size=str(next((q.size for q in quotes if q.outcome == "NO"), 0)))
+    if evidence is not None:
+        evidence.clear()
+        evidence.update(details)
     return state, quotes
 
 
@@ -116,9 +170,12 @@ class RunResult:
     windows: list[dict] = field(default_factory=list)
     skipped_quotes: list[dict] = field(default_factory=list)
     stop_elapsed_s: float | None = None
+    sizing_report: dict = field(default_factory=empty_sizing_report)
 
     def to_dict(self):
-        return asdict(self)
+        result = asdict(self)
+        result["sizing_report"]["safe_exit_status"] = self.final_close_barrier
+        return result
 
 
 class SMTradingLoop:
@@ -264,6 +321,8 @@ class SMTradingLoop:
             if all(c is not None for c in costs)
             else "NOT_VERIFIED"
         )
+        result.sizing_report = summarize_sizing(executor, result.windows, yes - no,
+                                                result.final_close_barrier)
         return yes, no
 
     async def _run_session(self, result, fill_window_sec):
@@ -362,12 +421,17 @@ class SMTradingLoop:
             self._resume("books")
             window_id = f"{self.session_id}:w{result.total_windows + 1}"
             try:
-                state, quotes = make_quotes(meta, books, yes, no, window_id)
+                sizing_evidence = {}
+                state, quotes = make_quotes(meta, books, yes, no, window_id, self.cfg.rdp_sm,
+                    now=executor.official_time + executor.monotonic() - executor.time_anchor,
+                    max_age=self.cfg.risk.ws_stale_halt_s, evidence=sizing_evidence)
                 for quote in quotes:
                     executor._validate(quote, window_id, books, meta)
             except QuoteUnavailable as exc:
+                sizing_evidence["sizing_constraint_reason"] = [str(exc)]
                 result.skipped_quotes.append({"elapsed_s": elapsed, "reason": str(exc)})
-                executor.record("sm_quote_skipped", result.skipped_quotes[-1])
+                executor.record("sm_quote_skipped", {**result.skipped_quotes[-1],
+                                                      "sizing": dict(sizing_evidence)})
                 self._display_events()
                 await self.sleep(1)
                 continue
@@ -383,10 +447,15 @@ class SMTradingLoop:
                     "delta": str(yes - no),
                     "elapsed_s": elapsed,
                     "quotes": [asdict(q) for q in quotes],
+                    "sizing": dict(sizing_evidence),
                 },
             )
-            def fresh_quotes(fresh_meta, fresh_books, fresh_window_id, *, yes=yes, no=no, state=state):
-                fresh_state, fresh = make_quotes(fresh_meta, fresh_books, yes, no, fresh_window_id)
+            def fresh_quotes(fresh_meta, fresh_books, fresh_window_id, *, yes=yes, no=no, state=state,
+                             sizing_evidence=sizing_evidence):
+                fresh_state, fresh = make_quotes(fresh_meta, fresh_books, yes, no, fresh_window_id,
+                    self.cfg.rdp_sm,
+                    now=executor.official_time + executor.monotonic() - executor.time_anchor,
+                    max_age=self.cfg.risk.ws_stale_halt_s, evidence=sizing_evidence)
                 _require(fresh_state == state, "STRATEGY_STATE_CHANGED")
                 return fresh
 
@@ -401,11 +470,11 @@ class SMTradingLoop:
             result.normal_windows += state == "NORMAL"
             result.rebalance_windows += state == "REBALANCE"
             result.windows.append(
-                {"state": state, "elapsed_s": elapsed, "result": window.to_dict()}
+                {"state": state, "elapsed_s": elapsed, "result": window.to_dict(),
+                 "sizing": dict(sizing_evidence)}
             )
             self._inventory(result)
-            # Preserve the existing Journal bytes. Only after M2 has closed
-            # do we hand off the exact books used to make these planned quotes.
+            # Hand off the decision books only after M2 has closed the window.
             if self.observer is not None:
                 self._display_events({"inventory_yes": yes, "inventory_no": no,
                                       "books": {"YES": books[meta.yes.token_id],
@@ -500,6 +569,8 @@ class SMTradingLoop:
                                  and preflight.market['no']['token_id'] == expected_market.no.token_id,
                                  'DISCOVERED_MARKET_CHANGED')
                 if preflight.status is SessionStatus.READY:
+                    validate_market_sizing(self.cfg.rdp_sm,
+                                           Decimal(str(preflight.market["min_order_size"])))
                     self._resume("startup")
                     break
                 time_only = (
@@ -570,6 +641,7 @@ class SMTradingLoop:
                 result.execution_status = "BLOCKED" if safe else "INCOMPLETE"
         finally:
             result.stop_time = time.time()
+            result.sizing_report["safe_exit_status"] = result.final_close_barrier
             if self.executor is not None:
                 try:
                     self.executor.record("sm_run_result", result.to_dict())

@@ -360,6 +360,13 @@ class HumanRunLog:
                     self.planned = {**p, **self.decision}
                 elif name == "sm_quote_refreshed":
                     self.planned = {**(self.planned or {}), "quotes": p["quotes"], "books": p["books"]}
+                    if "sizing" in p:
+                        s = p["sizing"]
+                        lines.append(f"Sizing: Base={s['base_size']} Target={s['configured_target_delta']} "
+                                     f"Favorite={s['favorite_side']} Validity={s['favorite_data_validity']} "
+                                     f"SignedTarget={s['signed_target_delta']} ActualDelta={s['actual_delta_before']} "
+                                     f"YES={s['planned_yes_size']} NO={s['planned_no_size']} "
+                                     f"Constraints={s['sizing_constraint_reason']}")
                 elif name == "sm_cancel_ack":
                     self.cancel_events.append(p)
                 elif name == "sm_official_reconciliation":
@@ -384,6 +391,7 @@ class HumanRunLog:
             return lines
         if kind == "summary":
             r = payload
+            sizing = r.get("sizing_report", {})
             observed = r.get("total_windows", 0) > 0
             yes = r.get("confirmed_yes") if observed else self.account.get("yes_inventory")
             no = r.get("confirmed_no") if observed else self.account.get("no_inventory")
@@ -401,7 +409,16 @@ class HumanRunLog:
                     f"Maximum Capital Utilization (observed M2 commitment / {TEST_CAPITAL_LIMIT_USDC:g} USDC cap): {value(maximum)} USDC | "
                     f"{value(maximum / TEST_CAPITAL_LIMIT_USDC * 100 if maximum is not None else None)}%",
                     f"Maximum Residual Exposure: {NA} | Exposure Duration: {NA}",
-                    f"Close Barrier Result: {r['final_close_barrier']}"]
+                    f"Close Barrier Result: {r['final_close_barrier']}",
+                    f"Sizing Final: Target={value(sizing.get('final_target_delta'))} "
+                    f"ActualDelta={value(sizing.get('final_actual_delta'))} "
+                    f"IntentionalResidual={value(sizing.get('intentional_residual_shares'))} "
+                    f"UnintentionalResidual={value(sizing.get('unintentional_residual_shares'))}",
+                    f"Settlement PnL: Pair={value(sizing.get('pair_pnl'))} "
+                    f"Intentional={value(sizing.get('intentional_residual_pnl'))} "
+                    f"Unintentional={value(sizing.get('unintentional_residual_pnl'))} "
+                    f"TradingBeforeRebate={value(sizing.get('trading_pnl_before_rebate'))} | "
+                    f"Actual Maker Rebate={value(sizing.get('actual_maker_rebate'))}"]
         return []
 
     def _inventory_check(self, payload):

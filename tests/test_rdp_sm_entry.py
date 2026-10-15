@@ -262,6 +262,7 @@ def cli_config(monkeypatch, tmp_path, v, cfg):
     config.mkdir()
     (config / "config.toml").write_text(
         f'[wallet]\nsignature_type = {cfg.wallet.signature_type}\n[paths]\njournal_dir = "{cfg.paths.journal_dir}"\n'
+        f'[rdp_sm]\nbase_size = "{cfg.rdp_sm.base_size}"\nmax_order_size = "{cfg.rdp_sm.max_order_size}"\n'
     )
     (tmp_path / ".env").write_text(
         f"PK={DUMMY_KEY}\nBROWSER_ADDRESS={cfg.secrets.browser_address}\n"

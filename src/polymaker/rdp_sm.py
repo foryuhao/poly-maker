@@ -353,6 +353,7 @@ def _book(raw: Any, tick_raw: Any, token: str, meta: MarketMeta) -> dict[str, An
     )
     return {
         "token_id": token,
+        "market_id": meta.condition_id,
         "best_bid": view.best_bid,
         "best_ask": view.best_ask,
         "tick": tick,
@@ -472,6 +473,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             "end": start + PERIOD_S,
             "duration_s": PERIOD_S,
             "tradable": True,
+            "min_order_size": meta.min_order_size,
             "mapping_source": "Gamma outcomes Up=YES / Down=NO",
             "yes": _book(yes_raw, yes_tick, meta.yes.token_id, meta),
             "no": _book(no_raw, no_tick, meta.no.token_id, meta),

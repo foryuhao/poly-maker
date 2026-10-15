@@ -179,6 +179,8 @@ def env(monkeypatch, tmp_path):
     client = httpx.Client(transport=transport)
     monkeypatch.setattr("py_clob_client_v2.http_helpers.helpers._http_client", client)
     cfg = Config(secrets=Secrets.model_construct(pk=DUMMY_KEY, browser_address=ADDRESS))
+    cfg.rdp_sm.base_size = Decimal("5")
+    cfg.rdp_sm.max_order_size = Decimal("1000")  # Explicit pre-SIZE historical fixture.
     cfg.wallet.signature_type = 0
     cfg.paths.journal_dir = str(tmp_path / "journal")
     yield venue, cfg

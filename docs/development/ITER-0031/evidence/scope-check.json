@@ -1,0 +1,14 @@
+{
+  "baseline": "68deb7a1c2d277a94e915fd6a60e97df9804b2d7",
+  "execution_methods_changed": [
+    "RiskJournal._read_zero_history",
+    "SMWindowExecutor._validate",
+    "SMWindowExecutor.execute_window",
+    "SMWindowExecutor.open"
+  ],
+  "execution_methods_added": [
+    "SMWindowExecutor._configured_quotes"
+  ],
+  "all_other_execution_methods_unchanged": true,
+  "quote_price_expression_unchanged": true
+}

@@ -6,6 +6,7 @@ from decimal import Decimal
 import httpx
 import pytest
 
+from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_entry import run_current_market
 from polymaker.rdp_sm_execution import RiskJournal, maker_buy_size
@@ -39,9 +40,9 @@ def test_normal_checks_each_actual_skewed_leg_amount(delta, yes, no, allowed):
     inventory = (Decimal(max(delta, 0)), Decimal(max(-delta, 0)))
     if not allowed:
         with pytest.raises(QuoteUnavailable, match="NORMAL_LEG_NOTIONAL_BELOW_MINIMUM"):
-            make_quotes(meta, books(yes, no), *inventory, "w")
+            make_quotes(meta, books(yes, no), *inventory, "w", RDPSMConfig(base_size=5, max_order_size=1000))
         return
-    state, pair = make_quotes(meta, books(yes, no), *inventory, "w")
+    state, pair = make_quotes(meta, books(yes, no), *inventory, "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert state == "NORMAL" and {q.outcome for q in pair} == {"YES", "NO"}
     assert all(Decimal(str(q.price)) * Decimal(str(q.size)) >= 1 for q in pair)
     assert {q.outcome: q.size for q in pair} == {"YES": 5 + max(-delta, 0), "NO": 5 + max(delta, 0)}
@@ -56,7 +57,7 @@ def test_rebalance_tops_up_only_short_side_to_smallest_legal_size(delta, price, 
     meta, _ = _market(Venue().raw, SLUG)
     view = {str(i): {"best_bid": float(price), "best_ask": float(Decimal(price) + Decimal(".001")),
                     "tick": .001} for i in (1, 2)}
-    state, single = make_quotes(meta, view, Decimal(max(delta, 0)), Decimal(max(-delta, 0)), "w")
+    state, single = make_quotes(meta, view, Decimal(max(delta, 0)), Decimal(max(-delta, 0)), "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert state == "REBALANCE" and len(single) == 1
     q = single[0]
     assert q.outcome == ("NO" if delta > 0 else "YES") and q.side.value == "BUY"

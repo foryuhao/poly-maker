@@ -104,10 +104,25 @@ class ExecutionConfig(BaseModel):
 
 
 class RDPSMConfig(BaseModel):
+    base_size: Decimal = Field(default=Decimal("7"), gt=0, allow_inf_nan=False)
+    target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
+    favorite_threshold: Decimal = Field(default=Decimal("0.70"), gt=Decimal("0.5"),
+                                      lt=1, allow_inf_nan=False)
+    max_order_size: Decimal = Field(default=Decimal("15"), gt=0, allow_inf_nan=False)
     matched_remaining_tolerance_shares: Decimal = Field(
         default=Decimal("0.1"), ge=0, allow_inf_nan=False,
         description="Inclusive remaining-share tolerance for MATCHED orders only",
     )
+
+    @model_validator(mode="after")
+    def _sizing(self) -> RDPSMConfig:
+        if self.target_delta not in (0, 1):
+            raise ValueError("target_delta must be 0 or 1")
+        if self.max_order_size < self.base_size:
+            raise ValueError("max_order_size must be >= base_size")
+        if any(q % Decimal(".01") for q in (self.base_size, self.max_order_size)):
+            raise ValueError("base_size and max_order_size must use the SDK 0.01 share grid")
+        return self
 
 
 class PathsConfig(BaseModel):

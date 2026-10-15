@@ -378,7 +378,13 @@ class RiskJournal(Journal):
             session, result = group[0]["data"]["payload"], payload
             check(set(session) in (session_keys, session_keys | {
                 "capital_basis", "historical_pending_cost_observed_usd"})
-                and set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"}))
+                and set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"},
+                    result_keys | {"sizing_report"}, result_keys | {
+                        "merged_pairs", "recovered_collateral_usdc", "sizing_report"}))
+            if "sizing_report" in result:
+                from polymaker.rdp_sm_sizing import validate_zero_sizing_report
+
+                validate_zero_sizing_report(result["sizing_report"], check, result["final_close_barrier"])
             check(all(type(result.get(k, 0)) in (int, float) and result.get(k, 0) == 0
                       for k in ("merged_pairs", "recovered_collateral_usdc")))
             check(session["session_id"] == result["session_id"] == sid)
@@ -1109,6 +1115,9 @@ class SMWindowExecutor:
         if preflight.status is not SessionStatus.READY:
             raise _Issue(SessionStatus.BLOCKED, "M1_SESSION_NOT_READY",
                          context={"preflight": preflight.to_dict()})
+        from polymaker.rdp_sm_sizing import validate_market_sizing
+
+        validate_market_sizing(cfg.rdp_sm, Decimal(str(preflight.market["min_order_size"])))
         reads = _ExecutionReads(cfg, risk_reads=startup_reads)
         journal = None
         try:
@@ -1528,6 +1537,7 @@ class SMWindowExecutor:
         _require(tick <= price <= 1 - tick and price % tick == 0, "QUOTE_PRICE_TICK_INVALID")
         _require(
             size >= max(MIN_MAKER_BUY_SHARES, Decimal(str(meta.min_order_size)))
+            and size <= self.cfg.rdp_sm.max_order_size
             and size % Decimal(".01") == 0,
             "QUOTE_SIZE_INVALID",
         )
@@ -1834,6 +1844,17 @@ class SMWindowExecutor:
         self.store.upsert_order(order)
         self.record("sm_placement_ack", asdict(attempt))
 
+    def _configured_quotes(self, meta, books, window_id, *, evidence=None):
+        # Local import keeps the existing M3 -> M2 dependency at module load.
+        from polymaker.rdp_sm_loop import make_quotes
+
+        fills = self.confirmed()
+        yes, no = (sum((Decimal(str(f.size)) for f in fills if f.token_id == token), Decimal(0))
+                   for token in (meta.yes.token_id, meta.no.token_id))
+        return make_quotes(meta, books, yes, no, window_id, self.cfg.rdp_sm,
+            now=self.official_time + self.monotonic() - self.time_anchor,
+            max_age=self.cfg.risk.ws_stale_halt_s, evidence=evidence)[1]
+
     async def execute_window(
         self,
         window_id: str,
@@ -1868,23 +1889,16 @@ class SMWindowExecutor:
                     return False
                 _require(quote_revision is not None, "STRATEGY_QUOTE_REVISION_REQUIRED")
                 fresh = quote_factory(meta, books, window_id)
-                # Keep the revision-bound side and inventory decision. A single
-                # REBALANCE leg may resize only by the legal BUY size rules.
+                # Keep the revision-bound side/inventory decision. Any resized
+                # leg must equal the same configured sizing decision used by M3.
                 def identity(q):
                     return q.market_id, q.token_id, q.outcome, q.side, q.window_id
                 _require([identity(q) for q in fresh] == [identity(q) for q in quotes],
                          "STRATEGY_QUOTE_IDENTITY_CHANGED")
-                for old, new in zip(quotes, fresh, strict=True):
-                    if old.size != new.size:
-                        fills = self.confirmed()
-                        gap = abs(sum((Decimal(str(f.size)) * (1 if f.token_id == meta.yes.token_id else -1)
-                                       for f in fills), Decimal(0)))
-                        _require(len(quotes) == 1 and gap >= 5
-                                 and Decimal(str(old.size)) == maker_buy_size(
-                                     Decimal(str(old.price)), gap, Decimal(str(meta.min_order_size)))
-                                 and Decimal(str(new.size)) == maker_buy_size(
-                                     Decimal(str(new.price)), gap, Decimal(str(meta.min_order_size))),
-                                 "STRATEGY_QUOTE_SIZE_CHANGED")
+                expected = self._configured_quotes(meta, books, window_id)
+                _require([(q.outcome, q.size) for q in fresh]
+                         == [(q.outcome, q.size) for q in expected],
+                         "STRATEGY_QUOTE_SIZE_CHANGED")
                 changed = quotes != fresh
                 quotes = list(fresh)
                 result.requested_quotes = list(quotes)
@@ -1930,8 +1944,8 @@ class SMWindowExecutor:
                 if elapsed >= NORMAL_END_S:
                     _require(len(quotes) == 1
                              and quotes[0].outcome == ("NO" if delta > 0 else "YES")
-                             and Decimal(str(quotes[0].size)) == maker_buy_size(
-                                 Decimal(str(quotes[0].price)), abs(delta), Decimal(str(meta.min_order_size))),
+                             and [(q.outcome, q.size) for q in quotes]
+                             == [(q.outcome, q.size) for q in self._configured_quotes(meta, books, window_id)],
                              "LATE_REBALANCE_QUOTE_INVALID")
                 _require(account["applicable_spenders"], "SPENDER_UNKNOWN")
                 _require(self.revision == account["capital_evidence_revision"],
@@ -1941,9 +1955,12 @@ class SMWindowExecutor:
                 _require(quote_revision is None or self.revision == quote_revision,
                          "STRATEGY_QUOTE_EVIDENCE_CHANGED")
                 if quote_factory is not None:
+                    sizing_evidence = {}
+                    self._configured_quotes(meta, books, window_id, evidence=sizing_evidence)
                     self.record("sm_quote_refreshed", {
                         "window_id": window_id, "quotes": [asdict(q) for q in quotes],
-                        "books": {"YES": books[meta.yes.token_id], "NO": books[meta.no.token_id]}})
+                        "books": {"YES": books[meta.yes.token_id], "NO": books[meta.no.token_id]},
+                        "sizing": sizing_evidence})
                 batch = [Placement(uuid.uuid4().hex, quote) for quote in quotes]
                 self.attempts.extend(batch)
                 self.invalidate("PLACEMENT_INTENT")

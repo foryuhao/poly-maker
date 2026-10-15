@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_entry import run_current_market
 from polymaker.rdp_sm_logging import HumanRunLog
@@ -33,7 +34,7 @@ def test_rounded_state_keeps_exact_inventory_based_quote_size(gap, state, sign):
                  "best_ask": float(b["asks"][0]["price"]), "tick": float(venue.ticks[t])}
              for t, b in venue.books.items()}
     delta = Decimal(gap) * sign
-    observed, quotes = make_quotes(meta, books, max(delta, 0), max(-delta, 0), "w")
+    observed, quotes = make_quotes(meta, books, max(delta, 0), max(-delta, 0), "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert observed == state
     short = "NO" if sign > 0 else "YES"
     if state == "NORMAL":

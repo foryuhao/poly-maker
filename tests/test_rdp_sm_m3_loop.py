@@ -8,6 +8,7 @@ import httpx
 import pytest
 from py_clob_client_v2.http_helpers import helpers
 
+from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_execution import SMWindowExecutor
 from polymaker.rdp_sm_loop import QuoteUnavailable, SMTradingLoop, make_quotes
@@ -118,7 +119,7 @@ def test_m3_01_02_quote_state_prices_and_size_skew(delta, sizes, state):
         }
         for t, b in venue.books.items()
     }
-    observed, qs = make_quotes(meta, books, Decimal(max(delta, 0)), Decimal(max(-delta, 0)), "w")
+    observed, qs = make_quotes(meta, books, Decimal(max(delta, 0)), Decimal(max(-delta, 0)), "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert observed == state and {q.outcome: q.size for q in qs} == sizes
     for q in qs:
         expected = Decimal(str(books[q.token_id]["best_bid"]))
@@ -325,12 +326,12 @@ async def test_invalid_price_is_skipped_and_fractional_rebalance_size_is_rounded
     assert result.execution_status == "COMPLETED" and result.stop_elapsed_s == 300
     meta, _ = _market(v.raw, SLUG)
     books = {"1": {"best_bid": 0.49, "best_ask": 0.51, "tick": 0.01}}
-    state, single = make_quotes(meta, books, Decimal(0), Decimal("5.001"), "w")
+    state, single = make_quotes(meta, books, Decimal(0), Decimal("5.001"), "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert state == "REBALANCE" and len(single) == 1
     assert single[0].outcome == "YES" and single[0].size == 5.01 and single[0].price == .49
     books["1"]["best_bid"] = .485
     with pytest.raises(QuoteUnavailable):
-        make_quotes(meta, books, Decimal(0), Decimal("5.001"), "invalid-price")
+        make_quotes(meta, books, Decimal(0), Decimal("5.001"), "invalid-price", RDPSMConfig(base_size=5, max_order_size=1000))
 
 
 async def test_default_entry_and_nonfake_transport_cannot_trade(env, monkeypatch):
