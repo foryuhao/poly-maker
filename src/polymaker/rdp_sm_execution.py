@@ -1,4 +1,4 @@
-"""Single-market SM execution composition; no strategy, Engine or restart recovery.
+"""Single-market SM execution composition; no strategy or Engine replacement.
 
 Only this opt-in library path can write orders. M1 and FL entry points are unchanged.
 An executor is single-use after unresolved exposure. Only complete, safely closed
@@ -200,6 +200,38 @@ class RiskJournal(Journal):
                       and i.strip() == i for i in ids) and len(ids) == len(set(ids)))
 
     @staticmethod
+    def _check_session_header(session, check):
+        """Shared strict schema and funding facts, including interrupted runs."""
+        keys = {
+            "session_id", "slug", "signer", "funder", "signature_type", "live_authority",
+            "starting_spendable_usdc", "starting_official_balance_usdc", "test_capital_limit_usdc",
+            "historical_pending_cost_reserved_usd", "historical_matched",
+            "preflight_observed_order_ids", "preflight_observed_trade_ids", "preflight_account_incomplete",
+        }
+        check(set(session) in (keys, keys | {"capital_basis", "historical_pending_cost_observed_usd"}))
+        RiskJournal._check_starting_observations(session, check)
+        check(session["test_capital_limit_usdc"] in {"20", "30"})
+        for key in ("starting_spendable_usdc", "starting_official_balance_usdc",
+                    "historical_pending_cost_reserved_usd"):
+            check(type(session[key]) in (int, float) and math.isfinite(session[key]) and session[key] >= 0)
+        reserve = session["historical_pending_cost_reserved_usd"]
+        check(session["starting_spendable_usdc"] <= max(0.0, session["starting_official_balance_usdc"] - reserve))
+        matched = session["historical_matched"]
+        check(isinstance(matched, dict))
+        for tid, evidence in matched.items():
+            check(isinstance(tid, str) and bool(tid) and tid.strip() == tid)
+            check(isinstance(evidence, dict) and set(evidence) == {
+                "status", "decision", "pending_cost_reserved_usd", "redeem"})
+            check(evidence["status"] in {"MATCHED", "MINED", "RETRYING"}
+                  and evidence["decision"] == "HISTORICAL_MATCHED_NONBLOCKING"
+                  and evidence["redeem"] == "NOT_VERIFIED")
+            check(isinstance(evidence["pending_cost_reserved_usd"], str))
+            amount = Decimal(evidence["pending_cost_reserved_usd"])
+            check(amount.is_finite() and amount > 0)
+        check(sum((Decimal(e["pending_cost_reserved_usd"]) for e in matched.values()), Decimal(0))
+              == RiskJournal._history_cost_total(session, check))
+
+    @staticmethod
     def _check_zero_windows(group, result, check):
         """Prove absence of execution from events, including pre-submit failures."""
         check(all(e["kind"] in {
@@ -335,12 +367,6 @@ class RiskJournal(Journal):
         def invalid_constant(_value):
             raise ValueError("nonfinite JSON")
 
-        session_keys = {
-            "session_id", "slug", "signer", "funder", "signature_type", "live_authority",
-            "starting_spendable_usdc", "starting_official_balance_usdc", "test_capital_limit_usdc",
-            "historical_pending_cost_reserved_usd", "historical_matched",
-            "preflight_observed_order_ids", "preflight_observed_trade_ids", "preflight_account_incomplete",
-        }
         counts = ["total_windows", "normal_windows", "rebalance_windows", "active_cycles",
                   "confirmed_fills", "blocked_windows"]
         economics = ["confirmed_yes", "confirmed_no", "delta", "completed_pairs",
@@ -376,9 +402,8 @@ class RiskJournal(Journal):
             check(sid not in seen)
             seen.add(sid)
             session, result = group[0]["data"]["payload"], payload
-            check(set(session) in (session_keys, session_keys | {
-                "capital_basis", "historical_pending_cost_observed_usd"})
-                and set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"},
+            RiskJournal._check_session_header(session, check)
+            check(set(result) in (result_keys, result_keys | {"merged_pairs", "recovered_collateral_usdc"},
                     result_keys | {"sizing_report"}, result_keys | {
                         "merged_pairs", "recovered_collateral_usdc", "sizing_report"}))
             if "sizing_report" in result:
@@ -456,10 +481,22 @@ class RiskJournal(Journal):
 
     @staticmethod
     def _read_history(history, funder, *, current_slug=None, official_time=None,
-                      current_market_id=None, expired_orders=None):
+                      current_market_id=None, expired_orders=None, interrupted=None):
         import io
 
+        from polymaker.rdp_sm_restart import (
+            ARCHIVE_EVENT,
+            pending_archive,
+            validate_archive,
+            validate_bound_events,
+        )
+
         lines = list(history)
+        pending = pending_archive(lines, official_time) if interrupted is not None else None
+        original_count = len(lines)
+        if pending is not None:
+            lines.append(json.dumps({"ts": pending["summary"]["stop_time"], "kind": ARCHIVE_EVENT,
+                "data": {"session_id": pending["summary"]["session_id"], "payload": pending}}) + "\n")
         try:
             return RiskJournal._read_zero_history(lines, funder)
         except (ValueError, TypeError, KeyError, ArithmeticError):
@@ -492,8 +529,9 @@ class RiskJournal(Journal):
                    "sm_official_reconciliation", "sm_close_barrier", "sm_window_result",
                    "sm_run_result", "sm_quote_skipped", "sm_placement_unknown",
                    "sm_unknown_official_lookup", "sm_quote_refreshed",
-                   "sm_merge_intent", "sm_merge_submitted", "sm_merge_result"}
-        for line in lines:
+                   "sm_merge_intent", "sm_merge_submitted", "sm_merge_result", ARCHIVE_EVENT}
+        prefix = hashlib.sha256()
+        for index, line in enumerate(lines):
             check(line.endswith("\n"))
             row = json.loads(line, object_pairs_hook=unique, parse_constant=invalid)
             check(isinstance(row, dict) and set(row) == {"ts", "kind", "data"})
@@ -510,11 +548,24 @@ class RiskJournal(Journal):
                   or (bool(group) and row["kind"] != "sm_session"
                       and sid == group[0]["data"]["session_id"]))
             group.append(row)
-            if row["kind"] != "sm_run_result":
+            prefix_before = prefix.hexdigest()
+            prefix.update(line.encode())
+            archived = row["kind"] == ARCHIVE_EVENT
+            if row["kind"] not in {"sm_run_result", ARCHIVE_EVENT}:
                 continue
             check(sid not in seen)
             seen.add(sid)
-            session, result = group[0]["data"]["payload"], data["payload"]
+            session = group[0]["data"]["payload"]
+            if archived:
+                RiskJournal._check_session_header(session, check)
+                if pending is not None and index == original_count:
+                    validate_bound_events(group[:-1], check)
+                    interrupted.update(payload=pending, group=group[:-1])
+                else:
+                    validate_archive(data["payload"], group[:-1], prefix_before, check)
+                result = data["payload"]["summary"]
+            else:
+                result = data["payload"]
             from polymaker.rdp_sm_merge import validate_merge_history
 
             validate_merge_history(group, session, result, check)
@@ -540,8 +591,11 @@ class RiskJournal(Journal):
                       and session["test_capital_limit_usdc"] in {"20", "30"})
                 RiskJournal._check_starting_observations(session, check)
                 cid = result["market_id"]
-                check(isinstance(cid, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", cid) is not None)
-                check(current_market_id is None or cid.lower() != current_market_id.lower())
+                # An interrupted session with no intent binds its historical
+                # condition through official metadata before the marker is saved.
+                check((pending is not None and index == original_count and cid is None)
+                      or isinstance(cid, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", cid) is not None)
+                check(cid is None or current_market_id is None or cid.lower() != current_market_id.lower())
                 check(result["execution_status"] in {"INCOMPLETE", "BLOCKED", "COMPLETED"}
                       and result["final_close_barrier"] in {"BLOCKED", "SAFE_TO_CONTINUE"})
                 check(type(result["start_time"]) in (int, float)
@@ -616,18 +670,24 @@ class RiskJournal(Journal):
                     if kind == "sm_placement_result":
                         check(aid not in completed)
                         completed[aid] = outcome
-                check(set(intents) == set(completed))
-                if not intents:
+                # A durable ACK already binds a known exchange ID. Ctrl+C can
+                # prevent its redundant placement_result write; fresh recovery
+                # proofs must cover that ID before the archive is persisted.
+                check(set(intents) == (set(completed) | set(acknowledged)
+                                      if archived else set(completed)))
+                if not intents and not archived:
                     RiskJournal._check_zero_windows(group, result, check)
                 for oid in acknowledged.values():
                     if RiskJournal._historical_no_fill_closed(group, oid, orders[oid], funder):
                         del orders[oid]
                 check(not any(e["kind"] == "sm_unknown_official_lookup" for e in group)
                       or bool(rejected_unknown))
-            slug, market = session["slug"], result["market_id"].lower()
-            check(slug not in slug_markets or slug_markets[slug] == market)
-            check(market not in market_slugs or market_slugs[market] == slug)
-            slug_markets[slug], market_slugs[market] = market, slug
+            slug = session["slug"]
+            if result["market_id"] is not None:
+                market = result["market_id"].lower()
+                check(slug not in slug_markets or slug_markets[slug] == market)
+                check(market not in market_slugs or market_slugs[market] == slug)
+                slug_markets[slug], market_slugs[market] = market, slug
             check(identity is None or identity == who)
             identity = who
             check(set(retained) <= set(costs))
@@ -638,10 +698,10 @@ class RiskJournal(Journal):
         check(not group)
         if expired_orders is not None:
             expired_orders.update(orders)
-        return len(lines), retained, identity, seen
+        return original_count, retained, identity, seen
 
     def __init__(self, directory: str | Path, funder: str, *, current_slug=None,
-                 official_time=None, current_market_id=None):
+                 official_time=None, current_market_id=None, recover_interrupted=False):
         directory = Path(directory).resolve()
         # A session/market UUID cannot select a different ledger to bypass risk.
         super().__init__(directory, day=f"rdp_sm_{funder.lower()}")
@@ -654,20 +714,27 @@ class RiskJournal(Journal):
                     if (locked.st_dev, locked.st_ino) != (opened.st_dev, opened.st_ino):
                         raise ValueError("journal identity changed")
                     self.historical_orders = {}
+                    pending = {} if recover_interrupted else None
                     (self.sequence, self.historical_reserve, self.historical_identity,
                      self.historical_session_ids) = self._read_history(
                         history, funder, current_slug=current_slug, official_time=official_time,
                         current_market_id=current_market_id,
-                        expired_orders=self.historical_orders)
+                        expired_orders=self.historical_orders, interrupted=pending)
+                    self.interrupted_session = pending or None
                     # Preserve validated historical payloads byte-for-byte in
                     # meaning when the CLI changes its funding basis. This is
                     # archival evidence, not confirmed inventory or a reserve.
                     self.historical_evidence = {}
+                    self.historical_pending_rows = []
                     history.seek(0)
                     for line in history:
                         row = json.loads(line)
                         if row["kind"] == "sm_session":
                             self.historical_evidence.update(row["data"]["payload"]["historical_matched"])
+                        elif row["kind"] == "sm_session_interrupted_reconciled":
+                            self.historical_pending_rows.extend(
+                                raw for raw in row["data"]["payload"]["trades"]
+                                if parse_trade(raw).status not in {TradeState.CONFIRMED, TradeState.FAILED})
             except (ValueError, TypeError, KeyError, ArithmeticError, UnicodeError, RecursionError) as exc:
                 raise RuntimeError("HISTORICAL_SM_RISK_REQUIRES_MANUAL_REVIEW") from exc
             self._fh.flush()
@@ -685,6 +752,7 @@ class RiskJournal(Journal):
         self.path = str(directory / f"rdp_sm_{funder.lower()}.jsonl")
 
     def verify_retained_reserve(self, reads, account):
+        _require(self.interrupted_session is None, "INTERRUPTED_SESSION_NOT_RECONCILED")
         if self.historical_identity is not None:
             _require(self.historical_identity == (reads.gateway.address.lower(),
                                                  reads.cfg.wallet.signature_type),
@@ -713,6 +781,10 @@ class RiskJournal(Journal):
     def write(self, kind: str, payload: Any, ts: float) -> None:
         if self._fh is None:
             raise RuntimeError("SM_JOURNAL_CLOSED")
+        if self.interrupted_session is not None:
+            from polymaker.rdp_sm_restart import ARCHIVE_EVENT
+
+            _require(kind == ARCHIVE_EVENT, "INTERRUPTED_SESSION_NOT_RECONCILED")
         super().write(kind, payload, ts)
         self._fh.flush()
         os.fsync(self._fh.fileno())
@@ -740,6 +812,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
             f"/data/order/{oid}"
             for oid in getattr(self, "known_ids", set())
             | getattr(self, "observed_open_rows", {}).keys()
+            | getattr(self, "historical_read_ids", set())
         }
         if not extra:
             raw = super()._get(endpoint, headers=headers, params=params)
@@ -1126,8 +1199,14 @@ class SMWindowExecutor:
             journal = RiskJournal(
                 cfg.paths.journal_dir, reads.gateway.funder, current_slug=slug,
                 current_market_id=preflight.market["condition_id"],
-                official_time=preflight.market["start"] + preflight.market["elapsed_s"])
+                official_time=preflight.market["start"] + preflight.market["elapsed_s"],
+                recover_interrupted=True)
+            from polymaker.rdp_sm_restart import reconcile_interrupted
+
             _require(session_id not in journal.historical_session_ids, "HISTORICAL_SM_SESSION_ID_REUSED")
+            account = await reconcile_interrupted(journal, reads, preflight.market)
+            if account is not None:
+                preflight.account = account
             journal.verify_retained_reserve(reads, preflight.account)
             executor = cls(cfg, slug, session_id, reads, journal, **clock)
             executor.record(

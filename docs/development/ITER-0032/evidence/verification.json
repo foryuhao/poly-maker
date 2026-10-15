@@ -1,0 +1,60 @@
+{
+  "iteration_id": "ITER-0032",
+  "related_task": "RDP-SIZE-001",
+  "implementation_review": "PASS",
+  "acceptance_status": "BLOCKED_BASELINE_13_FAILURES",
+  "new_restart_tests_passed": 84,
+  "full_suite": {
+    "passed": 1584,
+    "failed": 13,
+    "skipped": 2,
+    "runtime_s": 117.15
+  },
+  "baseline": {
+    "commit": "f9cbbfebee00da30d72fa19d30c73bcb949642c4",
+    "passed": 1500,
+    "failed": 13,
+    "skipped": 2
+  },
+  "failure_set_exactly_matches_baseline": true,
+  "existing_failed_tests": [
+    "test_config_aliases.py::test_cli_conflict_stops_before_settlement_preflight",
+    "test_rdp_sm_cli_logging.py::test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MATCHED]",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MINED]",
+    "test_rdp_sm_cli_logging.py::test_l09_secrets_are_redacted_and_raw_responses_not_rendered",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--json-only]",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--http-info]",
+    "test_rdp_sm_entry.py::test_r11_r12_full_cli_single_market_and_exit",
+    "test_rdp_sm_inventory_wait.py::test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[decision]",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[admission]",
+    "test_risk_shadow.py::test_baseline_01_and_protected_sources_identical",
+    "test_risk_shadow_cli.py::test_execution_strategy_and_entry_control_flow_preserved"
+  ],
+  "independent_review": {
+    "passed": 233,
+    "failed": 0,
+    "runtime_s": 12.61
+  },
+  "actual_tail_read_only_tests": {
+    "passed": 1,
+    "failed": 0
+  },
+  "ruff": "PASS",
+  "compile": "PASS",
+  "git_diff_check": "PASS",
+  "network_dns_attempts": 0,
+  "workspace_credentials_accessed": false,
+  "production_config_target_delta": {
+    "config/config.toml": "1",
+    "livecfg/config.toml": "1"
+  },
+  "production_config_included_in_fix_commit": false,
+  "real_journal_changed": false,
+  "real_account_queries_executed": false,
+  "micro_live_executed": false,
+  "real_orders_submitted": 0,
+  "real_merge_executed": false,
+  "strategy_timing_pricing_gateway_merge_sources_unchanged": true
+}

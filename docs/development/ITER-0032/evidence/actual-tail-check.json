@@ -1,0 +1,12 @@
+{
+  "read_only_actual_history_check": "PASS",
+  "history_bytes_unchanged": true,
+  "source_sha256": "4c4e28f1161ee0e9206394291149c3e1305f5e32b95b5f3660962d70462f3fd6",
+  "pending_session_id": "4b13c107f0474103b86b07b5422e6f96",
+  "execution_status": "INCOMPLETE",
+  "close_barrier": "BLOCKED",
+  "recoverable_known_orders": 2,
+  "official_recovery_requests_executed": false,
+  "archive_marker_written": false,
+  "live_execution_started": false
+}
