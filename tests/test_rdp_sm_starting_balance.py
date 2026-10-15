@@ -20,7 +20,7 @@ def env(monkeypatch, tmp_path):
     yield from loop_env.__wrapped__(monkeypatch, tmp_path)
 
 
-@pytest.mark.parametrize("balance,expected", [("6000000", 6), ("33464169", 20), ("100000000", 20)])
+@pytest.mark.parametrize("balance,expected", [("6000000", 6), ("33464169", 25), ("100000000", 25)])
 async def test_starting_budget_uses_official_balance_not_old_matched_cost(env, monkeypatch, balance, expected):
     v, cfg = env
     v.capital["balance"] = balance

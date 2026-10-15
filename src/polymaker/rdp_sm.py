@@ -32,7 +32,7 @@ from polymaker.marketdata.orderbook import OrderBook
 from polymaker.marketdata.parse import parse_book
 from polymaker.userstream.parse import strict_number
 
-TEST_CAPITAL_LIMIT_USDC = 20.0
+TEST_CAPITAL_LIMIT_USDC = 25.0
 TRADING_START_S = 15
 NORMAL_END_S = 120
 TRADING_END_S = PERIOD_S

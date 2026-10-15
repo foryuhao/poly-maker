@@ -55,3 +55,9 @@ Shadow 不初始化、调用或扩展 Merge/RPC。
 日志改为 `rdp_sm_<funder>_<session_id>.jsonl`，Shadow读取对应当前文件。
 旧日志保留但不读取或修改，旧历史/恢复 SOP 的跨轮要求由该人工新边界覆盖。
 详见 [ITER-0033](ITER-0033/RESULT.md)。本轮按用户要求不调用 Architect/Reviewer。
+
+2026-10-15 人工调整：每个 Session 的资本限制由 20 提高为 **25 USDC**。
+复用 `rdp_sm.TEST_CAPITAL_LIMIT_USDC` 单一入口，M1预算、M2资金准入、Session日志及
+报告利用率分母同步采用25；实际预算仍服从官方余额与allowance。新启动进程生效。
+订单数量上限15股、最低BUY金额1 USDC及其余策略/执行规则保持本次调整前行为。
+详见 [ITER-0035](ITER-0035/RESULT.md)。

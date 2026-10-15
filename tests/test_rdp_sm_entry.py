@@ -251,8 +251,8 @@ async def test_r10_capital_exhaustion_waits_and_verified_merge_recovers_cost(env
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.stop_reason == "MARKET_CUTOFF" and result.stop_elapsed_s == 300
     assert result.execution_status == "COMPLETED" and result.final_close_barrier == "SAFE_TO_CONTINUE"
-    assert v.executor.committed() <= 20 and all(r["status"] != "LIVE" for r in v.rows.values())
-    assert len(v.posts) == 8 and result.merged_pairs == 20
+    assert v.executor.committed() <= 25 and all(r["status"] != "LIVE" for r in v.rows.values())
+    assert len(v.posts) == 10 and result.merged_pairs == 25
     assert result.confirmed_yes == result.confirmed_no == 0
     denied = [w["result"] for w in result.windows if w["result"]["block_reason"] == "TEST_CAPITAL_LIMIT_EXCEEDED"]
     assert denied and all(w["placement_results"] == [] for w in denied)
@@ -353,11 +353,11 @@ async def test_r14_actual_journal_reconstructs_minimal_metrics(env, monkeypatch)
         return [r["data"]["payload"] for r in rows if r["kind"] == kind]
 
     session, final = payloads("sm_session")[0], payloads("sm_run_result")[0]
-    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "20"
+    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "25"
     intents = payloads("sm_placement_intent")
     maximum_committed = max(float(p["capital_committed_usd"]) for p in intents)
     assert (
-        maximum_committed <= 20
+        maximum_committed <= 25
         and maximum_committed > final["confirmed_yes"]
     )
     assert final["stop_reason"] == "MARKET_CUTOFF"  # exhaustion = NOT_REACHED

@@ -83,7 +83,7 @@ class ExecutionVenue(Venue):
             self.post_requests.append(deepcopy(body))
             attempts = self.executor.gateway._client.batch_attempts
             assert len(attempts) == len(body)
-            assert self.executor.committed() <= Decimal("20")
+            assert self.executor.committed() <= Decimal("25")
             lines = journal_records(self.executor.journal.path)
             replies = []
             for row, attempt in zip(body, attempts, strict=True):
@@ -359,7 +359,7 @@ async def test_e07_h01_terminal_then_live_blocks_even_old_official_terminal(env)
     assert any(c[1] == "/data/order/o-1" for c in v.calls)
 
 
-async def test_e09_twenty_dollar_cap_checked_before_any_submit(env):
+async def test_e09_session_cap_checked_before_any_submit(env):
     v, executor = await open_executor(env)
     result = await executor.execute_window("w1", quotes(size=40))
     assert (
@@ -694,11 +694,17 @@ async def test_two_owned_maker_legs_share_trade_id_without_deduplication_loss(en
     assert len(executor.confirmed()) == 2
 
 
-async def test_exact_twenty_dollar_single_order_is_allowed(env):
+@pytest.mark.parametrize("size,allowed", [(40, True), (50, True), (50.01, False)])
+async def test_twenty_five_dollar_single_order_cap_boundary(env, size, allowed):
     v, executor = await open_executor(env)
-    result = await executor.execute_window("w1", [replace(quotes()[0], price=0.5, size=40)])
-    assert result.close_barrier == "SAFE_TO_CONTINUE" and len(v.posts) == 1
-    assert executor.attempts[0].maximum == Decimal("20")
+    result = await executor.execute_window("w1", [replace(quotes()[0], price=0.5, size=size)])
+    if allowed:
+        assert result.close_barrier == "SAFE_TO_CONTINUE" and len(v.posts) == 1
+        assert executor.attempts[0].maximum == Decimal(str(size)) / 2
+    else:
+        assert result.close_barrier == "BLOCKED"
+        assert result.block_reason == "TEST_CAPITAL_LIMIT_EXCEEDED"
+        assert not v.posts and executor.committed() == 0
 
 
 async def test_journal_failure_after_ack_stops_new_requests_but_closes_entire_batch(env, monkeypatch):
