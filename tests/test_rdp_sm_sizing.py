@@ -190,8 +190,17 @@ def test_current_authorized_state_and_timing_are_unchanged(delta, state):
 
 
 @pytest.mark.parametrize("p,expected", [(".75", 6), (".55", 7), (".25", 8)])
-async def test_actual_late_repair_uses_configured_target_and_full_confirmation(env, p, expected):
+@pytest.mark.parametrize("coarse_clock", [False, True])
+async def test_actual_late_repair_uses_configured_target_and_full_confirmation(env, monkeypatch, p, expected, coarse_clock):
+    import httpx
+
     v, _ = configure(env, p=".75" if p == ".25" else p)
+    if coarse_clock:
+        v.time += .65
+    def official_clock(request):
+        if coarse_clock and request.url.path == "/time":
+            return httpx.Response(200, json=int(v.time), request=request)
+        return None
     def action(v, index):
         if index == 1:
             v.fill(current_orders(v)["YES"], "first-seven", 7)
@@ -199,10 +208,13 @@ async def test_actual_late_repair_uses_configured_target_and_full_confirmation(e
                 v.books[token]["bids"][0]["price"] = b["best_bid"]
                 v.books[token]["asks"][0]["price"] = b["best_ask"]
             advance(v, 200)
+            if coarse_clock:
+                v.time += .65
         elif index == 2:
             v.fill(current_orders(v)["NO"], "repair", expected)
     on_windows(v, action, stop_after=2)
-    result = await runner(env).run(offline=True)
+    with boundary(monkeypatch, v, official_clock):
+        result = await runner(env).run(offline=True)
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE"]
     w = result.windows[1]
@@ -374,6 +386,106 @@ def test_favorite_wrong_market_and_exact_crosscheck_boundary():
             books["2"][key] = str(D(books["2"][key]) + D(offset))
         result = resolve_favorite_target(meta, books, RDPSMConfig(target_delta=1), now=START + 15)
         assert (result["favorite_data_validity"] == "VALID") == valid
+
+
+@pytest.mark.parametrize("p,expected", [(".75", {"YES": 7, "NO": 6}),
+                                       (".25", {"YES": 6, "NO": 7})])
+@pytest.mark.parametrize("read_delay", [0, .4, "cross_second"])
+async def test_fractional_books_with_whole_second_official_time_keep_favorite(env, monkeypatch, p, expected, read_delay):
+    import httpx
+
+    from polymaker.rdp_sm_entry import run_current_market
+
+    v, cfg = configure(env, p=p)
+    v.time = START + 60.65
+    def official_clock(request):
+        if request.url.path == "/time":
+            stamp = int(v.time)
+            duration = stamp + 1.05 - v.time if read_delay == "cross_second" else read_delay
+            v.time += duration
+            v.mono += duration
+            return httpx.Response(200, json=stamp, request=request)
+        return None
+    on_windows(v, lambda *_: None, stop_after=1)
+    with boundary(monkeypatch, v, official_clock):
+        result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
+    assert result.execution_status == "COMPLETED", result.stop_reason
+    submitted = {q["outcome"]: q["size"] for q in result.windows[0]["result"]["requested_quotes"]}
+    assert submitted == expected
+    assert result.windows[0]["sizing"]["favorite_data_validity"] == "VALID"
+
+
+@pytest.mark.parametrize("now_offset,reference_offset,book_offset,reason", [
+    ("0", None, "0", "THRESHOLD_EXCEEDED"),
+    ("0", None, ".001", "BOOK_FROM_FUTURE"),
+    ("0", "0", ".999", "THRESHOLD_EXCEEDED"),
+    ("0", "0", "1", "BOOK_FROM_FUTURE"),
+    (".2", "0", ".85", "THRESHOLD_EXCEEDED"),
+    (".2", "0", "1.2", "BOOK_FROM_FUTURE"),
+    (".2", ".1", ".201", "BOOK_FROM_FUTURE"),
+    (".2", ".1", ".199", "THRESHOLD_EXCEEDED"),
+    ("0", "0", "-10", "THRESHOLD_EXCEEDED"),
+    ("0", "0", "-10.001", "BOOK_STALE"),
+    (".2", ".3", "0", "CLOCK_INVALID"),
+])
+def test_favorite_clock_precision_has_strict_bounds(now_offset, reference_offset, book_offset, reason):
+    meta, _ = _market(Venue().raw, SLUG)
+    origin = D(START + 15)
+    books = book_pair(stamp=origin + D(book_offset))
+    official = None if reference_offset is None else origin + D(reference_offset)
+    e = resolve_favorite_target(meta, books, RDPSMConfig(target_delta=1),
+        now=origin + D(now_offset), official_time=official)
+    assert e["favorite_data_reason"] == reason
+    assert e["favorite_data_validity"] == ("VALID" if reason == "THRESHOLD_EXCEEDED" else "INVALID")
+    assert e["signed_target_delta"] == ("1" if reason == "THRESHOLD_EXCEEDED" else "0")
+
+
+@pytest.mark.parametrize("reference", [D("NaN"), D("Infinity"), D(0), D(-1)])
+def test_favorite_rejects_invalid_official_clock(reference):
+    meta, _ = _market(Venue().raw, SLUG)
+    e = resolve_favorite_target(meta, book_pair(), RDPSMConfig(target_delta=1),
+        now=START + 15, official_time=reference)
+    assert e["favorite_data_reason"] == "CLOCK_INVALID" and e["signed_target_delta"] == "0"
+
+
+@pytest.mark.parametrize("fraction,delay,ahead,valid", [
+    ("0", ".1", "1.099", True), ("0", ".1", "1.1", False),
+    (".1", ".4", ".399", True), (".1", ".4", ".4", False),
+])
+def test_clock_read_duration_bounds_roundtrip_uncertainty(fraction, delay, ahead, valid):
+    meta, _ = _market(Venue().raw, SLUG)
+    now = D(START + 15) + D(fraction)
+    e = resolve_favorite_target(meta, book_pair(stamp=now + D(ahead)), RDPSMConfig(target_delta=1),
+        now=now, official_time=now, official_time_read_duration_s=D(delay))
+    assert e["favorite_data_validity"] == ("VALID" if valid else "INVALID")
+    assert e["favorite_clock_read_duration_s"] == str(D(delay))
+    assert e["signed_target_delta"] == ("1" if valid else "0")
+
+
+@pytest.mark.parametrize("delay", [D(-1), D("NaN"), D("Infinity")])
+def test_clock_read_duration_rejects_invalid_measurement(delay):
+    meta, _ = _market(Venue().raw, SLUG)
+    e = resolve_favorite_target(meta, book_pair(), RDPSMConfig(target_delta=1),
+        now=START + 15, official_time=START + 15, official_time_read_duration_s=delay)
+    assert e["favorite_data_reason"] == "CLOCK_INVALID" and e["signed_target_delta"] == "0"
+
+
+def test_clock_read_duration_requires_bound_official_observation():
+    meta, _ = _market(Venue().raw, SLUG)
+    e = resolve_favorite_target(meta, book_pair(), RDPSMConfig(target_delta=1),
+        now=START + 15, official_time_read_duration_s=D(".1"))
+    assert e["favorite_data_reason"] == "CLOCK_INVALID" and e["signed_target_delta"] == "0"
+
+
+@pytest.mark.parametrize("base", [5, 7])
+@pytest.mark.parametrize("reference", [D("NaN"), D(START + 15)])
+def test_target_zero_ignores_clock_precision_and_keeps_original_skew(base, reference):
+    meta, _ = _market(Venue().raw, SLUG)
+    e = {}
+    _, quotes = make_quotes(meta, book_pair(stamp=D(START + 15) + D(".65")), D(2), D(0), "w",
+        RDPSMConfig(base_size=base, target_delta=0), now=START + 15, official_time=reference, evidence=e)
+    assert {q.outcome: q.size for q in quotes} == {"YES": base, "NO": base + 2}
+    assert e["favorite_data_reason"] == "TARGET_DISABLED"
 
 
 @pytest.mark.parametrize("qty,expected", [(".5", ".5"), ("1", "0"), ("2", "0")])

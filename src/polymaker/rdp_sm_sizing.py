@@ -18,9 +18,13 @@ def validate_market_sizing(cfg: RDPSMConfig, minimum: Decimal) -> None:
         raise ValueError("SIZING_BASE_BELOW_MARKET_MINIMUM")
 
 
-def resolve_favorite_target(meta, books, cfg: RDPSMConfig, *, now=None, max_age=10):
+def resolve_favorite_target(meta, books, cfg: RDPSMConfig, *, now=None, max_age=10, official_time=None,
+                            official_time_read_duration_s=0):
     result = {"favorite_side": "NONE", "favorite_probability": UNKNOWN,
               "favorite_data_validity": "DISABLED" if cfg.target_delta == 0 else "INVALID",
+              "favorite_data_reason": "TARGET_DISABLED" if cfg.target_delta == 0 else "CLOCK_MISSING",
+              "favorite_clock_resolution_s": "0", "favorite_clock_read_duration_s": "0",
+              "favorite_clock_uncertainty_s": "0", "favorite_max_book_ahead_s": "0",
               "signed_target_delta": "0"}
     if cfg.target_delta == 0:
         return result
@@ -29,30 +33,68 @@ def resolve_favorite_target(meta, books, cfg: RDPSMConfig, *, now=None, max_age=
 
         if now is None:
             return result
+        clock, age_limit = Decimal(str(now)), Decimal(str(max_age))
+        read_duration = Decimal(str(official_time_read_duration_s))
+        result["favorite_data_reason"] = "CLOCK_INVALID"
+        if (not clock.is_finite() or clock <= 0 or not age_limit.is_finite() or age_limit <= 0
+                or not read_duration.is_finite() or read_duration < 0
+                or official_time is None and read_duration != 0):
+            return result
+        resolution = Decimal(0)
+        if official_time is not None:
+            reference = Decimal(str(official_time))
+            if not reference.is_finite() or not 0 < reference <= clock:
+                return result
+            # /time may expose whole seconds while /book has milliseconds.
+            # [reference, reference+1) is that official observation's precision
+            # interval. Its read duration bounds time spent receiving that
+            # observation; monotonic time since receipt is included in now.
+            # Without coarse-clock/read evidence the zero-lookahead rule stays.
+            if reference == reference.to_integral_value():
+                resolution = Decimal(1)
+        result["favorite_clock_resolution_s"] = str(resolution)
+        result["favorite_clock_read_duration_s"] = str(read_duration)
+        uncertainty = resolution + read_duration
+        result["favorite_clock_uncertainty_s"] = str(uncertainty)
         mids, stamps = [], []
         for token in (meta.yes.token_id, meta.no.token_id):
             b = books[token]
             bid, ask, tick, stamp = (Decimal(str(b[k])) for k in
                                      ("best_bid", "best_ask", "tick", "timestamp"))
-            if (b.get("token_id") != token or b.get("market_id") != meta.condition_id
-                    or not all(v.is_finite() for v in (bid, ask, tick, stamp))
-                    or f"{float(tick):g}" not in ROUNDING_CONFIG
-                    or not 0 < bid < ask < 1 or bid % tick or ask % tick
-                    or not 0 <= Decimal(str(now)) - stamp <= Decimal(str(max_age))):
+            if b.get("token_id") != token or b.get("market_id") != meta.condition_id:
+                result["favorite_data_reason"] = "BOOK_IDENTITY_INVALID"
+                return result
+            if not all(v.is_finite() for v in (bid, ask, tick, stamp)) or not 0 < bid < ask < 1:
+                result["favorite_data_reason"] = "BOOK_PRICE_OR_TIMESTAMP_INVALID"
+                return result
+            if f"{float(tick):g}" not in ROUNDING_CONFIG or bid % tick or ask % tick:
+                result["favorite_data_reason"] = "BOOK_TICK_INVALID"
+                return result
+            age = clock - stamp
+            result["favorite_max_book_ahead_s"] = str(max(
+                Decimal(result["favorite_max_book_ahead_s"]), -age, Decimal(0)))
+            if age < 0 and -age >= uncertainty:
+                result["favorite_data_reason"] = "BOOK_FROM_FUTURE"
+                return result
+            if age > age_limit:
+                result["favorite_data_reason"] = "BOOK_STALE"
                 return result
             mids.append((bid + ask) / 2)
             stamps.append(stamp)
-        # Same Decimal midpoint/crosscheck primitive as RDP-RISK research, with
-        # both sides mandatory. No Observer or last-good-price cache is used.
-        if abs(stamps[0] - stamps[1]) > 1 or abs(mids[0] + mids[1] - 1) > Decimal(".02"):
+        if abs(stamps[0] - stamps[1]) > 1:
+            result["favorite_data_reason"] = "BOOK_PAIR_TIME_GAP"
+            return result
+        if abs(mids[0] + mids[1] - 1) > Decimal(".02"):
+            result["favorite_data_reason"] = "BOOK_PROBABILITY_INCONSISTENT"
             return result
         p = mids[0]
         side = "YES" if p > cfg.favorite_threshold else "NO" if 1 - p > cfg.favorite_threshold else "NONE"
         result.update(favorite_side=side, favorite_probability=str(max(p, 1 - p)),
                       favorite_data_validity="VALID",
+                      favorite_data_reason="THRESHOLD_EXCEEDED" if side != "NONE" else "THRESHOLD_NOT_EXCEEDED",
                       signed_target_delta=str(cfg.target_delta * (1 if side == "YES" else -1 if side == "NO" else 0)))
     except (KeyError, TypeError, ValueError, ArithmeticError):
-        pass
+        result["favorite_data_reason"] = "MALFORMED_BOOK_OR_CLOCK"
     return result
 
 

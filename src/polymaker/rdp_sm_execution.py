@@ -583,6 +583,7 @@ class SMWindowExecutor:
         self.lock = asyncio.Lock()
         self.closed = False
         self.official_time = 0.0
+        self.official_time_read_duration_s = 0.0
         self.time_anchor = self.monotonic()
         self.meta = None
         self._cancel_jobs: dict[frozenset[str], asyncio.Task] = {}
@@ -900,8 +901,10 @@ class SMWindowExecutor:
             raise InventoryMismatch(context)
         self.inventory_mismatch = None
         _require(client._ClobClient__resolve_version() == 2, "M2_ORDER_VERSION_UNSUPPORTED")
+        clock_read_started = self.monotonic()
         now = await self.reads.server_time()
         self.official_time, self.time_anchor = now, self.monotonic()
+        self.official_time_read_duration_s = self.time_anchor - clock_read_started
         # No order reconciliation, account or market requests after these books.
         books = await self._read_books(meta) if include_books else {}
         if books:
@@ -1315,6 +1318,8 @@ class SMWindowExecutor:
                    for token in (meta.yes.token_id, meta.no.token_id))
         return make_quotes(meta, books, yes, no, window_id, self.cfg.rdp_sm,
             now=self.official_time + self.monotonic() - self.time_anchor,
+            official_time=self.official_time,
+            official_time_read_duration_s=self.official_time_read_duration_s,
             max_age=self.cfg.risk.ws_stale_halt_s, evidence=evidence)[1]
 
     async def execute_window(

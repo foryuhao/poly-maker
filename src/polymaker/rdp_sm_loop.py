@@ -57,12 +57,14 @@ class QuoteUnavailable(ValueError):
 
 
 def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str,
-                sizing: RDPSMConfig | None = None, *, now=None, max_age=10, evidence=None):
+                sizing: RDPSMConfig | None = None, *, now=None, max_age=10, evidence=None, official_time=None,
+                official_time_read_duration_s=0):
     cfg = sizing if sizing is not None else RDPSMConfig()
     validate_market_sizing(cfg, Decimal(str(meta.min_order_size)))
     delta = yes - no
     state = inventory_trading_state(delta)
-    favorite = resolve_favorite_target(meta, books, cfg, now=now, max_age=max_age)
+    favorite = resolve_favorite_target(meta, books, cfg, now=now, max_age=max_age, official_time=official_time,
+                                       official_time_read_duration_s=official_time_read_duration_s)
     target = Decimal(favorite["signed_target_delta"])
     details = {"base_size": str(cfg.base_size), "configured_target_delta": str(cfg.target_delta),
                "favorite_threshold": str(cfg.favorite_threshold), **favorite,
@@ -424,6 +426,8 @@ class SMTradingLoop:
                 sizing_evidence = {}
                 state, quotes = make_quotes(meta, books, yes, no, window_id, self.cfg.rdp_sm,
                     now=executor.official_time + executor.monotonic() - executor.time_anchor,
+                    official_time=executor.official_time,
+                    official_time_read_duration_s=executor.official_time_read_duration_s,
                     max_age=self.cfg.risk.ws_stale_halt_s, evidence=sizing_evidence)
                 for quote in quotes:
                     executor._validate(quote, window_id, books, meta)
@@ -455,6 +459,8 @@ class SMTradingLoop:
                 fresh_state, fresh = make_quotes(fresh_meta, fresh_books, yes, no, fresh_window_id,
                     self.cfg.rdp_sm,
                     now=executor.official_time + executor.monotonic() - executor.time_anchor,
+                    official_time=executor.official_time,
+                    official_time_read_duration_s=executor.official_time_read_duration_s,
                     max_age=self.cfg.risk.ws_stale_halt_s, evidence=sizing_evidence)
                 _require(fresh_state == state, "STRATEGY_STATE_CHANGED")
                 return fresh

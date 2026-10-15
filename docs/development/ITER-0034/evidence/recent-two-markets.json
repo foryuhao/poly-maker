@@ -1,0 +1,351 @@
+{
+  "scope": "Two completed Session files identified when user request arrived",
+  "live_queries_executed": false,
+  "real_logs_modified": false,
+  "replay_note": "Clock input is floor of recorded wall timestamp, an offline whole-second precision model; actual sizing clock was not persisted and is not reconstructed.",
+  "markets": [
+    {
+      "session_id": "c61688a846204e5b9a8f5717ee48f85c",
+      "market_slug": "btc-updown-5m-1792050300",
+      "market_start_local": "2026-10-15T15:45:00+08:00",
+      "source_path": "/home/ubuntu/poly-maker/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c61688a846204e5b9a8f5717ee48f85c.jsonl",
+      "sha256": "e385dca0accfe64c123af09fa66654d7f48dadaed0d645e02373d0c6800c50cd",
+      "source_bytes_unchanged_during_read": true,
+      "configured_target_values": [
+        "1"
+      ],
+      "initial_decisions": 13,
+      "initial_validity_counts": {
+        "INVALID": 13
+      },
+      "final_quote_decisions": 13,
+      "recorded_final_validity_counts": {
+        "INVALID": 12,
+        "VALID": 1
+      },
+      "final_actual_delta": 7.0,
+      "final_target_delta": 0.0,
+      "nonzero_target_orders": [
+        {
+          "window": "w5",
+          "signed_target": "-1",
+          "submitted": [
+            {
+              "outcome": "NO",
+              "size": 8.0,
+              "price": 0.86,
+              "outcome_status": "ACK"
+            }
+          ],
+          "confirmed_fill_shares": "0"
+        }
+      ],
+      "offline_snapshot_replay": [
+        {
+          "window": "w1",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.245",
+          "mid_no": "0.755",
+          "offline_clock_model": 1792050357,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w2",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.365",
+          "mid_no": "0.585",
+          "offline_clock_model": 1792050363,
+          "replayed_reason": "BOOK_PROBABILITY_INCONSISTENT",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w3",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.515",
+          "mid_no": "0.475",
+          "offline_clock_model": 1792050370,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w4",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.285",
+          "mid_no": "0.715",
+          "offline_clock_model": 1792050387,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w5",
+          "recorded_validity": "VALID",
+          "recorded_signed_target": "-1",
+          "mid_yes": "0.135",
+          "mid_no": "0.865",
+          "offline_clock_model": 1792050403,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w6",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.105",
+          "mid_no": "0.895",
+          "offline_clock_model": 1792050416,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w7",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.145",
+          "mid_no": "0.865",
+          "offline_clock_model": 1792050429,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w8",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.075",
+          "mid_no": "0.925",
+          "offline_clock_model": 1792050442,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w9",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.045",
+          "mid_no": "0.945",
+          "offline_clock_model": 1792050456,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w10",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.065",
+          "mid_no": "0.945",
+          "offline_clock_model": 1792050468,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w11",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.035",
+          "mid_no": "0.965",
+          "offline_clock_model": 1792050482,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w12",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.025",
+          "mid_no": "0.965",
+          "offline_clock_model": 1792050497,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w13",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.015",
+          "mid_no": "0.985",
+          "offline_clock_model": 1792050509,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        }
+      ]
+    },
+    {
+      "session_id": "a704dbf74aac40b78a77a8d578c378b2",
+      "market_slug": "btc-updown-5m-1792050600",
+      "market_start_local": "2026-10-15T15:50:00+08:00",
+      "source_path": "/home/ubuntu/poly-maker/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a704dbf74aac40b78a77a8d578c378b2.jsonl",
+      "sha256": "329202f3487d8bb62376a565398c5faa2359ab1dab2bad1007c42374f520de31",
+      "source_bytes_unchanged_during_read": true,
+      "configured_target_values": [
+        "1"
+      ],
+      "initial_decisions": 15,
+      "initial_validity_counts": {
+        "INVALID": 15
+      },
+      "final_quote_decisions": 15,
+      "recorded_final_validity_counts": {
+        "INVALID": 15
+      },
+      "final_actual_delta": 0.0,
+      "final_target_delta": 0.0,
+      "nonzero_target_orders": [],
+      "offline_snapshot_replay": [
+        {
+          "window": "w1",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.365",
+          "mid_no": "0.635",
+          "offline_clock_model": 1792050624,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w2",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.445",
+          "mid_no": "0.555",
+          "offline_clock_model": 1792050633,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w3",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.395",
+          "mid_no": "0.605",
+          "offline_clock_model": 1792050648,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w4",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.385",
+          "mid_no": "0.615",
+          "offline_clock_model": 1792050658,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w5",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.405",
+          "mid_no": "0.585",
+          "offline_clock_model": 1792050670,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w6",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.535",
+          "mid_no": "0.465",
+          "offline_clock_model": 1792050681,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w7",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.375",
+          "mid_no": "0.565",
+          "offline_clock_model": 1792050700,
+          "replayed_reason": "BOOK_PROBABILITY_INCONSISTENT",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w8",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.315",
+          "mid_no": "0.695",
+          "offline_clock_model": 1792050722,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w9",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.295",
+          "mid_no": "0.705",
+          "offline_clock_model": 1792050733,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "-1"
+        },
+        {
+          "window": "w10",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.535",
+          "mid_no": "0.465",
+          "offline_clock_model": 1792050747,
+          "replayed_reason": "THRESHOLD_NOT_EXCEEDED",
+          "replayed_signed_target": "0"
+        },
+        {
+          "window": "w11",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.795",
+          "mid_no": "0.225",
+          "offline_clock_model": 1792050762,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "1"
+        },
+        {
+          "window": "w12",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.885",
+          "mid_no": "0.115",
+          "offline_clock_model": 1792050774,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "1"
+        },
+        {
+          "window": "w13",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.895",
+          "mid_no": "0.095",
+          "offline_clock_model": 1792050789,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "1"
+        },
+        {
+          "window": "w14",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.965",
+          "mid_no": "0.035",
+          "offline_clock_model": 1792050805,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "1"
+        },
+        {
+          "window": "w15",
+          "recorded_validity": "INVALID",
+          "recorded_signed_target": "0",
+          "mid_yes": "0.975",
+          "mid_no": "0.025",
+          "offline_clock_model": 1792050822,
+          "replayed_reason": "THRESHOLD_EXCEEDED",
+          "replayed_signed_target": "1"
+        }
+      ]
+    }
+  ]
+}

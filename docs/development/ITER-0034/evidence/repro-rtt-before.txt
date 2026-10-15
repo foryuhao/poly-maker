@@ -1,0 +1,55 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_fractional_books_with_whole_second_official_time_keep_favorite[cross_second-.75-expected0] _
+/home/ubuntu/poly-maker/tests/test_rdp_sm_sizing.py:414: in test_fractional_books_with_whole_second_official_time_keep_favorite
+    assert submitted == expected
+E   AssertionError: assert {'YES': 7.0, 'NO': 7.0} == {'YES': 7, 'NO': 6}
+E
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'NO': 7.0} != {'NO': 6}
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-15 16:08:49 [info     ] owned_order_registered         order_id=o-1 source=rdp_sm token=1
+2026-10-15 16:08:49 [info     ] owned_order_registered         order_id=o-2 source=rdp_sm token=2
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-1
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-1 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-1 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-2
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-2 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-2 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-1
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-1 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-1 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-2
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-2 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-2 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+_ test_fractional_books_with_whole_second_official_time_keep_favorite[cross_second-.25-expected1] _
+/home/ubuntu/poly-maker/tests/test_rdp_sm_sizing.py:414: in test_fractional_books_with_whole_second_official_time_keep_favorite
+    assert submitted == expected
+E   AssertionError: assert {'YES': 7.0, 'NO': 7.0} == {'YES': 6, 'NO': 7}
+E
+E     Omitting 1 identical items, use -vv to show
+E     Differing items:
+E     {'YES': 7.0} != {'YES': 6}
+E     Use -v to get more diff
+----------------------------- Captured stdout call -----------------------------
+2026-10-15 16:08:49 [info     ] owned_order_registered         order_id=o-1 source=rdp_sm token=1
+2026-10-15 16:08:49 [info     ] owned_order_registered         order_id=o-2 source=rdp_sm token=2
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-1
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-1 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-1 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-2
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-2 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-2 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-1
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-1 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-1 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_reconcile_started        order_id=o-2
+2026-10-15 16:08:49 [info     ] order_reconcile_complete       order_id=o-2 tracked_qty=0.0 venue_qty=0.0
+2026-10-15 16:08:49 [info     ] order_match_checksum           order_id=o-2 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+=========================== short test summary info ============================
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_sizing.py::test_fractional_books_with_whole_second_official_time_keep_favorite[cross_second-.75-expected0]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_sizing.py::test_fractional_books_with_whole_second_official_time_keep_favorite[cross_second-.25-expected1]
+2 failed, 155 deselected in 1.48s
+M0 offline guard: 0 network/DNS attempts; workspace credentials denied

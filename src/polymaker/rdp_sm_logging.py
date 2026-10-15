@@ -364,6 +364,7 @@ class HumanRunLog:
                         s = p["sizing"]
                         lines.append(f"Sizing: Base={s['base_size']} Target={s['configured_target_delta']} "
                                      f"Favorite={s['favorite_side']} Validity={s['favorite_data_validity']} "
+                                     f"Reason={s.get('favorite_data_reason', 'UNKNOWN')} "
                                      f"SignedTarget={s['signed_target_delta']} ActualDelta={s['actual_delta_before']} "
                                      f"YES={s['planned_yes_size']} NO={s['planned_no_size']} "
                                      f"Constraints={s['sizing_constraint_reason']}")

@@ -1,0 +1,79 @@
+{
+  "iteration_id": "ITER-0034",
+  "related_task": "RDP-SIZE-001",
+  "branch": "rdp-size-001",
+  "base_commit": "2dd77dabd002fbd71fb34634f7f13ff6653039d4",
+  "fix_implementation": "COMPLETE",
+  "original_full_test_acceptance": "BLOCKED_BASELINE_13_FAILURES",
+  "full_suite": {
+    "passed": 1580,
+    "failed": 13,
+    "skipped": 2,
+    "runtime_s": 112.98
+  },
+  "sizing_suite": {
+    "passed": 165,
+    "failed": 0,
+    "runtime_s": 5.39,
+    "new_tests": 36
+  },
+  "failure_set_exactly_matches_base": true,
+  "existing_failed_tests": [
+    "test_config_aliases.py::test_cli_conflict_stops_before_settlement_preflight",
+    "test_rdp_sm_cli_logging.py::test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MATCHED]",
+    "test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MINED]",
+    "test_rdp_sm_cli_logging.py::test_l09_secrets_are_redacted_and_raw_responses_not_rendered",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--json-only]",
+    "test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--http-info]",
+    "test_rdp_sm_entry.py::test_r11_r12_full_cli_single_market_and_exit",
+    "test_rdp_sm_inventory_wait.py::test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[decision]",
+    "test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[admission]",
+    "test_risk_shadow.py::test_baseline_01_and_protected_sources_identical",
+    "test_risk_shadow_cli.py::test_execution_strategy_and_entry_control_flow_preserved"
+  ],
+  "reproduced_before_fix": {
+    "whole_seconds_vs_milliseconds_failed": 2,
+    "response_crossing_second_failed": 2
+  },
+  "ruff": "PASS",
+  "compile": "PASS",
+  "git_diff_check": "PASS",
+  "ast_checks": {
+    "M2_equal_after_removing_only_sizing_clock_metadata": true,
+    "M3_equal_after_removing_only_sizing_clock_arguments": true,
+    "make_quotes_equal_after_removing_only_clock_arguments": true,
+    "other_sizing_functions_unchanged": true
+  },
+  "protected_sources_unchanged": [
+    "rdp_sm.py",
+    "rdp_sm_entry.py",
+    "rdp_sm_merge.py",
+    "execution/gateway.py",
+    "state/tracker.py",
+    "config.py"
+  ],
+  "timing_pricing_state_capital_and_own_session_safety_unchanged": true,
+  "new_http_requests_per_decision": 0,
+  "new_waits": 0,
+  "new_config_parameters": 0,
+  "target_zero_parity": "PASS",
+  "strict_future_check_without_clock_uncertainty": "PASS",
+  "uncertainty_boundary_is_strict": "PASS",
+  "stale_limit_not_increased": "PASS",
+  "session_independence_preserved": true,
+  "architect_used": false,
+  "reviewer_used": false,
+  "reason": "User requested no Architect/Reviewer",
+  "network_dns_attempts": 0,
+  "workspace_credentials_accessed": false,
+  "actual_market_inputs": "Two completed journals read locally; hashes/byte checks in recent-two-markets.json",
+  "real_account_requests_executed": false,
+  "real_journals_modified": false,
+  "real_trades_submitted": 0,
+  "real_merge_or_rpc_executed": false,
+  "micro_live_executed": false,
+  "production_config_edits": "Existing target_delta=1 kept in both directories; not included in fix commit",
+  "live_verification_after_fix": "NOT_EXECUTED"
+}
