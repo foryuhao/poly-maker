@@ -31,6 +31,9 @@ rate_budget_fraction = 0.15
 post_only = true
 max_orders_per_batch = 15
 
+[rdp_sm]
+matched_remaining_tolerance_shares = 0.1
+
 [paths]
 db = "livecfg/state.db"
 journal_dir = "livecfg/journal"

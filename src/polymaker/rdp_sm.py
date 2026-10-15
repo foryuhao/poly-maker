@@ -12,7 +12,7 @@ import re
 import time
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
 from time import monotonic
 from typing import Any
@@ -34,13 +34,19 @@ from polymaker.userstream.parse import strict_number
 
 TEST_CAPITAL_LIMIT_USDC = 20.0
 TRADING_START_S = 15
-NORMAL_END_S = 180
+NORMAL_END_S = 120
 TRADING_END_S = PERIOD_S
 OFFICIAL_HOSTS = {
     "clob_host": "https://clob.polymarket.com",
     "gamma_host": "https://gamma-api.polymarket.com",
     "data_api_host": "https://data-api.polymarket.com",
 }
+
+
+def inventory_trading_state(delta: Decimal | float) -> str:
+    """Round the inventory gap half up to whole shares only for state selection."""
+    gap = abs(Decimal(str(delta))).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return "NORMAL" if gap < 5 else "REBALANCE"
 
 
 class SessionStatus(str, Enum):
@@ -519,7 +525,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check(
                 "trading_window",
                 "PASS" if window else "REJECTED",
-                "15 <= elapsed < 300; NORMAL stops at 180; M2 rechecks phase before POST",
+                f"15 <= elapsed < 300; NORMAL stops at {NORMAL_END_S}; M2 rechecks phase before POST",
             )
         )
         result.status = (

@@ -148,7 +148,7 @@ async def test_m3_15_full_market_type2_real_execution_timeline(env):
     assert states[:4] == ["NORMAL", "REBALANCE", "NORMAL", "NORMAL"]
     assert result.windows[0]["elapsed_s"] == 15 and result.stop_elapsed_s == 300
     assert (
-        result.total_windows == 55 and result.normal_windows == 54 and result.rebalance_windows == 1
+        result.total_windows == 35 and result.normal_windows == 34 and result.rebalance_windows == 1
     )
     assert result.active_cycles == 3 and result.confirmed_fills == 3
     assert result.confirmed_yes == result.confirmed_no == result.completed_pairs == 5
@@ -160,9 +160,9 @@ async def test_m3_15_full_market_type2_real_execution_timeline(env):
     fills = result.windows[-1]["result"]["confirmed_fills"]
     assert sum(f["price"] * f["size"] for f in fills if f["token_id"] == "1") / 5 == .48
     assert sum(f["price"] * f["size"] for f in fills if f["token_id"] == "2") / 5 == pytest.approx(.4796)
-    assert min(v.post_times) == 15 and max(v.post_times) == 177
-    assert all(15 <= stamp < 180 for stamp in v.post_times)
-    assert len(v.posts) == 109 and all(row["status"] == "CANCELED" for row in v.rows.values())
+    assert min(v.post_times) == 15 and max(v.post_times) == 117
+    assert all(15 <= stamp < 120 for stamp in v.post_times)
+    assert len(v.posts) == 69 and all(row["status"] == "CANCELED" for row in v.rows.values())
     assert result.live_authority == "NOT_VERIFIED_FOR_LIVE"
     for post in v.posts:
         assert post[0]["order"]["maker"] == safe
@@ -318,7 +318,7 @@ async def test_normal_pair_cost_over_one_is_allowed(env):
 
 async def test_invalid_price_is_skipped_and_fractional_rebalance_size_is_rounded(env):
     v, _ = env
-    v.time = START + 170
+    v.time = START + 110
     v.books["1"]["bids"][0]["price"] = ".01"
     result = await runner(env).run(offline=True)
     assert result.skipped_quotes and not v.posts and result.total_windows == 0

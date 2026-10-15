@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,13 @@ class ExecutionConfig(BaseModel):
     rate_budget_fraction: float = 0.25
     post_only: bool = True
     max_orders_per_batch: int = 15
+
+
+class RDPSMConfig(BaseModel):
+    matched_remaining_tolerance_shares: Decimal = Field(
+        default=Decimal("0.1"), ge=0, allow_inf_nan=False,
+        description="Inclusive remaining-share tolerance for MATCHED orders only",
+    )
 
 
 class PathsConfig(BaseModel):
@@ -248,6 +256,7 @@ class Config(BaseModel):
     engine: EngineConfig = EngineConfig()
     risk: RiskConfig = RiskConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    rdp_sm: RDPSMConfig = Field(default_factory=RDPSMConfig)
     paths: PathsConfig = PathsConfig()
     profiles: dict[str, StrategyProfile] = {}
     markets: list[MarketEntry] = []
@@ -291,6 +300,7 @@ class Config(BaseModel):
             engine=EngineConfig(**main.get("engine", {})),
             risk=RiskConfig(**main.get("risk", {})),
             execution=ExecutionConfig(**main.get("execution", {})),
+            rdp_sm=RDPSMConfig(**main.get("rdp_sm", {})),
             paths=PathsConfig(**main.get("paths", {})),
             profiles=profiles,
             markets=markets,

@@ -132,7 +132,7 @@ async def test_h01_conflicting_snapshot_economics_fail_closed(env, monkeypatch):
 @pytest.mark.parametrize("pages", [1, 6])
 async def test_h02_optional_slow_reads_never_precede_deadline_cancellation(env, monkeypatch, pages):
     v, executor = await open_executor(env)
-    v.time = START + 170
+    v.time = START + 110
     original = v.response
     active_reads = []
     events = []
@@ -180,7 +180,7 @@ async def test_h02_optional_slow_reads_never_precede_deadline_cancellation(env, 
     assert not active_reads
     assert events[0] == ("CANCEL", 3.0) and any(x[0] == "TRADES" for x in events)
     assert result.fill_deadline_monotonic == 3
-    assert v.time == START + 173 + (5 if pages == 1 else 24)
+    assert v.time == START + 113 + (5 if pages == 1 else 24)
     assert result.yes_inventory == result.no_inventory == 0
     assert len(v.posts) == 1 and result.close_barrier == "SAFE_TO_CONTINUE"
 

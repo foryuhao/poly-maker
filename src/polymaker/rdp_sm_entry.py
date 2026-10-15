@@ -242,7 +242,7 @@ class AccountRiskPolicy:
         return reserved
 
 
-async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None):
+async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):
     """Retry read failures within one pinned market; never select a next market."""
     sleep = asyncio.sleep if sleep is None else sleep
     monotonic = time.monotonic if monotonic is None else monotonic
@@ -271,6 +271,17 @@ async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None):
                         "reason": reason_code(exc), "context": getattr(exc, "context", None),
                         "elapsed_s": 300 - (deadline - monotonic()) if deadline is not None else None})
                 await sleep(min(2, max(0, deadline - monotonic())) if deadline is not None else 2)
+        if shadow_mode:
+            # Independent read-only process; no executor/Gateway capability is handed off.
+            try:
+                from polymaker.risk_shadow_launch import launch_shadow
+
+                launch_shadow(cfg, meta, session)
+            except Exception as exc:
+                import logging
+
+                logging.getLogger("polymaker.risk_shadow").error(
+                    "SHADOW_ERROR launch=%s session=%s", type(exc).__name__, session)
         # Pin discovery to this market while waiting; never select the next one.
         clock = ReadOnlyClobClient(host=cfg.wallet.clob_host, chain_id=137)
         if now - start < TRADING_START_S and observer is not None:

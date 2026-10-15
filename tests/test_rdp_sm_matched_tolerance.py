@@ -1,9 +1,11 @@
-"""MATCHED remainder <=0.01 shares; actual fills and unresolved lifecycle stay intact."""
+"""Configurable MATCHED remainder; actual fills and unresolved lifecycle stay intact."""
 
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
+from polymaker.config import Config, RDPSMConfig
 from polymaker.rdp_sm_entry import run_current_market
 from polymaker.rdp_sm_execution import _terminal
 from polymaker.userstream.parse import normalize_order
@@ -26,15 +28,58 @@ def cancel_rows(venue):
 @pytest.mark.parametrize("status,matched,terminal", [
     ("MATCHED", "5", True), ("MATCHED", "4.99410", True),
     ("MATCHED", "4.99001", True), ("MATCHED", "4.99", True),
-    ("MATCHED", "4.98999", False), ("MATCHED", "4.9841", False), ("MATCHED", "4", False),
+    ("MATCHED", "4.98999", True), ("MATCHED", "4.9841", True),
+    ("MATCHED", "4.9", True), ("MATCHED", "4.899999", False), ("MATCHED", "4", False),
     ("LIVE", "4.99410", False), ("UNKNOWN", "4.99410", False),
     ("CANCELED", "0", True),
 ])
-def test_terminal_uses_inclusive_point_zero_one(status, matched, terminal):
+def test_terminal_uses_inclusive_point_one(status, matched, terminal):
     row = {"id": "test", "asset_id": "1", "market": CID, "side": "BUY",
            "price": ".49", "original_size": "5", "size_matched": matched,
            "status": status, "associate_trades": []}
     assert _terminal(normalize_order(row)) is terminal
+
+
+def test_matched_tolerance_loads_from_toml(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        "[rdp_sm]\nmatched_remaining_tolerance_shares = 0.025\n")
+    assert Config.load(tmp_path, load_env=False).rdp_sm.matched_remaining_tolerance_shares == Decimal(".025")
+    assert RDPSMConfig().matched_remaining_tolerance_shares == Decimal(".1")
+
+
+@pytest.mark.parametrize("value", ["-0.1", "NaN", "Infinity", "-Infinity"])
+def test_matched_tolerance_rejects_negative_or_nonfinite(value):
+    with pytest.raises(ValidationError):
+        RDPSMConfig(matched_remaining_tolerance_shares=value)
+
+
+@pytest.mark.parametrize("tolerance,allowed", [(".01", False), (".1", True)])
+async def test_live_5_01_order_4_996924_fill_uses_configured_tolerance(env, tolerance, allowed):
+    v, cfg = env
+    cfg.rdp_sm.matched_remaining_tolerance_shares = Decimal(tolerance)
+    v, executor = await open_executor(env)
+    v.cancel_terminal = False
+
+    def cancel(venue):
+        cancel_rows(venue)
+        venue.fill("o-1", "observed-live-remainder", 4.996924)
+        venue.rows["o-1"]["status"] = "MATCHED"
+
+    v.on_cancel = cancel
+    result = await executor.execute_window("w1", quotes(size=5.01))
+    assert result.close_barrier == ("SAFE_TO_CONTINUE" if allowed else "BLOCKED")
+    assert result.yes_inventory == 4.996924 and result.no_inventory == 0
+    assert executor.processor.quantity_tolerance == executor.processor.price_tolerance == Decimal(".01")
+    if allowed:
+        assert result.capital_committed == pytest.approx(4.996924 * .49)
+        assert executor.safe_to_continue
+        # A later LIVE observation still invalidates the accepted terminal proof.
+        v.rows["o-1"]["status"] = "LIVE"
+        assert not await executor.verify_close()
+        assert executor.fatal == "TERMINAL_LIVE_CONTRADICTION"
+    else:
+        assert "ORDER_NOT_TERMINAL" in result.block_reason
+        assert result.capital_committed == pytest.approx(5.01 * .49)
 
 
 async def test_dust_matched_waits_for_confirmed_without_inventing_remaining_fill(env):
@@ -73,7 +118,7 @@ async def test_tolerance_cannot_bypass_terminal_or_trade_evidence(env, fault):
     v.cancel_terminal = False
     def cancel(venue):
         cancel_rows(venue)
-        venue.fill("o-1", "observed", 4.98999 if fault == "boundary" else
+        venue.fill("o-1", "observed", 4.899999 if fault == "boundary" else
                    4.98 if fault == "fill_mismatch" else 4.9941)
         venue.rows["o-1"]["status"] = "LIVE" if fault == "live" else "MATCHED"
         if fault == "missing_trade":

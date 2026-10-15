@@ -45,6 +45,10 @@ rate_budget_fraction = 0.25     # fraction of documented API limits we allow
 post_only = true                # every quote is post-only (maker-only mandate)
 max_orders_per_batch = 15       # exchange batch cap
 
+[rdp_sm]
+# MATCHED order remaining shares; price/inventory tolerances are separate.
+matched_remaining_tolerance_shares = 0.1
+
 [paths]
 db = "state.db"
 journal_dir = "journal"

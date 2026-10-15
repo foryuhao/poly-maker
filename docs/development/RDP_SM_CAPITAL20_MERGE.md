@@ -22,9 +22,11 @@ more shares to meet the existing 1 USDC rule.
 
 M3 planning, M2's final quote refresh and late-market REBALANCE admission all use
 the same size calculation. M2 rechecks capital against the actual rounded
-order. The NORMAL/REBALANCE state boundary still uses the exact confirmed Delta;
-rounding applies only to new order quantities, never to recorded fills or
-inventory. Buying 5.01 against a 5.003207 gap leaves an actual opposite residual
+order. The NORMAL/REBALANCE state boundary rounds the confirmed Delta to whole
+shares using half-up rounding before comparing its absolute value with 5.
+An absolute gap of 4.5 or 4.994407 therefore enters REBALANCE. Recorded fills,
+inventory and the gap used to size new orders retain their original precision.
+Buying 5.01 against a 5.003207 gap leaves an actual opposite residual
 of 0.006793 shares, which is retained in inventory and reported.
 
 This addresses the quantity rejection in the 22:00 market. The independent
@@ -40,10 +42,11 @@ markets. Subsequent confirmed pairs can be merged again, with each transaction
 tracked separately. Equal quantities are removed from both sides, so Delta and
 the inventory-deficient side remain unchanged.
 
-The trading schedule stays: wait until T=15; NORMAL and REBALANCE until T=180;
+The current trading schedule is: wait until T=15; NORMAL and REBALANCE until T=120;
 only REBALANCE until T=300; no new BUY at or after T=300. NORMAL still waits for
 market end. The final safe close also checks for remaining confirmed pairs.
 Transaction confirmation and closing can extend beyond the market end.
+The NORMAL cutoff was moved from T=180 to T=120 by user instruction on 2026-10-15.
 
 The library's explicit offline-only `SMTradingLoop.run(offline=True)` does not
 automatically Merge: its HTTP mock guard covers CLOB/Gamma rather than the
@@ -85,13 +88,28 @@ Display callback failures cannot interrupt transaction accounting.
 
 ## Inventory discrepancy policy
 
-RDP uses one inclusive **0.01** numeric tolerance: quantities are measured in
+RDP uses an inclusive **0.01** numeric tolerance: quantities are measured in
 shares and prices in USDC/share. This covers Tracker fill admission/replay,
 order metadata and cumulative fill reconciliation, M2 final fill proofs,
-remaining quantity on MATCHED orders, Data API inventory differences and
+Data API inventory differences and
 historical Merge fill-price validation. Decimal comparisons include the exact
 boundary. RDP's processor supplies these tolerances to shared FillTruth;
 other strategies retain their original default precision.
+
+MATCHED order remaining quantity has a separate inclusive tolerance, default
+**0.1 share**, configurable in the selected config directory's `config.toml`:
+
+```toml
+[rdp_sm]
+matched_remaining_tolerance_shares = 0.1
+```
+
+The value must be finite and nonnegative. It is loaded at process startup and
+captured by each executor. For the observed `5.01` order with `4.996924` matched,
+the `0.013076` remainder now passes the terminal-quantity check. Complete trade
+evidence and CONFIRMED fills are still required; LIVE orders remain blocked.
+Price, cumulative-fill and Data API inventory tolerances remain **0.01**.
+Actual fills are preserved, and SDK order-size precision remains **0.01 share**.
 
 The observed 22:30 small maker fill (`0.165406 @ 0.6300013300605782` against a
 `0.63` limit) previously exceeded the Tracker's `1e-6` price check and remained

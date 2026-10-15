@@ -56,8 +56,8 @@ def test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary(env, monkeypatch
     human = output.stderr
     (tmp_path / "human-cli-example.txt").write_text(human, encoding="utf-8")
     for text in ("Local Timestamp:", "BTC Up/Down 5m Market", SLUG, "Market Elapsed Seconds: 15",
-                 "Trading Window: NORMAL 15 <= T < 180s | REBALANCE 15 <= T < 300s",
-                 "Completion: T >= 300s | NORMAL waits for market end after T >= 180s",
+                 "Trading Window: NORMAL 15 <= T < 120s | REBALANCE 15 <= T < 300s",
+                 "Completion: T >= 300s | NORMAL waits for market end after T >= 120s",
                  "Remaining Trading Time: 285s",
                  "Available Capital: 100 USDC", "Preflight Status: SESSION_READY",
                  "Window 1 (closed)", "Trading State: NORMAL", "YES / UP Decision Book:",

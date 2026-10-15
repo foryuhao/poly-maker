@@ -378,7 +378,7 @@ async def test_e09_confirmed_cost_counts_in_later_window_cap(env):
     assert executor.committed() >= Decimal("9.8")
 
 
-@pytest.mark.parametrize("elapsed", [14, 180, 222, 239, 240, 260, 300])
+@pytest.mark.parametrize("elapsed", [14, 120, 150, 180, 222, 239, 240, 260, 300])
 async def test_e10_cutoff_has_no_new_posts(env, elapsed):
     v, executor = await open_executor(env)
     v.time = START + elapsed
@@ -636,7 +636,7 @@ async def test_inflight_post_caller_cancellation_waits_for_ack_then_closes(env):
 
 async def test_delayed_batch_ack_crosses_cutoff_only_cleanup_is_allowed(env):
     v, executor = await open_executor(env)
-    v.time, v.post_delay = START + 179, 65
+    v.time, v.post_delay = START + 119, 125
     result = await executor.execute_window("w1", quotes())
     assert len(v.posts) == 2 and len(v.post_requests) == 1 and v.time > START + 240
     assert v.cancels == [["o-1", "o-2"]] and result.close_barrier == "SAFE_TO_CONTINUE"

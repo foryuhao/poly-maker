@@ -87,9 +87,9 @@ async def test_actual_fractional_gap_submits_rounded_single_maker_and_preserves_
     def fills(venue, index):
         ids = current_orders(venue)
         if index == 1:
-            venue.fill(ids[first], "fractional-first", 4.996793)
+            venue.fill(ids[first], "fractional-first", 4.496793)
         elif index == 2:
-            venue.fill(ids[second], "ten-second", 10)
+            venue.fill(ids[second], "skew-second", 9.5)
             if late:
                 venue.time = START + 200
         elif index == 3:
@@ -110,7 +110,7 @@ async def test_actual_fractional_gap_submits_rounded_single_maker_and_preserves_
     assert result.delta == (-sign) * .006793 and result.residual_shares == .006793
     assert result.confirmed_yes == (0 if sign > 0 else .006793)
     assert result.confirmed_no == (.006793 if sign > 0 else 0)
-    assert result.merged_pairs == 10 and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert result.merged_pairs == 9.5 and result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert result.skipped_quotes == []
     assert repair["fill_deadline_monotonic"] - repair["t0_monotonic"] == 3
 

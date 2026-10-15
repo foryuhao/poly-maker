@@ -70,7 +70,7 @@ async def test_unquotable_final_book_skips_without_post_or_history_block(env, mo
     from test_rdp_sm_m1 import ADDRESS, START
 
     v, cfg = env
-    v.time = START + 170
+    v.time = START + 110
     reads = [0]
 
     def mutate(request):

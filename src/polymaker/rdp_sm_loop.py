@@ -20,6 +20,7 @@ from polymaker.rdp_sm import (
     SessionStatus,
     _Issue,
     _require,
+    inventory_trading_state,
     run_preflight,
 )
 from polymaker.rdp_sm_execution import (
@@ -48,7 +49,7 @@ class QuoteUnavailable(ValueError):
 
 def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str):
     delta = yes - no
-    state = "NORMAL" if abs(delta) < 5 else "REBALANCE"
+    state = inventory_trading_state(delta)
     if state == "NORMAL":
         sizes = {"YES": Decimal(5) + max(-delta, 0), "NO": Decimal(5) + max(delta, 0)}
         # Confirmed fills may carry finer precision (e.g. 4.98410 shares).
@@ -329,7 +330,7 @@ class SMTradingLoop:
                 self.observer.emit("inventory_check", {**executor.inventory_observation,
                     "status": "RESUMED", "elapsed_s": elapsed})
             yes, no = self._inventory(result)
-            normal = abs(yes - no) < 5
+            normal = inventory_trading_state(yes - no) == "NORMAL"
             if elapsed >= TRADING_END_S:
                 result.stop_reason = "MARKET_CUTOFF"
                 break

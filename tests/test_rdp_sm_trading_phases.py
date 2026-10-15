@@ -47,7 +47,7 @@ async def test_early_start_waits_without_credentials_or_orders_until_15(env, mon
     assert all(params.get("slug", SLUG) == SLUG for _, _, params in v.calls)
 
 
-@pytest.mark.parametrize("elapsed", [180, 200, 239, 240, 270, 299])
+@pytest.mark.parametrize("elapsed", [120, 150, 180, 200, 239, 240, 270, 299])
 async def test_normal_holds_until_300_without_requiring_quotable_books(env, monkeypatch, elapsed):
     v, _ = env
     v.time = START + elapsed
@@ -66,26 +66,26 @@ async def test_normal_holds_until_300_without_requiring_quotable_books(env, monk
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
-async def test_normal_still_submits_just_before_180(env):
+async def test_normal_still_submits_just_before_120(env):
     v, _ = env
-    v.time = START + 179.999
+    v.time = START + 119.999
     on_windows(v, lambda *_: None, stop_after=1)
     result = await run(env)
     assert result.execution_status == "COMPLETED"
     assert len(v.post_requests) == 1 and len(v.post_requests[0]) == 2
-    assert all(15 <= t < 180 for t in v.post_times)
+    assert all(15 <= t < 120 for t in v.post_times)
 
 
-async def test_normal_quote_refresh_crossing_180_skips_without_post(env, monkeypatch):
+async def test_normal_quote_refresh_crossing_120_skips_without_post(env, monkeypatch):
     v, _ = env
-    v.time = START + 179
+    v.time = START + 119
     books = []
     def cross_phase(request):
         if (request.url.path == "/book" and request.url.params["token_id"] == "1"
                 and v.executor is not None):
             books.append(True)
             if len(books) == 2:
-                advance(v, 180)
+                advance(v, 120)
         return None
     with boundary(monkeypatch, v, cross_phase):
         result = await run(env)
@@ -95,7 +95,7 @@ async def test_normal_quote_refresh_crossing_180_skips_without_post(env, monkeyp
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
-@pytest.mark.parametrize("cutoff", [180, 300])
+@pytest.mark.parametrize("cutoff", [120, 300])
 async def test_sdk_signing_crossing_phase_cutoff_aborts_before_http(env, monkeypatch, cutoff):
     v, executor = await open_executor(env)
     if cutoff == 300:
@@ -115,7 +115,7 @@ async def test_sdk_signing_crossing_phase_cutoff_aborts_before_http(env, monkeyp
         return signed
     monkeypatch.setattr(client, "create_order", sign_then_advance)
     from dataclasses import replace
-    submitted = quotes("w2") if cutoff == 180 else [replace(quotes("w2")[1], price=.48)]
+    submitted = quotes("w2") if cutoff == 120 else [replace(quotes("w2")[1], price=.48)]
     before = len(v.post_requests)
     result = await executor.execute_window("w2", submitted)
     assert len(v.post_requests) == before
@@ -123,10 +123,10 @@ async def test_sdk_signing_crossing_phase_cutoff_aborts_before_http(env, monkeyp
     assert result.close_barrier == "SAFE_TO_CONTINUE"
 
 
-@pytest.mark.parametrize("elapsed", [180, 239, 240, 270, 299.9, 300])
+@pytest.mark.parametrize("elapsed", [120, 150, 180, 239, 240, 270, 299.9, 300])
 async def test_only_short_side_rebalance_continues_to_hard_market_end(env, elapsed):
     v, _ = env
-    v.time = START + 170
+    v.time = START + 110
     def action(venue, index):
         if index == 1:
             venue.fill(current_orders(venue)["YES"], "initial", 5)
@@ -158,7 +158,7 @@ async def test_only_short_side_rebalance_continues_to_hard_market_end(env, elaps
 @pytest.mark.parametrize("initial_side", ["YES", "NO"])
 async def test_repaired_inventory_after_240_waits_to_300_without_new_normal_window(env, initial_side):
     v, _ = env
-    v.time = START + 175
+    v.time = START + 115
     def action(venue, index):
         if index == 1:
             venue.fill(current_orders(venue)[initial_side], "initial", 5)
@@ -178,7 +178,7 @@ async def test_repaired_inventory_after_240_waits_to_300_without_new_normal_wind
 
 async def test_late_rebalance_still_requires_actual_available_capital(env):
     v, _ = env
-    v.time = START + 170
+    v.time = START + 110
     def action(venue, index):
         if index == 1:
             venue.fill(current_orders(venue)["YES"], "initial", 5)
@@ -198,7 +198,7 @@ async def test_late_rebalance_still_requires_actual_available_capital(env):
 async def test_late_unknown_rebalance_stays_blocked_and_retains_commitment(env):
     import httpx
     v, _ = env
-    v.time = START + 170
+    v.time = START + 110
     def action(venue, index):
         if index == 1:
             venue.fill(current_orders(venue)["YES"], "initial", 5)

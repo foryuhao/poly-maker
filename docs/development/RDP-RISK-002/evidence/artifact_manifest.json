@@ -1,0 +1,20 @@
+{
+  "baseline_commit": "a728c4db3d01dab2fddb2b9ac162c9c5bf4bb3a1",
+  "source_hashes": {
+    "src/polymaker/risk_shadow.py": "73b7fa86044ce93604d324115dc918981f8b67e43f32a0557cbf727cf7e5fcd6",
+    "src/polymaker/risk_shadow_model.py": "865049c88e445494b4b9b31b4f2f1b8e68d73fb8fc999f9b46ddda4fd15ad061",
+    "src/polymaker/risk_shadow_replay.py": "0afaa863c4393c3b1e53db466bde6397d9964987a7162d3808b6a987a2f33006"
+  },
+  "research_artifact_sha256": {
+    "decision_comparison.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "execution_events.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "hypothetical_risk.jsonl": "3d678f6865cd18c0854f18ec2cb31cfe19e8c8bcb9f83c4bbdb472db8bd70bf0",
+    "market_events.jsonl": "4876c1f0d58522473647763353c7f1ca0a0b1c3f58194b1edc629e2e3bbf8a86",
+    "market_snapshots.jsonl": "49f98f7f507f7aab4752ea167d4759fa582f56e484aa53fabd4f31d2d482a34c",
+    "market_summary.json": "65d1df1a2a92c61e250df1a8c0c670d0cc803ea84a478b25e69fb844ef6c4831",
+    "risk_snapshots.jsonl": "6d9baeae167a284d3ba8940a45da755e437fb03a3c76c5a8ab7936ed53c8646e",
+    "shadow_errors.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "original_src_tests_unchanged": true,
+  "observation_directory": "/home/ubuntu/poly-maker/research_outputs/rdp_risk_shadow/btc-updown-5m-1791953700/b7d7bcee3fa34644b0d683e7ea7d2243"
+}

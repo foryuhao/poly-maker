@@ -16,7 +16,7 @@ from logging.handlers import QueueHandler
 from queue import SimpleQueue
 from threading import Thread
 
-from polymaker.rdp_sm import TEST_CAPITAL_LIMIT_USDC
+from polymaker.rdp_sm import NORMAL_END_S, TEST_CAPITAL_LIMIT_USDC, inventory_trading_state
 
 NA = "NOT_AVAILABLE"
 
@@ -196,8 +196,8 @@ class HumanRunLog:
             f"Market Time: {local_time(market['start']) if market.get('start') is not None else NA} -> "
             f"{local_time(market['end']) if market.get('end') is not None else NA}",
             f"Market Elapsed Seconds: {value(elapsed)} | Trading Window: "
-            "NORMAL 15 <= T < 180s | REBALANCE 15 <= T < 300s",
-            "Completion: T >= 300s | NORMAL waits for market end after T >= 180s",
+            f"NORMAL 15 <= T < {NORMAL_END_S}s | REBALANCE 15 <= T < 300s",
+            f"Completion: T >= 300s | NORMAL waits for market end after T >= {NORMAL_END_S}s",
             f"Remaining Trading Time: {value(remaining)}s",
         ]
 
@@ -306,7 +306,7 @@ class HumanRunLog:
             f"Updated Inventory: YES={value(w.get('yes_inventory'))} NO={value(w.get('no_inventory'))} | Updated Delta={value(w.get('delta'))}",
             f"Capital Used (confirmed cost): {used:g} USDC | Capital Committed (M2): {value(w.get('capital_committed'))} USDC",
             f"Close Barrier Result: {barrier} | {reason_label}: {value(w.get('block_reason'))}",
-            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else 'NORMAL' if abs(w.get('delta', 0)) < 5 else 'REBALANCE'} "
+            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else inventory_trading_state(w.get('delta', 0))} "
             "(inventory state; next market/time check still required)",
         ])
         self.cancel_events, self.reconciliations, self.planned, self.decision = [], [], None, {}

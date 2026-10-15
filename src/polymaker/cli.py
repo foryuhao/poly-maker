@@ -64,6 +64,7 @@ def rdp_sm_run(
     config_dir: str = typer.Option("config", help="existing FL config directory"),
     human: bool = typer.Option(True, "--human/--json-only", help="human logs on stderr; JSON stays on stdout"),
     http_info: bool = typer.Option(False, "--http-info", help="show raw HTTP/component INFO logs for diagnosis"),
+    shadow: bool = typer.Option(False, "--shadow", help="start read-only Risk Shadow for this market/session"),
 ) -> None:
     """Run one current BTC 5m market through M1/M3/M2, close and exit."""
     import json
@@ -93,7 +94,8 @@ def rdp_sm_run(
         if human:
             observer = HumanRunLog(signature_type=cfg.wallet.signature_type,
                                    secrets=secrets, console_handlers=logging.getLogger().handlers[:])
-        result = asyncio.run(run_current_market(cfg, observer=observer))
+        result = asyncio.run(run_current_market(cfg, observer=observer, shadow_mode=True)
+                             if shadow else run_current_market(cfg, observer=observer))
     except Exception as exc:
         import time
 

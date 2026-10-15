@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 from py_clob_client_v2.client import ClobClient
 
 from polymaker.catalog.gamma import GammaClient
-from polymaker.config import Config
+from polymaker.config import Config, RDPSMConfig
 from polymaker.domain import Quote, Side, TradeState
 from polymaker.execution.filltruth import ReconciliationOutcome, reconcile_owned_order
 from polymaker.execution.gateway import PlacementUnknown
@@ -50,6 +50,7 @@ from polymaker.rdp_sm import (
     _Reads,
     _require,
     _token_id,
+    inventory_trading_state,
     run_preflight,
 )
 from polymaker.state.store import StateStore
@@ -66,7 +67,7 @@ CAPITAL_LIMIT = Decimal(int(TEST_CAPITAL_LIMIT_USDC))
 MIN_MAKER_BUY_NOTIONAL = Decimal("1")
 MIN_MAKER_BUY_SHARES = Decimal("5")
 RDP_TOLERANCE = Decimal(".01")
-MATCHED_REMAINING_TOLERANCE_SHARES = RDP_TOLERANCE
+MATCHED_REMAINING_TOLERANCE_SHARES = RDPSMConfig().matched_remaining_tolerance_shares
 INVENTORY_TOLERANCE_SHARES = RDP_TOLERANCE
 SAFE_QUOTE_SKIP_REASONS = frozenset({
     "QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
@@ -1005,7 +1006,7 @@ class _SMProcessor(UserEventProcessor):
         if self.owned_record(ev.order_id) is not None:
             self.executor.external_revision += 1
             previous = self.executor.terminal.get(ev.order_id)
-            if previous is not None and not _terminal(ev):
+            if previous is not None and not _terminal(ev, self.executor.matched_remaining_tolerance_shares):
                 self.executor.fatal = "TERMINAL_LIVE_CONTRADICTION"
             self.executor.invalidate("ORDER_EVIDENCE_CHANGED", ev.order_id)
             with suppress(Exception):
@@ -1018,7 +1019,7 @@ class _SMProcessor(UserEventProcessor):
         super().quarantine_order(order_id, reason, **kwargs)
 
 
-def _terminal(event: OrderEvent) -> bool:
+def _terminal(event: OrderEvent, tolerance: Decimal = MATCHED_REMAINING_TOLERANCE_SHARES) -> bool:
     if event.status in {"CANCELED", "CANCELLED"}:
         return True
     if event.status != "MATCHED":
@@ -1027,7 +1028,7 @@ def _terminal(event: OrderEvent) -> bool:
     if not original.is_finite() or not matched.is_finite():
         return False
     # Inclusive Decimal boundary; inventory still uses actual confirmed fills.
-    return within_tolerance(original, matched, MATCHED_REMAINING_TOLERANCE_SHARES)
+    return within_tolerance(original, matched, tolerance)
 
 
 def _same_fill_economics(left, right):
@@ -1058,6 +1059,7 @@ class SMWindowExecutor:
         display_events=None,
     ):
         self.cfg, self.slug, self.session_id = cfg, slug, session_id
+        self.matched_remaining_tolerance_shares = cfg.rdp_sm.matched_remaining_tolerance_shares
         self.reads, self.gateway, self.journal = reads, reads.gateway, journal
         self.monotonic, self.sleep = monotonic, sleep
         self.store = StateStore(":memory:")
@@ -1552,9 +1554,9 @@ class SMWindowExecutor:
             "FINAL_ORDER_IDENTITY_UNKNOWN",
         )
         UserEventProcessor.on_order(self.processor, ev, self.meta.condition_id)
-        if oid in self.terminal and not _terminal(ev):
+        if oid in self.terminal and not _terminal(ev, self.matched_remaining_tolerance_shares):
             self.fatal = "TERMINAL_LIVE_CONTRADICTION"
-        _require(_terminal(ev), "ORDER_NOT_TERMINAL")
+        _require(_terminal(ev, self.matched_remaining_tolerance_shares), "ORDER_NOT_TERMINAL")
         _require(outcome is ReconciliationOutcome.COMPLETE, "FILLTRUTH_NOT_COMPLETE")
         official = self._official_fills(trades, {oid})
         local = self._local_fills({oid})
@@ -1922,7 +1924,7 @@ class SMWindowExecutor:
                 elapsed = self.official_time + self.monotonic() - self.time_anchor - start
                 delta = sum((Decimal(str(f.size)) * (1 if f.token_id == meta.yes.token_id else -1)
                              for f in self.confirmed()), Decimal(0))
-                cutoff = TRADING_END_S if abs(delta) >= 5 else NORMAL_END_S
+                cutoff = TRADING_END_S if inventory_trading_state(delta) == "REBALANCE" else NORMAL_END_S
                 _require(TRADING_START_S <= elapsed < cutoff,
                          "MARKET_SUBMISSION_CUTOFF")
                 if elapsed >= NORMAL_END_S:
