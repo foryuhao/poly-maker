@@ -1,0 +1,20 @@
+{
+  "repro-before.txt": {
+    "source": "/tmp/poly-maker-0037-red.txt",
+    "raw_sha256": "20d5c952ceba358107d783e5b0e288fff5fb1e0341f622208976cb8e32656817",
+    "stored_sha256": "2821af8b4c3ec89a08bd5b653844fa8d6132ea58015972ad5c12511b56a57cb4",
+    "normalization": "only trailing whitespace per console line"
+  },
+  "focused-tests.txt": {
+    "source": "/tmp/poly-maker-0037-final-focused.txt",
+    "raw_sha256": "330f43c0b05e9676abec5f203dacd921024e01dca3c953b8a3420446100dff88",
+    "stored_sha256": "330f43c0b05e9676abec5f203dacd921024e01dca3c953b8a3420446100dff88",
+    "normalization": "only trailing whitespace per console line"
+  },
+  "full-tests.txt": {
+    "source": "/tmp/poly-maker-0037-complete.txt",
+    "raw_sha256": "57db349c5262d8e1a54f8c8ceff48a61a437567bec58429abf587ec1e6be4026",
+    "stored_sha256": "705695c99b37e18d5c9b238a812e5be35129f0df0a6fff2a00f133a7fbe6bb31",
+    "normalization": "only trailing whitespace per console line"
+  }
+}

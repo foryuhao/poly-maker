@@ -1,0 +1,543 @@
+..............................F......................................... [  4%]
+........................................................................ [  8%]
+........................................................................ [ 13%]
+........................................................................ [ 17%]
+................................................ss...................... [ 21%]
+........................................................................ [ 26%]
+................F......FF.F.FF..........................F............... [ 30%]
+........................................................................ [ 35%]
+....................................F................................... [ 39%]
+........................................................................ [ 43%]
+........................................................................ [ 48%]
+........................................................................ [ 52%]
+........................................................................ [ 57%]
+........................................................................ [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 70%]
+........................................................................ [ 74%]
+..................................................................FF.... [ 78%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+....................F................................................... [ 92%]
+..F..................................................................... [ 96%]
+..........................................................               [100%]
+=================================== FAILURES ===================================
+_____________ test_cli_conflict_stops_before_settlement_preflight ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d058896a0>
+
+    def test_cli_conflict_stops_before_settlement_preflight(monkeypatch):
+        from typer.testing import CliRunner
+
+        import polymaker.settlement_sweep as settlement
+        from polymaker.cli import app
+
+        monkeypatch.setenv("PK", "0x" + KEY_A)
+        monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0x" + KEY_B)
+        monkeypatch.setattr(settlement, "preflight", lambda *args, **kwargs: pytest.fail(
+            "settlement preflight reached after credential conflict"))
+        result = CliRunner().invoke(app, ["settlement-sweep", "--preflight-only"])
+        assert result.exit_code != 0
+>       assert isinstance(result.exception, ConfigAliasError)
+E       AssertionError: assert False
+E        +  where False = isinstance(AssertionError('M0 forbids reading workspace credentials'), ConfigAliasError)
+E        +    where AssertionError('M0 forbids reading workspace credentials') = <Result AssertionError('M0 forbids reading workspace credentials')>.exception
+
+/home/ubuntu/poly-maker/tests/test_config_aliases.py:117: AssertionError
+_________ test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary __________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d048cbd40>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d048c8da0>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_l01_l04_l08_l09_l11_norma0')
+
+    def test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary(env, monkeypatch, tmp_path):
+        v, cfg = env
+        v.time = START + 15
+
+        def fills(v, index):
+            ids = current_orders(v)
+            if index == 1:
+                v.fill(ids["YES"], "first", 5)
+            elif index == 2:
+                v.fill(ids["NO"], "repair", 5)
+
+        on_windows(v, fills, stop_after=3)
+        output = invoke(env, monkeypatch, tmp_path)
+        assert output.exit_code == 0, output.output
+>       r = json.loads(output.stdout)  # existing machine channel is still one JSON
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:55:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:35 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:35 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+____________ test_l04_pending_never_displayed_as_confirmed[MATCHED] ____________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d0483a1b0>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04839040>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_l04_pending_never_display0')
+status = 'MATCHED'
+
+    @pytest.mark.parametrize("status", ["MATCHED", "MINED"])
+    def test_l04_pending_never_displayed_as_confirmed(env, monkeypatch, tmp_path, status):
+        v, _ = env
+        on_windows(v, lambda v, _: v.fill(current_orders(v)["YES"], "pending", 5, status))
+        output = invoke(env, monkeypatch, tmp_path)
+>       r = json.loads(output.stdout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:151:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:43 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:43 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_____________ test_l04_pending_never_displayed_as_confirmed[MINED] _____________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04af6570>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04af58e0>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_l04_pending_never_display1')
+status = 'MINED'
+
+    @pytest.mark.parametrize("status", ["MATCHED", "MINED"])
+    def test_l04_pending_never_displayed_as_confirmed(env, monkeypatch, tmp_path, status):
+        v, _ = env
+        on_windows(v, lambda v, _: v.fill(current_orders(v)["YES"], "pending", 5, status))
+        output = invoke(env, monkeypatch, tmp_path)
+>       r = json.loads(output.stdout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:151:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:43 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:43 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_________ test_l09_secrets_are_redacted_and_raw_responses_not_rendered _________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04a42780>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04a43c20>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_l09_secrets_are_redacted_0')
+
+    def test_l09_secrets_are_redacted_and_raw_responses_not_rendered(env, monkeypatch, tmp_path):
+        v, cfg = env
+        cfg.secrets.builder_secret = "dummy-builder-secret"
+        on_windows(v, lambda *_: None, stop_after=1)
+        response = v.response
+
+        def add_fields(request):
+            result = response(request)
+            if request.method == "POST":
+                raw = result.json()
+                for item in raw if isinstance(raw, list) else [raw]:
+                    item["api_secret"] = "dummy-api-secret"
+                return httpx.Response(200, json=raw, request=request)
+            return result
+
+        from test_rdp_sm_entry import boundary
+        with boundary(monkeypatch, v, lambda request: add_fields(request)):
+            output = invoke(env, monkeypatch, tmp_path)
+        assert output.exit_code == 0, output.output
+        assert "dummy-api-secret" not in output.output  # no credential in either channel
+>       placements = json.loads(output.stdout)["windows"][0]["result"]["placement_results"]
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:189:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:44 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:44 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+___________ test_http_diagnostics_and_json_only_switch[--json-only] ____________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04813620>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04812c00>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_http_diagnostics_and_json0')
+option = '--json-only'
+
+    @pytest.mark.parametrize("option", ["--json-only", "--http-info"])
+    def test_http_diagnostics_and_json_only_switch(env, monkeypatch, tmp_path, option):
+        v, _ = env
+        on_windows(v, lambda *_: None, stop_after=1)
+        output = invoke(env, monkeypatch, tmp_path, option)
+>       assert output.exit_code == 0 and json.loads(output.stdout)["total_windows"] == 1
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:257:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:44 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:44 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+___________ test_http_diagnostics_and_json_only_switch[--http-info] ____________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04e49a60>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04e4a420>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_http_diagnostics_and_json1')
+option = '--http-info'
+
+    @pytest.mark.parametrize("option", ["--json-only", "--http-info"])
+    def test_http_diagnostics_and_json_only_switch(env, monkeypatch, tmp_path, option):
+        v, _ = env
+        on_windows(v, lambda *_: None, stop_after=1)
+        output = invoke(env, monkeypatch, tmp_path, option)
+>       assert output.exit_code == 0 and json.loads(output.stdout)["total_windows"] == 1
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py:257:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:44 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:44 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_________________ test_r11_r12_full_cli_single_market_and_exit _________________
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04c7bbf0>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d06049730>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_r11_r12_full_cli_single_m0')
+
+    def test_r11_r12_full_cli_single_market_and_exit(env, monkeypatch, tmp_path):
+        v, cfg, _ = type2(env)
+        config = cli_config(monkeypatch, tmp_path, v, cfg)
+
+        def fills(v, index):
+            ids = current_orders(v)
+            if index == 1:
+                v.fill(ids["YES"], "first", 5)
+            if index == 2:
+                v.fill(ids["NO"], "repair", 5)
+
+        on_windows(v, fills)
+        output = CliRunner().invoke(app, ["rdp-sm-run", "--config-dir", str(config)])
+        assert output.exit_code == 0, output.output
+>       result = json.loads(output.stdout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_entry.py:303:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:48:59 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:48:59 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_ test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference __
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04db6750>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04db5280>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_persistent_gap_blocks_unt0')
+
+    def test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference(env, monkeypatch, tmp_path):
+        v, cfg = env
+        type2(env)
+        v.time = START + 60
+        def fills(venue, index):
+            assert index == 1, "another order was submitted during the persistent gap"
+            ids = current_orders(venue)
+            venue.fill(ids["YES"], "yes", 5)
+            venue.fill(ids["NO"], "no", 5)
+        on_windows(v, fills)
+
+        def stale_index(request):
+            if request.url.path == "/v2/positions" and v.trades:
+                return gap_reply(request, yes=4.98, no=5)
+            return None
+
+        with boundary(monkeypatch, v, stale_index):
+            output = invoke(env, monkeypatch, tmp_path)
+>       result = json.loads(output.stdout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_inventory_wait.py:125:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:49:08 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:49:08 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_____ test_cli_shows_tick_values_and_preserves_json_and_journal[decision] ______
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04bf1e50>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04bf2930>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_cli_shows_tick_values_and0')
+stage = 'decision'
+
+    @pytest.mark.parametrize("stage", ["decision", "admission"])
+    def test_cli_shows_tick_values_and_preserves_json_and_journal(env, monkeypatch, tmp_path, stage):
+        v, _ = env
+        v.time = START + 60
+        fault, _, failures, _ = tick_fault(v, stage=stage, recover=True)
+        with boundary(monkeypatch, v, fault):
+            output = invoke(env, monkeypatch, tmp_path)
+        assert output.exit_code == 0, output.output
+>       result = json.loads(output.stdout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_tick_recovery.py:124:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:50:23 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:50:23 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_____ test_cli_shows_tick_values_and_preserves_json_and_journal[admission] _____
+
+env = (<test_rdp_sm_m2_execution.ExecutionVenue object at 0x700d04560710>, Config(wallet=WalletConfig(chain_id=137, signatur...ssphrase='dummy-builder-passphrase', relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x700d04bf2a80>
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-2438/test_cli_shows_tick_values_and1')
+stage = 'admission'
+
+    @pytest.mark.parametrize("stage", ["decision", "admission"])
+    def test_cli_shows_tick_values_and_preserves_json_and_journal(env, monkeypatch, tmp_path, stage):
+        v, _ = env
+        v.time = START + 60
+        fault, _, failures, _ = tick_fault(v, stage=stage, recover=True)
+        with boundary(monkeypatch, v, fault):
+            output = invoke(env, monkeypatch, tmp_path)
+        assert output.exit_code == 0, output.output
+>       result = json.loads(output.stdout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/home/ubuntu/poly-maker/tests/test_rdp_sm_tick_recovery.py:124:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <json.decoder.JSONDecoder object at 0x700d09a88080>
+s = '2026-10-15 22:50:23 [info     ] order_reconcile_started        order_id=o-1\n2026-10-15 22:50:23 [info     ] order_re... "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN", "intentional_residual_evidence": {}}}\n'
+_w = <built-in method match of re.Pattern object at 0x700d09a424d0>
+
+    def decode(self, s, _w=WHITESPACE.match):
+        """Return the Python representation of ``s`` (a ``str`` instance
+        containing a JSON document).
+
+        """
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+        end = _w(s, end).end()
+        if end != len(s):
+>           raise JSONDecodeError("Extra data", s, end)
+E           json.decoder.JSONDecodeError: Extra data: line 1 column 5 (char 4)
+
+/home/ubuntu/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/json/decoder.py:341: JSONDecodeError
+_______________ test_baseline_01_and_protected_sources_identical _______________
+
+    def test_baseline_01_and_protected_sources_identical():
+>       assert (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+            == BASELINE
+        )
+E       AssertionError: assert 'b58252595316...729cc260092c4' == 'a728c4db3d01...2c9c5bf4bb3a1'
+E
+E         - a728c4db3d01dab2fddb2b9ac162c9c5bf4bb3a1
+E         + b5825259531683581207075ea43729cc260092c4
+
+/home/ubuntu/poly-maker/tests/test_risk_shadow.py:93: AssertionError
+___________ test_execution_strategy_and_entry_control_flow_preserved ___________
+
+    def test_execution_strategy_and_entry_control_flow_preserved():
+        root = Path(__file__).resolve().parents[1]
+
+        def tree(source):
+            return ast.parse(source)
+
+        path = "src/polymaker/rdp_sm_entry.py"
+        base = tree(subprocess.check_output(["git", "show", f"HEAD:{path}"], cwd=root, text=True))
+        current = tree((root / path).read_text())
+        before = next(
+            n
+            for n in base.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "run_current_market"
+        )
+        after = next(
+            n
+            for n in current.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "run_current_market"
+        )
+        after.args.kwonlyargs = [a for a in after.args.kwonlyargs if a.arg != "shadow_mode"]
+        after.args.kw_defaults = after.args.kw_defaults[:-1]
+        main_try = next(n for n in after.body if isinstance(n, ast.Try))
+        main_try.body = [
+            n
+            for n in main_try.body
+            if not (
+                isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "shadow_mode"
+            )
+        ]
+>       assert ast.dump(before, include_attributes=False) == ast.dump(after, include_attributes=False)
+E       AssertionError: assert 'AsyncFunctio...pe_params=[])' == 'AsyncFunctio...pe_params=[])'
+E
+E         Skipping 159 identical leading characters in diff, use -v to show
+E         - observer')], kw_defaults=[Constant(value=None), Constant(value=None), Constant(value=None)], defaults=[]), body=[Expr(value=Constant(value='Retry read failures within one pinned market; never select a next market.')), Assign(targets=[Name(id='sleep', ctx=Store())], value=IfExp(test=Compare(left=Name(id='sleep', ctx=Load()), ops=[Is()], comparators=[Constant(value=None)]), body=Attribute(value=Name(id='asyncio', ctx=Load()), attr='sleep', ctx=Load()), orelse=Name(id='sleep', ctx=Load()))), Assign(targets=...
+E
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+/home/ubuntu/poly-maker/tests/test_risk_shadow_cli.py:319: AssertionError
+=========================== short test summary info ============================
+FAILED ../../home/ubuntu/poly-maker/tests/test_config_aliases.py::test_cli_conflict_stops_before_settlement_preflight
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MATCHED]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_l04_pending_never_displayed_as_confirmed[MINED]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_l09_secrets_are_redacted_and_raw_responses_not_rendered
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--json-only]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_cli_logging.py::test_http_diagnostics_and_json_only_switch[--http-info]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_entry.py::test_r11_r12_full_cli_single_market_and_exit
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_inventory_wait.py::test_persistent_gap_blocks_until_300_closes_orders_and_logs_real_difference
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[decision]
+FAILED ../../home/ubuntu/poly-maker/tests/test_rdp_sm_tick_recovery.py::test_cli_shows_tick_values_and_preserves_json_and_journal[admission]
+FAILED ../../home/ubuntu/poly-maker/tests/test_risk_shadow.py::test_baseline_01_and_protected_sources_identical
+FAILED ../../home/ubuntu/poly-maker/tests/test_risk_shadow_cli.py::test_execution_strategy_and_entry_control_flow_preserved
+13 failed, 1627 passed, 2 skipped in 131.43s (0:02:11)
+M0 offline guard: 0 network/DNS attempts; workspace credentials denied

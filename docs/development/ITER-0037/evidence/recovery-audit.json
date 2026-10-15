@@ -1,0 +1,109 @@
+{
+  "baseline": "b582525",
+  "changed_methods": {
+    "src/polymaker/rdp_sm_execution.py": [
+      "ExecutionClobClient._get",
+      "ExecutionClobClient._read_pages",
+      "ExecutionClobClient.get_open_orders",
+      "ExecutionClobClient.get_trades",
+      "ExecutionClobClient.pagination_failure",
+      "ExecutionClobClient.retry_incomplete_reads",
+      "SMWindowExecutor.__init__",
+      "SMWindowExecutor._recover_pagination",
+      "SMWindowExecutor._snapshot",
+      "SMWindowExecutor._verify_close",
+      "SMWindowExecutor.safe_to_continue",
+      "_ExecutionReads.connect_account"
+    ],
+    "src/polymaker/rdp_sm_entry.py": [
+      "AccountRiskPolicy.__init__",
+      "AccountRiskPolicy.inspect",
+      "AccountRiskPolicy.observe_trade"
+    ],
+    "src/polymaker/rdp_sm_recovery.py": []
+  },
+  "unchanged_modules": {
+    "src/polymaker/rdp_sm_loop.py": {
+      "identical_to_b582525": true,
+      "sha256": "f5e6bd24937c2da0c8349273434dc65850b66c610ae733af205e18006dc20e3b"
+    },
+    "src/polymaker/rdp_sm_sizing.py": {
+      "identical_to_b582525": true,
+      "sha256": "4b290a1999513e7e3b0579ef6a54921f2c284bb3a90819008af94378a9242763"
+    },
+    "src/polymaker/rdp_sm.py": {
+      "identical_to_b582525": true,
+      "sha256": "d8a9ca750bae1090afd7d9b3a9c84f7e4c6efe461edf536ea76bd3334122dfc6"
+    },
+    "src/polymaker/execution/gateway.py": {
+      "identical_to_b582525": true,
+      "sha256": "0bc06a326a024f37eaf950266355254f02ac96dab499d941e71ba9325ffdee4e"
+    },
+    "src/polymaker/rdp_sm_merge.py": {
+      "identical_to_b582525": true,
+      "sha256": "34b7709350d8c5f6603bee9564a3db3fa477728d9e65ffd58a12c9016cf878b7"
+    },
+    "src/polymaker/state/tracker.py": {
+      "identical_to_b582525": true,
+      "sha256": "bcbe3a11395afcdaa8c235b331e076dfdaf2bb1fb09492d6e67fd3e9e464c714"
+    },
+    "src/polymaker/execution/filltruth.py": {
+      "identical_to_b582525": true,
+      "sha256": "e36fb19bab90e30c995a57822d4d27083f9077144c0672e12d2e4b55093cfcbf"
+    },
+    "src/polymaker/config.py": {
+      "identical_to_b582525": true,
+      "sha256": "c4218eef3a8a2cfc1a8c30474feb678e37b925ea95961c4a00c9d38ac9ddef9e"
+    }
+  },
+  "audit": [
+    {
+      "state": "ExecutionClobClient trade/order pagination failure",
+      "result": "FIXED: exact collection/filter scope; full retry from first page; keep observations"
+    },
+    {
+      "state": "Snapshot/close entry prevents recovery reads",
+      "result": "FIXED: perform incomplete reads before checks, including empty owned set"
+    },
+    {
+      "state": "Previous close proof revived by later successful read",
+      "result": "PREVENTED: pagination revision must match newly issued proof"
+    },
+    {
+      "state": "AccountRiskPolicy.pending current-market trade",
+      "result": "FIXED: permit status/metadata progression; consistent terminal evidence removes pending; require next full account snapshot"
+    },
+    {
+      "state": "pending_confirmations",
+      "result": "already rebuilt at each close verification; unchanged"
+    },
+    {
+      "state": "observed_open_rows/observed_trade_legs",
+      "result": "intentionally retain risk and economics across omissions; unchanged"
+    },
+    {
+      "state": "UNKNOWN Placement/Merge, fatal, journal error",
+      "result": "uncertain mutations and hard failures intentionally not auto-cleared; unchanged"
+    },
+    {
+      "state": "cancel jobs",
+      "result": "explicit verify_close(cancel=True) already resets jobs and retries cancellation; unchanged"
+    },
+    {
+      "state": "Merge explicit failure/prepare failure disables Merge",
+      "result": "existing authorized lifecycle policy, not a stale GET failure latch; unchanged"
+    },
+    {
+      "state": "Session independence",
+      "result": "no history, previous session or other market introduced; exact failed read scope only"
+    },
+    {
+      "state": "Unknown current-market pending on a successful prefix before page failure",
+      "result": "FIXED: per-page observations feed the same AccountRiskPolicy.pending; omission cannot clear; only full consistent terminal set and another account snapshot can resolve"
+    },
+    {
+      "state": "inventory_mismatch",
+      "result": "already reset after fresh Data API matches confirmed inventory within original tolerance; unchanged"
+    }
+  ]
+}

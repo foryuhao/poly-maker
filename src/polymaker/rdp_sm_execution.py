@@ -26,6 +26,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from py_clob_client_v2.client import ClobClient
+from py_clob_client_v2.constants import INITIAL_CURSOR
 
 from polymaker.catalog.gamma import GammaClient
 from polymaker.config import Config, RDPSMConfig
@@ -266,6 +267,8 @@ class ExecutionClobClient(ReadOnlyClobClient):
                         )
                         if leg.order_id in self.observed_open_rows:
                             self.observed_open_rows[leg.order_id]["_sm_fill_observed"] = True
+                if self.account_policy is not None:
+                    self.account_policy.observe_trade(parsed_trade, self.known_ids)
             _require(
                 isinstance(raw.get("next_cursor"), str) and bool(raw["next_cursor"]),
                 "TRADE_PAGE_UNKNOWN",
@@ -275,24 +278,45 @@ class ExecutionClobClient(ReadOnlyClobClient):
             _token_id(raw.get("asset_id"))
         return raw
 
-    def get_trades(self, *args, **kwargs):
-        self.trade_cursors = set()
-        try:
-            rows = super().get_trades(*args, **kwargs)
-            self.last_trades = rows
-            return rows
-        except Exception:
-            self.pagination_failure = self.pagination_failure or "TRADES_PAGINATION_INCOMPLETE"
-            raise
+    @property
+    def pagination_failure(self):
+        for kind, _ in self._pagination_failures:
+            return ("TRADES_PAGINATION_INCOMPLETE" if kind == "get_trades"
+                    else "OPEN_ORDERS_PAGINATION_INCOMPLETE")
+        return None
 
-    def get_open_orders(self, *args, **kwargs):
-        self._sm_order_cursors = set()
+    def _read_pages(self, kind, params, only_first_page, next_cursor):
+        # A complete read clears only its own collection AND filter scope.
+        # Keep page observations independently; an empty retry cannot erase risk.
+        params = replace(params) if params is not None else None
+        scope = tuple(sorted((k, v) for k, v in asdict(params).items() if v)) if params else ()
+        key = (kind, scope)
+        if kind == "get_trades":
+            self.trade_cursors = set()
+        else:
+            self._sm_order_cursors = set()
         try:
-            self.last_open_rows = super().get_open_orders(*args, **kwargs)
-            return self.last_open_rows
+            rows = getattr(super(), kind)(params, only_first_page, next_cursor)
         except Exception:
-            self.pagination_failure = self.pagination_failure or "OPEN_ORDERS_PAGINATION_INCOMPLETE"
+            self._pagination_failures[key] = params
+            self.pagination_revision += 1
             raise
+        if not only_first_page and next_cursor in (None, "", INITIAL_CURSOR):
+            setattr(self, "last_trades" if kind == "get_trades" else "last_open_rows", rows)
+            self._pagination_failures.pop(key, None)
+        return rows
+
+    def get_trades(self, params=None, only_first_page=False, next_cursor=None):
+        return self._read_pages("get_trades", params, only_first_page, next_cursor)
+
+    def get_open_orders(self, params=None, only_first_page=False, next_cursor=None):
+        return self._read_pages("get_open_orders", params, only_first_page, next_cursor)
+
+    def retry_incomplete_reads(self):
+        # Restart at page one with the original scope, even when no owned order
+        # exists to trigger reconciliation. Never retry a mutation here.
+        for (kind, _), params in list(self._pagination_failures.items()):
+            getattr(self, kind)(params)
 
     def _observe_order_page(self, rows):
         # Keep valid page evidence before the SDK requests any later page.
@@ -388,7 +412,9 @@ class _ExecutionReads(_Reads):
         gateway._client.known_ids = set()
         gateway._client.observed_open_rows = {}
         gateway._client.observed_trade_legs = {}
-        gateway._client.pagination_failure = None
+        gateway._client.account_policy = self.account_policy
+        gateway._client._pagination_failures = {}
+        gateway._client.pagination_revision = 0
         _require(
             gateway._client.get_address() == gateway.address
             and gateway._client.builder.funder == gateway.funder,
@@ -410,7 +436,8 @@ class _ExecutionReads(_Reads):
                 oid: dict(row) for oid, row in previous.observed_open_rows.items()
             }
             gateway._client.observed_trade_legs = dict(previous.observed_trade_legs)
-            gateway._client.pagination_failure = previous.pagination_failure
+            gateway._client._pagination_failures = dict(previous._pagination_failures)
+            gateway._client.pagination_revision = previous.pagination_revision
             # No reader chain or closed credential-bearing clients needed after
             # the identity-bound evidence has been transferred.
             self.risk_reads = None
@@ -579,6 +606,7 @@ class SMWindowExecutor:
         self.revision = 0
         self.external_revision = 0
         self.proof_revision = -1
+        self.proof_pagination_revision = -1
         self.fatal: str | None = None
         self.reason: str | None = "NO_CLOSE_EVIDENCE"
         self.used_windows: set[str] = set()
@@ -687,6 +715,7 @@ class SMWindowExecutor:
             and self.gateway._client.pagination_failure is None
             and self.reason is None
             and self.proof_revision == self.revision
+            and self.proof_pagination_revision == self.gateway._client.pagination_revision
             and all(a.outcome in {"ACK", "REJECTED", "ABORTED"} for a in self.attempts)
             and set(self.proofs) == self.known
             and set(self.terminal) == self.known
@@ -732,8 +761,19 @@ class SMWindowExecutor:
                      for b in books.values()), "EXECUTION_DATA_STALE")
         return books
 
+    async def _recover_pagination(self):
+        client = self.gateway._client
+        if client.pagination_failure is not None:
+            try:
+                await self.gateway._io(client.retry_incomplete_reads)
+            except Exception as exc:
+                if retry_read(exc):
+                    raise _Issue(SessionStatus.BLOCKED, reason_code(exc)) from exc
+                raise
+
     async def _snapshot(self, *, include_books=True):
         began = self.monotonic()
+        await self._recover_pagination()
         _require(
             self.gateway._client.pagination_failure is None,
             self.gateway._client.pagination_failure or "ACCOUNT_PAGINATION_UNRESOLVED",
@@ -1173,6 +1213,7 @@ class SMWindowExecutor:
         try:
             if cancel and self.known:
                 await self._cancel_known()
+            await self._recover_pagination()
             if any(a.outcome in {"UNKNOWN", "INTENT"} for a in self.attempts):
                 try:
                     candidates = await self.gateway.open_orders()
@@ -1221,6 +1262,7 @@ class SMWindowExecutor:
             )
             self.reason = None
             self.proof_revision = self.revision
+            self.proof_pagination_revision = self.gateway._client.pagination_revision
             self.record(
                 "sm_close_barrier",
                 {

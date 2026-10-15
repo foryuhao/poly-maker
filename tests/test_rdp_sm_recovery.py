@@ -125,6 +125,10 @@ async def test_partial_trade_page_retains_existing_confirmation_and_account_risk
     pages = []
     on_windows(v, lambda venue, _: venue.fill(current_orders(venue)["NO"], "no", 5))
     def partial_page(request):
+        if (pages and request.url.path == "/data/trades"
+                and request.url.params.get("next_cursor") != "next"):
+            return httpx.Response(200, request=request, json={
+                "data": deepcopy(v.trades), "next_cursor": "next"})
         if (request.url.path == "/data/trades" and v.trades
                 and v.executor.safe_to_continue and not pages):
             pages.append(True)

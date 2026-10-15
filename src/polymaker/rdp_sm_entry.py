@@ -101,15 +101,39 @@ class AccountRiskPolicy:
 
     def __init__(self, *, use_starting_balance=False):
         self.pending = {}
+        self.market_id = None
         self.use_starting_balance = use_starting_balance
         self.starting_order_ids = None
+
+    def observe_trade(self, trade, known_ids):
+        # Also called at each official page, before a later page can fail.
+        # Partial reads may retain risk, but cannot resolve it.
+        if trade.market != self.market_id:
+            return
+
+        def identity(value):
+            return (value.market, value.raw.get("trader_side"), value.taker_order_id,
+                    value.taker_asset_id, value.taker_side,
+                    tuple(sorted(value.maker_legs, key=lambda leg: leg.order_id)))
+
+        if trade.trade_id in self.pending:
+            _require(identity(parse_trade(self.pending[trade.trade_id])) == identity(trade),
+                     "PENDING_TRADE_EVIDENCE_CHANGED")
+        if trade.status in (TradeState.CONFIRMED, TradeState.FAILED):
+            return
+        ids = {leg.order_id for leg in trade.maker_legs}
+        if ids & known_ids:
+            return
+        self.pending.setdefault(trade.trade_id, trade.raw)
 
     async def inspect(self, reads, meta, positions, orders):
         client, gateway = reads.gateway._client, reads.gateway
         if self.starting_order_ids is None:
             self.starting_order_ids = {o.order_id for o in orders}
+        self.market_id = meta.condition_id
         rows = await gateway.get_trades(market=meta.condition_id)
         seen = set()
+        resolved = set()
         for row in rows:
             trade = parse_trade(row)
             # The official query is scoped to this market. Unrelated account
@@ -118,22 +142,26 @@ class AccountRiskPolicy:
                 continue
             _require(trade.trade_id not in seen, "ACCOUNT_TRADE_ID_CONFLICT")
             seen.add(trade.trade_id)
+            self.observe_trade(trade, client.known_ids)
             if trade.status in (TradeState.CONFIRMED, TradeState.FAILED):
-                continue
-            ids = {leg.order_id for leg in trade.maker_legs}
-            if ids & client.known_ids:
+                resolved.add(trade.trade_id)
+            elif {leg.order_id for leg in trade.maker_legs} & client.known_ids:
                 ours = {
                     leg.order_id for leg in trade.maker_legs
                     if leg.maker_address and leg.maker_address.lower() == gateway.funder.lower()
                 }
                 _require(row.get("trader_side") == "MAKER" and bool(ours) and ours <= client.known_ids,
                          "OWNED_TRADE_ROLE_UNKNOWN")
-                continue
-            prior = self.pending.setdefault(trade.trade_id, row)
-            _require(prior == row, "PENDING_TRADE_EVIDENCE_CHANGED")
+        # Only explicit, consistent terminal evidence in a complete read can
+        # resolve pending risk. Omission and status/metadata updates cannot.
+        resolved_pending = resolved & self.pending.keys()
+        for trade_id in resolved_pending:
+            self.pending.pop(trade_id)
         # Unknown pending exposure in the current market remains fail-closed,
         # even when a later page omits it. Owned fills use the original M2 gate.
-        _require(not self.pending, "CURRENT_MARKET_PENDING_EXPOSURE")
+        # Positions and balance were fetched before this trade read. Require
+        # another full account snapshot after newly resolved exposure.
+        _require(not self.pending and not resolved_pending, "CURRENT_MARKET_PENDING_EXPOSURE")
 
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):

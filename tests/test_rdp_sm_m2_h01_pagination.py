@@ -64,18 +64,20 @@ async def test_p01_order_page_survives_failure_and_later_complete_empty(env, mon
         assert sdk.observed_open_rows["external"]["original_size"] == "5"
         assert sdk.observed_open_rows["external"]["price"] == ".9"
         assert sdk.pagination_failure == "OPEN_ORDERS_PAGINATION_INCOMPLETE"
-        # Successful later reads are permitted for diagnosis; no empty result
-        # or zero-fill cancelled row can reset the incomplete-account latch.
+        # A complete read resolves the transport fault, but omission cannot
+        # release the observed LIVE order's full collateral reservation.
         assert await executor.gateway.open_orders() == []
+        assert sdk.pagination_failure is None
         second = await executor.execute_window("w2", [quotes("w2")[0]])
+        assert second.block_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
+        assert not calls and not v.posts
         v.rows["external"]["status"] = "CANCELED"
-        assert not await executor._external_no_fill_terminal(
+        assert await executor._external_no_fill_terminal(
             "external", ("3", Side.BUY, Decimal(".9"), Decimal("5"))
         )
-        assert not await executor.verify_close()
+        assert await executor.verify_close()
     assert completed and not calls and not v.posts and not v.cancels
     assert first.close_barrier == second.close_barrier == "BLOCKED"
-    assert second.block_reason == "OPEN_ORDERS_PAGINATION_INCOMPLETE"
 
 
 @pytest.mark.parametrize("status", ["MATCHED", "MINED", "CONFIRMED"])
@@ -116,10 +118,19 @@ async def test_p02_trade_page_retains_risk_without_inventory_or_automatic_releas
         assert sdk.pagination_failure == "TRADES_PAGINATION_INCOMPLETE"
         assert await executor.gateway.get_trades(market="other") == []
         second = await executor.execute_window("w2", [quotes("w2")[0]])
-        assert not await executor.verify_close()
+        assert sdk.pagination_failure is None
+        # No owned orders to close; the distinct account admission gate must
+        # still reserve the observed external fill, despite an empty replica.
+        assert await executor.verify_close()
+        assert not await executor._external_no_fill_terminal(
+            "external", ("3", Side.BUY, Decimal(".9"), Decimal("5")))
+        *_, account = await executor._snapshot()
+        assert account["execution_reserved_usd"] == 4.5
+        assert account["basic_spendable_budget_usd"] == 1.5
     assert completed and not calls and not v.posts
     assert first.close_barrier == second.close_barrier == "BLOCKED"
-    assert first.block_reason == second.block_reason == "TRADES_PAGINATION_INCOMPLETE"
+    assert first.block_reason == "TRADES_PAGINATION_INCOMPLETE"
+    assert second.block_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
     assert first.yes_inventory == first.no_inventory == 0
     assert not executor.confirmed()  # external/partial API evidence is not SM inventory
     assert ("external-pending", "external") in sdk.observed_trade_legs
