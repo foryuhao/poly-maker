@@ -62,6 +62,12 @@ network_pause_sec = 2.0
 network_max_pause_sec = 8.0
 network_probe_interval_sec = 0.5
 
+[rdp_sm.sync_observe]
+enabled = true
+order_interval_s = 1.0
+account_interval_s = 2.0
+output_dir = "research_outputs/periodic_sync"
+
 [paths]
 db = "state.db"
 journal_dir = "journal"

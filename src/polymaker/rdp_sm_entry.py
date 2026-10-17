@@ -11,6 +11,7 @@ import asyncio
 import math
 import time
 import uuid
+from contextlib import suppress
 
 from polymaker.btc5m import current_epoch, slug_for_epoch
 from polymaker.catalog.gamma import GammaClient
@@ -99,11 +100,12 @@ class AccountRiskPolicy:
     for history or resolution. M2 retains ownership and confirmed-fill checks.
     """
 
-    def __init__(self, *, use_starting_balance=False):
+    def __init__(self, *, use_starting_balance=False, sync_observer=None):
         self.pending = {}
         self.market_id = None
         self.use_starting_balance = use_starting_balance
         self.starting_order_ids = None
+        self.sync_observer = sync_observer
 
     def observe_trade(self, trade, known_ids):
         # Also called at each official page, before a later page can fail.
@@ -165,10 +167,47 @@ class AccountRiskPolicy:
 
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):
+    """One market per invocation; optionally own a read-only sync companion."""
+    companion = None
+    session = None
+    if cfg.rdp_sm.sync_observe.enabled:
+        try:
+            from polymaker.rdp_sm_sync_companion import SyncCompanion
+
+            session = uuid.uuid4().hex
+            companion = SyncCompanion(cfg, session)
+            companion.start()
+        except Exception as exc:
+            import logging
+
+            logging.getLogger("polymaker.sync_observe").warning(
+                "SYNC_OBSERVER_START_FAILED error=%s", type(exc).__name__)
+    try:
+        result = await _run_current_market(cfg, sleep=sleep, monotonic=monotonic,
+            observer=observer, shadow_mode=shadow_mode, session_id=session, sync_observer=companion)
+        if companion is not None:
+            with suppress(Exception):
+                companion.capture("entry_result", result.to_dict())
+        return result
+    finally:
+        if companion is not None:
+            from polymaker.rdp_sm_sync_companion import close_companion
+
+            try:
+                await close_companion(companion)
+            except Exception as exc:
+                import logging
+
+                logging.getLogger("polymaker.sync_observe").warning(
+                    "SYNC_OBSERVER_CLOSE_FAILED error=%s", type(exc).__name__)
+
+
+async def _run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False,
+                              session_id=None, sync_observer=None):
     """Retry read failures within one pinned market; never select a next market."""
     sleep = asyncio.sleep if sleep is None else sleep
     monotonic = time.monotonic if monotonic is None else monotonic
-    session = uuid.uuid4().hex
+    session = session_id or uuid.uuid4().hex
     pinned = {}
     discovery_attempts = 0
     discovery_error = None
@@ -193,6 +232,14 @@ async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, 
                         "reason": reason_code(exc), "context": getattr(exc, "context", None),
                         "elapsed_s": 300 - (deadline - monotonic()) if deadline is not None else None})
                 await sleep(min(2, max(0, deadline - monotonic())) if deadline is not None else 2)
+        if sync_observer is not None:
+            try:
+                sync_observer.bind_market(meta, start)
+            except Exception as exc:
+                import logging
+
+                logging.getLogger("polymaker.sync_observe").warning(
+                    "SYNC_OBSERVER_BIND_FAILED error=%s", type(exc).__name__)
         if shadow_mode:
             # Independent read-only process; no executor/Gateway capability is handed off.
             try:
@@ -236,7 +283,7 @@ async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, 
                              observer=observer)
         loop.market_deadline = pinned["deadline"]
         return await loop.run_production(expected_market=meta,
-            account_policy=AccountRiskPolicy(use_starting_balance=True))
+            account_policy=AccountRiskPolicy(use_starting_balance=True, sync_observer=sync_observer))
     except Exception as exc:
         if observer is not None:
             observer.emit("diagnostic", {"reason": str(exc) if isinstance(exc, _Issue)

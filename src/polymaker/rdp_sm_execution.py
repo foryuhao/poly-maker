@@ -900,6 +900,13 @@ class SMWindowExecutor:
         if self.display_events is not None:
             with suppress(Exception):
                 self.display_events.append((kind, payload))
+        # One-way, in-memory observation only. Never use companion snapshots
+        # for trading, network admission, inventory or closing authorization.
+        sink = getattr(getattr(getattr(self, "reads", None), "account_policy", None),
+                       "sync_observer", None)
+        if sink is not None:
+            with suppress(Exception):
+                sink.capture(kind, payload, monotonic=time.monotonic())
 
     def drain_network_events(self):
         network = getattr(self.reads, "network", None)

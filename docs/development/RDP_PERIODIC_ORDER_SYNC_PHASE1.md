@@ -1,5 +1,7 @@
 # 第一阶段：独立只读同步与一小时观察
 
+最新使用方式：按用户确认改为由原`rdp-sm-run`托管本次Session旁路，外层shell循环12次。见 [主进程托管说明](RDP_PERIODIC_ORDER_SYNC_ATTACHED.md)。本文保留独立观察命令作为可选诊断入口，不必与托管模式同时启动。
+
 日期：2026-10-17。开发基线 `Pilot-x12`；实现位于 `feature/periodic-order-sync` 独立工作目录。本阶段不接入NORMAL、REBALANCE或执行器，也不启动、停止、重启它们。
 
 ## 两阶段边界

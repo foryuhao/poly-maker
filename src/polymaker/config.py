@@ -144,9 +144,18 @@ class RDPObiConfig(BaseModel):
         return self
 
 
+class RDPSyncObserveConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = False
+    order_interval_s: float = Field(default=1.0, ge=.01, allow_inf_nan=False)
+    account_interval_s: float = Field(default=2.0, ge=.01, allow_inf_nan=False)
+    output_dir: str = "research_outputs/periodic_sync"
+
+
 class RDPSMConfig(BaseModel):
     normal_entry_mode: Literal["legacy", "obi_v1"] = "legacy"
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
+    sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
     base_size: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
     favorite_threshold: Decimal = Field(default=Decimal("0.70"), gt=Decimal("0.5"),

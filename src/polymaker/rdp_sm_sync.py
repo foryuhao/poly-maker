@@ -8,6 +8,7 @@ import math
 import queue
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import asdict, dataclass
@@ -40,10 +41,11 @@ class SyncSnapshot:
     last_good: tuple[ReadEvidence, ...] = ()
     pending_ids: tuple[str, ...] = ()
     fatal_type: str | None = None
+    session_id: str | None = None
 
     def to_dict(self):
         return {"mode": "OBSERVE_ONLY", "trading_authorized": False,
-                "version": self.version, "status": self.status,
+                "version": self.version, "status": self.status, "session_id": self.session_id,
                 "published_monotonic": self.published_monotonic,
                 "published_wall": self.published_wall,
                 "market": json.loads(self.market_json) if self.market_json else None,
@@ -59,8 +61,9 @@ class SyncObserver:
     before closing the private transport; cancelling an awaiter cannot own I/O.
     """
 
-    def __init__(self, reader_factory, settings=None):
+    def __init__(self, reader_factory, settings=None, *, follow_main=False, session_id=None):
         self.settings, self.reader_factory = settings or SyncSettings(), reader_factory
+        self.follow_main, self.session_id = follow_main, session_id
         self._stop = threading.Event()
         self._condition = threading.Condition()
         self._snapshot = SyncSnapshot()
@@ -73,6 +76,22 @@ class SyncObserver:
         self._pending, self._details, self._legs = {}, {}, {}
         self._detail_sequence = 0
         self._emitted_reads = {}
+        self._target = None
+        self._history = deque(maxlen=1024)
+
+    def bind_market(self, market):
+        """Passive main-process context, never an out-of-cycle refresh request."""
+        if not self.follow_main or not isinstance(market, ObservedMarket):
+            raise ValueError("SYNC_MAIN_CONTEXT_REQUIRED")
+        with self._condition:
+            if self._target is not None and self._target != market:
+                raise ValueError("SYNC_MAIN_MARKET_ALREADY_BOUND")
+            self._target = market
+
+    def snapshot_at(self, monotonic):
+        with self._condition:
+            return next((s for s in reversed(self._history)
+                         if s.published_monotonic <= monotonic), None)
 
     def start(self):
         if self._thread is not None:
@@ -117,19 +136,23 @@ class SyncObserver:
 
     def _publish(self, *, status="RUNNING", fatal=None):
         # Only the coordinator calls this; consumers only get immutable objects.
+        if status == "RUNNING" and self.follow_main and self._market is None:
+            status = "AWAITING_MAIN_MARKET"
         current = SyncSnapshot(
             version=self._snapshot.version + 1, published_monotonic=time.monotonic(),
             published_wall=time.time(), status=status,
             market_json=json.dumps(asdict(self._market)) if self._market else None,
             attempts=tuple(self._attempts.values()), last_good=tuple(self._good.values()),
-            pending_ids=tuple(sorted(self._pending)), fatal_type=fatal,
+            pending_ids=tuple(sorted(self._pending)), fatal_type=fatal, session_id=self.session_id,
         )
         with self._condition:
             self._snapshot = current
+            self._history.append(current)
             self._condition.notify_all()
         changed = [r for r in current.attempts if self._emitted_reads.get(r.name) != r.read_id]
         self._emitted_reads.update({r.name: r.read_id for r in changed})
-        self._emit({"kind": "sync_snapshot", "mode": "OBSERVE_ONLY", "trading_authorized": False,
+        event = {"kind": "sync_snapshot", "mode": "OBSERVE_ONLY", "trading_authorized": False,
+                    "session_id": self.session_id,
                     "version": current.version, "status": current.status,
                     "shutdown": self._stop.is_set(),
                     "published_monotonic": current.published_monotonic,
@@ -137,7 +160,10 @@ class SyncObserver:
                     "market": json.loads(current.market_json) if current.market_json else None,
                     "attempt_updates": {r.name: r.to_dict() for r in changed},
                     "last_good_refs": {r.name: r.read_id for r in current.last_good},
-                    "pending_ids": list(current.pending_ids), "fatal_type": fatal})
+                    "pending_ids": list(current.pending_ids), "fatal_type": fatal}
+        if self.follow_main:
+            event["full_snapshot"] = current.to_dict()
+        self._emit(event)
 
     def _accept(self, evidence):
         self._attempts[evidence.name] = evidence
@@ -199,6 +225,9 @@ class SyncObserver:
         failures = 0
         while not self._stop.is_set():
             began, wall = time.monotonic(), time.time()
+            if self.follow_main and self._target is None:
+                await self._sleep_until(began + interval)
+                continue
             before = self._snapshot.version
             retry_after = 0.0
             try:
@@ -264,7 +293,10 @@ class SyncObserver:
     async def _orders_round(self):
         estimate = self._anchor[0] + time.monotonic() - self._anchor[1]
         epoch = int(estimate) // 300 * 300
-        if self._market is None or self._market.start != epoch:
+        if self.follow_main:
+            if self._market is None:
+                self._change_market(self._target)
+        elif self._market is None or self._market.start != epoch:
             # Metadata is fetched only at market changes, not for each consumer.
             metadata = await self._read("market", str(epoch), lambda: asdict(self.reader.market(epoch)))
             if not metadata.complete:
