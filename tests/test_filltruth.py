@@ -536,7 +536,8 @@ async def test_deadline_at_final_complete_gate_never_clears_quarantine(monkeypat
         original_failed = proc.has_failed_fill
         transitions = []
         original_mark = store.mark_owned_order_unresolved
-        original_info = filltruth_module.log.info
+        original_log = filltruth_module.log
+        original_info = original_log.info
         complete_logs = []
 
         def mark_unresolved(order_id, value):
@@ -562,7 +563,16 @@ async def test_deadline_at_final_complete_gate_never_clears_quarantine(monkeypat
         monkeypatch.setattr(filltruth_module, "_check_active_order_deadline", final_gate)
         monkeypatch.setattr(proc, "has_failed_fill", has_failed)
         monkeypatch.setattr(store, "mark_owned_order_unresolved", mark_unresolved)
-        monkeypatch.setattr(filltruth_module.log, "info", track_info)
+        class ObservedLog:
+            info = staticmethod(track_info)
+
+            def __getattr__(self, name):
+                return getattr(original_log, name)
+
+        # Patching a lazy logger's synthesized .info attribute makes monkeypatch
+        # restore a permanently bound pre-CLI PrintLogger method. Replace the
+        # module reference so teardown restores the original proxy itself.
+        monkeypatch.setattr(filltruth_module, "log", ObservedLog())
         loop = asyncio.get_running_loop()
         result = await reconcile_owned_order("ours", gw, proc, deadline=loop.time() + 5)
         assert result is ReconciliationOutcome.ACTIVE_DEADLINE

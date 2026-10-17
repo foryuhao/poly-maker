@@ -16,7 +16,12 @@ from logging.handlers import QueueHandler
 from queue import SimpleQueue
 from threading import Thread
 
-from polymaker.rdp_sm import NORMAL_END_S, TEST_CAPITAL_LIMIT_USDC, inventory_trading_state
+from polymaker.rdp_sm import (
+    NORMAL_END_S,
+    TEST_CAPITAL_LIMIT_USDC,
+    inventory_delta,
+    inventory_trading_state,
+)
 
 NA = "NOT_AVAILABLE"
 
@@ -220,9 +225,21 @@ class HumanRunLog:
         if failures:
             lines.append("Trading Was Attempted: NO (preflight did not open this executor)")
         for diagnostic in p.get("diagnostics", []):
-            lines.extend(self._tick_failure(diagnostic) if diagnostic.get("tick_check")
-                         else self._book_failure(diagnostic))
+            if diagnostic.get("ws_check"):
+                lines.extend(self._ws_failure(diagnostic))
+            else:
+                lines.extend(self._tick_failure(diagnostic) if diagnostic.get("tick_check")
+                             else self._book_failure(diagnostic))
         return lines
+
+    def _ws_failure(self, d):
+        last = d.get("last_failure") or {}
+        return [
+            f"WS Check: BLOCKED | Reason={value(d.get('reason'))} | "
+            f"Generation={value(d.get('generation'))} | Sequence={value(d.get('sequence'))}",
+            f"WS Last Failure: {value(last.get('reason'))} | Type={value(last.get('error_type'))} | "
+            f"Failure Count={value(d.get('failure_count'))}",
+        ]
 
     def _tick_failure(self, d):
         return ["Tick Check: BLOCKED | DYNAMIC_TICK_UNKNOWN_OR_CHANGED",
@@ -293,20 +310,34 @@ class HumanRunLog:
                         and w.get("block_reason") in {"QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
                                                      "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM", "MAKER_BUY_NOTIONAL_BELOW_MINIMUM"}
                         else "Block Reason")
-        cancel = ", ".join("ACK" if c.get("ack") is True else "NOT_ACKNOWLEDGED" for c in self.cancel_events) or NA
+        def cancel_status(event):
+            if event.get("ack") is True:
+                return "ACK"
+            reply = event.get("ack") or event.get("result") or {}
+            if reply.get("unknown"):
+                return "UNKNOWN"
+            if reply.get("canceled"):
+                return "ACK" if not reply.get("not_canceled") else "PARTIAL_ACK"
+            rejected = reply.get("not_canceled", [])
+            if rejected and all("already canceled or matched" in str(item) for item in rejected):
+                return "ALREADY_CANCELED_OR_MATCHED"
+            return "NOT_ACKNOWLEDGED"
+
+        cancel = ", ".join(cancel_status(c) for c in self.cancel_events) or NA
+        token_ids = {p["quote"]["outcome"]: p["quote"]["token_id"] for p in attempts}
         latest = {r.get("order_id"): r.get("filltruth") for r in self.reconciliations}
         reconciliation = ", ".join(f"{shortened(oid)}={value(status)}" for oid, status in latest.items()) or NA
         lines.extend([
             f"Known Order IDs (run): {', '.join(shortened(i) for i in w.get('known_order_ids', [])) or NA}",
             f"FillWindow Duration (deadline - T0): {value(duration)}s",
             f"Confirmed Fill Quantity (this window, newly observed): {sum(f['size'] for f in fresh):g} | "
-            f"YES={sum(f['size'] for f in fresh if f['token_id'] == plan.get('books', {}).get('YES', {}).get('token_id')):g} "
-            f"NO={sum(f['size'] for f in fresh if f['token_id'] == plan.get('books', {}).get('NO', {}).get('token_id')):g}",
+            f"YES={sum(f['size'] for f in fresh if f['token_id'] == token_ids.get('YES')):g} "
+            f"NO={sum(f['size'] for f in fresh if f['token_id'] == token_ids.get('NO')):g}",
             f"Cancel Status: {cancel} | Reconciliation Status: {reconciliation}",
             f"Updated Inventory: YES={value(w.get('yes_inventory'))} NO={value(w.get('no_inventory'))} | Updated Delta={value(w.get('delta'))}",
             f"Capital Used (confirmed cost): {used:g} USDC | Capital Committed (M2): {value(w.get('capital_committed'))} USDC",
             f"Close Barrier Result: {barrier} | {reason_label}: {value(w.get('block_reason'))}",
-            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else inventory_trading_state(w.get('delta', 0))} "
+            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else inventory_trading_state(inventory_delta(w.get('yes_inventory', 0), w.get('no_inventory', 0)))} "
             "(inventory state; next market/time check still required)",
         ])
         self.cancel_events, self.reconciliations, self.planned, self.decision = [], [], None, {}
@@ -370,6 +401,14 @@ class HumanRunLog:
                                      f"Constraints={s['sizing_constraint_reason']}")
                 elif name == "sm_cancel_ack":
                     self.cancel_events.append(p)
+                elif name == "sm_network_transition":
+                    lines.append(f"Network: {p['previous']} -> {p['state']} | "
+                                 f"Reason={p['reason']} | Pause={value(p['pause_duration_sec'])}s")
+                elif name == "sm_network_slow_request":
+                    lines.append(f"Network Slow Request: {p['method']} | "
+                                 f"Duration={value(p['duration_ms'])}ms | WARNING")
+                elif name == "sm_obi_close_requested":
+                    lines.append(f"Order Close Requested: {p['window_id']} | Reason={p['reason']}")
                 elif name == "sm_official_reconciliation":
                     self.reconciliations.append(p)
                 elif name == "sm_placement_intent":
@@ -407,6 +446,8 @@ class HumanRunLog:
                     f"YES Inventory: {value(yes)} | NO Inventory: {value(no)} | Delta: {value(delta)}",
                     f"Completed Pairs: {value(r.get('completed_pairs') if delta is not None else None)} | Residual Shares: {value(abs(delta) if delta is not None else None)}",
                     f"Merged Pairs: {value(r.get('merged_pairs', 0))} | Recovered Collateral: {value(r.get('recovered_collateral_usdc', 0))} USDC",
+                    f"Verified Merge Gross PnL: {value(r.get('realized_merge_pnl'))} USDC | "
+                    f"Unmerged Pair PnL Estimate: {value(r.get('unmerged_pair_pnl_estimate'))} USDC",
                     f"Maximum Capital Utilization (observed M2 commitment / {TEST_CAPITAL_LIMIT_USDC:g} USDC cap): {value(maximum)} USDC | "
                     f"{value(maximum / TEST_CAPITAL_LIMIT_USDC * 100 if maximum is not None else None)}%",
                     f"Maximum Residual Exposure: {NA} | Exposure Duration: {NA}",
@@ -425,7 +466,8 @@ class HumanRunLog:
     def _inventory_check(self, payload):
         lines = [f"Inventory Check: {payload.get('status', 'BLOCKED_WAIT_UNTIL_300')} | "
                  f"T+{value(payload.get('elapsed_s'))}s | Source=DATA_API | "
-                 f"Tolerance={value(payload.get('tolerance_shares'))} shares"]
+                 f"Tolerance={value(payload.get('tolerance_shares'))} shares"
+                 f"{' (exclusive)' if payload.get('tolerance_exclusive') else ''}"]
         for side, values in payload.get("inventory", {}).items():
             lines.append(f"{side}: Expected={value(values.get('expected'))} "
                          f"Actual={value(values.get('actual'))} "

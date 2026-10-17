@@ -164,14 +164,14 @@ async def test_actual_fractional_fill_rebalance_closes_and_next_normal_uses_lega
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     pair = result.windows[2]["result"]["requested_quotes"]
-    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 5.01, "NO": 5}
+    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 5, "NO": 5}
     assert result.confirmed_yes == 4.9941 and result.confirmed_no == 5
     assert result.merged_pairs == 0
     assert result.delta == pytest.approx(-.0059)
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert [len(p) for p in v.post_requests] == [2, 1, 2]
     signed_yes = next(p["order"] for p in v.post_requests[2] if p["order"]["tokenId"] == "1")
-    assert Decimal(signed_yes["takerAmount"]) == Decimal("5.01") * 1_000_000
+    assert Decimal(signed_yes["takerAmount"]) == Decimal("5") * 1_000_000
 
 
 async def test_production_mixed_confirmed_mined_dust_waits_then_resumes_normal(env):

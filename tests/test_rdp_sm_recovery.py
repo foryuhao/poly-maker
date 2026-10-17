@@ -273,8 +273,9 @@ async def test_missing_merge_auth_does_not_abandon_rebalance_or_release_inventor
         elif index == 2:
             venue.fill(ids["NO"], "minimum-notional", 100)
             venue.time = START + 240
-            venue.books["1"]["bids"][0]["price"] = ".16"
-            venue.books["1"]["asks"][0]["price"] = ".17"
+            # Keep this recovery scenario within the current $15 session cap.
+            venue.books["1"]["bids"][0]["price"] = ".12"
+            venue.books["1"]["asks"][0]["price"] = ".13"
         elif index == 3:
             venue.fill(ids["YES"], "repair", 95)
     on_windows(v, fills, stop_after=3)
@@ -283,7 +284,7 @@ async def test_missing_merge_auth_does_not_abandon_rebalance_or_release_inventor
     assert result.stop_reason == "MERGE_PREPARE_FAILED:BUILDER_AUTH_MISSING"
     assert len(v.posts) == 4 and result.delta == 0 and result.confirmed_yes == result.confirmed_no == 100
     assert not v.merge_submissions and result.merged_pairs == 0
-    assert v.executor.committed() > 18 and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert 14 < v.executor.committed() <= 15 and result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert len([r for r in journal_records(v.executor.journal.path) if r["kind"] == "sm_trade"]) > 0
 
 

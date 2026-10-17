@@ -1,0 +1,355 @@
+{
+  "scope": {
+    "start": "2026-10-17T15:40:00+08:00",
+    "end": "2026-10-17T16:40:00+08:00",
+    "frozen_markets": 12
+  },
+  "first_recorded_valid_signals": [
+    {
+      "market": "15:40",
+      "first": {
+        "time": "15:40:22.599",
+        "epoch": 1792222822.5994842,
+        "signal": "VALID_YES",
+        "obi": "0.958531460798407608094658852",
+        "source_line": 31,
+        "recorded_time": "15:40:23.422"
+      }
+    },
+    {
+      "market": "15:45",
+      "first": {
+        "time": "15:45:23.404",
+        "epoch": 1792223123.4040658,
+        "signal": "VALID_NO",
+        "obi": "-0.4557171271906246640146220836",
+        "source_line": 29,
+        "recorded_time": "15:45:23.625"
+      }
+    },
+    {
+      "market": "15:50",
+      "first": {
+        "time": "15:50:31.609",
+        "epoch": 1792223431.6096675,
+        "signal": "VALID_YES",
+        "obi": "0.8157433910248746422116419235",
+        "source_line": 75,
+        "recorded_time": "15:50:31.820"
+      }
+    },
+    {
+      "market": "15:55",
+      "first": {
+        "time": "15:55:22.697",
+        "epoch": 1792223722.697885,
+        "signal": "VALID_NO",
+        "obi": "-0.8559488548051262500366579665",
+        "source_line": 26,
+        "recorded_time": "15:55:22.698"
+      }
+    },
+    {
+      "market": "16:00",
+      "first": {
+        "time": "16:00:23.110",
+        "epoch": 1792224023.1104295,
+        "signal": "VALID_YES",
+        "obi": "0.4694096775768623557559284517",
+        "source_line": 24,
+        "recorded_time": "16:00:23.110"
+      }
+    },
+    {
+      "market": "16:05",
+      "first": {
+        "time": "16:05:23.730",
+        "epoch": 1792224323.730664,
+        "signal": "VALID_NO",
+        "obi": "-0.741392789017792926608086557",
+        "source_line": 15,
+        "recorded_time": "16:05:23.776"
+      }
+    },
+    {
+      "market": "16:10",
+      "first": {
+        "time": "16:10:26.455",
+        "epoch": 1792224626.455772,
+        "signal": "VALID_NO",
+        "obi": "-0.9466719037979273045895398375",
+        "source_line": 29,
+        "recorded_time": "16:10:26.926"
+      }
+    },
+    {
+      "market": "16:15",
+      "first": {
+        "time": "16:16:07.845",
+        "epoch": 1792224967.8459504,
+        "signal": "VALID_YES",
+        "obi": "0.9292570172892740163356689745",
+        "source_line": 70,
+        "recorded_time": "16:16:08.308"
+      }
+    },
+    {
+      "market": "16:20",
+      "first": {
+        "time": "16:20:21.580",
+        "epoch": 1792225221.5808074,
+        "signal": "VALID_YES",
+        "obi": "0.555610040148334303840142205",
+        "source_line": 28,
+        "recorded_time": "16:20:21.880"
+      }
+    },
+    {
+      "market": "16:25",
+      "first": {
+        "time": "16:25:26.543",
+        "epoch": 1792225526.5432553,
+        "signal": "VALID_NO",
+        "obi": "-0.9070651163751264947027116335",
+        "source_line": 29,
+        "recorded_time": "16:25:26.543"
+      }
+    },
+    {
+      "market": "16:30",
+      "first": {
+        "time": "16:30:23.906",
+        "epoch": 1792225823.9064806,
+        "signal": "VALID_YES",
+        "obi": "0.7880249146071930882057464335",
+        "source_line": 29,
+        "recorded_time": "16:30:24.129"
+      }
+    },
+    {
+      "market": "16:35",
+      "first": {
+        "time": "16:35:23.140",
+        "epoch": 1792226123.1403995,
+        "signal": "VALID_NO",
+        "obi": "-0.5679873130451425915292702265",
+        "source_line": 28,
+        "recorded_time": "16:35:23.402"
+      }
+    }
+  ],
+  "already_canceled": [],
+  "rejected": [
+    {
+      "market": "15:50",
+      "window": "w3",
+      "time": "15:50:53.775",
+      "reason": "invalid post-only order: order crosses book"
+    },
+    {
+      "market": "16:10",
+      "window": "w2",
+      "time": "16:10:31.967",
+      "reason": "invalid post-only order: order crosses book"
+    },
+    {
+      "market": "16:25",
+      "window": "w6",
+      "time": "16:26:10.693",
+      "reason": "invalid post-only order: order crosses book"
+    }
+  ],
+  "repair_close_outcome": {
+    "ACK": {
+      "WS_BOOK_STALE": 6,
+      "ORDER_DEADLINE": 8
+    },
+    "REJECTED": {
+      "PLACEMENT_NOT_ACKNOWLEDGED": 1
+    }
+  },
+  "repair_median_post_to_close_s": 3.0005374350585043,
+  "repair_median_close_to_safe_s": 10.25817060470581,
+  "repair_max_close_to_safe_s": 23.427910089492798,
+  "unfilled_ack_repair_count": 7,
+  "unfilled_ack_repair_median_post_to_close_s": 3.0021395976655185,
+  "filled_normal_close_reasons": {
+    "SIGNAL_REVERSED": 7,
+    "ORDER_DEADLINE": 1
+  },
+  "starting_balance": 22.643222,
+  "latest_observed_balance": 23.755522,
+  "observed_balance_change": 1.1123,
+  "unexplained_cash_flow": 5.0,
+  "cash_gaps": [
+    {
+      "previous": "16:10",
+      "next": "16:15",
+      "unassigned_cash_flow": 5.0
+    }
+  ],
+  "merges": [
+    {
+      "market": "15:40",
+      "time": "15:44:26.814",
+      "epoch": 1792223066.8140755,
+      "pairs": 5.0,
+      "released_cost": "5.45",
+      "balance_before": 17.193222,
+      "balance_after": 22.193222,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a241a21cb7344e66a92c3e10ec70af68.jsonl",
+      "source_line": 1333
+    },
+    {
+      "market": "15:45",
+      "time": "15:49:21.355",
+      "epoch": 1792223361.3555648,
+      "pairs": 10.89,
+      "released_cost": "11.0277",
+      "balance_before": 11.165522,
+      "balance_after": 22.055522,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_af294965fa6e4b2d9e0508698f2b3cf4.jsonl",
+      "source_line": 1288
+    },
+    {
+      "market": "15:50",
+      "time": "15:54:22.159",
+      "epoch": 1792223662.1597402,
+      "pairs": 5.0,
+      "released_cost": "5.10",
+      "balance_before": 16.955522,
+      "balance_after": 21.955522,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_64d50379820a42fe882f8737db4b23a6.jsonl",
+      "source_line": 1247
+    },
+    {
+      "market": "15:55",
+      "time": "15:59:28.181",
+      "epoch": 1792223968.1819322,
+      "pairs": 5.0,
+      "released_cost": "5.40",
+      "balance_before": 16.555522,
+      "balance_after": 21.555522,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_60388fdc55094efe9ca55f2f49fee91a.jsonl",
+      "source_line": 1327
+    },
+    {
+      "market": "16:00",
+      "time": "16:04:25.156",
+      "epoch": 1792224265.1564112,
+      "pairs": 5.0,
+      "released_cost": "4.60",
+      "balance_before": 16.955522,
+      "balance_after": 21.955522,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd317b53cd69414b8b0e8e47d2155c68.jsonl",
+      "source_line": 1344
+    },
+    {
+      "market": "16:10",
+      "time": "16:14:28.685",
+      "epoch": 1792224868.685989,
+      "pairs": 5.0,
+      "released_cost": "4.45",
+      "balance_before": 18.755522,
+      "balance_after": 23.755522,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_eecf5ee3966e475a99dfe8fd168f0366.jsonl",
+      "source_line": 1585
+    }
+  ],
+  "non_success_requests": [
+    {
+      "market": "16:05",
+      "time": "16:08:24.172",
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_829b6140697048bf8c03463dceca81f1.jsonl",
+      "source_line": 1440,
+      "request_id": "246e9c27efd54f90846cb4940434c382",
+      "operation_id": "f525bc77c0b04837a343d2210dfa74bc",
+      "request_scope_id": "f525bc77c0b04837a343d2210dfa74bc",
+      "batch_id": null,
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "started_monotonic": 2735790.821186739,
+      "completed_monotonic": 2735796.334363129,
+      "started_wall": 1792224498.65883,
+      "completed_wall": 1792224504.1720433,
+      "duration_ms": 5513.170680962503,
+      "outcome": "TRANSPORT_ERROR",
+      "http_status": null,
+      "error_type": "PolyApiException",
+      "event_monotonic": 2735796.334363129
+    },
+    {
+      "market": "16:25",
+      "time": "16:26:21.530",
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_54663396127a43c3adaaae7639287b57.jsonl",
+      "source_line": 490,
+      "request_id": "0aac9774d847444880518b6d9747a0ce",
+      "operation_id": "a2b6e0a699f746c891b2a5d8c6317984",
+      "request_scope_id": "a2b6e0a699f746c891b2a5d8c6317984",
+      "batch_id": "54663396127a43c3adaaae7639287b57:w7",
+      "method": "GET",
+      "endpoint": "/data/order/0x16d910745d4d7a836dd9f80a56fb7bfe804724e03ef5fcc0646e2721018ad530",
+      "started_monotonic": 2736873.458994748,
+      "completed_monotonic": 2736873.693041473,
+      "started_wall": 1792225581.2966378,
+      "completed_wall": 1792225581.5307207,
+      "duration_ms": 234.04364474117756,
+      "outcome": "LOCAL_ERROR",
+      "http_status": null,
+      "error_type": "_Issue",
+      "event_monotonic": 2736873.693041473
+    }
+  ],
+  "comparison": {
+    "markets": {
+      "before": 24,
+      "after": 12
+    },
+    "submitted": {
+      "before": 226,
+      "after": 106
+    },
+    "traded_markets": {
+      "before": 11,
+      "after": 7
+    },
+    "residual_markets": {
+      "before": 5,
+      "after": 1
+    },
+    "pair_pnl": {
+      "before": -0.44229513999999986,
+      "after": -0.13769999999999996
+    },
+    "residual_cost": {
+      "before": 14.65280486,
+      "after": 3.75
+    },
+    "phase_fill_rates": {
+      "before": {
+        "NORMAL": {
+          "submitted": 170,
+          "filled": 15
+        },
+        "REBALANCE": {
+          "submitted": 56,
+          "filled": 9
+        }
+      },
+      "after": {
+        "NORMAL": {
+          "submitted": 91,
+          "filled": 8
+        },
+        "REBALANCE": {
+          "submitted": 15,
+          "filled": 7
+        }
+      }
+    }
+  },
+  "max_writer_queue": 148,
+  "diagnostics_dropped": 0,
+  "confirmation_lag_median_s": 11.210016965866089,
+  "confirmation_lag_max_s": 19.769959688186646
+}

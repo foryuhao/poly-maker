@@ -12,13 +12,15 @@ posting — so paper mode exercises the full pipeline.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
+import json
 import math
 import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any, TypeVar
 
 import httpx
@@ -41,6 +43,27 @@ class GatewayReadError(RuntimeError):
 
 class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
+
+
+@dataclass(frozen=True)
+class PreparedOrders:
+    orders: tuple
+    quotes: tuple
+    order_ids: tuple[str, ...]
+    body_hash: str
+
+
+@dataclass(frozen=True)
+class CancelResult:
+    canceled: tuple[str, ...]
+    not_canceled: tuple[tuple[str, str], ...]
+    unknown: tuple[str, ...]
+    sdk_started_monotonic: float | None = None
+    ack_monotonic: float | None = None
+
+    @property
+    def complete(self):
+        return not self.not_canceled and not self.unknown
 
 
 def _normalize_place_response(raw: Any) -> dict[str, Any] | None:
@@ -84,6 +107,7 @@ class ExecutionGateway:
         # dedicated, bounded pool for blocking order/HTTP calls so a burst of
         # requotes across many markets can't starve the default executor
         self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="clob-io")
+        self._cancel_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="clob-cancel")
 
     @property
     def paper(self) -> bool:
@@ -96,6 +120,7 @@ class ExecutionGateway:
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
+        self._cancel_pool.shutdown(wait=False, cancel_futures=True)
 
     async def _io(self, fn: Callable[..., _T], *args: Any) -> _T:
         """Run a blocking client call on the dedicated pool."""
@@ -169,6 +194,91 @@ class ExecutionGateway:
             log.warning("clock_check_failed", err=str(exc))
 
     # ── placement ───────────────────────────────────────────────────────
+    def _prepared_body(self, orders):
+        from py_clob_client_v2.order_utils.model.order_data_v2 import order_to_json_v2
+
+        return json.dumps(
+            [
+                order_to_json_v2(
+                    a.order, self._client.creds.api_key or "", a.orderType, True, False
+                )
+                for a in orders
+            ],
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+    async def prepare(self, quotes, meta, tick_sizes):
+        """Sign once outside the operation segment; never submit here."""
+
+        def build():
+            from py_clob_client_v2.clob_types import (
+                OrderArgsV2,
+                OrderType,
+                PartialCreateOrderOptions,
+                PostOrdersV2Args,
+            )
+            from py_clob_client_v2.config import get_contract_config
+            from py_clob_client_v2.order_utils.exchange_order_builder_v2 import (
+                ExchangeOrderBuilderV2,
+            )
+
+            client = self._client
+            if client._ClobClient__resolve_version() != 2 or client.builder.signature_type not in (
+                0,
+                1,
+                2,
+            ):
+                raise ValueError("PREPARED_SIGNING_MODE_UNSUPPORTED")
+            contracts = get_contract_config(client.chain_id)
+            exchange = contracts.neg_risk_exchange_v2 if meta.neg_risk else contracts.exchange_v2
+            builder = ExchangeOrderBuilderV2(exchange, client.chain_id, client.signer)
+            args, ids = [], []
+            for q in quotes:
+                signed = client.create_order(
+                    OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
+                    options=PartialCreateOrderOptions(
+                        tick_size=_tick_str(tick_sizes[q.token_id]), neg_risk=meta.neg_risk
+                    ),
+                )
+                ids.append(builder.build_order_hash(builder.build_order_typed_data(signed)))
+                args.append(PostOrdersV2Args(order=signed, orderType=OrderType.GTC))
+            return PreparedOrders(
+                tuple(args),
+                tuple(quotes),
+                tuple(ids),
+                hashlib.sha256(self._prepared_body(args).encode()).hexdigest(),
+            )
+
+        return await self._io(build)
+
+    async def send_prepared(self, prepared, *, submit_guard):
+        """Restricted RDP path: send original objects, no signing, logs or GET."""
+        await self._order_bucket.acquire(len(prepared.orders))
+
+        def send():
+            from threading import local
+
+            client = self._client
+            if (
+                hashlib.sha256(self._prepared_body(prepared.orders).encode()).hexdigest()
+                != prepared.body_hash
+            ):
+                raise ValueError("PREPARED_BODY_CHANGED")
+            if not submit_guard():
+                return None
+            if not hasattr(client, "operation_local"):
+                client.operation_local = local()
+            client.operation_local.no_get = True
+            client.expected_body_hash = prepared.body_hash
+            try:
+                return client.post_orders(list(prepared.orders), post_only=True)
+            finally:
+                client.operation_local.no_get = False
+                client.expected_body_hash = None
+
+        return await self._io(send)
+
     async def place(
         self, quotes: list[Quote], meta: MarketMeta, *,
         submit_guard: Callable[[], bool] | None = None,
@@ -306,8 +416,42 @@ class ExecutionGateway:
         out.append(OpenOrder(oid.strip(), q.token_id, q.side, q.price, q.size, OrderState.LIVE))
         return out
 
-
     # ── cancellation ────────────────────────────────────────────────────
+    async def cancel_detailed(self, order_ids: list[str]) -> CancelResult:
+        """Per-ID result on reserved capacity; cancellation never proves close."""
+        if not order_ids or self._paper:
+            return CancelResult(tuple(order_ids), (), ())
+        await self._cancel_bucket.acquire(1)
+        started = [None]
+
+        def send():
+            started[0] = time.monotonic()
+            return self._client.cancel_orders(order_ids)
+
+        try:
+            raw = await asyncio.get_running_loop().run_in_executor(self._cancel_pool, send)
+            canceled = raw.get("canceled")
+            failed = raw.get("not_canceled", raw.get("notCanceled"))
+            if (
+                not isinstance(canceled, list)
+                or not isinstance(failed, dict)
+                or any(not isinstance(x, str) for x in canceled)
+                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in failed.items())
+                or len(set(canceled)) != len(canceled)
+                or set(canceled) & failed.keys()
+                or not set(canceled) | failed.keys() <= set(order_ids)
+            ):
+                raise ValueError("CANCEL_RESPONSE_INVALID")
+            return CancelResult(
+                tuple(canceled),
+                tuple(failed.items()),
+                tuple(sorted(set(order_ids) - set(canceled) - failed.keys())),
+                started[0],
+                time.monotonic(),
+            )
+        except Exception:
+            return CancelResult((), (), tuple(order_ids), started[0], time.monotonic())
+
     async def cancel(self, order_ids: list[str]) -> bool:
         """Cancel by id. Returns True on success — callers must NOT drop the
         orders from local state on failure (they may still be live)."""

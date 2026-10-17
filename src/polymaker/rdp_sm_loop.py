@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from dataclasses import asdict, dataclass, field, replace
+from contextlib import suppress
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 
 import httpx
 from py_clob_client_v2.http_helpers import helpers
 
-from polymaker.config import Config, RDPSMConfig
-from polymaker.domain import Side
+from polymaker.config import Config
 from polymaker.rdp_sm import (
     NORMAL_END_S,
     TRADING_END_S,
@@ -20,18 +20,17 @@ from polymaker.rdp_sm import (
     SessionStatus,
     _Issue,
     _require,
+    inventory_delta,
     inventory_trading_state,
     run_preflight,
 )
 from polymaker.rdp_sm_execution import (
-    MIN_MAKER_BUY_NOTIONAL,
-    MIN_MAKER_BUY_SHARES,
     InventoryMismatch,
     SMWindowExecutor,
-    WindowQuote,
     _execution_identity,
     _ExecutionReads,
 )
+from polymaker.rdp_sm_quotes import QuoteUnavailable, make_quotes
 from polymaker.rdp_sm_recovery import (
     UNCERTAIN_MUTATIONS,
     pause_reason,
@@ -40,106 +39,10 @@ from polymaker.rdp_sm_recovery import (
     retry_read,
 )
 from polymaker.rdp_sm_sizing import (
-    adjust_normal_pair,
-    adjusted_normal_size,
-    calculate_rebalance_size,
     empty_sizing_report,
-    normal_sizes,
-    resolve_favorite_target,
     summarize_sizing,
     validate_market_sizing,
 )
-
-
-class QuoteUnavailable(ValueError):
-    """Known quote illegality; no placement or exposure was created."""
-
-
-def make_quotes(meta, books, yes: Decimal, no: Decimal, window_id: str,
-                sizing: RDPSMConfig | None = None, *, now=None, max_age=10, evidence=None, official_time=None,
-                official_time_read_duration_s=0):
-    cfg = sizing if sizing is not None else RDPSMConfig()
-    validate_market_sizing(cfg, Decimal(str(meta.min_order_size)))
-    delta = yes - no
-    state = inventory_trading_state(delta)
-    favorite = resolve_favorite_target(meta, books, cfg, now=now, max_age=max_age, official_time=official_time,
-                                       official_time_read_duration_s=official_time_read_duration_s)
-    target = Decimal(favorite["signed_target_delta"])
-    details = {"base_size": str(cfg.base_size), "configured_target_delta": str(cfg.target_delta),
-               "favorite_threshold": str(cfg.favorite_threshold), **favorite,
-               "actual_delta_before": str(delta), "sizing_adjustment_reason":
-               "FAVORITE_TARGET" if target else "LEGACY_INVENTORY_SKEW",
-               "sizing_constraint_reason": [], "minimum_order_size": str(meta.min_order_size),
-               "favorite_at_decision": favorite["favorite_side"],
-               "final_winning_outcome": "UNKNOWN", "favorite_prediction_correct": "UNKNOWN",
-               "target_sizing_applied": False,
-               "planned_yes_size": "0", "planned_no_size": "0",
-               "submitted_yes_size": "0", "submitted_no_size": "0",
-               "confirmed_yes_fill": "0", "confirmed_no_fill": "0",
-               "actual_delta_after": str(delta)}
-    if evidence is not None:
-        evidence.clear()
-        evidence.update(details)
-    if state == "NORMAL":
-        sizes = normal_sizes(delta, cfg.base_size)
-    else:
-        sizes = {"NO" if delta > 0 else "YES": abs(delta)}
-    quotes = []
-    for outcome, size in sizes.items():
-        token = meta.yes.token_id if outcome == "YES" else meta.no.token_id
-        book = books[token]
-        tick, bid, ask = (Decimal(str(book[k])) for k in ("tick", "best_bid", "best_ask"))
-        price = bid - tick if state == "NORMAL" else bid
-        if (
-            not all(n.is_finite() for n in (tick, bid, ask, price, size))
-            or tick <= 0
-            or not tick <= price <= 1 - tick
-            or price % tick != 0
-            or price >= ask
-        ):
-            raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
-        if state == "REBALANCE":
-            try:
-                ideal, size, reasons = calculate_rebalance_size(
-                    delta, target, price, Decimal(str(meta.min_order_size)), cfg.max_order_size)
-            except ValueError as exc:
-                raise QuoteUnavailable(str(exc)) from exc
-            details.update(current_delta=str(delta), ideal_repair_size=str(ideal),
-                           actual_repair_size=str(size), repair_side=outcome,
-                           repair_sizing_fallback=reasons or ["NONE"])
-            neutral_size = calculate_rebalance_size(delta, Decimal(0), price,
-                Decimal(str(meta.min_order_size)), cfg.max_order_size)[1]
-        else:
-            neutral_size = adjusted_normal_size(outcome, size, Decimal(0), price,
-                Decimal(str(meta.min_order_size)), cfg.max_order_size)[0]
-            size, reasons = adjusted_normal_size(outcome, size, target, price,
-                                                Decimal(str(meta.min_order_size)), cfg.max_order_size)
-        details["target_sizing_applied"] |= size != neutral_size
-        details["sizing_constraint_reason"].extend(reasons)
-        if (size < max(MIN_MAKER_BUY_SHARES, Decimal(str(meta.min_order_size)))
-                or size % Decimal(".01") != 0):
-            raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
-        if state == "NORMAL" and price * size < MIN_MAKER_BUY_NOTIONAL:
-            raise QuoteUnavailable("NORMAL_LEG_NOTIONAL_BELOW_MINIMUM")
-        quotes.append(
-            WindowQuote(
-                meta.condition_id, token, outcome, Side.BUY, float(price), float(size), window_id
-            )
-        )
-    if state == "NORMAL" and cfg.target_delta != 0:
-        current = {q.outcome: Decimal(str(q.size)) for q in quotes}
-        closest = adjust_normal_pair(current, {q.outcome: Decimal(str(q.price)) for q in quotes},
-                                     delta, target, Decimal(str(meta.min_order_size)))
-        if closest != current:
-            details["sizing_constraint_reason"].append("TARGET_AFTER_CONSTRAINTS")
-            quotes = [replace(q, size=float(closest[q.outcome])) for q in quotes]
-            details["target_sizing_applied"] = True
-    details.update(planned_yes_size=str(next((q.size for q in quotes if q.outcome == "YES"), 0)),
-                   planned_no_size=str(next((q.size for q in quotes if q.outcome == "NO"), 0)))
-    if evidence is not None:
-        evidence.clear()
-        evidence.update(details)
-    return state, quotes
 
 
 @dataclass
@@ -164,6 +67,8 @@ class RunResult:
     residual_shares: float = 0
     average_yes_cost: float | None = None
     average_no_cost: float | None = None
+    realized_merge_pnl: float = 0
+    unmerged_pair_pnl_estimate: float | str = 0
     theoretical_pair_pnl: float | str = 0
     final_close_barrier: str = "BLOCKED"
     execution_status: str = "BLOCKED"
@@ -315,18 +220,31 @@ class SMTradingLoop:
         result.average_yes_cost, result.average_no_cost = (
             float(cost) if cost is not None else None for cost in costs
         )
-        result.theoretical_pair_pnl = (
+        realized = executor.merged_pairs - sum(executor.merged_cost.values(), Decimal(0))
+        result.realized_merge_pnl = float(realized)
+        unmerged = (
             0
             if min(yes, no) == 0
-            else float(min(yes, no) * (1 - sum(costs)))
+            else min(yes, no) * (1 - sum(costs))
             if all(c is not None for c in costs)
             else "NOT_VERIFIED"
         )
+        result.unmerged_pair_pnl_estimate = float(unmerged) if not isinstance(unmerged, str) else unmerged
+        # Cumulative pair estimate includes already realized merges; flattening
+        # the inventory must not reset previously verified profit or loss.
+        result.theoretical_pair_pnl = (
+            unmerged if isinstance(unmerged, str) else float(realized + unmerged)
+        )
         result.sizing_report = summarize_sizing(executor, result.windows, yes - no,
                                                 result.final_close_barrier)
+        if (executor.merged_pairs > 0 and min(yes, no) == 0
+                and result.final_close_barrier == "SAFE_TO_CONTINUE"):
+            result.sizing_report["pair_pnl"] = result.realized_merge_pnl
         return yes, no
 
     async def _run_session(self, result, fill_window_sec):
+        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            return await self._run_obi_session(result)
         executor = self.executor
         failed = False
         market_start = int(self.slug.rsplit("-", 1)[1])
@@ -390,7 +308,7 @@ class SMTradingLoop:
                 self.observer.emit("inventory_check", {**executor.inventory_observation,
                     "status": "RESUMED", "elapsed_s": elapsed})
             yes, no = self._inventory(result)
-            normal = inventory_trading_state(yes - no) == "NORMAL"
+            normal = inventory_trading_state(inventory_delta(yes, no)) == "NORMAL"
             if elapsed >= TRADING_END_S:
                 result.stop_reason = "MARKET_CUTOFF"
                 break
@@ -518,6 +436,159 @@ class SMTradingLoop:
         self._inventory(result)
         result.execution_status = "INCOMPLETE" if not safe else "BLOCKED" if failed else "COMPLETED"
 
+    async def _run_obi_session(self, result):
+        """Single writer coordinator; controllers share only order primitives."""
+        from polymaker.rdp_sm_lifecycle import BatchLifecycle
+        from polymaker.rdp_sm_normal import NormalController
+        from polymaker.rdp_sm_rebalance import RebalanceController
+
+        executor = self.executor
+        lifecycle = BatchLifecycle(executor)
+        normal = NormalController(executor, lifecycle)
+        rebalance = RebalanceController(executor, lifecycle)
+        self.normal_controller, self.rebalance_controller = normal, rebalance
+        feed = executor.reads.feed
+        failed = False
+        start = int(self.slug.rsplit("-", 1)[1])
+
+        async def warm_network():
+            # Only public GETs; no synthetic orders/cancels for measurement.
+            while True:
+                task = asyncio.create_task(executor.reads.server_time())
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    with suppress(Exception):
+                        await task
+                    raise
+                except Exception:
+                    pass
+                await asyncio.sleep(executor.cfg.rdp_sm.obi.network_probe_interval_sec)
+
+        warmer = asyncio.create_task(warm_network(), name="rdp-network-warmup")
+        try:
+            while True:
+                executor.drain_network_events()
+                if not self.production:
+                    await self._offline_boundary()
+                elapsed = (
+                    self._estimated_elapsed()
+                    if self.market_deadline is not None
+                    else executor.official_time
+                    + executor.monotonic()
+                    - executor.time_anchor
+                    - start
+                )
+                result.stop_elapsed_s = elapsed
+                if elapsed >= TRADING_END_S:
+                    result.stop_reason = "MARKET_CUTOFF"
+                    break
+                if executor.fatal is not None or getattr(executor.journal, "failure", None):
+                    failed = True
+                    result.stop_reason = executor.fatal or "JOURNAL_WRITE_FAILED"
+                    break
+                if (
+                    executor.attempts
+                    and not executor.safe_to_continue
+                    and not await executor.verify_close(cancel=True)
+                ):
+                    await self._pause(
+                        result, executor.reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
+                    )
+                    continue
+                try:
+                    async with executor.lock:
+                        meta, _, _, account = await executor._await_owned(
+                            executor._snapshot(include_books=False)
+                        )
+                except InventoryMismatch:
+                    await self._wait_for_inventory(result)
+                    continue
+                except Exception as exc:
+                    if not retry_read(exc):
+                        raise
+                    await self._pause(result, reason_code(exc), "read")
+                    continue
+                if self.expected_market is not None:
+                    _require(
+                        meta.condition_id == self.expected_market.condition_id
+                        and meta.tokens == self.expected_market.tokens,
+                        "DISCOVERED_MARKET_CHANGED",
+                    )
+                yes, no = self._inventory(result)
+                if await self._merge(result, elapsed):
+                    continue
+                if executor.merge_pending or executor.fatal:
+                    continue
+                controller = normal if inventory_trading_state(inventory_delta(yes, no)) == "NORMAL" else rebalance
+                elapsed = (
+                    executor.official_time + executor.monotonic() - executor.time_anchor - start
+                )
+                if elapsed >= TRADING_END_S:
+                    result.stop_reason = "MARKET_CUTOFF"
+                    break
+                if elapsed < TRADING_START_S or elapsed >= controller.cutoff:
+                    await self.sleep(min(1, max(0.01, TRADING_END_S - elapsed)))
+                    continue
+                snapshot = lifecycle.snapshot(controller, yes, no)
+                if snapshot.reason == "WS_TICK_UNVERIFIED":
+                    try:
+                        await executor.reads.refresh_feed_ticks()
+                    except Exception as exc:
+                        if not retry_read(exc):
+                            raise
+                        await self._pause(result, reason_code(exc), "books")
+                    continue
+                health = executor.network_health()
+                if not snapshot.valid or not health.allowed:
+                    lifecycle.wait(snapshot.reason if not snapshot.valid else health.reason,
+                                   snapshot, health)
+                    await feed.wait_after(feed.sequence, 0.5)
+                    continue
+                lifecycle.account = account
+                window_id = f"{self.session_id}:w{result.total_windows + 1}"
+                # Independent controller entry methods own their preparation
+                # and exit policy, rather than passing a TTL to execute_window.
+                entry = normal.enter if controller is normal else rebalance.repair
+                outcome = await entry(yes, no, window_id)
+                if outcome is None:
+                    continue
+                window, sizing = outcome
+                result.total_windows += 1
+                result.normal_windows += controller is normal
+                result.rebalance_windows += controller is rebalance
+                result.windows.append(
+                    {
+                        "state": controller.phase,
+                        "elapsed_s": elapsed,
+                        "result": window.to_dict(),
+                        "sizing": sizing,
+                    }
+                )
+                self._inventory(result)
+                self._display_events(window=window.to_dict())
+                if window.close_barrier != "SAFE_TO_CONTINUE":
+                    result.blocked_windows += 1
+                    await self._pause(
+                        result, window.block_reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
+                    )
+            safe = await executor.verify_close(cancel=True)
+            if safe and self.production and executor.inventory_mismatch is None:
+                await self._merge(result)
+                safe = executor.safe_to_continue
+            await executor.journal.flush()
+            result.final_close_barrier = "SAFE_TO_CONTINUE" if safe else "BLOCKED"
+            result.execution_status = (
+                "INCOMPLETE" if not safe else "BLOCKED" if failed else "COMPLETED"
+            )
+            self._inventory(result)
+        finally:
+            executor.record("sm_obi_metrics", dict(lifecycle.metrics))
+            executor.record("sm_ws_diagnostics", feed.diagnostics())
+            warmer.cancel()
+            await asyncio.gather(warmer, return_exceptions=True)
+            executor.drain_network_events()
+
     async def _wait_for_inventory(self, result):
         """No BUY or Merge while Data API inventory is unexplained; retry until T=300."""
         executor = self.executor
@@ -539,14 +610,22 @@ class SMTradingLoop:
         return await self._run(production=True, expected_market=expected_market,
                                account_policy=account_policy, fill_window_sec=3.0)
 
-    async def _run(self, *, offline=False, production=False, expected_market=None,
-                   account_policy=None, fill_window_sec=3.0) -> RunResult:
+    async def _run(
+        self,
+        *,
+        offline=False,
+        production=False,
+        expected_market=None,
+        account_policy=None,
+        fill_window_sec=3.0,
+    ) -> RunResult:
         result = RunResult(None, self.session_id)
         if self.started:
             result.stop_reason = "M3_RUN_ALREADY_USED"
             result.stop_time = time.time()
             return result
         self.started = True
+        startup_reads = None
         try:
             self.production, self.expected_market = production, expected_market
             if not production:
@@ -636,7 +715,17 @@ class SMTradingLoop:
                                                   "context": getattr(exc, "context", None)})
             if self.executor is not None:
                 if isinstance(exc, asyncio.CancelledError):
-                    self.executor.fatal = "ABNORMAL_EXIT"
+                    if self.executor.interrupted_before_orders():
+                        # There cannot be an in-flight POST before the first
+                        # candidate write. Still run the full close verification.
+                        self.executor.fatal = None
+                        result.stop_reason = "USER_INTERRUPTED_BEFORE_ORDERS"
+                        self.executor.record("sm_interrupted_before_orders", {
+                            "preparation_started": False, "attempts": 0,
+                            "known_orders": 0, "capital_committed": "0",
+                        })
+                    else:
+                        self.executor.fatal = "ABNORMAL_EXIT"
                 safe = await self.executor._await_owned(
                     self.executor.verify_close(cancel=True), propagate_cancel=False
                 )
@@ -654,6 +743,21 @@ class SMTradingLoop:
                     result.execution_status = "INCOMPLETE"
                     result.final_close_barrier = "BLOCKED"
                     result.stop_reason = "JOURNAL_WRITE_FAILED"
+                if getattr(self.executor.journal, "flush", None) is not None:
+                    try:
+                        await self.executor.journal.flush()
+                    except Exception:
+                        result.execution_status, result.final_close_barrier = (
+                            "INCOMPLETE",
+                            "BLOCKED",
+                        )
+                        result.stop_reason = "JOURNAL_WRITE_FAILED"
                 self.executor.close()
                 self._display_events()
+            feed = getattr(self.executor.reads if self.executor else startup_reads, "feed", None)
+            if feed is not None:
+                await feed.close()
+            lease = getattr(self.executor.reads if self.executor else startup_reads, "lease", None)
+            if lease is not None:
+                lease.close()
         return result

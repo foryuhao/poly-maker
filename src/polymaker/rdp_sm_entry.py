@@ -71,7 +71,7 @@ async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotoni
         observer.emit("discovery", {"slug": meta.slug, "condition_id": meta.condition_id,
                                      "start": start, "end": start + 300,
                                      "elapsed_s": elapsed, "official_time": now})
-    if not TRADING_START_S <= elapsed < NORMAL_END_S:
+    if cfg.rdp_sm.normal_entry_mode == "obi_v1" or not TRADING_START_S <= elapsed < NORMAL_END_S:
         return meta, start, now, {}
     books = {}
     for token in (meta.yes.token_id, meta.no.token_id):

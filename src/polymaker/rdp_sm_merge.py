@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import replace
 from decimal import Decimal
 
-from polymaker.rdp_sm import _require
+from polymaker.rdp_sm import DUST_SHARES, _require
 from polymaker.rdp_sm_execution import RDP_TOLERANCE
 from polymaker.settlement_sweep import (
     SCALE,
@@ -85,8 +85,11 @@ class SMMerger:
         position = Position(context, meta.slug, 0, 0, False, False)
         yes = backend._balance(context, context.yes_id)
         no = backend._balance(context, context.no_id)
-        _require((yes, no) == (raw(expected[context.yes_id]), raw(expected[context.no_id])),
+        _require(all(abs(actual - raw(expected[token])) < DUST_SHARES * SCALE
+                     for actual, token in ((yes, context.yes_id), (no, context.no_id))),
                  "MERGE_BALANCE_NOT_EXPLAINED_BY_SESSION")
+        # Physical balances include ignored dust; merge at most confirmed session pairs.
+        self.merge_amount_raw = min(yes, no, *(raw(qty) for qty in expected.values()))
         return replace(position, yes_raw=yes, no_raw=no), backend.collateral_raw()
 
     def settle(self, handle, position, collateral_before):
@@ -105,7 +108,7 @@ class SMMerger:
         yes = self.backend._balance(position.context, position.yes_token)
         no = self.backend._balance(position.context, position.no_token)
         collateral = self.backend.collateral_raw()
-        amount = position.merge_raw
+        amount = self.merge_amount_raw
         _require((yes, no) == (position.yes_raw - amount, position.no_raw - amount)
                  and collateral - collateral_before == amount,
                  "MERGE_POST_STATE_NOT_VERIFIED")
@@ -125,12 +128,12 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
         if elapsed is None:
             now = await executor._await_owned(executor.reads.server_time())
             elapsed = now - int(executor.slug.rsplit("-", 1)[1])
-        if elapsed < MERGE_START_S or min(holdings(executor).values()) <= 0:
+        if elapsed < MERGE_START_S or min(holdings(executor).values()) < DUST_SHARES:
             return False
         _require(await executor._await_owned(executor._verify_close(cancel=True)),
                  "MERGE_CLOSE_BARRIER_REQUIRED")
         before = holdings(executor)
-        if min(before.values()) <= 0:
+        if min(before.values()) < DUST_SHARES:
             return False
         merger = SMMerger(executor.cfg)
         revision = executor.revision
@@ -146,9 +149,12 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             _require(merger.backend.wallet.lower() == executor.gateway.funder.lower()
                      and merger.backend.signer.lower() == executor.gateway.address.lower(),
                      "MERGE_ACCOUNT_IDENTITY_CHANGED")
+            if merger.merge_amount_raw < DUST_SHARES * SCALE:
+                return False
             intent = {"merge_id": uuid.uuid4().hex, "condition_id": executor.meta.condition_id,
                       "wallet": executor.gateway.funder, "yes_token_id": position.yes_token,
-                      "no_token_id": position.no_token, "amount_raw": position.merge_raw,
+                      "no_token_id": position.no_token, "amount_raw": merger.merge_amount_raw,
+                      "dust_threshold_shares": str(DUST_SHARES),
                       "before_yes_raw": position.yes_raw, "before_no_raw": position.no_raw,
                       "collateral_before_raw": collateral, "elapsed_s": elapsed}
             _require(intent["amount_raw"] > 0, "MERGE_NO_CONFIRMED_PAIRS")
@@ -158,7 +164,7 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             submitted = False
             try:
                 handle = await executor._await_owned(executor.gateway._io(
-                    merger.backend.submit_merge, position, position.merge_raw))
+                    merger.backend.submit_merge, position, intent["amount_raw"]))
                 submitted = True
                 executor.record("sm_merge_submitted", {**intent,
                     "tx_id": str(getattr(handle, "transaction_id", None) or "") or None,
@@ -219,8 +225,12 @@ def validate_merge_history(group, session, summary, check):
                   and type(p["elapsed_s"]) in (int, float) and p["elapsed_s"] >= MERGE_START_S)
             check(all(type(p[k]) is int and p[k] >= 0 for k in (
                 "amount_raw", "before_yes_raw", "before_no_raw", "collateral_before_raw")))
-            check(p["amount_raw"] > 0 and p["amount_raw"] == min(p["before_yes_raw"], p["before_no_raw"]))
+            dust_policy = p.get("dust_threshold_shares") == str(DUST_SHARES)
+            check(p["amount_raw"] > 0 and p["amount_raw"] <= min(p["before_yes_raw"], p["before_no_raw"]))
+            if not dust_policy:
+                check(p["amount_raw"] == min(p["before_yes_raw"], p["before_no_raw"]))
             check(p["yes_token_id"] != p["no_token_id"])
+            session_remaining = []
             for token, field in ((p["yes_token_id"], "before_yes_raw"), (p["no_token_id"], "before_no_raw")):
                 fills = [f for f in close["confirmed_fills"] if f["token_id"] == token]
                 check(all(f["status"] == "CONFIRMED" and f["market_id"] == p["condition_id"] for f in fills))
@@ -234,8 +244,14 @@ def validate_merge_history(group, session, summary, check):
                           and not exceeds_tolerance(f["price"], owned[f["maker_order_id"]]["price"],
                                                     RDP_TOLERANCE) for f in fills))
                 qty = sum((Decimal(str(f["size"])) for f in fills), Decimal(0))
-                check(qty.is_finite() and qty * SCALE == (qty * SCALE).to_integral_value()
-                      and int(qty * SCALE) - merged == p[field])
+                check(qty.is_finite() and qty * SCALE == (qty * SCALE).to_integral_value())
+                remaining = int(qty * SCALE) - merged
+                session_remaining.append(remaining)
+                check(abs(remaining - p[field]) < DUST_SHARES * SCALE if dust_policy
+                      else remaining == p[field])
+            if dust_policy:
+                check(p["amount_raw"] >= DUST_SHARES * SCALE
+                      and p["amount_raw"] == min(*session_remaining, p["before_yes_raw"], p["before_no_raw"]))
             check(not (set(intents) - done))
             intents[mid] = p
         else:
@@ -263,11 +279,13 @@ def validate_merge_history(group, session, summary, check):
                           and p["after_no_raw"] == p["before_no_raw"] - amount
                           and p["collateral_after_raw"] == p["collateral_before_raw"] + amount)
                     released = Decimal(0)
-                    for token, field in ((p["yes_token_id"], "before_yes_raw"),
+                    for token, _field in ((p["yes_token_id"], "before_yes_raw"),
                                          (p["no_token_id"], "before_no_raw")):
                         gross_cost = sum((Decimal(str(f["size"])) * Decimal(str(f["price"]))
                                           for f in close["confirmed_fills"] if f["token_id"] == token), Decimal(0))
-                        cost = (gross_cost - retired.get(token, Decimal(0))) * Decimal(amount) / Decimal(p[field])
+                        owned_qty_raw = sum((Decimal(str(f["size"])) * SCALE
+                                             for f in close["confirmed_fills"] if f["token_id"] == token), Decimal(0)) - merged
+                        cost = (gross_cost - retired.get(token, Decimal(0))) * Decimal(amount) / owned_qty_raw
                         released += cost
                         retired[token] = retired.get(token, Decimal(0)) + cost
                     check(Decimal(p["released_cost_usdc"]) == released)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import pytest
 
 from polymaker.rdp_sm_entry import run_current_market
 from polymaker.rdp_sm_execution import InventoryMismatch, RiskJournal
+from polymaker.rdp_sm_loop import RunResult, SMTradingLoop
 from polymaker.rdp_sm_merge import merge_confirmed_pairs
 from test_rdp_sm_m1 import ADDRESS, START
 from test_rdp_sm_m2_execution import journal_records, open_executor, quotes
@@ -22,17 +24,23 @@ def env(monkeypatch, tmp_path):
     yield from loop_env.__wrapped__(monkeypatch, tmp_path)
 
 
-async def paired(env, *, no=5):
+async def paired(env, *, no=5, prices=None):
     v, ex = await open_executor(env)
+    orders = quotes()
+    if prices is not None:
+        orders = [replace(q, price=price) for q, price in zip(orders, prices, strict=True)]
+        for q in orders:
+            v.books[q.token_id]['bids'][0]['price'] = str(q.price)
+            v.books[q.token_id]['asks'][0]['price'] = str(Decimal(str(q.price)) + Decimal('.01'))
     def fill(venue):
         venue.fill("o-1", "yes", 5)
         venue.fill("o-2", "no", no)
     v.on_cancel = fill
-    window = await ex.execute_window("w1", quotes())
+    window = await ex.execute_window("w1", orders)
     assert window.close_barrier == "SAFE_TO_CONTINUE"
     v.on_cancel = None
-    v.positions = [{"token_id": "1", "current_size": 5, "avg_price": .49},
-                   {"token_id": "2", "current_size": no, "avg_price": .48}]
+    v.positions = [{"token_id": "1", "current_size": 5, "avg_price": orders[0].price},
+                   {"token_id": "2", "current_size": no, "avg_price": orders[1].price}]
     return v, ex
 
 
@@ -61,6 +69,46 @@ async def test_merge_preserves_unpaired_shares_and_releases_only_verified_cost(e
     assert ex.committed() == Decimal(".98")
     *_, account = await ex._snapshot(include_books=False)
     assert account["yes_inventory"] == 2 and account["no_inventory"] == 0
+
+
+@pytest.mark.parametrize("quantity,merged", [(0.099999, False), (0.1, True)])
+async def test_dust_pairs_skip_chain_reads_and_exact_threshold_merges(env, quantity, merged):
+    v, ex = await paired(env, no=quantity)
+    v.time = START + 240
+    assert await merge_confirmed_pairs(ex) is merged
+    if merged:
+        assert ex.merged_pairs == Decimal('0.1')
+    else:
+        assert not v.merge_rpc_calls and not v.merge_submissions
+        assert ex.merged_pairs == 0 and ex.committed() > 0
+
+
+async def test_merge_ignores_external_dust_without_merging_or_losing_its_balance(env, monkeypatch):
+    from polymaker.rdp_sm_merge import SMMerger
+
+    v, ex = await paired(env)
+    v.time = START + 240
+    native_prepare = SMMerger.prepare
+
+    def prepare_with_physical_dust(merger, meta, expected):
+        # Add a constant real balance at the RPC boundary, before and after burn.
+        native_balance = merger.backend._balance
+        monkeypatch.setattr(merger.backend, '_balance',
+                            lambda context, token: native_balance(context, token) + 50_000)
+        return native_prepare(merger, meta, expected)
+
+    monkeypatch.setattr(SMMerger, 'prepare', prepare_with_physical_dust)
+    assert await merge_confirmed_pairs(ex)
+    assert ex.merged_pairs == 5 and ex.committed() == 0
+    records = journal_records(ex.journal.path)
+    intent = next(r['data']['payload'] for r in records if r['kind'] == 'sm_merge_intent')
+    result = next(r['data']['payload'] for r in records if r['kind'] == 'sm_merge_result')
+    assert intent['amount_raw'] == 5_000_000
+    assert intent['before_yes_raw'] == intent['before_no_raw'] == 5_050_000
+    assert result['after_yes_raw'] == result['after_no_raw'] == 50_000
+    # Re-open the journal through its real historical proof validator.
+    journal = RiskJournal(ex.cfg.paths.journal_dir, v.funder)
+    journal.close()
 
 
 async def test_merge_presentation_failure_cannot_interrupt_verified_accounting(env):
@@ -272,8 +320,9 @@ async def test_verified_merge_recovers_capital_before_large_minimum_notional_rep
         elif index == 2:
             venue.fill(ids["NO"], "minimum-topup", 100)
             venue.time = START + 240
-            venue.books["1"]["bids"][0]["price"] = ".20"
-            venue.books["1"]["asks"][0]["price"] = ".21"
+            # The repair fits the $15 cap only after verified merge recovery.
+            venue.books["1"]["bids"][0]["price"] = ".14"
+            venue.books["1"]["asks"][0]["price"] = ".15"
         elif index == 3:
             venue.fill(ids["YES"], "repair", 95)
             venue.time = START + 300
@@ -286,3 +335,59 @@ async def test_verified_merge_recovers_capital_before_large_minimum_notional_rep
     assert result.confirmed_yes == result.confirmed_no == 0 and result.delta == 0
     assert result.windows[-1]["result"]["requested_quotes"][0]["size"] == 95
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
+
+
+def inventory_report(ex):
+    loop = SMTradingLoop(ex.cfg, ex.slug, ex.session_id)
+    loop.executor = ex
+    result = RunResult(ex.meta.condition_id, ex.session_id)
+    result.final_close_barrier = 'SAFE_TO_CONTINUE' if ex.safe_to_continue else 'BLOCKED'
+    loop._inventory(result)
+    return loop, result
+
+
+@pytest.mark.parametrize('prices,pnl', [((.57, .38), .25), ((.67, .54), -1.05)])
+async def test_verified_merge_preserves_gross_profit_or_loss_after_inventory_flattens(env, prices, pnl):
+    v, ex = await paired(env, prices=prices)
+    loop, result = inventory_report(ex)
+    assert result.realized_merge_pnl == 0
+    assert result.unmerged_pair_pnl_estimate == pytest.approx(pnl)
+    assert result.theoretical_pair_pnl == pytest.approx(pnl)
+    assert result.sizing_report['pair_pnl'] == 'UNKNOWN'
+    v.time = START + 240
+    assert await merge_confirmed_pairs(ex)
+    loop._inventory(result)
+    assert result.confirmed_yes == result.confirmed_no == 0
+    assert result.realized_merge_pnl == pytest.approx(pnl)
+    assert result.unmerged_pair_pnl_estimate == 0
+    assert result.theoretical_pair_pnl == pytest.approx(pnl)
+    assert result.sizing_report['pair_pnl'] == pytest.approx(pnl)
+    assert result.sizing_report['trading_pnl_before_rebate'] == 'UNKNOWN'
+    assert result.sizing_report['actual_maker_rebate'] == 'UNKNOWN'
+    loop._inventory(result)  # Rebuilding the report must not count a merge twice.
+    assert result.theoretical_pair_pnl == pytest.approx(pnl)
+
+
+async def test_merged_pair_profit_excludes_remaining_unpaired_cost(env):
+    v, ex = await paired(env, no=3)
+    v.time = START + 240
+    assert await merge_confirmed_pairs(ex)
+    _, result = inventory_report(ex)
+    assert result.confirmed_yes == 2 and result.confirmed_no == 0
+    assert result.realized_merge_pnl == pytest.approx(.09)
+    assert result.theoretical_pair_pnl == pytest.approx(.09)
+    assert result.sizing_report['pair_pnl'] == pytest.approx(.09)
+    assert result.sizing_report['unintentional_residual_pnl'] == 'UNKNOWN'
+    assert result.sizing_report['trading_pnl_before_rebate'] == 'UNKNOWN'
+
+
+async def test_unknown_merge_cannot_create_realized_profit(env):
+    v, ex = await paired(env)
+    v.time = START + 240
+    v.merge_fault = 'poll_timeout'
+    with pytest.raises(RuntimeError, match='MERGE_UNKNOWN'):
+        await merge_confirmed_pairs(ex)
+    _, result = inventory_report(ex)
+    assert result.realized_merge_pnl == 0
+    assert result.sizing_report['pair_pnl'] == 'UNKNOWN'
+    assert result.final_close_barrier == 'BLOCKED'

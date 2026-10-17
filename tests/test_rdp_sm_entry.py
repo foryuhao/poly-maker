@@ -251,8 +251,8 @@ async def test_r10_capital_exhaustion_waits_and_verified_merge_recovers_cost(env
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.stop_reason == "MARKET_CUTOFF" and result.stop_elapsed_s == 300
     assert result.execution_status == "COMPLETED" and result.final_close_barrier == "SAFE_TO_CONTINUE"
-    assert v.executor.committed() <= 25 and all(r["status"] != "LIVE" for r in v.rows.values())
-    assert len(v.posts) == 10 and result.merged_pairs == 25
+    assert v.executor.committed() <= 15 and all(r["status"] != "LIVE" for r in v.rows.values())
+    assert len(v.posts) == 6 and result.merged_pairs == 15
     assert result.confirmed_yes == result.confirmed_no == 0
     denied = [w["result"] for w in result.windows if w["result"]["block_reason"] == "TEST_CAPITAL_LIMIT_EXCEEDED"]
     assert denied and all(w["placement_results"] == [] for w in denied)
@@ -270,7 +270,9 @@ def cli_config(monkeypatch, tmp_path, v, cfg):
         f"PK={DUMMY_KEY}\nBROWSER_ADDRESS={cfg.secrets.browser_address}\n"
     )
     monkeypatch.setenv("PK", DUMMY_KEY)
+    monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", DUMMY_KEY)
     monkeypatch.setenv("BROWSER_ADDRESS", cfg.secrets.browser_address)
+    monkeypatch.setenv("POLYMARKET_WALLET_ADDRESS", cfg.secrets.browser_address)
     monkeypatch.setattr("dotenv.main.find_dotenv", lambda *a, **kw: str(tmp_path / ".env"))
     clock = SimpleNamespace(time=lambda: v.time, monotonic=lambda: v.mono)
     for module in ("polymaker.rdp_sm_entry", "polymaker.rdp_sm_loop", "polymaker.rdp_sm_execution"):
@@ -353,11 +355,11 @@ async def test_r14_actual_journal_reconstructs_minimal_metrics(env, monkeypatch)
         return [r["data"]["payload"] for r in rows if r["kind"] == kind]
 
     session, final = payloads("sm_session")[0], payloads("sm_run_result")[0]
-    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "25"
+    assert session["starting_spendable_usdc"] == 100 and session["test_capital_limit_usdc"] == "15"
     intents = payloads("sm_placement_intent")
     maximum_committed = max(float(p["capital_committed_usd"]) for p in intents)
     assert (
-        maximum_committed <= 25
+        maximum_committed <= 15
         and maximum_committed > final["confirmed_yes"]
     )
     assert final["stop_reason"] == "MARKET_CUTOFF"  # exhaustion = NOT_REACHED
@@ -409,7 +411,10 @@ async def test_r14_actual_journal_reconstructs_minimal_metrics(env, monkeypatch)
     assert len(intervals) == 1 and intervals[0][1] - intervals[0][0] == 6
     assert final["residual_shares"] == 0 and final["confirmed_yes"] == final["confirmed_no"] == 0
     assert final["completed_pairs"] == final["merged_pairs"] == final["recovered_collateral_usdc"] == 5
-    assert final["theoretical_pair_pnl"] == 0
+    assert final["theoretical_pair_pnl"] == pytest.approx(.202)
+    assert final["realized_merge_pnl"] == pytest.approx(.202)
+    assert final["unmerged_pair_pnl_estimate"] == 0
+    assert final["sizing_report"]["pair_pnl"] == pytest.approx(.202)
     merge = payloads("sm_merge_result")[-1]
     assert merge["status"] == "CONFIRMED" and float(merge["released_cost_usdc"]) == pytest.approx(4.798)
     assert (

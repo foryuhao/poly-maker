@@ -1,0 +1,76 @@
+{
+  "mode": "READ_ONLY_CURRENT_MARKET_PREFLIGHT",
+  "checked_at_wall": 1792212921.4964142,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/time"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/derive-api-key"
+    },
+    {
+      "method": "GET",
+      "path": "/tick-size"
+    },
+    {
+      "method": "GET",
+      "path": "/tick-size"
+    },
+    {
+      "method": "GET",
+      "path": "/data/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/version"
+    },
+    {
+      "method": "GET",
+      "path": "/balance-allowance"
+    },
+    {
+      "method": "GET",
+      "path": "/time"
+    }
+  ],
+  "market_slug": "btc-updown-5m-1792212900",
+  "status": "SESSION_READY",
+  "checks": [
+    {
+      "name": "market",
+      "outcome": "PASS",
+      "detail": "official identity, mapping, books and ticks"
+    },
+    {
+      "name": "account_reads",
+      "outcome": "PASS",
+      "detail": "official authenticated reads complete"
+    },
+    {
+      "name": "clean_market",
+      "outcome": "PASS",
+      "detail": "zero target inventory (ignoring dust <0.1 shares) and no pre-existing target orders"
+    },
+    {
+      "name": "capital",
+      "outcome": "PASS",
+      "detail": "basic venue minimum within available balance, allowance and $15 cap"
+    },
+    {
+      "name": "freshness",
+      "outcome": "PASS",
+      "detail": "fresh snapshots against official CLOB time"
+    },
+    {
+      "name": "trading_window",
+      "outcome": "PASS",
+      "detail": "15 <= elapsed < 300; NORMAL stops at 120; M2 rechecks phase before POST"
+    }
+  ],
+  "market_elapsed_s": 24.0,
+  "spendable_usdc": 15.0,
+  "old_marker_unchanged": true,
+  "old_journal_recovery_requests": false
+}

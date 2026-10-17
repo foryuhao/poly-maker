@@ -2,6 +2,7 @@
 
 No live endpoints or credentials: run with rdp_sm_m0_offline.py bootstrap.
 """
+
 import json
 import logging
 from threading import Event
@@ -36,6 +37,45 @@ def invoke(env, monkeypatch, tmp_path, *options):
     v, cfg = env
     config = cli_config(monkeypatch, tmp_path, v, cfg)
     return CliRunner().invoke(app, ["rdp-sm-run", "--config-dir", str(config), *options])
+
+
+def test_ws_preflight_failure_renders_original_cause():
+    observer = HumanRunLog()
+    try:
+        lines = observer.render("preflight", {
+            "status": "SESSION_BLOCKED",
+            "checks": [{"name": "freshness", "outcome": "BLOCKED", "detail": "WS_DISCONNECTED"}],
+            "diagnostics": [{"ws_check": True, "reason": "WS_DISCONNECTED", "generation": 2,
+                             "sequence": 63, "failure_count": 1,
+                             "last_failure": {"reason": "WS_CROSSED_BOOK", "error_type": "ValueError"}}],
+        })
+        text = "\n".join(lines)
+        assert "WS Last Failure: WS_CROSSED_BOOK" in text
+        assert "WS Check: BLOCKED" in text and "BOOK_SIDE_MISSING" not in text
+    finally:
+        observer.close()
+
+
+def test_obi_fill_side_and_structured_cancel_ack_render_actual_facts():
+    observer = HumanRunLog()
+    quote = dict(outcome='YES', token_id='up', side='BUY', price=.26, size=5)
+    observer.cancel_events = [
+        {'result': {'canceled': ['order'], 'not_canceled': [], 'unknown': []}},
+        {'result': {'canceled': [], 'not_canceled': [['order',
+            "order can't be found - already canceled or matched"]], 'unknown': []}},
+    ]
+    try:
+        lines = observer._window(dict(
+            placement_results=[dict(quote=quote, post_started=True, outcome='ACK', order_id='order')],
+            confirmed_fills=[dict(status='CONFIRMED', trade_id='fill', maker_order_id='order',
+                                  token_id='up', price=.26, size=.01)],
+            yes_inventory=.01, no_inventory=0, delta=.01, close_barrier='SAFE_TO_CONTINUE'))
+        text = '\n'.join(lines)
+        assert '0.01 | YES=0.01 NO=0' in text
+        assert 'Cancel Status: ACK, ALREADY_CANCELED_OR_MATCHED' in text
+        assert 'NOT_ACKNOWLEDGED' not in text
+    finally:
+        observer.close()
 
 
 def test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary(env, monkeypatch, tmp_path):
@@ -85,7 +125,8 @@ def test_l01_l04_l08_l09_l11_normal_rebalance_confirmed_summary(env, monkeypatch
     final = next(x["data"]["payload"] for x in rows if x["kind"] == "sm_run_result")
     assert final == r  # no human strings or redactions were written to RunResult
     strategy = next(x["data"]["payload"] for x in rows if x["kind"] == "sm_strategy_window")
-    assert set(strategy) == {"window_id", "state", "delta", "elapsed_s", "quotes"}
+    assert set(strategy) == {"window_id", "state", "delta", "elapsed_s", "quotes", "sizing"}
+    assert strategy["sizing"]["configured_target_delta"] == str(cfg.rdp_sm.target_delta)
 
 
 @pytest.mark.parametrize("token,side,label", [("1", "bids", "Bid"), ("2", "asks", "Ask")])
@@ -378,3 +419,16 @@ def test_l08_late_normal_start_waits_until_market_end_with_observed_inventory(en
     assert "YES Inventory: 0 | NO Inventory: 0" in output.stderr
     assert json.loads(output.stdout)["stop_elapsed_s"] == 300
     assert "Total Windows: 0" in output.stderr and "Maximum Capital Utilization" in output.stderr
+
+
+def test_network_pause_and_first_order_close_are_visible_in_human_log():
+    observer = HumanRunLog()
+    lines = observer.render('events', [
+        ('sm_network_transition', {'previous': 'NORMAL', 'state': 'PAUSED',
+                                   'reason': 'NETWORK_REPEATED_SLOW', 'pause_duration_sec': 2}),
+        ('sm_network_slow_request', {'method': 'DELETE', 'duration_ms': 573}),
+        ('sm_obi_close_requested', {'window_id': 'w1', 'reason': 'ORDER_DEADLINE'}),
+    ])
+    text = '\n'.join(lines)
+    assert 'NORMAL -> PAUSED' in text and 'NETWORK_REPEATED_SLOW' in text
+    assert '573' in text and 'WARNING' in text and 'ORDER_DEADLINE' in text

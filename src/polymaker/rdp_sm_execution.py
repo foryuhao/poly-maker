@@ -25,8 +25,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.constants import INITIAL_CURSOR
+from py_clob_client_v2.exceptions import PolyApiException
 
 from polymaker.catalog.gamma import GammaClient
 from polymaker.config import Config, RDPSMConfig
@@ -35,6 +37,7 @@ from polymaker.execution.filltruth import ReconciliationOutcome, reconcile_owned
 from polymaker.execution.gateway import PlacementUnknown
 from polymaker.journal import Journal
 from polymaker.rdp_sm import (
+    DUST_SHARES,
     NORMAL_END_S,
     OFFICIAL_HOSTS,
     TEST_CAPITAL_LIMIT_USDC,
@@ -49,6 +52,7 @@ from polymaker.rdp_sm import (
     _Reads,
     _require,
     _token_id,
+    inventory_delta,
     inventory_trading_state,
     run_preflight,
 )
@@ -68,7 +72,7 @@ MIN_MAKER_BUY_NOTIONAL = Decimal("1")
 MIN_MAKER_BUY_SHARES = Decimal("5")
 RDP_TOLERANCE = Decimal(".01")
 MATCHED_REMAINING_TOLERANCE_SHARES = RDPSMConfig().matched_remaining_tolerance_shares
-INVENTORY_TOLERANCE_SHARES = RDP_TOLERANCE
+INVENTORY_TOLERANCE_SHARES = DUST_SHARES  # Strictly below, unlike fill/price tolerance.
 SAFE_QUOTE_SKIP_REASONS = frozenset({
     "QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
     "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM", "MAKER_BUY_NOTIONAL_BELOW_MINIMUM",
@@ -121,6 +125,30 @@ def _explicit_maker_rejection(item, notional) -> bool:
     )
 
 
+def _canceled_submission_response(attempt: Placement) -> bool:
+    """An exact, identity-bound POST rejection, never a DELETE not-found reply."""
+    raw = attempt.raw_response
+    if isinstance(raw, list) and len(raw) == 1:
+        raw = raw[0]
+    if not isinstance(raw, dict) or not attempt.post_started:
+        return False
+    error = raw.get("errorMsg")
+    match = re.fullmatch(
+        r"order (0x[0-9a-fA-F]{64}) is invalid\. Already canceled\.",
+        error if isinstance(error, str) else "",
+    )
+    return (
+        match is not None
+        and match[1] == attempt.expected_order_id == attempt.order_id
+        and raw.get("success") is True
+        and all(raw.get(k) == "" for k in ("orderID", "status", "makingAmount", "takingAmount"))
+        and all(raw.get(k) in (None, "") for k in ("order_id", "orderId", "id"))
+        and all(raw.get(k) in (None, []) for k in (
+            "tradeIDs", "tradeIds", "trade_ids", "transactionsHashes", "transactionHashes",
+            "transactions_hashes"))
+    )
+
+
 @dataclass(frozen=True)
 class WindowQuote:
     market_id: str
@@ -141,6 +169,7 @@ class Placement:
     post_started: bool = False
     request_hash: str | None = None
     raw_response: Any = None
+    expected_order_id: str | None = None
 
     @property
     def maximum(self) -> Decimal:
@@ -231,7 +260,49 @@ class ExecutionClobClient(ReadOnlyClobClient):
         return super().create_order(
             replace(order_args, size=Decimal(str(order_args.size))), options=options)
 
+    def _observe_http(self, method, endpoint, began, started_wall, *, operation_id=None, error=None,
+                      batch_id=None):
+        network = getattr(self, "network", None)
+        if network is None:
+            return
+        outcome = "SUCCESS"
+        if error is not None:
+            status = getattr(error, "status_code", None)
+            if status in {401, 403}:
+                outcome = "AUTHENTICATION_ERROR"
+            elif status == 429:
+                outcome = "RATE_LIMITED"
+            elif status == 408 or isinstance(status, int) and status >= 500:
+                outcome = "SERVER_ERROR"
+            elif status is not None:
+                outcome = "HTTP_REJECTION"
+            elif isinstance(error, (PolyApiException, httpx.RequestError)):
+                # The SDK wraps httpx transport errors in a status-less exception.
+                outcome = "TRANSPORT_ERROR"
+            else:
+                outcome = "LOCAL_ERROR"
+        network.observe(
+            method, time.monotonic() - began, error is None, operation_id=operation_id,
+            endpoint=urlsplit(endpoint).path, started_at=began, started_wall=started_wall,
+            outcome=outcome, batch_id=batch_id,
+            http_status=getattr(error, "status_code", None) if error else 200,
+            error_type=type(error).__name__ if error else None,
+        )
+
     def _get(self, endpoint, headers=None, params=None):
+        if getattr(getattr(self, "operation_local", None), "no_get", False):
+            raise ValueError("OPERATION_EXTRA_GET_FORBIDDEN")
+        began, started_wall = time.monotonic(), time.time()
+        batch_id = getattr(self, "network_batch_id", None)
+        try:
+            raw = self._execution_get(endpoint, headers, params)
+        except BaseException as exc:
+            self._observe_http("GET", endpoint, began, started_wall, error=exc, batch_id=batch_id)
+            raise
+        self._observe_http("GET", endpoint, began, started_wall, batch_id=batch_id)
+        return raw
+
+    def _execution_get(self, endpoint, headers=None, params=None):
         parsed = urlsplit(endpoint)
         extra = parsed.path == "/data/trades" or parsed.path in {
             f"/data/order/{oid}"
@@ -368,10 +439,27 @@ class ExecutionClobClient(ReadOnlyClobClient):
                 and Decimal(str(signed["makerAmount"])) == current.maximum * 1_000_000,
                 "SIGNED_QUOTE_ECONOMICS_CHANGED",
             )
+        expected = getattr(self, "expected_body_hash", None)
+        _require(
+            expected is None or hashlib.sha256(data.encode()).hexdigest() == expected,
+            "PREPARED_BODY_CHANGED",
+        )
+        if getattr(self, "on_post_start", None) is not None:
+            self.on_post_start()
         for current in attempts:
             current.post_started = True
             current.request_hash = hashlib.sha256(data.encode()).hexdigest()
-        raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
+        began, started_wall = time.monotonic(), time.time()
+        batch_id = getattr(self, "network_batch_id", None)
+        operation_id = "post:" + hashlib.sha256(data.encode()).hexdigest()
+        try:
+            raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
+        except BaseException as exc:
+            self._observe_http("POST", endpoint, began, started_wall,
+                               operation_id=operation_id, error=exc, batch_id=batch_id)
+            raise
+        self._observe_http("POST", endpoint, began, started_wall,
+                           operation_id=operation_id, batch_id=batch_id)
         for current in attempts:
             current.raw_response = raw
         return raw
@@ -385,16 +473,39 @@ class ExecutionClobClient(ReadOnlyClobClient):
             and set(ids) <= self.known_ids,
             "SM_CANCEL_SCOPE_INVALID",
         )
-        return ClobClient._delete(self, endpoint, headers=headers, data=data, params=params)
+        began, started_wall = time.monotonic(), time.time()
+        batch_id = getattr(self, "network_batch_id", None)
+        if batch_id is None and getattr(self, "network", None) is not None:
+            # An unresolved batch stays owned after the controller returns.
+            # Later explicit cleanup must retain that same logical identity.
+            batch_id = self.network.snapshot().active_batch
+        operation_id = "cancel:" + hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
+        try:
+            raw = ClobClient._delete(self, endpoint, headers=headers, data=data, params=params)
+        except BaseException as exc:
+            self._observe_http("DELETE", endpoint, began, started_wall,
+                               operation_id=operation_id, error=exc, batch_id=batch_id)
+            raise
+        self._observe_http("DELETE", endpoint, began, started_wall,
+                           operation_id=operation_id, batch_id=batch_id)
+        return raw
 
 
 class _ExecutionReads(_Reads):
-    def __init__(self, cfg: Config, *, risk_reads: _ExecutionReads | None = None,
-                 account_policy=None):
+    def __init__(
+        self, cfg: Config, *, risk_reads: _ExecutionReads | None = None, account_policy=None
+    ):
         super().__init__(cfg)
         self.risk_reads = risk_reads
         self.account_policy = (risk_reads.account_policy if risk_reads is not None
                                else account_policy)
+        self.feed = getattr(risk_reads, "feed", None)
+        self.lease = getattr(risk_reads, "lease", None)
+        self.network = getattr(risk_reads, "network", None)
+        if cfg.rdp_sm.normal_entry_mode == "obi_v1" and self.network is None:
+            from polymaker.rdp_sm_network import NetworkHealth
+
+            self.network = NetworkHealth(cfg.rdp_sm.obi)
 
     async def connect_account(self) -> None:
         await super().connect_account()
@@ -415,6 +526,7 @@ class _ExecutionReads(_Reads):
         gateway._client.account_policy = self.account_policy
         gateway._client._pagination_failures = {}
         gateway._client.pagination_revision = 0
+        gateway._client.network = self.network
         _require(
             gateway._client.get_address() == gateway.address
             and gateway._client.builder.funder == gateway.funder,
@@ -451,12 +563,50 @@ class _ExecutionReads(_Reads):
             return await exact_market(gamma, slug=slug)
 
     async def book(self, token: str):
+        _require(self.cfg.rdp_sm.normal_entry_mode != "obi_v1", "OBI_REST_BOOK_FORBIDDEN")
         # SDK normally caches tick size indefinitely. SM needs an official read
         # at every submission, rather than a permanently cached M1 snapshot.
         self.gateway._client._ClobClient__tick_sizes.pop(token, None)
         tick = await self.gateway._io(self.gateway._client.get_tick_size, token)
         raw = await self.gateway._io(self.gateway._client.get_order_book, token)
         return raw, tick
+
+    async def ensure_feed(self, meta):
+        from polymaker.rdp_sm_marketdata import SessionFeed
+
+        if self.feed is None:
+            self.feed = SessionFeed(meta, self.cfg.rdp_sm.obi, proxy=self.cfg.proxy)
+            try:
+                await self.refresh_feed_ticks()
+            except BaseException:
+                self.feed = None
+                raise
+            self.feed.task = asyncio.create_task(self.feed.run(), name="rdp-execution-ws")
+        _require(
+            self.feed.meta.condition_id == meta.condition_id
+            and self.feed.meta.tokens == meta.tokens,
+            "SESSION_MARKET_CHANGED",
+        )
+        return self.feed
+
+    async def refresh_feed_ticks(self):
+        ticks = {}
+        for token in self.feed.books:
+            self.gateway._client._ClobClient__tick_sizes.pop(token, None)
+            ticks[token] = await self.gateway._io(self.gateway._client.get_tick_size, token)
+        try:
+            self.feed.verify_ticks(ticks)
+        except ValueError as exc:
+            raise _Issue(SessionStatus.BLOCKED, str(exc)) from exc
+
+    async def ws_readiness(self, meta):
+        feed = await self.ensure_feed(meta)
+        deadline = time.monotonic() + self.cfg.risk.ws_stale_halt_s
+        while not feed.snapshot().valid:
+            if time.monotonic() >= deadline:
+                raise _Issue(SessionStatus.BLOCKED, "WS_READINESS_TIMEOUT", context=feed.diagnostics())
+            await asyncio.sleep(0.01)
+        return feed.snapshot().books()
 
 
 def _execution_identity(reads: _ExecutionReads) -> str:
@@ -533,6 +683,7 @@ class _SMProcessor(UserEventProcessor):
     def on_order(self, ev: OrderEvent, condition_id: str, **kwargs):
         self._external_commitment_changed(ev.order_id)
         if self.owned_record(ev.order_id) is not None:
+            self.executor.observed_order_events.add(ev.order_id)
             self.executor.external_revision += 1
             previous = self.executor.terminal.get(ev.order_id)
             if previous is not None and not _terminal(ev, self.executor.matched_remaining_tolerance_shares):
@@ -594,9 +745,16 @@ class SMWindowExecutor:
         self.store = StateStore(":memory:")
         self.processor = _SMProcessor(self, self.store)
         self.attempts: list[Placement] = []
+        # Set before a durable OBI candidate write can start, including writes
+        # whose caller is cancelled before the completion counter is updated.
+        self.preparation_started = False
         self.known: set[str] = set()
         self.terminal: dict[str, OrderEvent] = {}
         self.proofs: dict[str, dict[str, Any]] = {}
+        # Keep rejected signed IDs observable, without inventing exchange orders
+        # or terminal OrderEvents for submissions the venue declared invalid.
+        self.canceled_submission_proofs: dict[str, dict[str, Any]] = {}
+        self.observed_order_events: set[str] = set()
         self.pending_confirmations: set[str] = set()
         self.merged_pairs = Decimal(0)
         self.merged_cost: dict[str, Decimal] = {}
@@ -638,6 +796,11 @@ class SMWindowExecutor:
         startup_reads = _ExecutionReads(cfg, risk_reads=risk_reads)
         preflight = await run_preflight(cfg, slug, _reads=startup_reads)
         if preflight.status is not SessionStatus.READY:
+            if risk_reads is None:
+                if startup_reads.feed is not None:
+                    await startup_reads.feed.close()
+                if startup_reads.lease is not None:
+                    startup_reads.lease.close()
             raise _Issue(SessionStatus.BLOCKED, "M1_SESSION_NOT_READY",
                          context={"preflight": preflight.to_dict()})
         from polymaker.rdp_sm_sizing import validate_market_sizing
@@ -649,27 +812,60 @@ class SMWindowExecutor:
             await reads.connect_account()
             authority = _execution_identity(reads)
             journal = RiskJournal(cfg.paths.journal_dir, reads.gateway.funder, session_id=session_id)
+            if cfg.rdp_sm.normal_entry_mode == "obi_v1":
+                from polymaker.rdp_sm_fence import create_fence
+                from polymaker.rdp_sm_writer import AsyncRiskWriter
+
+                journal = AsyncRiskWriter(journal)
+                await asyncio.to_thread(
+                    create_fence,
+                    cfg,
+                    reads.gateway.funder,
+                    reads.feed.meta,
+                    session_id,
+                    journal.path,
+                    reads.lease,
+                )
             executor = cls(cfg, slug, session_id, reads, journal, **clock)
             executor.record(
                 "sm_session",
                 {
                     "session_id": session_id,
+                    **(
+                        {
+                            "normal_entry_mode": "obi_v1",
+                            "normal_order_policy": "SIGNAL_SIDE_ONLY",
+                            "normal_active_order_policy": "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL",
+                            "config_dir": str(cfg.config_dir),
+                            "obi": cfg.rdp_sm.obi.model_dump(mode="json"),
+                        }
+                        if cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                        else {}
+                    ),
                     "slug": slug,
                     "signer": reads.gateway.address,
                     "funder": reads.gateway.funder,
                     "signature_type": cfg.wallet.signature_type,
                     "live_authority": authority,
-                    "starting_spendable_usdc": min(preflight.account['available_balance_usd'],
-                        preflight.account['applicable_allowance_usd'] -
-                        preflight.account['existing_buy_commitment_usd']),
-                    "starting_official_balance_usdc": preflight.account['official_balance_usd'],
+                    "starting_spendable_usdc": min(
+                        preflight.account["available_balance_usd"],
+                        preflight.account["applicable_allowance_usd"]
+                        - preflight.account["existing_buy_commitment_usd"],
+                    ),
+                    "starting_official_balance_usdc": preflight.account["official_balance_usd"],
                     "test_capital_limit_usdc": str(CAPITAL_LIMIT),
                     # Compatibility fields only; no prior Session evidence.
                     "historical_pending_cost_reserved_usd": 0,
                     "historical_matched": {},
-                    **({"capital_basis": "OFFICIAL_BALANCE_AT_SESSION_START",
-                        "historical_pending_cost_observed_usd": 0}
-                       if reads.account_policy is not None and reads.account_policy.use_starting_balance else {}),
+                    **(
+                        {
+                            "capital_basis": "OFFICIAL_BALANCE_AT_SESSION_START",
+                            "historical_pending_cost_observed_usd": 0,
+                        }
+                        if reads.account_policy is not None
+                        and reads.account_policy.use_starting_balance
+                        else {}
+                    ),
                     "preflight_observed_order_ids": sorted(
                         reads.gateway._client.observed_open_rows
                     ),
@@ -684,12 +880,18 @@ class SMWindowExecutor:
             reads.close()
             if journal is not None:
                 journal.close()
+            if risk_reads is None:
+                if reads.feed is not None:
+                    await reads.feed.close()
+                if reads.lease is not None:
+                    reads.lease.close()
             raise
 
-    def record(self, kind: str, payload: Any) -> None:
+    def record(self, kind: str, payload: Any, *, event_wall=None) -> None:
         try:
             self.journal.write(
-                kind, {"session_id": self.session_id, "payload": payload}, time.time()
+                kind, {"session_id": self.session_id, "payload": payload},
+                time.time() if event_wall is None else event_wall
             )
         except Exception:
             self.fatal = "JOURNAL_WRITE_FAILED"
@@ -699,7 +901,20 @@ class SMWindowExecutor:
             with suppress(Exception):
                 self.display_events.append((kind, payload))
 
+    def drain_network_events(self):
+        network = getattr(self.reads, "network", None)
+        if network is not None:
+            for kind, payload, wall in network.drain_events():
+                self.record(kind, payload, event_wall=wall)
+
+    def network_health(self, signal_age_ms=0):
+        # The final SDK guard runs in a worker. Only the async coordinator
+        # drains diagnostics into the single writer's submission queue.
+        return self.reads.network.snapshot(signal_age_ms)
+
     def invalidate(self, reason: str, order_id: str | None = None) -> None:
+        if order_id in self.canceled_submission_proofs:
+            self._restore_canceled_submission(order_id)
         self.revision += 1
         self.proof_revision = -1
         self.reason = reason
@@ -709,16 +924,31 @@ class SMWindowExecutor:
     @property
     def safe_to_continue(self) -> bool:
         return (
-            not self.closed
+            getattr(self.journal, "failure", None) is None
+            and not self.closed
             and not self.merge_pending
             and self.fatal is None
             and self.gateway._client.pagination_failure is None
             and self.reason is None
             and self.proof_revision == self.revision
             and self.proof_pagination_revision == self.gateway._client.pagination_revision
-            and all(a.outcome in {"ACK", "REJECTED", "ABORTED"} for a in self.attempts)
+            and all(a.outcome in {"ACK", "VERIFIED", "REJECTED", "ABORTED"} for a in self.attempts)
             and set(self.proofs) == self.known
             and set(self.terminal) == self.known
+        )
+
+    def interrupted_before_orders(self) -> bool:
+        """An abort latch can be cleared only before any OBI candidate risk exists."""
+        return (
+            self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+            and not self.preparation_started
+            and not self.attempts
+            and not self.known
+            and not self.merge_pending
+            and self.merged_pairs == 0
+            and not self.confirmed()
+            and self.fatal in {None, "ABNORMAL_EXIT"}
+            and getattr(self.journal, "failure", None) is None
         )
 
     def confirmed(self) -> list[TradeEvent]:
@@ -752,6 +982,11 @@ class SMWindowExecutor:
         return max(Decimal(0), total - sum(self.merged_cost.values(), Decimal(0)))
 
     async def _read_books(self, meta):
+        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            feed = await self.reads.ensure_feed(meta)
+            snapshot = feed.snapshot()
+            _require(snapshot.valid, snapshot.reason)
+            return snapshot.books()
         books = {}
         for token in (meta.yes.token_id, meta.no.token_id):
             raw_book, tick = await self.reads.book(token)
@@ -778,6 +1013,11 @@ class SMWindowExecutor:
             self.gateway._client.pagination_failure is None,
             self.gateway._client.pagination_failure or "ACCOUNT_PAGINATION_UNRESOLVED",
         )
+        # Refresh rejected signed IDs without re-reading every closed order.
+        # The previous complete barrier remains required; account reads below
+        # still check new trades and open orders against its terminal proofs.
+        if self.canceled_submission_proofs:
+            await self._refresh_canceled_submissions()
         _require(
             all(
                 getattr(self.cfg.wallet, key).rstrip("/") == host
@@ -807,6 +1047,7 @@ class SMWindowExecutor:
         capital_revision = self.revision
         account = await _account(self.reads, meta, market)
         client = self.gateway._client
+        self._check_canceled_submission_observations()
         if self.known:
             # The close proof is reusable, but newly observed trade facts are
             # not. Production account policy already reads complete trade pages.
@@ -819,6 +1060,7 @@ class SMWindowExecutor:
         _execution_identity(self.reads)
         # Raw SDK orders already pass F01 identity validation; read full IDs too.
         orders = await self.gateway.open_orders()
+        self._check_canceled_submission_observations()
         for order in orders:
             if order.order_id in self.terminal:
                 self.fatal = "TERMINAL_LIVE_CONTRADICTION"
@@ -932,10 +1174,11 @@ class SMWindowExecutor:
                 if ev.token_id == token), Decimal(0)
             ) - self.merged_pairs
             actual = Decimal(str(account[f"{name}_inventory"]))
-            consistent = consistent and abs(actual - owned_qty) <= INVENTORY_TOLERANCE_SHARES
+            consistent = consistent and abs(actual - owned_qty) < INVENTORY_TOLERANCE_SHARES
             inventory[name.upper()] = {"expected": float(owned_qty), "actual": float(actual),
                                        "difference": float(actual - owned_qty)}
-        context = {"source": "DATA_API", "tolerance_shares": float(INVENTORY_TOLERANCE_SHARES),
+        context = {"source": "DATA_API", "tolerance_shares": float(DUST_SHARES),
+                   "tolerance_exclusive": True,
                    "inventory": inventory}
         self.inventory_observation = context
         if not consistent:
@@ -1051,6 +1294,24 @@ class SMWindowExecutor:
         _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
 
     async def _verify_order(self, oid: str) -> None:
+        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            row = await self.gateway.get_order(oid)
+            ev = normalize_order(row)
+            owned = self.processor.owned_record(oid)
+            _require(
+                ev is not None
+                and owned is not None
+                and ev.market_id == self.meta.condition_id
+                and ev.token_id == owned["token_id"]
+                and ev.side.value == owned["side"]
+                and Decimal(str(ev.original_size)) == Decimal(str(owned["submitted_qty"]))
+                and Decimal(str(ev.price)) == Decimal(str(owned["submitted_price"]))
+                and (
+                    "maker_address" not in row
+                    or row["maker_address"].lower() == self.gateway.funder.lower()
+                ),
+                "SIGNED_ORDER_ECONOMICS_MISMATCH",
+            )
         outcome = await reconcile_owned_order(oid, self.gateway, self.processor, retry_delays=())
         trades = list(getattr(self.gateway._client, "last_trades", []))
         row = await self.gateway.get_order(oid)
@@ -1061,13 +1322,16 @@ class SMWindowExecutor:
             )
         ev = normalize_order(row)
         owned = self.processor.owned_record(oid)
+        identity_tolerance = (
+            Decimal(0) if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" else RDP_TOLERANCE
+        )
         _require(
             ev is not None
             and ev.token_id == owned["token_id"]
             and ev.side.value == owned["side"]
             and ev.market_id == self.meta.condition_id
-            and within_tolerance(ev.original_size, owned["submitted_qty"], RDP_TOLERANCE)
-            and within_tolerance(ev.price, owned["submitted_price"], RDP_TOLERANCE),
+            and within_tolerance(ev.original_size, owned["submitted_qty"], identity_tolerance)
+            and within_tolerance(ev.price, owned["submitted_price"], identity_tolerance),
             "FINAL_ORDER_IDENTITY_UNKNOWN",
         )
         UserEventProcessor.on_order(self.processor, ev, self.meta.condition_id)
@@ -1150,7 +1414,18 @@ class SMWindowExecutor:
         async with self.lock:
             if cancel:
                 self._cancel_jobs = {}  # An explicit later cleanup may retry cancellation.
-            return await self._await_owned(self._verify_close(cancel=cancel))
+            safe = await self._await_owned(self._verify_close(cancel=cancel))
+            if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+                network = self.reads.network
+                if safe and network is not None:
+                    network.complete_batch(network.snapshot().active_batch, safe=True)
+                self.drain_network_events()
+                try:
+                    await self.journal.flush()
+                except Exception:
+                    self.fatal = "JOURNAL_WRITE_FAILED"
+                    return False
+            return safe
 
     async def _await_owned(self, operation, *, propagate_cancel: bool = True):
         """Drain the same coroutine/SDK reads even when its caller is cancelled.
@@ -1189,7 +1464,11 @@ class SMWindowExecutor:
 
             async def send():
                 began, cancel_ts = self.monotonic(), time.time()
-                ack = await self.gateway.cancel(sorted(scope))
+                ack = (
+                    asdict(await self.gateway.cancel_detailed(sorted(scope)))
+                    if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                    else await self.gateway.cancel(sorted(scope))
+                )
                 with suppress(Exception):
                     self.record("sm_cancel_ack", {"ids": sorted(scope), "ack": ack,
                         "request_ts": cancel_ts, "duration_s": self.monotonic() - began})
@@ -1199,6 +1478,8 @@ class SMWindowExecutor:
         while True:
             try:
                 await asyncio.shield(job)
+                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+                    self._cancel_jobs.pop(scope, None)
                 return
             except asyncio.CancelledError:
                 self.fatal = "ABNORMAL_EXIT"
@@ -1225,16 +1506,35 @@ class SMWindowExecutor:
                         "sm_unknown_official_lookup",
                         {
                             **lookup,
-                            "resolution": "NO_RELIABLE_REQUEST_TO_ORDER_CORRELATION; risk retained",
+                            "resolution": (
+                                "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
+                                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                                else "NO_RELIABLE_REQUEST_TO_ORDER_CORRELATION; risk retained"
+                            ),
                         },
                     )
             external_revision = self.external_revision
             errors = []
+            candidates = [
+                a for a in self.attempts
+                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                and (
+                    a.order_id in self.canceled_submission_proofs
+                    or a.outcome in {"UNKNOWN", "REJECTED"}
+                    and _canceled_submission_response(a)
+                )
+            ]
+            for attempt in candidates:
+                try:
+                    await self._verify_canceled_submission(attempt)
+                except Exception as exc:
+                    errors.append(f"{attempt.order_id}:{exc}")
             for oid in sorted(self.known):
                 try:
                     await self._verify_order(oid)
                 except Exception as exc:
                     errors.append(f"{oid}:{exc}")
+            self._check_canceled_submission_observations()
             _require(not errors, ";".join(errors))
             _require(
                 self.external_revision == external_revision, "EVENT_DURING_CLOSE_REQUIRES_RECHECK"
@@ -1250,11 +1550,22 @@ class SMWindowExecutor:
                 == self._local_fills(self.known),
                 "CROSS_ORDER_TRADE_SET_CHANGED",
             )
+            if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+                for attempt in self.attempts:
+                    if (
+                        attempt.outcome == "UNKNOWN"
+                        and attempt.expected_order_id
+                        and attempt.order_id == attempt.expected_order_id
+                        and attempt.order_id in self.proofs
+                        and attempt.order_id in self.terminal
+                    ):
+                        attempt.outcome = "VERIFIED"  # official closure, never a synthetic ACK
             _require(
-                all(a.outcome in {"ACK", "REJECTED", "ABORTED"} for a in self.attempts),
+                all(a.outcome in {"ACK", "VERIFIED", "REJECTED", "ABORTED"} for a in self.attempts),
                 "UNKNOWN_PLACEMENT_EXPOSURE",
             )
             _require(self.fatal is None, self.fatal or "FATAL_EXECUTION_STATE")
+            _require(getattr(self.journal, "failure", None) is None, "JOURNAL_WRITE_FAILED")
             _require(not self.merge_pending, "MERGE_PENDING")
             _require(
                 self.gateway._client.pagination_failure is None,
@@ -1288,6 +1599,123 @@ class SMWindowExecutor:
                 )
             return False
 
+    def _restore_canceled_submission(self, oid):
+        """Any later observation revokes the rejection and reserves full risk."""
+        self.canceled_submission_proofs.pop(oid, None)
+        self.known.add(oid)
+        for attempt in self.attempts:
+            if attempt.order_id == oid and attempt.outcome == "REJECTED":
+                attempt.outcome = "UNKNOWN"
+
+    def _canceled_submission_observed(self, oid, trades=()):
+        client = self.gateway._client
+        return (
+            oid in client.observed_open_rows
+            or oid in self.observed_order_events
+            or oid in self.terminal
+            or oid in self.store.orders
+            or any(key[1] == oid for key in client.observed_trade_legs)
+            or any(key[1] == oid for key in self.processor.fill_records)
+            or oid in self.processor.quarantined_orders
+            or self.processor.has_unresolved_fill_key(oid)
+            or bool(self._official_fills(trades, {oid}))
+        )
+
+    def _check_canceled_submission_observations(self):
+        for oid in list(self.canceled_submission_proofs):
+            if self._canceled_submission_observed(oid, self.gateway._client.last_trades):
+                self.invalidate("CANCELED_SUBMISSION_EVIDENCE_CHANGED", oid)
+                _require(False, "CANCELED_SUBMISSION_EVIDENCE_CHANGED")
+
+    async def _refresh_canceled_submissions(self):
+        """Recheck rejection evidence only; never repair an invalid close proof.
+
+        Share fresh full pages across rejected IDs. Replaying the complete
+        per-order close here makes snapshot duration grow with session history
+        until every otherwise healthy account read exceeds its freshness cap.
+        """
+        _require(self.safe_to_continue, self.reason or "PREVIOUS_WINDOW_UNRESOLVED")
+        client = self.gateway._client
+        ids = set(self.canceled_submission_proofs)
+        expected_revision = self.revision + len(ids)
+        external_revision = self.external_revision
+        pagination_revision = client.pagination_revision
+        # Reserve every candidate throughout the reads, including failed reads.
+        for oid in ids:
+            self.invalidate("CANCELED_SUBMISSION_RECHECK", oid)
+        try:
+            attempts = [a for a in self.attempts if a.order_id in ids]
+            _require(
+                len(attempts) == len(ids) and {a.order_id for a in attempts} == ids,
+                "CANCELED_SUBMISSION_ID_REUSED",
+            )
+            orders = await self.gateway.open_orders()
+            open_rows = list(client.last_open_rows)
+            trades = await self.gateway.get_trades(market=self.meta.condition_id)
+            evidence = (orders, open_rows, trades, external_revision)
+            for attempt in attempts:
+                _require(
+                    await self._verify_canceled_submission(attempt, evidence=evidence),
+                    "CLOSE_EVIDENCE_INVALIDATED",
+                )
+            self._check_canceled_submission_observations()
+            _require(
+                self.revision == expected_revision and self.external_revision == external_revision,
+                "EVENT_DURING_CLOSE_REQUIRES_RECHECK",
+            )
+            _require(client.pagination_revision == pagination_revision, "CLOSE_EVIDENCE_INVALIDATED")
+            # Only our rejection-proof refresh advanced the revision. Preserve
+            # the existing per-order proofs, never bless unrelated new facts.
+            self.reason = None
+            self.proof_revision = self.revision
+            _require(self.safe_to_continue, "CLOSE_EVIDENCE_INVALIDATED")
+        except Exception as exc:
+            self.reason = self.fatal or str(exc)
+            self.proof_revision = -1
+            raise _Issue(SessionStatus.BLOCKED, self.reason) from exc
+
+    async def _verify_canceled_submission(self, attempt, *, evidence=None):
+        oid, client = attempt.order_id, self.gateway._client
+        # Revalidation reserves the whole amount until all new reads finish.
+        if oid in self.canceled_submission_proofs:
+            self._restore_canceled_submission(oid)
+            self.invalidate("CANCELED_SUBMISSION_RECHECK", oid)
+        _require(_canceled_submission_response(attempt), "CANCELED_SUBMISSION_RESPONSE_CHANGED")
+        _require(
+            sum(a.expected_order_id == oid for a in self.attempts) == 1,
+            "CANCELED_SUBMISSION_ID_REUSED",
+        )
+        if evidence is None:
+            external_revision = self.external_revision
+            orders = await self.gateway.open_orders()  # All pages, no absence-only proof.
+            open_rows = list(client.last_open_rows)
+            trades = await self.gateway.get_trades(market=self.meta.condition_id)
+        else:
+            orders, open_rows, trades, external_revision = evidence
+        _require(client.pagination_failure is None, "CANCELED_SUBMISSION_PAGINATION_UNRESOLVED")
+        _require(
+            self.external_revision == external_revision,
+            "EVENT_DURING_CLOSE_REQUIRES_RECHECK",
+        )
+        observed = any(order.order_id == oid for order in orders) or self._canceled_submission_observed(oid, trades)
+        if observed:
+            return False  # The regular order/fill reconciliation owns this ID.
+        _require(
+            attempt.outcome in {"UNKNOWN", "REJECTED"}
+            and _canceled_submission_response(attempt),
+            "CANCELED_SUBMISSION_EVIDENCE_CHANGED",
+        )
+        # The identity-bound POST error is the positive rejection evidence.
+        # Empty collections only establish that no conflicting fact was seen.
+        self.canceled_submission_proofs[oid] = {
+            "response": attempt.raw_response, "open_orders": open_rows, "trades": trades,
+        }
+        attempt.outcome = "REJECTED"
+        self.known.discard(oid)
+        self.proofs.pop(oid, None)
+        self.terminal.pop(oid, None)
+        return True
+
     async def _wait_for_confirmation(self) -> bool:
         """After cancellation, keep the barrier closed while settlement catches up.
 
@@ -1296,12 +1724,17 @@ class SMWindowExecutor:
         """
         start = int(self.slug.rsplit("-", 1)[1])
         deadline = self.time_anchor + start + TRADING_END_S + CANCEL_BUFFER_S - self.official_time
-        while (self.fatal is None and self.gateway._client.pagination_failure is None
-               and self.pending_confirmations
-               and all(a.outcome in {"ACK", "REJECTED", "ABORTED"} for a in self.attempts)
-               and self.reason == ";".join(
-                   f"{oid}:TRADE_CONFIRMATION_UNRESOLVED" for oid in sorted(self.pending_confirmations))
-               and self.monotonic() < deadline):
+        while (
+            self.fatal is None
+            and self.gateway._client.pagination_failure is None
+            and self.pending_confirmations
+            and all(a.outcome in {"ACK", "VERIFIED", "REJECTED", "ABORTED"} for a in self.attempts)
+            and self.reason
+            == ";".join(
+                f"{oid}:TRADE_CONFIRMATION_UNRESOLVED" for oid in sorted(self.pending_confirmations)
+            )
+            and self.monotonic() < deadline
+        ):
             await self.sleep(min(2.0, deadline - self.monotonic()))
             if self.fatal is not None:
                 return False
@@ -1337,7 +1770,7 @@ class SMWindowExecutor:
         return [("UNKNOWN", None) if order is not None and ids.count(order.order_id) > 1
                 else (outcome, order) for outcome, order in outcomes]
 
-    def _accept_placement(self, attempt, order, meta):
+    def _accept_placement(self, attempt, order, meta, *, record=True):
         quote, client = attempt.quote, self.gateway._client
         _require(re.fullmatch(r"[A-Za-z0-9_-]+", order.order_id) is not None, "ORDER_ID_NOT_OPAQUE")
         _require(order.order_id not in self.known and order.order_id not in client.observed_open_rows,
@@ -1351,11 +1784,12 @@ class SMWindowExecutor:
         self.processor.register_order(order.order_id, meta.condition_id, quote.token_id,
                                       Side.BUY, quote.size, quote.price, "rdp_sm")
         self.store.upsert_order(order)
-        self.record("sm_placement_ack", asdict(attempt))
+        if record:
+            self.record("sm_placement_ack", asdict(attempt))
 
     def _configured_quotes(self, meta, books, window_id, *, evidence=None):
         # Local import keeps the existing M3 -> M2 dependency at module load.
-        from polymaker.rdp_sm_loop import make_quotes
+        from polymaker.rdp_sm_quotes import make_quotes
 
         fills = self.confirmed()
         yes, no = (sum((Decimal(str(f.size)) for f in fills if f.token_id == token), Decimal(0))
@@ -1375,6 +1809,7 @@ class SMWindowExecutor:
         quote_revision: int | None = None,
         quote_factory=None,
     ) -> WindowResult:
+        _require(self.cfg.rdp_sm.normal_entry_mode == "legacy", "OBI_CONTROLLER_REQUIRED")
         async with self.lock:
             result = WindowResult(
                 self.session_id,
@@ -1447,8 +1882,10 @@ class SMWindowExecutor:
                 _require(new <= Decimal(str(account["basic_spendable_budget_usd"])),
                          "OFFICIAL_CAPITAL_INSUFFICIENT")
                 elapsed = self.official_time + self.monotonic() - self.time_anchor - start
-                delta = sum((Decimal(str(f.size)) * (1 if f.token_id == meta.yes.token_id else -1)
-                             for f in self.confirmed()), Decimal(0))
+                delta = inventory_delta(*(
+                    sum((Decimal(str(f.size)) for f in self.confirmed() if f.token_id == token),
+                        Decimal(0)) - self.merged_pairs
+                    for token in (meta.yes.token_id, meta.no.token_id)))
                 cutoff = TRADING_END_S if inventory_trading_state(delta) == "REBALANCE" else NORMAL_END_S
                 _require(TRADING_START_S <= elapsed < cutoff,
                          "MARKET_SUBMISSION_CUTOFF")
@@ -1630,7 +2067,15 @@ class SMWindowExecutor:
         """Release resources; never automatically trade or erase the risk ledger."""
         if self.lock.locked():
             raise RuntimeError("EXECUTION_ACTIVE; cancel and await the window before teardown")
+        verified = self.safe_to_continue
         self.closed = True
-        self.reads.close()
-        self.store.close()
-        self.journal.close()
+        lease = getattr(self.reads, "lease", None)
+        try:
+            self.reads.close()
+            self.store.close()
+            self.journal.close()
+            if lease is not None and not lease.file.closed and verified and getattr(self.journal, "failure", None) is None:
+                lease.verified_closed()
+        finally:
+            if lease is not None:
+                lease.close()

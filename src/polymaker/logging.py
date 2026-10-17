@@ -63,4 +63,6 @@ def configure(
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    return structlog.get_logger(name)  # type: ignore[no-any-return]
+    # CLI invocations can reconfigure logging after library use. A cached
+    # pre-CLI PrintLogger would bypass stderr/queue handlers and corrupt stdout.
+    return structlog.wrap_logger(None, logger_factory_args=(name,), cache_logger_on_first_use=False)  # type: ignore[no-any-return]

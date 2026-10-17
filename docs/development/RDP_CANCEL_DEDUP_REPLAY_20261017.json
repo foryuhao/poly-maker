@@ -1,0 +1,33 @@
+{
+  "source": "journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_505876544e8a47419e6337ef4b154adc.jsonl",
+  "source_sha256": "00a5d6cabd9d7b5626640655627ef08b4d72e5e9eee52f94bdf3782f54c7afbd",
+  "scope": "Replay recorded HTTP completions and batch ownership only; not a counterfactual trading simulation.",
+  "http_requests_replayed": 1387,
+  "original_pause_reasons": [
+    "NETWORK_REPEATED_SLOW",
+    "NETWORK_REPEATED_SLOW",
+    "NETWORK_SERVER_ERROR"
+  ],
+  "replayed_pause_reasons": [
+    "NETWORK_SERVER_ERROR"
+  ],
+  "recorded_batch_admissions_rejected": [],
+  "pnl_reconstruction": [
+    {
+      "session_id": "505876544e8a47419e6337ef4b154adc",
+      "realized_merge_pnl": 0.25,
+      "unmerged_pair_pnl_estimate": 0.0,
+      "theoretical_pair_pnl": 0.25,
+      "pair_pnl": 0.25,
+      "trading_pnl_before_rebate": "UNKNOWN"
+    },
+    {
+      "session_id": "caad7ad1e9f74afeba5b07240a53267e",
+      "realized_merge_pnl": -1.0479641599999996,
+      "unmerged_pair_pnl_estimate": 0.0,
+      "theoretical_pair_pnl": -1.0479641599999996,
+      "pair_pnl": -1.0479641599999996,
+      "trading_pnl_before_rebate": "UNKNOWN"
+    }
+  ]
+}

@@ -32,9 +32,10 @@ from polymaker.marketdata.orderbook import OrderBook
 from polymaker.marketdata.parse import parse_book
 from polymaker.userstream.parse import strict_number
 
-TEST_CAPITAL_LIMIT_USDC = 25.0
+TEST_CAPITAL_LIMIT_USDC = 15.0
 TRADING_START_S = 15
 NORMAL_END_S = 120
+DUST_SHARES = Decimal("0.1")
 TRADING_END_S = PERIOD_S
 OFFICIAL_HOSTS = {
     "clob_host": "https://clob.polymarket.com",
@@ -43,9 +44,19 @@ OFFICIAL_HOSTS = {
 }
 
 
+def decision_quantity(quantity: Decimal | float) -> Decimal:
+    """Ignore strictly sub-0.1 shares only in decisions, never in the ledger."""
+    value = Decimal(str(quantity))
+    return Decimal(0) if abs(value) < DUST_SHARES else value
+
+
+def inventory_delta(yes: Decimal, no: Decimal) -> Decimal:
+    return decision_quantity(decision_quantity(yes) - decision_quantity(no))
+
+
 def inventory_trading_state(delta: Decimal | float) -> str:
     """Round the inventory gap half up to whole shares only for state selection."""
-    gap = abs(Decimal(str(delta))).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    gap = abs(decision_quantity(delta)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     return "NORMAL" if gap < 5 else "REBALANCE"
 
 
@@ -442,7 +453,12 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
 async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None) -> PreflightResult:
     """Read one selected market/account once; never submit, cancel or persist."""
     result = PreflightResult()
-    reads = _reads if _reads is not None else _Reads(cfg)
+    if _reads is None and cfg.rdp_sm.normal_entry_mode == "obi_v1":
+        from polymaker.rdp_sm_execution import _ExecutionReads
+
+        reads = _ExecutionReads(cfg)
+    else:
+        reads = _reads if _reads is not None else _Reads(cfg)
     began = monotonic()
     stage = "configuration"
     try:
@@ -460,9 +476,17 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         meta, start = _market(raw, slug)
         stage = "account_identity"
         await reads.connect_account()
+        if cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            from polymaker.rdp_sm_fence import recover_fence
+
+            await recover_fence(reads, meta)
         stage = "books"
-        yes_raw, yes_tick = await reads.book(meta.yes.token_id)
-        no_raw, no_tick = await reads.book(meta.no.token_id)
+        obi = cfg.rdp_sm.normal_entry_mode == "obi_v1"
+        if obi:
+            ws_books = await reads.ws_readiness(meta)
+        else:
+            yes_raw, yes_tick = await reads.book(meta.yes.token_id)
+            no_raw, no_tick = await reads.book(meta.no.token_id)
         result.market = {
             "slug": meta.slug,
             "condition_id": meta.condition_id,
@@ -472,8 +496,12 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             "tradable": True,
             "min_order_size": meta.min_order_size,
             "mapping_source": "Gamma outcomes Up=YES / Down=NO",
-            "yes": _book(yes_raw, yes_tick, meta.yes.token_id, meta),
-            "no": _book(no_raw, no_tick, meta.no.token_id, meta),
+            "yes": ws_books[meta.yes.token_id]
+            if obi
+            else _book(yes_raw, yes_tick, meta.yes.token_id, meta),
+            "no": ws_books[meta.no.token_id]
+            if obi
+            else _book(no_raw, no_tick, meta.no.token_id, meta),
         }
         result.checks.append(Check("market", "PASS", "official identity, mapping, books and ticks"))
         stage = "account"
@@ -483,15 +511,15 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         )
         account = result.account
         clean = (
-            account["yes_inventory"] == 0
-            and account["no_inventory"] == 0
+            decision_quantity(account["yes_inventory"]) == 0
+            and decision_quantity(account["no_inventory"]) == 0
             and account["target_open_orders"] == 0
         )
         result.checks.append(
             Check(
                 "clean_market",
                 "PASS" if clean else "REJECTED",
-                "zero target inventory and no pre-existing target orders",
+                "zero target inventory (ignoring dust <0.1 shares) and no pre-existing target orders",
             )
         )
         eligible = account["basic_spendable_budget_usd"] >= account["minimum_pair_commitment_usd"]
@@ -504,6 +532,13 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         )
         stage = "freshness"
         stamp = await reads.server_time()
+        if obi:
+            fresh = reads.feed.snapshot()
+            if not fresh.valid:
+                raise _Issue(SessionStatus.BLOCKED, fresh.reason, context=reads.feed.diagnostics())
+            result.market.update(
+                yes=fresh.books()[meta.yes.token_id], no=fresh.books()[meta.no.token_id]
+            )
         result.checked_at, result.time_source = stamp, "OFFICIAL_CLOB_TIME"
         _require(monotonic() - began <= max_age, "PREFLIGHT_SNAPSHOT_EXPIRED")
         for side in ("yes", "no"):
@@ -548,4 +583,8 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         result.checks.append(Check(stage, "BLOCKED", f"READ_OR_PARSE_FAILED:{type(exc).__name__}"))
     finally:
         reads.close()
+        if _reads is None and getattr(reads, "feed", None) is not None:
+            await reads.feed.close()
+        if _reads is None and getattr(reads, "lease", None) is not None:
+            reads.lease.close()
     return result

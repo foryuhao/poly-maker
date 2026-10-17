@@ -332,7 +332,7 @@ async def test_t10_historical_evidence_is_not_imported_into_m1_m2(env, monkeypat
     account = snapshots[-1]
     assert account["historical_pending_cost_reserved_usd"] == 0
     assert account["execution_reserved_usd"] == 0
-    assert account["basic_spendable_budget_usd"] == 25
+    assert account["basic_spendable_budget_usd"] == 15
     reopened = RiskJournal(cfg.paths.journal_dir, ADDRESS)
     assert reopened.sequence == 0
     reopened.close()

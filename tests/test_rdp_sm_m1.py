@@ -165,7 +165,7 @@ async def test_t01_t02_t03_t12_integrated_ready_identity_mapping_tick(venue, cfg
     assert result.market["yes"]["best_bid"] == 0.49 and result.market["no"]["best_ask"] == 0.52
     assert result.time_source == "OFFICIAL_CLOB_TIME" and result.market["elapsed_s"] == 60
     assert result.account["signer"] == ADDRESS and result.account["funder"] == ADDRESS
-    assert result.account["basic_spendable_budget_usd"] == 25
+    assert result.account["basic_spendable_budget_usd"] == 15
     data = json.loads(json.dumps(result.to_dict(), allow_nan=False))
     assert (
         data["status"] == "SESSION_READY" and data["read_only"] and not data["trading_authorized"]

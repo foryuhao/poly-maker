@@ -1,0 +1,44 @@
+{
+  "session_id": "093f3786d7f54e2695f4538c605cc417",
+  "order_id": "0xf06474964f8133f1cedbcc4b551c406b92c738ef0e2da03c1547f825e801de3e",
+  "mode": "READ_ONLY_OFFICIAL_RECHECK",
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/auth/derive-api-key"
+    },
+    {
+      "method": "GET",
+      "path": "/data/order/0xf06474964f8133f1cedbcc4b551c406b92c738ef0e2da03c1547f825e801de3e"
+    },
+    {
+      "method": "GET",
+      "path": "/data/orders"
+    },
+    {
+      "method": "GET",
+      "path": "/data/trades"
+    },
+    {
+      "method": "GET",
+      "path": "/data/orders"
+    }
+  ],
+  "order_detail": {
+    "error_type": "GatewayReadError",
+    "cause_type": "_Issue"
+  },
+  "open_orders_count": 0,
+  "target_open": false,
+  "market_trade_count": 0,
+  "target_trade_count": 0,
+  "id_filtered_orders": [],
+  "pagination_complete": true,
+  "source_files_unchanged": true,
+  "historical_journal_sha256": "d2780dd7f5e31f1a82802bf9dc1c494fb886ba77a7e34cf3fcd297e7c46007e5",
+  "recovery_marker_changed": false,
+  "historical_response_matches_new_rule": true,
+  "signed_id_used_once": true,
+  "historical_report_rewritten": false,
+  "conclusion": "Exact identity-bound POST rejection; fresh official reads found no order or trade. Historical journal and recovery marker retained."
+}

@@ -46,8 +46,21 @@ post_only = true                # every quote is post-only (maker-only mandate)
 max_orders_per_batch = 15       # exchange batch cap
 
 [rdp_sm]
+normal_entry_mode = "obi_v1"
+base_size = "5"
+target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
+
+[rdp_sm.obi]
+# Historical field name: individual slow-request threshold; p95 is diagnostic only.
+max_rtt_p95_ms = 500.0
+network_recent_window_sec = 5.0
+network_slow_sample_count = 3
+network_slow_trigger_count = 2
+network_pause_sec = 2.0
+network_max_pause_sec = 8.0
+network_probe_interval_sec = 0.5
 
 [paths]
 db = "state.db"

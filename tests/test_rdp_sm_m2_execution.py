@@ -83,7 +83,7 @@ class ExecutionVenue(Venue):
             self.post_requests.append(deepcopy(body))
             attempts = self.executor.gateway._client.batch_attempts
             assert len(attempts) == len(body)
-            assert self.executor.committed() <= Decimal("25")
+            assert self.executor.committed() <= Decimal("15")
             lines = journal_records(self.executor.journal.path)
             replies = []
             for row, attempt in zip(body, attempts, strict=True):
@@ -370,14 +370,15 @@ async def test_e09_session_cap_checked_before_any_submit(env):
 
 async def test_e09_confirmed_cost_counts_in_later_window_cap(env):
     v, executor = await open_executor(env)
-    v.on_cancel = lambda venue: venue.fill("o-1", qty=20)
-    first = await executor.execute_window("w1", quotes(size=20))
-    assert first.close_barrier == "SAFE_TO_CONTINUE" and first.capital_committed == 9.8
+    v.on_cancel = lambda venue: venue.fill("o-1", qty=15)
+    first = await executor.execute_window("w1", quotes(size=15))
+    assert first.close_barrier == "SAFE_TO_CONTINUE" and first.capital_committed == 7.35
     v.on_cancel = None
-    v.positions = [{"token_id": "1", "current_size": 20, "avg_price": 0.49}]
-    second = await executor.execute_window("w2", quotes("w2", size=20))
+    v.positions = [{"token_id": "1", "current_size": 15, "avg_price": 0.49}]
+    second = await executor.execute_window("w2", quotes("w2", size=15))
     assert second.close_barrier == "BLOCKED" and len(v.posts) == 2
-    assert executor.committed() >= Decimal("9.8")
+    assert second.block_reason == "TEST_CAPITAL_LIMIT_EXCEEDED"
+    assert executor.committed() == Decimal("7.35")
 
 
 @pytest.mark.parametrize("elapsed", [14, 120, 150, 180, 222, 239, 240, 260, 300])
@@ -694,8 +695,8 @@ async def test_two_owned_maker_legs_share_trade_id_without_deduplication_loss(en
     assert len(executor.confirmed()) == 2
 
 
-@pytest.mark.parametrize("size,allowed", [(40, True), (50, True), (50.01, False)])
-async def test_twenty_five_dollar_single_order_cap_boundary(env, size, allowed):
+@pytest.mark.parametrize("size,allowed", [(20, True), (30, True), (30.01, False)])
+async def test_fifteen_dollar_single_order_cap_boundary(env, size, allowed):
     v, executor = await open_executor(env)
     result = await executor.execute_window("w1", [replace(quotes()[0], price=0.5, size=size)])
     if allowed:

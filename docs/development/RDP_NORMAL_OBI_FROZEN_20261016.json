@@ -1,0 +1,10 @@
+{
+  "plan": "docs/development/RDP_NORMAL_OBI_PLAN_20261016.md",
+  "sha256": "2104d229e09a3d02f828ac8d2623660ee56ced0d332d5198c6268e78c59340fd",
+  "head": "c9136c93cc40d6bc534df6b60610e13df8326c79",
+  "authorized": "freeze and implement; no live trading",
+  "user_config_sha256": {
+    "config/config.toml": "6c2f1a466ad3f807ccab1a59661982bb87781beb575307598206e6868eb65bcc",
+    "livecfg/config.toml": "a6623a38405440d4c4bc082ae7a2949aa0ffd591a3375809b2be595ee10633b0"
+  }
+}

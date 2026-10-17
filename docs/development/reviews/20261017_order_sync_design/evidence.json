@@ -1,0 +1,819 @@
+{
+  "scope": "Historical HTTP requests, not a benchmark of the proposed service",
+  "quantiles": "sorted samples at floor((n-1)*p); p50 uses median",
+  "markets": 36,
+  "nominal_market_seconds": 10800,
+  "limitations": [
+    "Data API /v2/positions is not covered by sm_network_request instrumentation",
+    "Individual HTTP timing excludes queueing and complete multi-page read cost",
+    "Per-endpoint quantiles do not establish a whole-round percentile",
+    "No API calls, trading process changes, or live performance measurements"
+  ],
+  "latencies": [
+    {
+      "cohort": "all36",
+      "endpoint": "/balance-allowance",
+      "n": 2750,
+      "p50_ms": 193.20850470103323,
+      "p90_ms": 332.9651323147118,
+      "p95_ms": 358.7934896349907,
+      "p99_ms": 391.3720240816474,
+      "max_ms": 1120.335831772536
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/data/order/:id",
+      "n": 9681,
+      "p50_ms": 219.82019720599055,
+      "p90_ms": 310.10907981544733,
+      "p95_ms": 322.0083392225206,
+      "p99_ms": 392.4100771546364,
+      "max_ms": 1903.0703287571669
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/data/orders",
+      "n": 5548,
+      "p50_ms": 196.57465443015099,
+      "p90_ms": 323.5560148023069,
+      "p95_ms": 338.5601150803268,
+      "p99_ms": 384.7132958471775,
+      "max_ms": 3539.5894879475236
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/data/trades",
+      "n": 6097,
+      "p50_ms": 198.35042906925082,
+      "p90_ms": 286.852422170341,
+      "p95_ms": 315.16991881653666,
+      "p99_ms": 352.3819758556783,
+      "max_ms": 1872.080471366644
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/tick-size",
+      "n": 1088,
+      "p50_ms": 201.42842596396804,
+      "p90_ms": 309.5587007701397,
+      "p95_ms": 315.0180261582136,
+      "p99_ms": 325.48799086362123,
+      "max_ms": 414.75246381014585
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/time",
+      "n": 17201,
+      "p50_ms": 200.6036126986146,
+      "p90_ms": 305.01528084278107,
+      "p95_ms": 335.95131197944283,
+      "p99_ms": 432.29984398931265,
+      "max_ms": 5198.041365947574
+    },
+    {
+      "cohort": "all36",
+      "endpoint": "/version",
+      "n": 112,
+      "p50_ms": 201.1925841215998,
+      "p90_ms": 373.1178627349436,
+      "p95_ms": 514.906934928149,
+      "p99_ms": 536.481517367065,
+      "max_ms": 675.545975100249
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/balance-allowance",
+      "n": 1749,
+      "p50_ms": 192.06341682001948,
+      "p90_ms": 328.6746656522155,
+      "p95_ms": 354.64908415451646,
+      "p99_ms": 386.1957099288702,
+      "max_ms": 616.5481279604137
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/data/order/:id",
+      "n": 7185,
+      "p50_ms": 215.22634010761976,
+      "p90_ms": 311.29887513816357,
+      "p95_ms": 321.3505307212472,
+      "p99_ms": 371.8535490334034,
+      "max_ms": 1699.1981007158756
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/data/orders",
+      "n": 3573,
+      "p50_ms": 195.6290891394019,
+      "p90_ms": 324.2043531499803,
+      "p95_ms": 341.32367419078946,
+      "p99_ms": 384.3754297122359,
+      "max_ms": 639.5784500055015
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/data/trades",
+      "n": 4264,
+      "p50_ms": 197.77223700657487,
+      "p90_ms": 295.2392161823809,
+      "p95_ms": 316.7895609512925,
+      "p99_ms": 347.5793991237879,
+      "max_ms": 1872.080471366644
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/tick-size",
+      "n": 736,
+      "p50_ms": 200.2186223398894,
+      "p90_ms": 309.6351698040962,
+      "p95_ms": 315.80331828445196,
+      "p99_ms": 325.683674775064,
+      "max_ms": 382.1040829643607
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/time",
+      "n": 11429,
+      "p50_ms": 200.0803267583251,
+      "p90_ms": 301.8904742784798,
+      "p95_ms": 334.67779913917184,
+      "p99_ms": 430.46788265928626,
+      "max_ms": 1556.9671653211117
+    },
+    {
+      "cohort": "first24",
+      "endpoint": "/version",
+      "n": 74,
+      "p50_ms": 201.02165709249675,
+      "p90_ms": 372.95847618952394,
+      "p95_ms": 518.4718798846006,
+      "p99_ms": 568.9087258651853,
+      "max_ms": 675.545975100249
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/balance-allowance",
+      "n": 1001,
+      "p50_ms": 195.87481766939163,
+      "p90_ms": 337.8951349295676,
+      "p95_ms": 364.1008520498872,
+      "p99_ms": 395.5405028536916,
+      "max_ms": 1120.335831772536
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/data/order/:id",
+      "n": 2496,
+      "p50_ms": 228.38427335955203,
+      "p90_ms": 304.49864780530334,
+      "p95_ms": 323.5080623999238,
+      "p99_ms": 442.7250511944294,
+      "max_ms": 1903.0703287571669
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/data/orders",
+      "n": 1975,
+      "p50_ms": 198.59415385872126,
+      "p90_ms": 322.0442561432719,
+      "p95_ms": 331.99802367016673,
+      "p99_ms": 385.3509249165654,
+      "max_ms": 3539.5894879475236
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/data/trades",
+      "n": 1833,
+      "p50_ms": 199.83102288097143,
+      "p90_ms": 271.0079262033105,
+      "p95_ms": 304.4794872403145,
+      "p99_ms": 352.3819758556783,
+      "max_ms": 615.2418302372098
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/tick-size",
+      "n": 352,
+      "p50_ms": 203.4575380384922,
+      "p90_ms": 308.7048940360546,
+      "p95_ms": 312.70028837025166,
+      "p99_ms": 320.4032890498638,
+      "max_ms": 414.75246381014585
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/time",
+      "n": 5772,
+      "p50_ms": 202.47938111424446,
+      "p90_ms": 308.29442106187344,
+      "p95_ms": 338.61641213297844,
+      "p99_ms": 437.93653743341565,
+      "max_ms": 5198.041365947574
+    },
+    {
+      "cohort": "latest12",
+      "endpoint": "/version",
+      "n": 38,
+      "p50_ms": 201.66979217901826,
+      "p90_ms": 383.85256100445986,
+      "p95_ms": 512.7136860974133,
+      "p99_ms": 514.906934928149,
+      "max_ms": 527.2829071618617
+    }
+  ],
+  "request_counts": [
+    {
+      "cohort": "all36",
+      "method": "DELETE",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 5145
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/balance-allowance",
+      "outcome": "SUCCESS",
+      "count": 2750
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/order/:id",
+      "outcome": "LOCAL_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/order/:id",
+      "outcome": "SUCCESS",
+      "count": 9681
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/orders",
+      "outcome": "SUCCESS",
+      "count": 5548
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "LOCAL_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "SUCCESS",
+      "count": 6097
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "TRANSPORT_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/tick-size",
+      "outcome": "SUCCESS",
+      "count": 1088
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/time",
+      "outcome": "SUCCESS",
+      "count": 17201
+    },
+    {
+      "cohort": "all36",
+      "method": "GET",
+      "endpoint": "/version",
+      "outcome": "SUCCESS",
+      "count": 112
+    },
+    {
+      "cohort": "all36",
+      "method": "POST",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 332
+    },
+    {
+      "cohort": "first24",
+      "method": "DELETE",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 3555
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/balance-allowance",
+      "outcome": "SUCCESS",
+      "count": 1749
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/data/order/:id",
+      "outcome": "SUCCESS",
+      "count": 7185
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/data/orders",
+      "outcome": "SUCCESS",
+      "count": 3573
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "LOCAL_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "SUCCESS",
+      "count": 4264
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/tick-size",
+      "outcome": "SUCCESS",
+      "count": 736
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/time",
+      "outcome": "SUCCESS",
+      "count": 11429
+    },
+    {
+      "cohort": "first24",
+      "method": "GET",
+      "endpoint": "/version",
+      "outcome": "SUCCESS",
+      "count": 74
+    },
+    {
+      "cohort": "first24",
+      "method": "POST",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 226
+    },
+    {
+      "cohort": "latest12",
+      "method": "DELETE",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 1590
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/balance-allowance",
+      "outcome": "SUCCESS",
+      "count": 1001
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/data/order/:id",
+      "outcome": "LOCAL_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/data/order/:id",
+      "outcome": "SUCCESS",
+      "count": 2496
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/data/orders",
+      "outcome": "SUCCESS",
+      "count": 1975
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "SUCCESS",
+      "count": 1833
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/data/trades",
+      "outcome": "TRANSPORT_ERROR",
+      "count": 1
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/tick-size",
+      "outcome": "SUCCESS",
+      "count": 352
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/time",
+      "outcome": "SUCCESS",
+      "count": 5772
+    },
+    {
+      "cohort": "latest12",
+      "method": "GET",
+      "endpoint": "/version",
+      "outcome": "SUCCESS",
+      "count": 38
+    },
+    {
+      "cohort": "latest12",
+      "method": "POST",
+      "endpoint": "/orders",
+      "outcome": "SUCCESS",
+      "count": 106
+    }
+  ],
+  "provenance": [
+    {
+      "market": "13:40",
+      "session_id": "9f3fa7138582470fa0a56c0b5279be66",
+      "slug": "btc-updown-5m-1792215600",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_9f3fa7138582470fa0a56c0b5279be66.jsonl",
+      "sha256": "55b8a4358b06a3f9f8782f22322e006d597f0e21c14b4f4731af3ef80da7008b",
+      "bytes": 2184472,
+      "lines": 1591,
+      "result_line": 1591
+    },
+    {
+      "market": "14:20",
+      "session_id": "ea9bd55b00dd4f58b5523cc8f018b412",
+      "slug": "btc-updown-5m-1792218000",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ea9bd55b00dd4f58b5523cc8f018b412.jsonl",
+      "sha256": "95eecd39397ddb6ab59c67dbc7ed3310c90f44f9cb719ac494b580ce115faa75",
+      "bytes": 3198924,
+      "lines": 1958,
+      "result_line": 1958
+    },
+    {
+      "market": "13:30",
+      "session_id": "34939312e2e44e8aac15b3610cc6c691",
+      "slug": "btc-updown-5m-1792215000",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_34939312e2e44e8aac15b3610cc6c691.jsonl",
+      "sha256": "b4cc60b2832cb0c1b818ec80699f7c2f396eb14e2f51b582a945727924567da4",
+      "bytes": 4092765,
+      "lines": 2529,
+      "result_line": 2529
+    },
+    {
+      "market": "14:45",
+      "session_id": "7b63552a2626494eabdc5b0c04371354",
+      "slug": "btc-updown-5m-1792219500",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7b63552a2626494eabdc5b0c04371354.jsonl",
+      "sha256": "99902009fba3c61955e51796742119e86ec7f1a54e83f223a36f676698427403",
+      "bytes": 1591020,
+      "lines": 1612,
+      "result_line": 1612
+    },
+    {
+      "market": "14:25",
+      "session_id": "d4009e85f3384bb4a57c18b074f538a4",
+      "slug": "btc-updown-5m-1792218300",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_d4009e85f3384bb4a57c18b074f538a4.jsonl",
+      "sha256": "7bca8773c1a13fc000ee1e638e5c80870bc6fdaa9c543cf63f45f939f2edf95f",
+      "bytes": 1448463,
+      "lines": 1491,
+      "result_line": 1491
+    },
+    {
+      "market": "13:45",
+      "session_id": "466e5603c85d4d009cf85ebcc9bd66ae",
+      "slug": "btc-updown-5m-1792215900",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_466e5603c85d4d009cf85ebcc9bd66ae.jsonl",
+      "sha256": "96d8de61a040ef6d209c4cff74e699214d9061beac51d4df74858eceb4de77b5",
+      "bytes": 2236812,
+      "lines": 1706,
+      "result_line": 1706
+    },
+    {
+      "market": "14:00",
+      "session_id": "40b66d90669d46a1ac6a03c221c1c8d4",
+      "slug": "btc-updown-5m-1792216800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_40b66d90669d46a1ac6a03c221c1c8d4.jsonl",
+      "sha256": "565d5419e466270bef6a2229240d269583b62c961ead13b33d7e55d774f5e7b7",
+      "bytes": 541356,
+      "lines": 656,
+      "result_line": 656
+    },
+    {
+      "market": "13:55",
+      "session_id": "c1f3268e04494adda7d59b322de768a3",
+      "slug": "btc-updown-5m-1792216500",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c1f3268e04494adda7d59b322de768a3.jsonl",
+      "sha256": "7fe8a1c34225e3898f8e6085c025467cb9d6bb7d63fef93d45fca213827f9859",
+      "bytes": 12164114,
+      "lines": 2297,
+      "result_line": 2297
+    },
+    {
+      "market": "13:10",
+      "session_id": "825b26bc5c4b4496bc904c372d16f251",
+      "slug": "btc-updown-5m-1792213800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_825b26bc5c4b4496bc904c372d16f251.jsonl",
+      "sha256": "3450315eeb048aa950c55eea94991909773f5fceacff837afc349c5b6ef98822",
+      "bytes": 4833818,
+      "lines": 2291,
+      "result_line": 2291
+    },
+    {
+      "market": "14:55",
+      "session_id": "30e6a48bfb0a45eb89ab3745b6cb17f2",
+      "slug": "btc-updown-5m-1792220100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_30e6a48bfb0a45eb89ab3745b6cb17f2.jsonl",
+      "sha256": "e02fb7e2a6e1c21fac8a2ff986d10dcfb198e8cb6dc69f90dbe4b15f5804d550",
+      "bytes": 10395822,
+      "lines": 2210,
+      "result_line": 2210
+    },
+    {
+      "market": "13:35",
+      "session_id": "0df72e2518964f29b5a8f623b424373b",
+      "slug": "btc-updown-5m-1792215300",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_0df72e2518964f29b5a8f623b424373b.jsonl",
+      "sha256": "84cf41fc50a2bbd53367ad76bb38bc00f44e78a64c7ccc0c4b34392bd2f0d27e",
+      "bytes": 1328474,
+      "lines": 1403,
+      "result_line": 1403
+    },
+    {
+      "market": "14:50",
+      "session_id": "1fa461eb587542f4b1c0b4f6fdc39bd1",
+      "slug": "btc-updown-5m-1792219800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_1fa461eb587542f4b1c0b4f6fdc39bd1.jsonl",
+      "sha256": "0ee24651273f010291d10e1b80e9d7c1a7bc5c2b20bc5b2dd0926fa08719c65f",
+      "bytes": 1618864,
+      "lines": 1625,
+      "result_line": 1625
+    },
+    {
+      "market": "14:10",
+      "session_id": "140333c80b7e4a759569c74b4e1efc89",
+      "slug": "btc-updown-5m-1792217400",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_140333c80b7e4a759569c74b4e1efc89.jsonl",
+      "sha256": "b712072b30b17b581a9f6d4342a0b0152aa6647ab693aea007b27a857793cd57",
+      "bytes": 3756247,
+      "lines": 2547,
+      "result_line": 2547
+    },
+    {
+      "market": "14:30",
+      "session_id": "b0a5b9b3a86d4752a56ff4a8ff95abc9",
+      "slug": "btc-updown-5m-1792218600",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b0a5b9b3a86d4752a56ff4a8ff95abc9.jsonl",
+      "sha256": "bc13066bb1a583d9b08c50ea43531ba6b736104a1fd32b9580cf1e65da83815f",
+      "bytes": 1484580,
+      "lines": 1525,
+      "result_line": 1525
+    },
+    {
+      "market": "13:25",
+      "session_id": "a544c0e3093c490e9537f4f063b4b32f",
+      "slug": "btc-updown-5m-1792214700",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a544c0e3093c490e9537f4f063b4b32f.jsonl",
+      "sha256": "0fc591cda45147c429875b0bf4bc50f619c996ffc951eab199d04f7220ee5983",
+      "bytes": 1506593,
+      "lines": 1546,
+      "result_line": 1546
+    },
+    {
+      "market": "14:35",
+      "session_id": "b0eddca793ab4f0181bda02c431f09e4",
+      "slug": "btc-updown-5m-1792218900",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b0eddca793ab4f0181bda02c431f09e4.jsonl",
+      "sha256": "07474b2f5c510ac3b7b736f97f4d853d25180037c0099b77c098f3e7eff9121b",
+      "bytes": 2081420,
+      "lines": 1781,
+      "result_line": 1781
+    },
+    {
+      "market": "13:05",
+      "session_id": "ea5ef4acef3b455db2a24f4bce68970d",
+      "slug": "btc-updown-5m-1792213500",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ea5ef4acef3b455db2a24f4bce68970d.jsonl",
+      "sha256": "e10d0d71d64f2d40f68167001bcab37c64a3342aadffbd9a96e79d8a0dbfdba9",
+      "bytes": 1720730,
+      "lines": 1478,
+      "result_line": 1478
+    },
+    {
+      "market": "13:20",
+      "session_id": "1245ddafee7249f38af900e9a952e1d2",
+      "slug": "btc-updown-5m-1792214400",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_1245ddafee7249f38af900e9a952e1d2.jsonl",
+      "sha256": "04ae85576a90063f41bda221aedd0c343b6867ac1a59f183ad710e6195d2f081",
+      "bytes": 1359743,
+      "lines": 1432,
+      "result_line": 1432
+    },
+    {
+      "market": "14:40",
+      "session_id": "e32fa30f22554e2a93eff9782ce41a62",
+      "slug": "btc-updown-5m-1792219200",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e32fa30f22554e2a93eff9782ce41a62.jsonl",
+      "sha256": "db9f0b59abc5aee39a87994bddf55182c76892ba527dceff5ae52910b126e861",
+      "bytes": 1582079,
+      "lines": 1589,
+      "result_line": 1589
+    },
+    {
+      "market": "13:50",
+      "session_id": "0d356257058b4148ab3cc03e9676b769",
+      "slug": "btc-updown-5m-1792216200",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_0d356257058b4148ab3cc03e9676b769.jsonl",
+      "sha256": "b518063175e83a542fc1209563dc006985cc54a3bfd0525407b0eb85a1b23904",
+      "bytes": 1614458,
+      "lines": 1608,
+      "result_line": 1608
+    },
+    {
+      "market": "13:00",
+      "session_id": "fbe3d887a4484a46b8e689f9319fe2e9",
+      "slug": "btc-updown-5m-1792213200",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fbe3d887a4484a46b8e689f9319fe2e9.jsonl",
+      "sha256": "7ce865ef883307554041c17a6075b7ae5b84c63ff843fbd97dd05e6dd3fa2138",
+      "bytes": 1941436,
+      "lines": 1936,
+      "result_line": 1936
+    },
+    {
+      "market": "13:15",
+      "session_id": "4d91b0396f0b4463977321bd1ad1c108",
+      "slug": "btc-updown-5m-1792214100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4d91b0396f0b4463977321bd1ad1c108.jsonl",
+      "sha256": "9a96095aa0c7ddd7c91f185bb7502718d457e3f863192908cd179720f67366e7",
+      "bytes": 2372146,
+      "lines": 1539,
+      "result_line": 1539
+    },
+    {
+      "market": "14:05",
+      "session_id": "9adc60d6cb79401aab9bc1f5255c9e32",
+      "slug": "btc-updown-5m-1792217100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_9adc60d6cb79401aab9bc1f5255c9e32.jsonl",
+      "sha256": "e0baa00eadb5b222374e3d1073491110ffdf784ac9dde6fec845a4236e3bab55",
+      "bytes": 1630063,
+      "lines": 1633,
+      "result_line": 1633
+    },
+    {
+      "market": "14:15",
+      "session_id": "9df4da340bad496d8e2822fbfdfea4fd",
+      "slug": "btc-updown-5m-1792217700",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_9df4da340bad496d8e2822fbfdfea4fd.jsonl",
+      "sha256": "ef380eff07418b0eb5c4403b86a99e0f0e81bdb4d9b86aaa8e0a579b40d1b9e6",
+      "bytes": 1911675,
+      "lines": 1915,
+      "result_line": 1915
+    },
+    {
+      "market": "16:35",
+      "session_id": "7be5d0b9990f48c2a628f3fe4fd421d8",
+      "slug": "btc-updown-5m-1792226100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7be5d0b9990f48c2a628f3fe4fd421d8.jsonl",
+      "sha256": "8687942cc3c68fad2262c181ef46d63761fe3bc74ddcfe8017414bd2ce8ac117",
+      "bytes": 1559917,
+      "lines": 1585,
+      "result_line": 1585
+    },
+    {
+      "market": "15:45",
+      "session_id": "af294965fa6e4b2d9e0508698f2b3cf4",
+      "slug": "btc-updown-5m-1792223100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_af294965fa6e4b2d9e0508698f2b3cf4.jsonl",
+      "sha256": "3a8285b691656a13f489672b5bb37cd5587776c66470b0db8bc7961a179a0b43",
+      "bytes": 3619517,
+      "lines": 1566,
+      "result_line": 1566
+    },
+    {
+      "market": "16:20",
+      "session_id": "a47a5c23d92e46a1b7bc5bb77b97d207",
+      "slug": "btc-updown-5m-1792225200",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a47a5c23d92e46a1b7bc5bb77b97d207.jsonl",
+      "sha256": "5c84fac5880d54e030363204ba6396a3f3a0809bf046958a09cd8899ab5b9265",
+      "bytes": 1634685,
+      "lines": 1640,
+      "result_line": 1640
+    },
+    {
+      "market": "16:25",
+      "session_id": "54663396127a43c3adaaae7639287b57",
+      "slug": "btc-updown-5m-1792225500",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_54663396127a43c3adaaae7639287b57.jsonl",
+      "sha256": "40c7f0ce24ca93725ca7242fba12cd789b19d292885cb07a1cc4f8f50a6cfbfb",
+      "bytes": 1578875,
+      "lines": 1572,
+      "result_line": 1572
+    },
+    {
+      "market": "15:55",
+      "session_id": "60388fdc55094efe9ca55f2f49fee91a",
+      "slug": "btc-updown-5m-1792223700",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_60388fdc55094efe9ca55f2f49fee91a.jsonl",
+      "sha256": "98c700bd5066991d573b1d9acbb14cce7d0ae8d07016635a0c22900044c6b033",
+      "bytes": 2635294,
+      "lines": 1616,
+      "result_line": 1616
+    },
+    {
+      "market": "15:40",
+      "session_id": "a241a21cb7344e66a92c3e10ec70af68",
+      "slug": "btc-updown-5m-1792222800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a241a21cb7344e66a92c3e10ec70af68.jsonl",
+      "sha256": "a40feb84ab7a0a83e6a164d252365280d49bdd37671d7bc09294da8fd2f7a7d8",
+      "bytes": 1976987,
+      "lines": 1625,
+      "result_line": 1625
+    },
+    {
+      "market": "16:00",
+      "session_id": "bd317b53cd69414b8b0e8e47d2155c68",
+      "slug": "btc-updown-5m-1792224000",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd317b53cd69414b8b0e8e47d2155c68.jsonl",
+      "sha256": "0ba4af4dc1acb9624892e3ca72189d2349b0ce74ce56cb2ee7ddb859e496ada8",
+      "bytes": 2175384,
+      "lines": 1622,
+      "result_line": 1622
+    },
+    {
+      "market": "16:15",
+      "session_id": "95f209364352435e95f226c6f54775be",
+      "slug": "btc-updown-5m-1792224900",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_95f209364352435e95f226c6f54775be.jsonl",
+      "sha256": "275f98cd577496af5442ad766cf39714540d0649aa436a0894afb5272bffd0c6",
+      "bytes": 909708,
+      "lines": 1022,
+      "result_line": 1022
+    },
+    {
+      "market": "16:30",
+      "session_id": "172d12bbc990476baa05c1257dbbff78",
+      "slug": "btc-updown-5m-1792225800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_172d12bbc990476baa05c1257dbbff78.jsonl",
+      "sha256": "5d607da50fbdce4afa62bb3f25d8a1bbf1f1821261b69f2543065f66da1bd471",
+      "bytes": 1294801,
+      "lines": 1364,
+      "result_line": 1364
+    },
+    {
+      "market": "16:10",
+      "session_id": "eecf5ee3966e475a99dfe8fd168f0366",
+      "slug": "btc-updown-5m-1792224600",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_eecf5ee3966e475a99dfe8fd168f0366.jsonl",
+      "sha256": "5bb35e410b6aeef16aa695a3614d1b60150f02165a912ab3929151cffb56e17a",
+      "bytes": 2401960,
+      "lines": 1901,
+      "result_line": 1901
+    },
+    {
+      "market": "16:05",
+      "session_id": "829b6140697048bf8c03463dceca81f1",
+      "slug": "btc-updown-5m-1792224300",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_829b6140697048bf8c03463dceca81f1.jsonl",
+      "sha256": "7995be4bf28864b174e362299618ccc1236db91ea635435d7c21b942a5044e83",
+      "bytes": 2196237,
+      "lines": 2002,
+      "result_line": 2002
+    },
+    {
+      "market": "15:50",
+      "session_id": "64d50379820a42fe882f8737db4b23a6",
+      "slug": "btc-updown-5m-1792223400",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_64d50379820a42fe882f8737db4b23a6.jsonl",
+      "sha256": "e9a8c68e6272f7dde3e3a7e8ad59770b2316279cbf4302cbb985c6a6317c709b",
+      "bytes": 1924094,
+      "lines": 1519,
+      "result_line": 1519
+    }
+  ]
+}

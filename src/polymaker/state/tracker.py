@@ -185,13 +185,26 @@ class UserEventProcessor:
                 # raw exact ID; registration will establish ownership later.
                 self._pending_malformed_order_ids.add(order_id)
 
-    def register_order(self, order_id: str, condition_id: str, token_id: str,
-                       side: Side, qty: float, price: float, source: str = "engine") -> None:
+    def register_order(
+        self,
+        order_id: str,
+        condition_id: str,
+        token_id: str,
+        side: Side,
+        qty: float,
+        price: float,
+        source: str = "engine",
+        *,
+        quiet: bool = False,
+    ) -> None:
         self._store.register_owned_order(order_id, condition_id, token_id, side, qty, price, source)
         self._owned.add(order_id)
         self._order_observe(order_id, {"transition": "REGISTERED", "token_id": token_id,
             "side": side.value, "qty": qty, "price": price, "source": source})
-        log.info("owned_order_registered", order_id=order_id, token=token_id[:12], source=source)
+        if not quiet:
+            log.info(
+                "owned_order_registered", order_id=order_id, token=token_id[:12], source=source
+            )
         if order_id in self._pending_malformed_order_ids:
             self._pending_malformed_order_ids.discard(order_id)
             self.quarantine_order(order_id, "malformed WS trade referenced this owned order")

@@ -108,6 +108,8 @@ def test_cli_conflict_stops_before_settlement_preflight(monkeypatch):
     import polymaker.settlement_sweep as settlement
     from polymaker.cli import app
 
+    # This case tests environment aliases only, never the operator's dotenv file.
+    monkeypatch.setattr('polymaker.config.load_dotenv', lambda: None)
     monkeypatch.setenv("PK", "0x" + KEY_A)
     monkeypatch.setenv("POLYMARKET_PRIVATE_KEY", "0x" + KEY_B)
     monkeypatch.setattr(settlement, "preflight", lambda *args, **kwargs: pytest.fail(

@@ -14,7 +14,7 @@ import os
 import tomllib
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import dotenv_values, load_dotenv
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -103,8 +103,51 @@ class ExecutionConfig(BaseModel):
     max_orders_per_batch: int = 15
 
 
+class RDPObiConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    threshold: Decimal = Field(default=Decimal("0.30"), gt=0, le=1, allow_inf_nan=False)
+    signal_horizon_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    rebalance_order_ttl_sec: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    max_book_age_ms: float = Field(default=100.0, gt=0, allow_inf_nan=False)
+    max_signal_age_ms: float = Field(default=100.0, gt=0, allow_inf_nan=False)
+    max_pair_skew_ms: float = Field(default=100.0, gt=0, allow_inf_nan=False)
+    # Historical name retained for existing configs: now the individual slow-request threshold.
+    max_rtt_p95_ms: float = Field(default=500.0, gt=0, allow_inf_nan=False)
+    # Compatibility/telemetry only; historical RTT is no longer a signal-age veto.
+    max_signal_plus_rtt_ms: float = Field(default=500.0, gt=0, allow_inf_nan=False)
+    network_min_samples: int = Field(default=10, ge=1)
+    network_window_sec: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    network_sample_max_age_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    network_recovery_samples: int = Field(default=3, ge=1)
+    network_recent_window_sec: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    network_slow_sample_count: int = Field(default=3, ge=2)
+    network_slow_trigger_count: int = Field(default=2, ge=2)
+    network_pause_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    network_max_pause_sec: float = Field(default=8.0, gt=0, allow_inf_nan=False)
+    network_probe_interval_sec: float = Field(default=0.5, gt=0, allow_inf_nan=False)
+    cancel_retry_sec: float = Field(default=0.25, gt=0, allow_inf_nan=False)
+    # The first live experiment never rearms a consumed continuous direction.
+    repeat_same_signal: Literal[False] = False
+
+    @model_validator(mode="after")
+    def _budgets(self):
+        if self.max_signal_age_ms >= self.signal_horizon_sec * 1000:
+            raise ValueError("signal age must be shorter than its horizon")
+        if self.network_sample_max_age_sec > self.network_window_sec:
+            raise ValueError("network sample age exceeds rolling window")
+        if self.network_recent_window_sec > self.network_window_sec:
+            raise ValueError("network recent window exceeds diagnostic window")
+        if self.network_slow_trigger_count > self.network_slow_sample_count:
+            raise ValueError("network slow trigger exceeds sample count")
+        if self.network_max_pause_sec < self.network_pause_sec:
+            raise ValueError("maximum network pause is shorter than initial pause")
+        return self
+
+
 class RDPSMConfig(BaseModel):
-    base_size: Decimal = Field(default=Decimal("7"), gt=0, allow_inf_nan=False)
+    normal_entry_mode: Literal["legacy", "obi_v1"] = "legacy"
+    obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
+    base_size: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
     favorite_threshold: Decimal = Field(default=Decimal("0.70"), gt=Decimal("0.5"),
                                       lt=1, allow_inf_nan=False)

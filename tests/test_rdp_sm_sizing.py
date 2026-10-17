@@ -32,7 +32,7 @@ def decision(delta=0, p=".75", *, cfg=None, books=None, minimum=5):
     meta = replace(meta, min_order_size=minimum)
     evidence = {}
     state, quotes = make_quotes(meta, books or book_pair(p), max(D(str(delta)), 0),
-        max(-D(str(delta)), 0), "w", cfg or RDPSMConfig(target_delta=1),
+        max(-D(str(delta)), 0), "w", cfg or RDPSMConfig(base_size=7, target_delta=1),
         now=START + 15, evidence=evidence)
     return state, {q.outcome: D(str(q.size)) for q in quotes}, evidence, quotes
 
@@ -44,6 +44,8 @@ def env(monkeypatch, tmp_path):
 
 def configure(env, target=1, p=".75", **kw):
     v, cfg = env
+    # These seven-share scenarios are independent of the production default.
+    kw.setdefault("base_size", 7)
     cfg.rdp_sm = RDPSMConfig(target_delta=target, **kw)
     for token, b in book_pair(p).items():
         v.books[token]["bids"][0]["price"] = b["best_bid"]
@@ -56,14 +58,14 @@ def configure(env, target=1, p=".75", **kw):
 def test_defaults():
     cfg = RDPSMConfig()
     assert (cfg.base_size, cfg.target_delta, cfg.favorite_threshold, cfg.max_order_size) == (
-        D(7), D(0), D(".70"), D(15))
+        D(5), D(0), D(".70"), D(15))
 
 
 @pytest.mark.parametrize("bad", [
     {"base_size": 0}, {"base_size": -1}, {"base_size": "NaN"}, {"base_size": "5.001"},
     {"target_delta": -1}, {"target_delta": 2}, {"target_delta": ".5"}, {"target_delta": "Infinity"},
     {"favorite_threshold": ".5"}, {"favorite_threshold": 1}, {"favorite_threshold": "NaN"},
-    {"max_order_size": 6}, {"max_order_size": "15.001"}, {"max_order_size": "Infinity"},
+    {"max_order_size": 4}, {"max_order_size": "15.001"}, {"max_order_size": "Infinity"},
 ])
 def test_invalid_config_rejected(bad):
     with pytest.raises(ValidationError):
@@ -372,7 +374,7 @@ async def test_production_entry_config_a_ignores_favorite(env, p):
 def test_threshold_is_configurable_and_inactive_when_target_zero():
     assert decision(p=".71", cfg=RDPSMConfig(target_delta=1, favorite_threshold=".8"))[2]["signed_target_delta"] == "0"
     assert decision(p=".71", cfg=RDPSMConfig(target_delta=1, favorite_threshold=".6"))[2]["signed_target_delta"] == "1"
-    assert decision(p=".71", cfg=RDPSMConfig(target_delta=0, favorite_threshold=".6"))[1] == {"YES": 7, "NO": 7}
+    assert decision(p=".71", cfg=RDPSMConfig(target_delta=0, favorite_threshold=".6"))[1] == {"YES": 5, "NO": 5}
 
 
 def test_favorite_wrong_market_and_exact_crosscheck_boundary():

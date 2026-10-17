@@ -50,7 +50,7 @@ async def test_type2_existing_sdk_and_readers_bind_signer_mode_and_funder(env):
     assert result.status is SessionStatus.READY
     assert result.account["signer"] == ADDRESS and result.account["funder"] == expected
     assert result.account["signature_type"] == 2
-    assert result.account["basic_spendable_budget_usd"] == 25
+    assert result.account["basic_spendable_budget_usd"] == 15
     assert not venue.posts and not venue.cancels
 
 

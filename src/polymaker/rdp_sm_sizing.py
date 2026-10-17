@@ -3,6 +3,7 @@
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
 from polymaker.config import RDPSMConfig
+from polymaker.rdp_sm import decision_quantity
 from polymaker.rdp_sm_execution import MIN_MAKER_BUY_SHARES, maker_buy_size
 
 GRID = Decimal(".01")
@@ -100,6 +101,7 @@ def resolve_favorite_target(meta, books, cfg: RDPSMConfig, *, now=None, max_age=
 
 def normal_sizes(delta: Decimal, base: Decimal):
     """The original inventory skew, including its original submission rounding."""
+    delta = decision_quantity(delta)
     return {side: q.quantize(GRID, rounding=ROUND_CEILING) for side, q in
             {"YES": base + max(-delta, 0), "NO": base + max(delta, 0)}.items()}
 
