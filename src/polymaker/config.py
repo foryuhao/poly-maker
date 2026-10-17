@@ -147,9 +147,16 @@ class RDPObiConfig(BaseModel):
 class RDPSyncObserveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
+    use_for_execution: bool = False
     order_interval_s: float = Field(default=1.0, ge=.01, allow_inf_nan=False)
     account_interval_s: float = Field(default=2.0, ge=.01, allow_inf_nan=False)
     output_dir: str = "research_outputs/periodic_sync"
+
+    @model_validator(mode="after")
+    def _execution_requires_service(self):
+        if self.use_for_execution and not self.enabled:
+            raise ValueError("execution cache requires sync_observe.enabled")
+        return self
 
 
 class RDPSMConfig(BaseModel):

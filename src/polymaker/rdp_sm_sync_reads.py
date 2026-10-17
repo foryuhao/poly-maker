@@ -265,6 +265,10 @@ class ObserverReader:
         _token_id(event.token_id)
         result = asdict(event)
         result["associate_trades_present"] = "associate_trades" in row
+        if "maker_address" in row:
+            if not isinstance(row["maker_address"], str):
+                raise ValueError("SYNC_ORDER_MAKER_INVALID")
+            result["maker_address"] = row["maker_address"]
         return result
 
     def open_orders(self):
@@ -285,7 +289,10 @@ class ObserverReader:
                     raise ValueError("SYNC_TRADE_TOKEN_MISMATCH")
                 leg.pop("owner", None)
             return {"trade_id": parsed.trade_id, "status": parsed.status,
-                    "market": parsed.market, "timestamp": parsed.timestamp, "maker_legs": legs}
+                    "market": parsed.market, "timestamp": parsed.timestamp, "maker_legs": legs,
+                    "trader_side": row.get("trader_side"),
+                    "taker_order_id": parsed.taker_order_id,
+                    "taker_asset_id": parsed.taker_asset_id, "taker_side": parsed.taker_side}
         rows = self._collection("/data/trades", {"market": market.condition_id}, convert)
         if len({r["trade_id"] for r in rows}) != len(rows):
             raise IncompleteRead(rows, ValueError("SYNC_DUPLICATE_TRADE"))

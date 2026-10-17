@@ -139,9 +139,9 @@ async def setup_obi(env, monkeypatch, horizon=0.12):
                         "market": CID,
                         "timestamp": str(feed.wall() * 1000),
                         "bids": [
-                            {"price": pump_state["bid"] if t == "1" else ".49", "size": str(bid_q)}
+                            {"price": pump_state["bid"] if t == "1" else pump_state.get("no_bid", ".49"), "size": str(bid_q)}
                         ],
-                        "asks": [{"price": ".52" if t == "1" else ".51", "size": str(ask_q)}],
+                        "asks": [{"price": pump_state.get("yes_ask", ".52") if t == "1" else pump_state.get("no_ask", ".51"), "size": str(ask_q)}],
                     }
                 )
             feed.apply(rows)

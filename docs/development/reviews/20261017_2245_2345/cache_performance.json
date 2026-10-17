@@ -1,0 +1,227 @@
+{
+  "scope": "Frozen 12 markets, 2026-10-17 22:45–23:45 Asia/Shanghai",
+  "counters": {
+    "rounds:orders": 3620,
+    "incomplete:orders": 2,
+    "overruns:orders": 7,
+    "rounds:account": 1789,
+    "incomplete:account": 0,
+    "overruns:account": 0,
+    "main_gets": 14177,
+    "main_gets_shared": 12628,
+    "main_gets_native": 1549,
+    "collector_gets": 15246,
+    "collector:/auth/derive-api-key": 12,
+    "collector:/time": 3634,
+    "collector:/balance-allowance": 1790,
+    "collector:/data/orders": 3622,
+    "collector:/data/trades": 3622,
+    "collector:/v2/positions": 1790,
+    "collector:/data/order/:id": 776,
+    "native:/tick-size": 1402,
+    "native:/data/orders": 27,
+    "native:/version": 39,
+    "native:/balance-allowance": 27,
+    "native:/data/trades": 27,
+    "native:/time": 27
+  },
+  "metrics": {
+    "round_ms:orders": {
+      "n": 3620,
+      "p50": 211.99168800376356,
+      "p95": 428.56333684176207,
+      "max": 2853.3258312381804
+    },
+    "round_ms:account": {
+      "n": 1789,
+      "p50": 237.3422970995307,
+      "p95": 381.0455212369561,
+      "max": 937.1593901887536
+    },
+    "interval_ms:orders": {
+      "n": 3608,
+      "p50": 1000.999340089038,
+      "p95": 1001.8512732349336,
+      "max": 2853.3310620114207
+    },
+    "interval_ms:account": {
+      "n": 1777,
+      "p50": 2001.0771611705422,
+      "p95": 2002.1001282148063,
+      "max": 2065.6770509667695
+    },
+    "timegrid_age_ms:open_orders": {
+      "n": 35629,
+      "p50": 745.9324556402862,
+      "p95": 1203.3122121356428,
+      "max": 3124.559758696705
+    },
+    "timegrid_age_ms:trades": {
+      "n": 35629,
+      "p50": 746.2169453501701,
+      "p95": 1203.4354475326836,
+      "max": 3123.749216552824
+    },
+    "timegrid_age_ms:capital": {
+      "n": 35629,
+      "p50": 1242.7408508956432,
+      "p95": 2143.797948025167,
+      "max": 2555.8743341825902
+    },
+    "timegrid_age_ms:positions": {
+      "n": 35629,
+      "p50": 1253.2685087062418,
+      "p95": 2154.206500388682,
+      "max": 2887.1649596840143
+    },
+    "consumed_age_ms:account:time": {
+      "n": 7576,
+      "p50": 714.4849940668792,
+      "p95": 1170.2173398807645,
+      "max": 1534.378293901682
+    },
+    "consumed_age_ms:account:capital": {
+      "n": 7576,
+      "p50": 1053.7825680803508,
+      "p95": 2078.7772620096803,
+      "max": 2498.6113919876516
+    },
+    "consumed_age_ms:account:open_orders": {
+      "n": 7576,
+      "p50": 710.314811905846,
+      "p95": 1165.1474358513951,
+      "max": 1531.5516158007085
+    },
+    "consumed_age_ms:account:trades": {
+      "n": 7576,
+      "p50": 710.6232161168009,
+      "p95": 1165.872113313526,
+      "max": 1531.5404259599745
+    },
+    "consumed_age_ms:account:positions": {
+      "n": 7576,
+      "p50": 1068.654922535643,
+      "p95": 2114.941844716668,
+      "max": 2664.1170661896467
+    },
+    "consumed_age_ms:close:time": {
+      "n": 470,
+      "p50": 402.4670154321939,
+      "p95": 1171.5221479535103,
+      "max": 1226.365045644343
+    },
+    "consumed_age_ms:close:capital": {
+      "n": 470,
+      "p50": 1041.0505710169673,
+      "p95": 1938.0144602619112,
+      "max": 2298.367623705417
+    },
+    "consumed_age_ms:close:open_orders": {
+      "n": 470,
+      "p50": 401.6454585362226,
+      "p95": 1113.3953402750194,
+      "max": 1217.6042906939983
+    },
+    "consumed_age_ms:close:trades": {
+      "n": 470,
+      "p50": 401.16670494899154,
+      "p95": 1006.923177279532,
+      "max": 1217.121971771121
+    },
+    "consumed_age_ms:close:positions": {
+      "n": 470,
+      "p50": 1190.3123245574534,
+      "p95": 1984.8381928168237,
+      "max": 2508.9213494211435
+    }
+  },
+  "per_market": [
+    {
+      "market": "22:45",
+      "main_gets": 1071,
+      "shared_gets": 1016,
+      "native_gets": 55
+    },
+    {
+      "market": "22:50",
+      "main_gets": 1109,
+      "shared_gets": 1044,
+      "native_gets": 65
+    },
+    {
+      "market": "22:55",
+      "main_gets": 1118,
+      "shared_gets": 1065,
+      "native_gets": 53
+    },
+    {
+      "market": "23:00",
+      "main_gets": 1163,
+      "shared_gets": 1082,
+      "native_gets": 81
+    },
+    {
+      "market": "23:05",
+      "main_gets": 1181,
+      "shared_gets": 1110,
+      "native_gets": 71
+    },
+    {
+      "market": "23:10",
+      "main_gets": 1124,
+      "shared_gets": 1059,
+      "native_gets": 65
+    },
+    {
+      "market": "23:15",
+      "main_gets": 1077,
+      "shared_gets": 1014,
+      "native_gets": 63
+    },
+    {
+      "market": "23:20",
+      "main_gets": 1142,
+      "shared_gets": 1067,
+      "native_gets": 75
+    },
+    {
+      "market": "23:25",
+      "main_gets": 1783,
+      "shared_gets": 1028,
+      "native_gets": 755
+    },
+    {
+      "market": "23:30",
+      "main_gets": 1152,
+      "shared_gets": 1099,
+      "native_gets": 53
+    },
+    {
+      "market": "23:35",
+      "main_gets": 1114,
+      "shared_gets": 1008,
+      "native_gets": 106
+    },
+    {
+      "market": "23:40",
+      "main_gets": 1143,
+      "shared_gets": 1036,
+      "native_gets": 107
+    }
+  ],
+  "comparison": {
+    "previous_scope": "2026-10-17 20:20–21:20, observer only",
+    "previous_main_timed_gets": 13593,
+    "previous_collector_gets": 15078,
+    "previous_union_covered_gets": 28671,
+    "current_union_covered_gets": 16795,
+    "covered_get_reduction_fraction": 0.41421645565205256,
+    "caveat": "Descriptive different market cohorts, not A/B. Main timing excludes some startup, settlement and positions calls. Shared collector requests deduplicated by read_id/operation_id."
+  },
+  "source_files": [
+    "analysis.json",
+    "evidence.json",
+    "../20261017_sync_attached_12/evidence.json",
+    "each selected session events.jsonl, snapshots.jsonl and strategy journal"
+  ]
+}

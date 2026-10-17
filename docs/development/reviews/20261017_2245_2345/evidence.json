@@ -1,0 +1,1379 @@
+{
+  "scope": "2026-10-17 22:45–23:45 Asia/Shanghai; latest 12 logged BTC five-minute markets",
+  "sent_outcomes": {
+    "ACK": 190,
+    "REJECTED": 15,
+    "UNKNOWN": 4
+  },
+  "canceled_count": 11,
+  "canceled_outcomes": {
+    "REJECTED": 7,
+    "UNKNOWN": 4
+  },
+  "post_only_cross_count": 8,
+  "unknown_windows": [
+    {
+      "market": "23:30",
+      "window": "w3",
+      "post_time": "23:30:36.211",
+      "phase": "REBALANCE",
+      "outcome_final": "UNKNOWN",
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:30:47.912"
+    },
+    {
+      "market": "23:35",
+      "window": "w8",
+      "post_time": "23:36:13.023",
+      "phase": "NORMAL",
+      "outcome_final": "UNKNOWN",
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:36:24.198"
+    },
+    {
+      "market": "23:40",
+      "window": "w11",
+      "post_time": "23:41:15.346",
+      "phase": "REBALANCE",
+      "outcome_final": "UNKNOWN",
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:41:26.631"
+    },
+    {
+      "market": "23:40",
+      "window": "w19",
+      "post_time": "23:42:01.383",
+      "phase": "REBALANCE",
+      "outcome_final": "UNKNOWN",
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:42:13.254"
+    }
+  ],
+  "blocked_windows": [
+    {
+      "market": "22:45",
+      "window": "w6",
+      "post_time": "22:45:51.980",
+      "outcome_final": "REJECTED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "22:46:02.924"
+    },
+    {
+      "market": "22:45",
+      "window": "w8",
+      "post_time": "22:46:13.446",
+      "outcome_final": "REJECTED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "22:46:24.073"
+    },
+    {
+      "market": "22:55",
+      "window": "w18",
+      "post_time": "22:56:52.108",
+      "outcome_final": "REJECTED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "22:57:02.766"
+    },
+    {
+      "market": "23:30",
+      "window": "w3",
+      "post_time": "23:30:36.211",
+      "outcome_final": "UNKNOWN",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:30:47.912"
+    },
+    {
+      "market": "23:35",
+      "window": "w8",
+      "post_time": "23:36:13.023",
+      "outcome_final": "UNKNOWN",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:36:24.198"
+    },
+    {
+      "market": "23:40",
+      "window": "w3",
+      "post_time": "23:40:36.926",
+      "outcome_final": "REJECTED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:40:48.151"
+    },
+    {
+      "market": "23:40",
+      "window": "w11",
+      "post_time": "23:41:15.346",
+      "outcome_final": "UNKNOWN",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:41:26.631"
+    },
+    {
+      "market": "23:40",
+      "window": "w19",
+      "post_time": "23:42:01.383",
+      "outcome_final": "UNKNOWN",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "final_close_time": "23:42:13.254"
+    }
+  ],
+  "phase_metrics": {
+    "NORMAL": {
+      "submitted": 129,
+      "outcomes": {
+        "ACK": 122,
+        "REJECTED": 6,
+        "UNKNOWN": 1
+      },
+      "filled_orders": 13,
+      "close_reasons": {
+        "ORDER_DEADLINE": 48,
+        "SIGNAL_REVERSED": 77,
+        "MARKET_SUBMISSION_CUTOFF": 3,
+        "WS_RECONNECT_REQUIRED": 1
+      },
+      "post_to_close_s": {
+        "n": 129,
+        "median": 1.3913021879270673,
+        "p95": 2.0031625302508473,
+        "max": 2.004038279876113
+      },
+      "close_to_window_end_s": {
+        "n": 129,
+        "median": 2.311950445175171,
+        "p95": 7.973757743835449,
+        "max": 11.170694828033447
+      },
+      "unfilled_ack_post_to_close_s": {
+        "n": 109,
+        "median": 1.6589216496795416,
+        "p95": 2.0033673401921988,
+        "max": 2.004038279876113
+      },
+      "ack_stale": 0
+    },
+    "REBALANCE": {
+      "submitted": 80,
+      "outcomes": {
+        "REJECTED": 9,
+        "ACK": 68,
+        "UNKNOWN": 3
+      },
+      "filled_orders": 14,
+      "close_reasons": {
+        "PLACEMENT_NOT_ACKNOWLEDGED": 5,
+        "WS_BOOK_STALE": 55,
+        "ORDER_DEADLINE": 20
+      },
+      "post_to_close_s": {
+        "n": 80,
+        "median": 0.8712111280765384,
+        "p95": 3.004423039034009,
+        "max": 3.0050888527184725
+      },
+      "close_to_window_end_s": {
+        "n": 80,
+        "median": 2.2973146438598633,
+        "p95": 10.745046615600586,
+        "max": 11.762641906738281
+      },
+      "unfilled_ack_post_to_close_s": {
+        "n": 54,
+        "median": 1.1173335348721594,
+        "p95": 3.0049170199781656,
+        "max": 3.0050888527184725
+      },
+      "ack_stale": 48
+    }
+  },
+  "starting_balance": 23.892932,
+  "final_observed_balance": 16.682732,
+  "final_balance_time": "23:44:16.024",
+  "observed_balance_change": -7.210199999999997,
+  "scoped_cash_flow": -7.2102,
+  "unexplained_cash_flow": 3.552713678800501e-15,
+  "between_market_gaps": [
+    {
+      "previous": "22:45",
+      "next": "22:50",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "22:50",
+      "next": "22:55",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "22:55",
+      "next": "23:00",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:00",
+      "next": "23:05",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:05",
+      "next": "23:10",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:10",
+      "next": "23:15",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:15",
+      "next": "23:20",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:20",
+      "next": "23:25",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:25",
+      "next": "23:30",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:30",
+      "next": "23:35",
+      "unexplained": 0.0
+    },
+    {
+      "previous": "23:35",
+      "next": "23:40",
+      "unexplained": 0.0
+    }
+  ],
+  "merges": [
+    {
+      "market": "22:45",
+      "time": "22:49:15.857",
+      "epoch": 1792248555.8573918,
+      "pairs": 5.0,
+      "released_cost": "4.40",
+      "balance_before": 19.492932,
+      "balance_after": 24.492932,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "source_line": 1824
+    },
+    {
+      "market": "23:00",
+      "time": "23:04:15.613",
+      "epoch": 1792249455.6138062,
+      "pairs": 5.0,
+      "released_cost": "5.95",
+      "balance_before": 18.542932,
+      "balance_after": 23.542932,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "source_line": 3228
+    },
+    {
+      "market": "23:05",
+      "time": "23:09:14.662",
+      "epoch": 1792249754.6627176,
+      "pairs": 5.0,
+      "released_cost": "5.847609561752988047808764940",
+      "balance_before": 17.682732,
+      "balance_after": 22.682732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "source_line": 2635
+    },
+    {
+      "market": "23:10",
+      "time": "23:14:15.552",
+      "epoch": 1792250055.5524137,
+      "pairs": 5.0,
+      "released_cost": "4.95",
+      "balance_before": 17.732732,
+      "balance_after": 22.732732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "source_line": 1903
+    },
+    {
+      "market": "23:15",
+      "time": "23:19:21.636",
+      "epoch": 1792250361.636455,
+      "pairs": 5.0,
+      "released_cost": "3.95",
+      "balance_before": 18.782732,
+      "balance_after": 23.782732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "source_line": 1919
+    },
+    {
+      "market": "23:20",
+      "time": "23:24:14.831",
+      "epoch": 1792250654.8312447,
+      "pairs": 10.0,
+      "released_cost": "11.40",
+      "balance_before": 12.382732,
+      "balance_after": 22.382732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "source_line": 2943
+    },
+    {
+      "market": "23:25",
+      "time": "23:29:15.389",
+      "epoch": 1792250955.3890216,
+      "pairs": 10.0,
+      "released_cost": "11.73333333333333333333333333",
+      "balance_before": 7.682732,
+      "balance_after": 17.682732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "source_line": 2918
+    },
+    {
+      "market": "23:25",
+      "time": "23:29:37.754",
+      "epoch": 1792250977.7543669,
+      "pairs": 5.0,
+      "released_cost": "7.466666666666666666666666668",
+      "balance_before": 13.182732,
+      "balance_after": 18.182732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "source_line": 3115
+    },
+    {
+      "market": "23:30",
+      "time": "23:34:16.309",
+      "epoch": 1792251256.309038,
+      "pairs": 5.0,
+      "released_cost": "6.05",
+      "balance_before": 12.132732,
+      "balance_after": 17.132732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "source_line": 1775
+    },
+    {
+      "market": "23:35",
+      "time": "23:39:17.655",
+      "epoch": 1792251557.6556087,
+      "pairs": 5.0,
+      "released_cost": "4.95",
+      "balance_before": 12.182732,
+      "balance_after": 17.182732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "source_line": 1869
+    },
+    {
+      "market": "23:40",
+      "time": "23:44:16.024",
+      "epoch": 1792251856.024588,
+      "pairs": 5.0,
+      "released_cost": "5.50",
+      "balance_before": 11.682732,
+      "balance_after": 16.682732,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "source_line": 2532
+    }
+  ],
+  "observer": [
+    {
+      "market": "22:45",
+      "session_id": "bd475b352b0d43f39a230fd7afd45282",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 452,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 4,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1239,
+        "http:200:None": 1239,
+        "round:orders": 300,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "round:account": 150,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 37
+      }
+    },
+    {
+      "market": "22:50",
+      "session_id": "b5d177b153e74e3392b0a9f300650f91",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 448,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 0,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1258,
+        "http:200:None": 1258,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "round:orders": 296,
+        "incomplete:orders": 1,
+        "overrun:orders": 0,
+        "consistency": 66
+      }
+    },
+    {
+      "market": "22:55",
+      "session_id": "3d2096e512234f5aa2ef9f14ccafe5c6",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 455,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 0,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1276,
+        "http:200:None": 1276,
+        "round:orders": 304,
+        "incomplete:orders": 1,
+        "overrun:orders": 2,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 63
+      }
+    },
+    {
+      "market": "23:00",
+      "session_id": "86efea18a69b4f89b080bc8209a1370f",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 447,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 2,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1303,
+        "http:200:None": 1303,
+        "round:orders": 296,
+        "incomplete:orders": 0,
+        "overrun:orders": 1,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 115
+      }
+    },
+    {
+      "market": "23:05",
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 466,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 4,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1324,
+        "http:200:None": 1324,
+        "round:orders": 314,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 82
+      }
+    },
+    {
+      "market": "23:10",
+      "session_id": "7d354af8b75e4dfca27357f2b358e9eb",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 449,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 2,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1270,
+        "http:200:None": 1270,
+        "round:orders": 298,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 76
+      }
+    },
+    {
+      "market": "23:15",
+      "session_id": "b20decaba25a4eb4ab0e70c121cc0e79",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 451,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 2,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1258,
+        "http:200:None": 1258,
+        "round:account": 150,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "round:orders": 299,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "consistency": 59
+      }
+    },
+    {
+      "market": "23:20",
+      "session_id": "c3a74171a4604ccd8eadb35f1f306079",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 457,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 4,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1280,
+        "http:200:None": 1280,
+        "round:orders": 305,
+        "incomplete:orders": 0,
+        "overrun:orders": 1,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 62
+      }
+    },
+    {
+      "market": "23:25",
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 449,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 6,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1242,
+        "http:200:None": 1242,
+        "round:orders": 298,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 48
+      }
+    },
+    {
+      "market": "23:30",
+      "session_id": "b9cd6ef04c354e8a8ec4b2366f5c407f",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 466,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 2,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1313,
+        "http:200:None": 1313,
+        "round:orders": 315,
+        "incomplete:orders": 0,
+        "overrun:orders": 2,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 68
+      }
+    },
+    {
+      "market": "23:35",
+      "session_id": "a303f5bdd5e748218cf8c0cc0563628f",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 449,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 4,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1236,
+        "http:200:None": 1236,
+        "round:orders": 298,
+        "incomplete:orders": 0,
+        "overrun:orders": 0,
+        "round:account": 149,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 42
+      }
+    },
+    {
+      "market": "23:40",
+      "session_id": "fd04bce31a6248cea39a541571f41f37",
+      "execution_reads_from_cache": true,
+      "source_sha256": {
+        "rdp_sm_sync_companion.py": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4",
+        "rdp_sm_sync_observe.py": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e",
+        "rdp_sm_sync.py": "645aabebce0906599c5b30bc4549cdefaff11f292accbead57a322c5663106f3",
+        "rdp_sm_sync_reads.py": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44",
+        "rdp_sm_cached_reads.py": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+      },
+      "snapshots": 448,
+      "status": "RECORDED",
+      "observer_status": "STOPPED",
+      "dropped_events": 0,
+      "dropped_references": 0,
+      "reference_market_or_history_gaps": 0,
+      "io_drained": true,
+      "failure": null,
+      "confirmed_snapshot_keys": 3,
+      "max_trade_timestamp": 0,
+      "counters": {
+        "http": 1247,
+        "http:200:None": 1247,
+        "round:orders": 297,
+        "incomplete:orders": 0,
+        "overrun:orders": 1,
+        "round:account": 148,
+        "incomplete:account": 0,
+        "overrun:account": 0,
+        "consistency": 56
+      }
+    }
+  ],
+  "same_sync_source_hashes": true,
+  "current_source_matches": {
+    "rdp_sm_sync_companion.py": true,
+    "rdp_sm_sync_observe.py": true,
+    "rdp_sm_sync.py": true,
+    "rdp_sm_sync_reads.py": true,
+    "rdp_sm_cached_reads.py": true
+  },
+  "counts": {
+    "cache_scopes": 8046,
+    "barrier:SAFE_TO_CONTINUE:": 247,
+    "barrier:BLOCKED:SYNC_CACHE_NOT_READY": 8,
+    "barrier:BLOCKED:TRADE_CONFIRMATION_UNRESOLVED": 223
+  },
+  "cache_source_boundary_failures": [],
+  "consistency_disagreements": [
+    {
+      "market": "23:00",
+      "line": 883,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792249200",
+      "order_id": "0x2127d0ad0b1f6585b198634deff79dfcb571ea1b8276108ce22bca7ade8909ef",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2760593.477964118,
+      "order_started_monotonic": 2760593.641500416,
+      "session_id": "86efea18a69b4f89b080bc8209a1370f"
+    },
+    {
+      "market": "23:05",
+      "line": 575,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792249500",
+      "order_id": "0x97af72ade0f5a89f4019b7572a09de0d98d89ac35a48766258ba8b87faa2df5f",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2760859.406522337,
+      "order_started_monotonic": 2760859.406720603,
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23"
+    },
+    {
+      "market": "23:05",
+      "line": 778,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792249500",
+      "order_id": "0x75f7293af903cf7ac8108b74c50f8abc6e33154b5b86d96fc232bf4c17a4a72f",
+      "quantity_delta_shares": 0.01,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2760877.908573467,
+      "order_started_monotonic": 2760877.932267562,
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23"
+    },
+    {
+      "market": "23:05",
+      "line": 1196,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792249500",
+      "order_id": "0x5ec065a91864b5fedc1606c81acd2f00985867c390600b3850656a80adb48fc4",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2760912.949675001,
+      "order_started_monotonic": 2760912.985992881,
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23"
+    },
+    {
+      "market": "23:25",
+      "line": 268,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792250700",
+      "order_id": "0xb075df63b9261e7ac3b5d0b23a522aadada0d130fdd585705f05f97e646faa9c",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2762026.665312049,
+      "order_started_monotonic": 2762026.676083786,
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30"
+    },
+    {
+      "market": "23:30",
+      "line": 163,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792251000",
+      "order_id": "0xd24d8e14bb7d10f7dcaa56b2742789e2106718f858640de40c6f4f1b73e8d524",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2762315.639173843,
+      "order_started_monotonic": 2762315.63934698,
+      "session_id": "b9cd6ef04c354e8a8ec4b2366f5c407f"
+    },
+    {
+      "market": "23:30",
+      "line": 1086,
+      "kind": "sync_consistency",
+      "market_slug": "btc-updown-5m-1792251000",
+      "order_id": "0x8bea0f306426a7019b7307fd8b6b969d150b0ae2a4669bf670115af0902f4e40",
+      "quantity_delta_shares": 5.0,
+      "associate_ids_match": false,
+      "observations_agree": false,
+      "trades_completed_monotonic": 2762403.625592559,
+      "order_started_monotonic": 2762403.644256361,
+      "session_id": "b9cd6ef04c354e8a8ec4b2366f5c407f"
+    }
+  ],
+  "request_metrics": {
+    "GET:/tick-size": {
+      "n": 1402,
+      "median": 197.2863671835512,
+      "p95": 226.2649880722165,
+      "max": 491.15691101178527
+    },
+    "GET:/data/orders": {
+      "n": 3419,
+      "median": 192.49392906203866,
+      "p95": 213.61025981605053,
+      "max": 548.894738778472
+    },
+    "GET:/version": {
+      "n": 39,
+      "median": 206.04038191959262,
+      "p95": 230.08270794525743,
+      "max": 515.5963879078627
+    },
+    "GET:/balance-allowance": {
+      "n": 1700,
+      "median": 192.92657892219722,
+      "p95": 215.86149279028177,
+      "max": 362.2144879773259
+    },
+    "GET:/data/trades": {
+      "n": 3421,
+      "median": 194.9360016733408,
+      "p95": 214.9760788306594,
+      "max": 514.809925109148
+    },
+    "GET:/time": {
+      "n": 3420,
+      "median": 202.9764235485345,
+      "p95": 257.78975896537304,
+      "max": 2657.54257934168
+    },
+    "POST:/orders": {
+      "n": 209,
+      "median": 237.72518895566463,
+      "p95": 787.8296803683043,
+      "max": 1534.934276714921
+    },
+    "GET:/data/order/:id": {
+      "n": 776,
+      "median": 193.23146739043295,
+      "p95": 215.3976932168007,
+      "max": 437.76401272043586
+    },
+    "DELETE:/orders": {
+      "n": 1080,
+      "median": 221.82507161051035,
+      "p95": 527.9908189550042,
+      "max": 2315.667847171426
+    }
+  },
+  "http_observer_counts": {
+    "http": 15246,
+    "http:200:None": 15246,
+    "round:orders": 3620,
+    "round:account": 1789,
+    "consistency": 774,
+    "incomplete:orders": 2,
+    "overrun:orders": 7
+  },
+  "non_200_observer_requests": [],
+  "matched_to_confirmed_observation_s": {
+    "n": 33,
+    "median": 6.007835149765015,
+    "p95": 7.55204963684082,
+    "max": 8.655804634094238
+  },
+  "max_writer_queue": 90,
+  "diagnostics_dropped": 0,
+  "provenance": [
+    {
+      "market": "23:30",
+      "session_id": "b9cd6ef04c354e8a8ec4b2366f5c407f",
+      "slug": "btc-updown-5m-1792251000",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "sha256": "435a4f3dcd8bfbab4368480a2a344f3238747d01dfafad793114d55da287930f",
+      "bytes": 2962696,
+      "lines": 2065,
+      "result_line": 2065
+    },
+    {
+      "market": "23:20",
+      "session_id": "c3a74171a4604ccd8eadb35f1f306079",
+      "slug": "btc-updown-5m-1792250400",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "sha256": "4d388bd33396bd2294127468e97b28ae624b5a77c584b8f4fddfa28564983586",
+      "bytes": 10147935,
+      "lines": 3233,
+      "result_line": 3233
+    },
+    {
+      "market": "23:25",
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30",
+      "slug": "btc-updown-5m-1792250700",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "sha256": "1611c9d1fa350b0cceef2dd88973c70e61cf8610da3c6ec6fbd8dcfa603afa75",
+      "bytes": 5232237,
+      "lines": 3287,
+      "result_line": 3287
+    },
+    {
+      "market": "23:10",
+      "session_id": "7d354af8b75e4dfca27357f2b358e9eb",
+      "slug": "btc-updown-5m-1792249800",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "sha256": "16cc5f0b6f2732e1aecf7766b293a7cd67d8c8d70e2e08b6f5ad6c371e95d83b",
+      "bytes": 7248788,
+      "lines": 2203,
+      "result_line": 2203
+    },
+    {
+      "market": "23:15",
+      "session_id": "b20decaba25a4eb4ab0e70c121cc0e79",
+      "slug": "btc-updown-5m-1792250100",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "sha256": "442a727ff3496ab5bf16e02f7d14f546f69b3f50fdac4bc1c390566baf67a718",
+      "bytes": 3271603,
+      "lines": 2202,
+      "result_line": 2202
+    },
+    {
+      "market": "22:50",
+      "session_id": "b5d177b153e74e3392b0a9f300650f91",
+      "slug": "btc-updown-5m-1792248600",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b5d177b153e74e3392b0a9f300650f91.jsonl",
+      "sha256": "2ebaa7d18218d923b15ef89aa6e49b8f7974294dd39ae247b57f397088d3337d",
+      "bytes": 3135984,
+      "lines": 2859,
+      "result_line": 2859
+    },
+    {
+      "market": "22:55",
+      "session_id": "3d2096e512234f5aa2ef9f14ccafe5c6",
+      "slug": "btc-updown-5m-1792248900",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_3d2096e512234f5aa2ef9f14ccafe5c6.jsonl",
+      "sha256": "5644db6bd009962a30e187984d8835292246602481e04c1074506a22d10624ea",
+      "bytes": 2919360,
+      "lines": 2659,
+      "result_line": 2659
+    },
+    {
+      "market": "22:45",
+      "session_id": "bd475b352b0d43f39a230fd7afd45282",
+      "slug": "btc-updown-5m-1792248300",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "sha256": "a8b24ec224b7dae62850667daa8f667199b804e23a7336681588dfc764d20dad",
+      "bytes": 2966792,
+      "lines": 2102,
+      "result_line": 2102
+    },
+    {
+      "market": "23:40",
+      "session_id": "fd04bce31a6248cea39a541571f41f37",
+      "slug": "btc-updown-5m-1792251600",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "sha256": "a6c25a5a18849bc0b2c242441a8a23f3d27219afef7bf626511bd9397821bcb0",
+      "bytes": 4951019,
+      "lines": 2831,
+      "result_line": 2831
+    },
+    {
+      "market": "23:35",
+      "session_id": "a303f5bdd5e748218cf8c0cc0563628f",
+      "slug": "btc-updown-5m-1792251300",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "sha256": "e3666a2efb0e277e20e0b790ba686bfe1858ead8ef84fcac1f02702556d8185c",
+      "bytes": 3367790,
+      "lines": 2150,
+      "result_line": 2150
+    },
+    {
+      "market": "23:00",
+      "session_id": "86efea18a69b4f89b080bc8209a1370f",
+      "slug": "btc-updown-5m-1792249200",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "sha256": "8cad6806082a9228d12c3c500918cf5369c702d7fec2cc793387a90c30a414d3",
+      "bytes": 8592486,
+      "lines": 3541,
+      "result_line": 3541
+    },
+    {
+      "market": "23:05",
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23",
+      "slug": "btc-updown-5m-1792249500",
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "sha256": "6a1487e412910e688a86d245db9bac94cbbc3e5b9dc49c39f63d4b7d674eeb6f",
+      "bytes": 6826604,
+      "lines": 2939,
+      "result_line": 2939
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bd475b352b0d43f39a230fd7afd45282/manifest.json",
+      "bytes": 1389,
+      "sha256": "4bad395271038fee682d57cfe645b24a91086c6b88d4dcd25bf653fcbe82ba61"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bd475b352b0d43f39a230fd7afd45282/summary.json",
+      "bytes": 7841,
+      "sha256": "53001bbf4e629366b51caeea36b9e0e689e3c618d32ea6b2cb77613ac958fef3"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bd475b352b0d43f39a230fd7afd45282/events.jsonl",
+      "bytes": 3319128,
+      "sha256": "e7efa23b04eee4af3a103598c25cb0fbabd403ac8089c98e56e079990845c26f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bd475b352b0d43f39a230fd7afd45282/snapshots.jsonl",
+      "bytes": 13689485,
+      "sha256": "12357b031b1053afcff7ccdcb2ab9ab7a343e07b47208f6188ddc95db4e8fdfd"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bd475b352b0d43f39a230fd7afd45282/strategy_refs.jsonl",
+      "bytes": 2040825,
+      "sha256": "6fae5bbd83d74353105ba12a7fd27f16253799fc11140391ca4fe8aaba990028"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b5d177b153e74e3392b0a9f300650f91/manifest.json",
+      "bytes": 1388,
+      "sha256": "fb19653b5a98f131241a174ea8a381b340d818e25f0af43314aad96c77f83c97"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b5d177b153e74e3392b0a9f300650f91/summary.json",
+      "bytes": 10325,
+      "sha256": "a51f1dd13e3ddf033b278435dc3448b2bd4eda6d5bd6b08127ddf9d2a1d70e21"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b5d177b153e74e3392b0a9f300650f91/events.jsonl",
+      "bytes": 2929712,
+      "sha256": "bc856d505de54734026ed30c0e9cf528dbd12f20ab6568d2c663a9286a963a09"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b5d177b153e74e3392b0a9f300650f91/snapshots.jsonl",
+      "bytes": 18207369,
+      "sha256": "0457e15725b8961eb6ebcb85d5eab9652df96ad87cbda9c6b858ceb64c0f095e"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b5d177b153e74e3392b0a9f300650f91/strategy_refs.jsonl",
+      "bytes": 4502042,
+      "sha256": "c55d29205a55ecdbfc4d24092ee8caffec267f420caa7df8ea2efe9a2bf11b8c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/3d2096e512234f5aa2ef9f14ccafe5c6/manifest.json",
+      "bytes": 1388,
+      "sha256": "300892cab11cc68dcc083bfe89711fad324cfb3ae71872c17479f87c8da57812"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/3d2096e512234f5aa2ef9f14ccafe5c6/summary.json",
+      "bytes": 9854,
+      "sha256": "2f98f2359d7e3de2ee79421ffdeb8c67aecd2a3de6689704220bbefcb5eb236f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/3d2096e512234f5aa2ef9f14ccafe5c6/events.jsonl",
+      "bytes": 2912210,
+      "sha256": "f0564d93a9e807699a9c3afd1574e19172ce77ecec9bed08ca3f75a3b54dfc53"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/3d2096e512234f5aa2ef9f14ccafe5c6/snapshots.jsonl",
+      "bytes": 17453086,
+      "sha256": "742dd35d37579adbf4c9e49d6ae49309c3d6f0ec449ba92a775bcfdc34d1697d"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/3d2096e512234f5aa2ef9f14ccafe5c6/strategy_refs.jsonl",
+      "bytes": 4377286,
+      "sha256": "fedae9c46790bb64df7646ee60df99fddea5ea5799e4e5de700aa1f49b2832e0"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/86efea18a69b4f89b080bc8209a1370f/manifest.json",
+      "bytes": 1387,
+      "sha256": "eb77d3f1723c2d19500d2d8acfdf248e10ffe493129c387b8fa9dd04abccbaa7"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/86efea18a69b4f89b080bc8209a1370f/summary.json",
+      "bytes": 12918,
+      "sha256": "ede0110cb419bac53f302d75d6f5c61bb103c85644602396598a95c0a25bbe32"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/86efea18a69b4f89b080bc8209a1370f/events.jsonl",
+      "bytes": 4194309,
+      "sha256": "08785273f1f11f96ed6a6acb11729a41d419d1f5ac5101edd5fd8cf720d6235f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/86efea18a69b4f89b080bc8209a1370f/snapshots.jsonl",
+      "bytes": 25964140,
+      "sha256": "3275f10d1244bf7dc8bab5a1125d3d1f9f2f43333b92cce1f43a6f49b952429f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/86efea18a69b4f89b080bc8209a1370f/strategy_refs.jsonl",
+      "bytes": 4912230,
+      "sha256": "1417b3fce9820b088f20d30eafd341c32ae77e6bd951800131b20e20023ab1ad"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/ae7561e3e0154cfe96444e2dc08f6f23/manifest.json",
+      "bytes": 1390,
+      "sha256": "85887ed4d0bfa9d1456d8d1548d2eaaf7457c4c9e701d3910825c993a730c01c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/ae7561e3e0154cfe96444e2dc08f6f23/summary.json",
+      "bytes": 11149,
+      "sha256": "e809a54c940c2abedae848215ebd051708d00707689d3e2af1b05d644dc51549"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/ae7561e3e0154cfe96444e2dc08f6f23/events.jsonl",
+      "bytes": 4249119,
+      "sha256": "e4be3cb972191eee7ee7b51ca03c462270c3e208e27035775040638f539cce74"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/ae7561e3e0154cfe96444e2dc08f6f23/snapshots.jsonl",
+      "bytes": 24760442,
+      "sha256": "e7d1c841c19827b7154e005f12cabf78a9e5b174908696a8bbcf00ff56d41629"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/ae7561e3e0154cfe96444e2dc08f6f23/strategy_refs.jsonl",
+      "bytes": 3528944,
+      "sha256": "b4932e3cd772c0c84ad0b9460ee58281cbca55236f86133526e704ef32bf28cc"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/7d354af8b75e4dfca27357f2b358e9eb/manifest.json",
+      "bytes": 1388,
+      "sha256": "1550c7b06d7d0901edf266111a62bc168e060f089650731b81c3832803d98be4"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/7d354af8b75e4dfca27357f2b358e9eb/summary.json",
+      "bytes": 10857,
+      "sha256": "2c50f0455dce6aaa3d615afe6839798fafb62d1e2b37acf3db3185feb80f9fea"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/7d354af8b75e4dfca27357f2b358e9eb/events.jsonl",
+      "bytes": 5279296,
+      "sha256": "80d23006cc02f2c40daa269468a03cf188f31ef341b9e6af3fe33f150d695499"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/7d354af8b75e4dfca27357f2b358e9eb/snapshots.jsonl",
+      "bytes": 26494389,
+      "sha256": "b38f0be083a6b5be115ff267942c9486fd3730c185542ccecb12b11631056d53"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/7d354af8b75e4dfca27357f2b358e9eb/strategy_refs.jsonl",
+      "bytes": 2758032,
+      "sha256": "05a2edf45d0c8b2632f6f955f51b20d81cb90cc225779c53dab6ea7005248f52"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b20decaba25a4eb4ab0e70c121cc0e79/manifest.json",
+      "bytes": 1389,
+      "sha256": "ee0d987417b078796b3cd4aaba93af9c8f8c1ffc927673667e581ce9b205ed78"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b20decaba25a4eb4ab0e70c121cc0e79/summary.json",
+      "bytes": 9358,
+      "sha256": "e3cd62dc144a28c59797292718c1264425869da6bd47974ff4363edf3d357f0a"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b20decaba25a4eb4ab0e70c121cc0e79/events.jsonl",
+      "bytes": 3465100,
+      "sha256": "a498585057b77c6724f48a8709cdb19856d4bd651087c0a4fa34b95c5303096d"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b20decaba25a4eb4ab0e70c121cc0e79/snapshots.jsonl",
+      "bytes": 17149916,
+      "sha256": "2f47c5fdda5792d81501cc0a3db18148587115c0741004bebea93f91a1d39b70"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b20decaba25a4eb4ab0e70c121cc0e79/strategy_refs.jsonl",
+      "bytes": 2444982,
+      "sha256": "37d12e25eb284937f1cc0be9b64c9c8a3c5c6bb52dd5a64d5c57df1cf8645711"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/c3a74171a4604ccd8eadb35f1f306079/manifest.json",
+      "bytes": 1389,
+      "sha256": "6aae5f66bf0ad4ecb45319a5d2fe9a3edf3f5f5a9fb4dd20ca142b5f40418ee5"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/c3a74171a4604ccd8eadb35f1f306079/summary.json",
+      "bytes": 9116,
+      "sha256": "ef52f303c6af241cc5613478e889f4efac9cce4bc2ef2ddc29210258c613f830"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/c3a74171a4604ccd8eadb35f1f306079/events.jsonl",
+      "bytes": 6256813,
+      "sha256": "25c35ee9270cd04f4f63d56f28802bfe15a7b81fa6981595be816dfb52d6405c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/c3a74171a4604ccd8eadb35f1f306079/snapshots.jsonl",
+      "bytes": 25442597,
+      "sha256": "a0194ba65b2988780cf1dc8a43abf2384874f1a212b74af3a6c4574c408e26dd"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/c3a74171a4604ccd8eadb35f1f306079/strategy_refs.jsonl",
+      "bytes": 3381206,
+      "sha256": "135f153051ce72c0447e1f8fcc1ccf5922efbe151433d1103535b74743c3d983"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cf35a9ebd90f41c1b93cc26ed8418d30/manifest.json",
+      "bytes": 1388,
+      "sha256": "755b9b89b61f165e2a6a86c87d925a25403d9b59744fa3c674422f3b724a1038"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cf35a9ebd90f41c1b93cc26ed8418d30/summary.json",
+      "bytes": 7607,
+      "sha256": "7b43f18a7334d5caddf97e822519f27c2534901e1d0a74c90345dffb9a1e71f2"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cf35a9ebd90f41c1b93cc26ed8418d30/events.jsonl",
+      "bytes": 4222832,
+      "sha256": "c103a65e68422c162c1662638f4d10e8d29033968977237d4548f1a22bfd047c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cf35a9ebd90f41c1b93cc26ed8418d30/snapshots.jsonl",
+      "bytes": 15269258,
+      "sha256": "df07577a0df5bed2b1d5f756a81a7c784125dc9e2c55e1eb5d25d6d11a1ef48b"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cf35a9ebd90f41c1b93cc26ed8418d30/strategy_refs.jsonl",
+      "bytes": 2536791,
+      "sha256": "ea2a0b9225ff20d67f3a4d00d0af28fda7f1b5fe836cb6c1a6c25bffa3631efd"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b9cd6ef04c354e8a8ec4b2366f5c407f/manifest.json",
+      "bytes": 1388,
+      "sha256": "c25bc127cfd90e69e5d68f7064dd89adde1843a9ff6e794a2adb2d34b560f20e"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b9cd6ef04c354e8a8ec4b2366f5c407f/summary.json",
+      "bytes": 9390,
+      "sha256": "cd18f70026b0281c7fb26dd52286ccabaf7b975f29e1ba74560e0130f5dd2075"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b9cd6ef04c354e8a8ec4b2366f5c407f/events.jsonl",
+      "bytes": 3424770,
+      "sha256": "aa8064f60926a077b509935d3b1b1c2b45745fa68230e0e741fe881cfc3aa586"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b9cd6ef04c354e8a8ec4b2366f5c407f/snapshots.jsonl",
+      "bytes": 17170912,
+      "sha256": "afef13f665a3b5b7b4d8c451b15a2af04c7b62cda77acd9a34e3faf077ab0c7d"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/b9cd6ef04c354e8a8ec4b2366f5c407f/strategy_refs.jsonl",
+      "bytes": 1812238,
+      "sha256": "81402e0f0cc19e8c637ee1205837e7b1a08d699d8cd68b7351e26abd28c57f63"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a303f5bdd5e748218cf8c0cc0563628f/manifest.json",
+      "bytes": 1387,
+      "sha256": "f89825ce8e772aa0c5bc36d8dba30de0cb484927410861ab495e51d1f465d825"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a303f5bdd5e748218cf8c0cc0563628f/summary.json",
+      "bytes": 8354,
+      "sha256": "558959d76136a75d2db45744c0b21ca6c3303c74641253f3205b41a3190ca7a9"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a303f5bdd5e748218cf8c0cc0563628f/events.jsonl",
+      "bytes": 3767444,
+      "sha256": "fc772632fcb6be6fb93f16cc5484d08ff97e169c22e196b6f3db381ee395fef3"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a303f5bdd5e748218cf8c0cc0563628f/snapshots.jsonl",
+      "bytes": 16132647,
+      "sha256": "677684e15585cb2d689ba692e11c31583f63276ed4ab89045780f90ba6cd8daa"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a303f5bdd5e748218cf8c0cc0563628f/strategy_refs.jsonl",
+      "bytes": 2131275,
+      "sha256": "8ad3756424d17533e7e5648608d0278b10860b75df4db94910e9914a1c421f06"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/fd04bce31a6248cea39a541571f41f37/manifest.json",
+      "bytes": 1386,
+      "sha256": "4866fd586557b808f96413de1e978db898ff2fa82c1e3874c7c1eaf4c6bca6f8"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/fd04bce31a6248cea39a541571f41f37/summary.json",
+      "bytes": 11106,
+      "sha256": "1e10c39094b6393964e254674e12828483c87942e47b90b21c76e11027bd3a62"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/fd04bce31a6248cea39a541571f41f37/events.jsonl",
+      "bytes": 3452242,
+      "sha256": "e7451823ea38dbe95c7acc464f7b1d34df6e7c016f204e14ac2f2e70689c6e5f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/fd04bce31a6248cea39a541571f41f37/snapshots.jsonl",
+      "bytes": 19848111,
+      "sha256": "14d6933a09adcc127a2d2ecc0a8f2704d45098f5b23502b663a4bfa663f8c617"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/fd04bce31a6248cea39a541571f41f37/strategy_refs.jsonl",
+      "bytes": 4023655,
+      "sha256": "e8fbf3836144774d7a876cde404003521d8ef1931037d9ef7bc2daafd7751335"
+    }
+  ]
+}

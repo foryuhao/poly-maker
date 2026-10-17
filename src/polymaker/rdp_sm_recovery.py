@@ -7,6 +7,10 @@ from polymaker.rdp_sm import _Issue
 
 PAUSE_CODES = frozenset(
     {
+        "SYNC_CACHE_NOT_READY",
+        "SYNC_CACHE_UNAVAILABLE",
+        "SYNC_CACHE_EVIDENCE_CHANGED",
+        "SYNC_DETAIL_NOT_READY",
         "WS_READINESS_TIMEOUT",
         "WS_NOT_CONNECTED",
         "WS_DISCONNECTED",

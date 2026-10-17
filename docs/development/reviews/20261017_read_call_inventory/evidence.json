@@ -1,0 +1,190 @@
+{
+  "scope": "Current production obi_v1 path used by rdp-sm-run; source audit, no live API calls",
+  "sdk_version": "1.0.2",
+  "counting_unit": "Logical complete reads; assumes single-page collections, successful ordinary ACK flow, warm SDK version cache. HTTP pagination, retries and background readers are additional.",
+  "controllers_direct_http_calls": {
+    "NORMAL": 0,
+    "REBALANCE": 0
+  },
+  "common_snapshot": {
+    "gamma_market": 1,
+    "positions": 1,
+    "open_orders": 2,
+    "balance_allowance": 1,
+    "market_trades": 1,
+    "server_time": 1,
+    "total": 7
+  },
+  "new_preparation": {
+    "tick_size": 2,
+    "total": 2,
+    "cached_slot_reuse_total": 0
+  },
+  "close_per_known_id": {
+    "order_detail": 3,
+    "market_trades": 1,
+    "total": 4
+  },
+  "ordinary_successful_new_window": "9 + 4*N; N is current Session known-ID count including current ACK order; excludes background, retries, extra main-loop iterations, startup, final close and merge",
+  "examples": [
+    {
+      "known_ids": 1,
+      "base_snapshot": 7,
+      "new_preparation": 2,
+      "one_close_round": 4,
+      "total": 13
+    },
+    {
+      "known_ids": 5,
+      "base_snapshot": 7,
+      "new_preparation": 2,
+      "one_close_round": 20,
+      "total": 29
+    },
+    {
+      "known_ids": 10,
+      "base_snapshot": 7,
+      "new_preparation": 2,
+      "one_close_round": 40,
+      "total": 49
+    },
+    {
+      "known_ids": 15,
+      "base_snapshot": 7,
+      "new_preparation": 2,
+      "one_close_round": 60,
+      "total": 69
+    }
+  ],
+  "conditional_extra_reads": {
+    "unproved_known_ids_before_snapshot": "1 order + 1 complete market trade read per unproved ID",
+    "strict_canceled_submission_proof_refresh_in_snapshot": "1 complete open-order collection + 1 complete market trade collection, shared across all candidates",
+    "strict_canceled_submission_proof_in_close": "1 complete open-order collection + 1 complete market trade collection per qualifying candidate",
+    "unknown_intent_close_lookup": "1 complete open-order collection per close round if any placement is UNKNOWN or INTENT",
+    "external_disappeared_order": "up to 2 order details + 1 complete trade collection per eligible external ID",
+    "pending_confirmations": "sleep up to 2s then another full close round over all known IDs; no cancel=True from this waiter",
+    "ws_tick_unverified": "2 tick reads; independent of the 2 reads for a later new preparation",
+    "inventory_mismatch_waiter": "1 extra server-time read, sleep up to 1s, then next loop restarts snapshot",
+    "pagination_recovery": "restarts each failed collection/filter scope from page one, then normal reads still run",
+    "sdk_version": "cold cache: 1 /version read; ordinary repeated resolver calls use local cache",
+    "final_close": "one extra complete close round over all known IDs; exception recovery may also close again",
+    "eligible_successful_merge": "two extra full close rounds, 8*N single-page reads, plus settlement metadata/on-chain/relayer queries; final merge check also reads server time when elapsed is omitted"
+  },
+  "background": {
+    "legacy_time_warmer": "1 /time per iteration, followed by 0.5s sleep; start-to-start includes HTTP duration",
+    "new_sync_orders": "3 + K single-page GETs per target 1s round; K<=4 selected observed pending order IDs",
+    "new_sync_account": "2 complete reads per target 2s round",
+    "new_sync_startup": "1 derive-api-key GET and 1 initial /time read per companion",
+    "new_sync_steady_state": "approximately 4 + average(K) GET/s with single pages and target periods sustained; not included in phase formulas"
+  },
+  "startup": {
+    "discovery": "1 /time + 1 Gamma market read, plus /time waits if before T15",
+    "first_healthy_preflight": "1 market + 1 derive + 2 initial tick + 1 positions + 1 open orders + 1 balance + 1 trades + 1 cold /version + 1 /time = 10 reads",
+    "executor_open_healthy_preflight": "same 8 reads without repeated initial ticks, reuses ready feed",
+    "executor_client_connect": "1 additional derive GET; cold version occurs at first runtime account read",
+    "healthy_minimum_before_runtime_loop": "21 single-page reads when discovery starts after T15, no current-market recovery fence, no tick revalidation or retry",
+    "current_market_recovery": "per candidate detail lookup plus market trades and cancellation; only exceptional restart path"
+  },
+  "limitations": [
+    "call_sites.csv is a syntax index including conditionals, helpers and legacy branches; its row count is not a count of HTTP requests.",
+    "No claims of measured latency, request rate improvement or whole-market fixed request count are made.",
+    "Only current obi_v1 path is counted in formulas; legacy execute_window and non-OBI book REST are indexed but excluded."
+  ],
+  "source_files": [
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_normal.py",
+      "bytes": 2658,
+      "sha256": "2212fd186e755ba87171f826949e292ad8dd53aa01cb509196e55b68c4c26ba1"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_rebalance.py",
+      "bytes": 2103,
+      "sha256": "ccb7f714f45cf60fef2771ab2a2423fe10bbc5d5a54d36cd82791814c82a44c2"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_loop.py",
+      "bytes": 37701,
+      "sha256": "340fcc54a5190fea728c58145dc8b5b07efa7d4b72d16d3f8b051ef9b09810f3"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_lifecycle.py",
+      "bytes": 31941,
+      "sha256": "49b6dd7e1e86ba1a8605fe31cc0b2010f64119ba866c38766c153d7629733167"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_execution.py",
+      "bytes": 99802,
+      "sha256": "0b14d323c285506d084833dc95ebf429c8e8fec91f82263773bddd4da757b660"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm.py",
+      "bytes": 24620,
+      "sha256": "38c30ecc950762b2d7e741cedc98e0a8916f5ad488938ba98ccaa4ecb96ee65a"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_entry.py",
+      "bytes": 13919,
+      "sha256": "e6d96a36dbdecce8854492d5f32cea259be2348a0ea3ce9cc5a38366139ea3dd"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_marketdata.py",
+      "bytes": 23063,
+      "sha256": "bb27fa580b7f0a9e60e1b4869b4a4ac579659de48d51811deb3012a47066b672"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_network.py",
+      "bytes": 10856,
+      "sha256": "225874f4ed4f5a5e75ae6b4ac27bb8d153c1113f7de551fc878330fac6e18263"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_merge.py",
+      "bytes": 16496,
+      "sha256": "b9be8b4c2f239aa229a4260e68b87fe9d2fc6542efc37ee4a53bebcd1e292fb9"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_fence.py",
+      "bytes": 6377,
+      "sha256": "3defa23075324f63902dc653b6c1b0f8b3ff77f21f2fd59a62a558a91c6c6e33"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_sync.py",
+      "bytes": 17298,
+      "sha256": "1d19990ace01c34ecde8c3372c47edd79476708833ca92df6ce131d759590ff4"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_sync_companion.py",
+      "bytes": 12472,
+      "sha256": "2d6181c4e65531511e270aede19de967469a87a5e393996699dd9b9613fa7f7b"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_sync_reads.py",
+      "bytes": 14951,
+      "sha256": "5bf34dbba390b2134197de84fc43ae5c4b67aea4dbc0592087cf22ab5190439d"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_quotes.py",
+      "bytes": 6465,
+      "sha256": "a7372dbcca676d37efe23c9ef3e989969e89215f1750b893ed187af4432c164c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/rdp_sm_sizing.py",
+      "bytes": 12852,
+      "sha256": "a604b5e4df71fbaee7ce2c55470b31146d1028046bae72caca78087da2b25c1c"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/execution/filltruth.py",
+      "bytes": 16941,
+      "sha256": "e36fb19bab90e30c995a57822d4d27083f9077144c0672e12d2e4b55093cfcbf"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/src/polymaker/execution/gateway.py",
+      "bytes": 44381,
+      "sha256": "e4317ee6330fac751384dcfe1db14def530502059d14cffdd7ba9e75efead6fd"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/py_clob_client_v2/client.py",
+      "bytes": 42116,
+      "sha256": "3425c1afb5a7de82b3640f29ca92909197eb4584d86d073b3216ad3cbcdefd80"
+    }
+  ]
+}

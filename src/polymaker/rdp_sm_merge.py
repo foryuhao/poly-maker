@@ -160,6 +160,8 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             _require(intent["amount_raw"] > 0, "MERGE_NO_CONFIRMED_PAIRS")
             executor.record("sm_merge_intent", intent)
             executor.merge_pending = True
+            cache_write = (executor.shared_reads.begin_write("MERGE")
+                           if executor.shared_reads is not None else None)
             _progress(on_progress)
             submitted = False
             try:
@@ -181,6 +183,9 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
                     executor.record("sm_merge_result", {**intent, "status": "UNKNOWN",
                                                          "error_type": type(exc).__name__})
                     raise RuntimeError("MERGE_UNKNOWN") from None
+            finally:
+                if cache_write is not None:
+                    executor.shared_reads.end_write(cache_write)
             qty = Decimal(intent["amount_raw"]) / SCALE
             released = {}
             if result["status"] == "CONFIRMED":

@@ -196,7 +196,12 @@ class BatchLifecycle:
             commitment = sum(
                 (Decimal(str(q.price)) * Decimal(str(q.size)) for q in quotes), Decimal(0)
             )
-            if commitment + e.committed() > CAPITAL_LIMIT or commitment > Decimal(
+            # NORMAL budgets a full dollar per submitted share for the cycle.
+            capital_required = (
+                sum((Decimal(str(q.size)) * Decimal("1.00") for q in quotes), Decimal(0))
+                if controller.phase == "NORMAL" else commitment
+            )
+            if capital_required + e.committed() > CAPITAL_LIMIT or commitment > Decimal(
                 str(self.account["basic_spendable_budget_usd"])
             ):
                 continue
@@ -273,6 +278,9 @@ class BatchLifecycle:
 
     def guard(self, controller, intent, revision, deadline):
         e, cfg = self.executor, self.executor.cfg.rdp_sm.obi
+        if e.shared_reads is not None and not e.shared_reads.admission_current():
+            self.guard_reason = "SYNC_CACHE_EVIDENCE_CHANGED"
+            return False
         now = e.monotonic()
         current = self.snapshot(controller, intent.yes, intent.no)
         elapsed = e.official_time + now - e.time_anchor - int(e.slug.rsplit("-", 1)[1])
@@ -505,6 +513,9 @@ class BatchLifecycle:
                         reason, snapshot_id=current.snapshot_id, health=asdict(health), **evidence
                     )
                 if close_requested.is_set() and any(a.post_started for a in batch):
+                    if (e.shared_reads is not None and post_done.is_set()
+                            and e.shared_reads.terminal_observed(prospective)):
+                        return  # The final close still verifies fills and reserves.
                     await cancel_possible()
                     if verification_done.is_set():
                         return
@@ -520,6 +531,7 @@ class BatchLifecycle:
 
         watcher = asyncio.create_task(watch(), name="rdp-persistent-close")
         raw, error = None, None
+        write = e.shared_reads.begin_write("POST", prospective) if e.shared_reads else None
         try:
             try:
                 raw = await e._await_owned(
@@ -528,6 +540,9 @@ class BatchLifecycle:
                 )
             except Exception as exc:
                 error = type(exc).__name__
+            finally:
+                if write is not None:
+                    e.shared_reads.end_write(write)
             post_returned = e.monotonic()
             outcomes = (
                 e._placement_outcomes(raw, candidate.signed.quotes)

@@ -19,7 +19,8 @@ from test_rdp_sm_obi_execution import env as env
 
 @pytest.mark.parametrize("disconnect_preflight,cancel_before_order", [(False, False), (True, False), (False, True)])
 @pytest.mark.parametrize("prior_unresolved", [False, True])
-async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, monkeypatch, disconnect_preflight, cancel_before_order, prior_unresolved):
+@pytest.mark.parametrize("cached", [False, True])
+async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, monkeypatch, disconnect_preflight, cancel_before_order, prior_unresolved, cached):
     v, cfg = env
     cfg.rdp_sm.normal_entry_mode = "obi_v1"
     cfg.rdp_sm.obi.network_min_samples = cfg.rdp_sm.obi.network_recovery_samples = 1
@@ -126,13 +127,30 @@ async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, 
 
     client = boundary(monkeypatch, v, http)
     loop = SMTradingLoop(cfg, SLUG, "obi-entry", monotonic=time.monotonic)
+    companion = None
     try:
         meta, _, _, books = await discover_current_market(cfg)
         assert books == {} and meta.condition_id == CID
         # Production entry pins this deadline before the first M1 attempt,
         # including attempts that fail before a complete market snapshot exists.
         loop.market_deadline = anchor + START + 300 - v.time
-        result = await asyncio.wait_for(loop.run(offline=True), 10)
+        if cached:
+            from polymaker.rdp_sm_entry import AccountRiskPolicy
+            from polymaker.rdp_sm_sync_companion import SyncCompanion
+            from polymaker.rdp_sm_sync_reads import ObserverReader
+
+            cfg.rdp_sm.sync_observe.enabled = cfg.rdp_sm.sync_observe.use_for_execution = True
+            cfg.rdp_sm.sync_observe.order_interval_s = .03
+            cfg.rdp_sm.sync_observe.account_interval_s = .05
+            companion = SyncCompanion(cfg, "obi-entry", reader_factory=lambda emit, stop:
+                ObserverReader(cfg, emit=emit, stop=stop,
+                               transport=httpx.MockTransport(v.response)))
+            companion.bind_market(meta, START)
+            companion.start()
+            policy = AccountRiskPolicy(use_starting_balance=True, sync_observer=companion)
+            result = await asyncio.wait_for(loop._run(offline=True, account_policy=policy), 10)
+        else:
+            result = await asyncio.wait_for(loop.run(offline=True), 10)
         assert result.execution_status == ("BLOCKED" if cancel_before_order else "COMPLETED"), (
             result.stop_reason,
             result.to_dict(),
@@ -152,4 +170,6 @@ async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, 
         assert loop.normal_controller is not loop.rebalance_controller
         assert bool(injected) is disconnect_preflight
     finally:
+        if companion is not None:
+            await asyncio.to_thread(companion.close)
         client.close()

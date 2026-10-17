@@ -1,7 +1,7 @@
-"""Per-invocation, pinned-market observation owned by rdp-sm-run.
+"""Per-invocation pinned cache and diagnostics owned by rdp-sm-run.
 
-The execution path only supplies identity and small event references. It never
-reads this observer's snapshots or waits for its HTTP/file writes.
+Execution may consume immutable snapshots when use_for_execution is enabled;
+the diagnostic recorder is never on the trade or HTTP path.
 """
 
 from __future__ import annotations
@@ -29,11 +29,13 @@ REFERENCE_KINDS = frozenset({
     "sm_cancel_ack", "sm_close_barrier", "sm_trade", "sm_window_result", "sm_run_result",
     "sm_placement_intent", "sm_placement_ack", "sm_placement_unknown", "sm_placement_result",
     "entry_result",
+    "sm_sync_cache_read",
 })
 SCALARS = (
     "window_id", "phase", "state", "result", "reason", "stop_reason", "execution_status",
     "order_id", "expected_order_id", "trade_id", "maker_order_id", "token_id", "outcome",
     "status", "price", "size", "confirmed_yes", "confirmed_no", "delta", "final_close_barrier",
+    "purpose", "snapshot_version", "operation_after_monotonic",
 )
 TIME_FIELDS = (
     "post_started", "post_returned", "requested_monotonic", "delete_requested",
@@ -73,6 +75,7 @@ class SyncCompanion:
     def __init__(self, cfg, session_id, *, reader_factory=None):
         options = cfg.rdp_sm.sync_observe
         self.session_id = session_id
+        self.use_for_execution = options.use_for_execution
         self.directory = Path(options.output_dir).resolve() / session_id
         self.journal_file = str(Path(cfg.paths.journal_dir).resolve()
             / f"rdp_sm_{cfg.secrets.browser_address.lower()}_{session_id}.jsonl")
@@ -159,11 +162,13 @@ class SyncCompanion:
         try:
             self.directory.mkdir(parents=True, exist_ok=False)
             manifest = {"mode": "MAIN_PROCESS_COMPANION", "trading_authorized": False,
+                        "execution_reads_from_cache": self.use_for_execution,
                         "pid": os.getpid(), "session_id": self.session_id,
                         "started_wall": time.time(), "settings": asdict(self.service.settings),
                         "market_selection": "MAIN_PROCESS_ONLY", "strategy_journal": self.journal_file,
                         "source_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                            for p in Path(__file__).parent.glob("rdp_sm_sync*.py")}}
+                            for p in [*Path(__file__).parent.glob("rdp_sm_sync*.py"),
+                                      Path(__file__).with_name("rdp_sm_cached_reads.py")]}}
             manifest_path = self.directory / "manifest.json"
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
             with (self.directory / "events.jsonl").open("x", buffering=1) as events, (

@@ -1,0 +1,130 @@
+source,function,line,target,syntax
+src/polymaker/rdp_sm_normal.py,NormalController.enter,75,prepare,"self.lifecycle.prepare(self, yes, no, window_id)"
+src/polymaker/rdp_sm_rebalance.py,RebalanceController.repair,60,prepare,"self.lifecycle.prepare(self, yes, no, window_id)"
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_session,256,server_time,executor.reads.server_time()
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_session,275,verify_close,executor.verify_close(cancel=True)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_session,287,_snapshot,executor._snapshot(include_books=False)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_session,427,verify_close,executor.verify_close(cancel=True)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session.warm_network,457,server_time,executor.reads.server_time()
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,493,verify_close,executor.verify_close(cancel=True)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,502,_snapshot,executor._snapshot(include_books=False)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,533,snapshot,"lifecycle.snapshot(controller, yes, no)"
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,536,refresh_feed_ticks,executor.reads.refresh_feed_ticks()
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,542,network_health,executor.network_health()
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,546,wait_after,"feed.wait_after(feed.sequence, 0.5)"
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run_obi_session,575,verify_close,executor.verify_close(cancel=True)
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._wait_for_inventory,595,server_time,executor.reads.server_time()
+src/polymaker/rdp_sm_loop.py,SMTradingLoop._run,730,verify_close,self.executor.verify_close(cancel=True)
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.snapshot,116,snapshot,self.feed.snapshot(repair_token=repair)
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.prepare,124,snapshot,"self.snapshot(controller, yes, no)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.prepare,129,network_health,e.network_health()
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.prepare,177,get_tick_size,"e.gateway._io(client.get_tick_size, token)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.prepare,184,_ClobClient__resolve_version,e.gateway._io(client._ClobClient__resolve_version)
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.prepare,203,prepare,"e.gateway.prepare( [Quote(q.token_id, q.side, q.price, q.size) for q in quotes], e.meta, ticks )"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.guard,277,snapshot,"self.snapshot(controller, intent.yes, intent.no)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.guard,280,network_health,"e.network_health(age if intent.phase == ""NORMAL"" else 0)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.activate,325,wait_after,"self.feed.wait_after(sequence, 0.5)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle.activate,326,snapshot,"self.snapshot(controller, slot.yes, slot.no)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle._send.cancel_possible,445,cancel_detailed,e.gateway.cancel_detailed(prospective)
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle._send.watch,467,snapshot,"self.snapshot(controller, intent.yes, intent.no)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle._send.watch,469,network_health,e.network_health()
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle._send,526,send_prepared,"e.gateway.send_prepared(candidate.signed, submit_guard=client.submit_guard)"
+src/polymaker/rdp_sm_lifecycle.py,BatchLifecycle._send,677,_verify_close,e._verify_close(cancel=True)
+src/polymaker/rdp_sm_execution.py,ExecutionClobClient._delete,481,snapshot,self.network.snapshot()
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.market,559,market,super().market(slug)
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.market,563,exact_market,"exact_market(gamma, slug=slug)"
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.book,570,get_tick_size,"self.gateway._io(self.gateway._client.get_tick_size, token)"
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.book,571,get_order_book,"self.gateway._io(self.gateway._client.get_order_book, token)"
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.ensure_feed,580,refresh_feed_ticks,self.refresh_feed_ticks()
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.refresh_feed_ticks,596,get_tick_size,"self.gateway._io(self.gateway._client.get_tick_size, token)"
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.ws_readiness,603,ensure_feed,self.ensure_feed(meta)
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.ws_readiness,605,snapshot,feed.snapshot()
+src/polymaker/rdp_sm_execution.py,_ExecutionReads.ws_readiness,609,snapshot,feed.snapshot()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.network_health,920,snapshot,self.reads.network.snapshot(signal_age_ms)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._read_books,993,ensure_feed,self.reads.ensure_feed(meta)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._read_books,994,snapshot,feed.snapshot()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._recover_pagination,1010,retry_incomplete_reads,self.gateway._io(client.retry_incomplete_reads)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1018,_recover_pagination,self._recover_pagination()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1027,_refresh_canceled_submissions,self._refresh_canceled_submissions()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1038,reconcile_owned_order,"reconcile_owned_order(oid, self.gateway, self.processor, retry_delays=())"
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1042,market,self.reads.market(self.slug)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1055,_account,"_account(self.reads, meta, market)"
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1062,get_trades,self.gateway.get_trades(market=meta.condition_id)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1069,open_orders,self.gateway.open_orders()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1153,_external_no_fill_terminal,"self._external_no_fill_terminal(oid, identities[oid])"
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1195,_ClobClient__resolve_version,client._ClobClient__resolve_version()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._snapshot,1197,server_time,self.reads.server_time()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._external_no_fill_terminal,1253,get_order,self.gateway.get_order(oid)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._external_no_fill_terminal,1256,get_trades,self.gateway.get_trades(market=normalize_order(row).market_id)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._external_no_fill_terminal,1260,get_order,self.gateway.get_order(oid)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_order,1305,get_order,self.gateway.get_order(oid)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_order,1322,reconcile_owned_order,"reconcile_owned_order(oid, self.gateway, self.processor, retry_delays=())"
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_order,1324,get_order,self.gateway.get_order(oid)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.verify_close,1424,_verify_close,self._verify_close(cancel=cancel)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.verify_close,1428,snapshot,network.snapshot()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._cancel_known.send,1475,cancel_detailed,self.gateway.cancel_detailed(sorted(scope))
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_close,1504,_recover_pagination,self._recover_pagination()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_close,1507,open_orders,self.gateway.open_orders()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_close,1536,_verify_canceled_submission,self._verify_canceled_submission(attempt)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._refresh_canceled_submissions,1659,open_orders,self.gateway.open_orders()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._refresh_canceled_submissions,1661,get_trades,self.gateway.get_trades(market=self.meta.condition_id)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._refresh_canceled_submissions,1665,_verify_canceled_submission,"self._verify_canceled_submission(attempt, evidence=evidence)"
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_canceled_submission,1697,open_orders,self.gateway.open_orders()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._verify_canceled_submission,1699,get_trades,self.gateway.get_trades(market=self.meta.condition_id)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor._wait_for_confirmation,1748,_verify_close,self._verify_close()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.execute_window,1878,_snapshot,self._snapshot()
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.execute_window,1998,_verify_close,self._verify_close(cancel=True)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.execute_window,2003,_verify_close,self._verify_close(cancel=True)
+src/polymaker/rdp_sm_execution.py,SMWindowExecutor.execute_window,2025,_verify_close,self._verify_close(cancel=True)
+src/polymaker/rdp_sm.py,_Reads.market,238,market_by_slug,gamma.market_by_slug(slug)
+src/polymaker/rdp_sm.py,_Reads.book,242,get_order_book,"self.gateway._io(client.get_order_book, token)"
+src/polymaker/rdp_sm.py,_Reads.book,243,get_tick_size,"self.gateway._io(client.get_tick_size, token)"
+src/polymaker/rdp_sm.py,_Reads.server_time,247,get_server_time,self.gateway._io(self.gateway._client.get_server_time)
+src/polymaker/rdp_sm.py,_account,379,positions,gateway.positions()
+src/polymaker/rdp_sm.py,_account,384,open_orders,gateway.open_orders()
+src/polymaker/rdp_sm.py,_account,387,required_collateral_spenders,gateway.required_collateral_spenders(meta)
+src/polymaker/rdp_sm.py,_account,389,balance_allowance,gateway.balance_allowance()
+src/polymaker/rdp_sm.py,run_preflight,475,market,reads.market(slug)
+src/polymaker/rdp_sm.py,run_preflight,508,_account,"_account(reads, meta, result.market)"
+src/polymaker/rdp_sm.py,run_preflight,534,server_time,reads.server_time()
+src/polymaker/rdp_sm.py,run_preflight,536,snapshot,reads.feed.snapshot()
+src/polymaker/rdp_sm_entry.py,discover_current_market,55,get_server_time,asyncio.to_thread(client.get_server_time)
+src/polymaker/rdp_sm_entry.py,discover_current_market,64,exact_market,"exact_market(gamma, slug=slug)"
+src/polymaker/rdp_sm_entry.py,discover_current_market,79,get_order_book,"asyncio.to_thread(client.get_order_book, token)"
+src/polymaker/rdp_sm_entry.py,discover_current_market,80,get_tick_size,"asyncio.to_thread(client.get_tick_size, token)"
+src/polymaker/rdp_sm_entry.py,discover_current_market,82,get_server_time,asyncio.to_thread(client.get_server_time)
+src/polymaker/rdp_sm_entry.py,AccountRiskPolicy.inspect,136,get_trades,gateway.get_trades(market=meta.condition_id)
+src/polymaker/rdp_sm_entry.py,_run_current_market,261,get_server_time,asyncio.to_thread(clock.get_server_time)
+src/polymaker/rdp_sm_marketdata.py,SessionFeed.diagnostics,170,snapshot,self.snapshot()
+src/polymaker/rdp_sm_marketdata.py,SessionFeed.invalidate,221,snapshot,self.snapshot()
+src/polymaker/rdp_sm_marketdata.py,SessionFeed.apply,446,snapshot,self.snapshot()
+src/polymaker/rdp_sm_network.py,NetworkHealth.snapshot,197,_snapshot,"self._snapshot(self.monotonic(), signal_age_ms)"
+src/polymaker/rdp_sm_network.py,NetworkHealth.begin_batch,203,_snapshot,"self._snapshot(now, 0)"
+src/polymaker/rdp_sm_merge.py,SMMerger.prepare,54,get_market,backend.client.get_market(slug=meta.slug)
+src/polymaker/rdp_sm_merge.py,SMMerger.prepare,86,_balance,"backend._balance(context, context.yes_id)"
+src/polymaker/rdp_sm_merge.py,SMMerger.prepare,87,_balance,"backend._balance(context, context.no_id)"
+src/polymaker/rdp_sm_merge.py,SMMerger.prepare,93,collateral_raw,backend.collateral_raw()
+src/polymaker/rdp_sm_merge.py,SMMerger.settle,102,get_transaction_receipt,self.backend.w3.eth.get_transaction_receipt(tx_hash)
+src/polymaker/rdp_sm_merge.py,SMMerger.settle,108,_balance,"self.backend._balance(position.context, position.yes_token)"
+src/polymaker/rdp_sm_merge.py,SMMerger.settle,109,_balance,"self.backend._balance(position.context, position.no_token)"
+src/polymaker/rdp_sm_merge.py,SMMerger.settle,110,collateral_raw,self.backend.collateral_raw()
+src/polymaker/rdp_sm_merge.py,merge_confirmed_pairs,129,server_time,executor.reads.server_time()
+src/polymaker/rdp_sm_merge.py,merge_confirmed_pairs,133,_verify_close,executor._verify_close(cancel=True)
+src/polymaker/rdp_sm_merge.py,merge_confirmed_pairs,143,prepare,"executor.gateway._io(merger.prepare, executor.meta, before)"
+src/polymaker/rdp_sm_merge.py,merge_confirmed_pairs,199,_verify_close,executor._verify_close()
+src/polymaker/rdp_sm_fence.py,recover_fence,145,cancel_detailed,reads.gateway.cancel_detailed(ids)
+src/polymaker/rdp_sm_fence.py,recover_fence,148,get_order,reads.gateway.get_order(oid)
+src/polymaker/rdp_sm_fence.py,recover_fence,152,get_trades,"reads.gateway.get_trades(market=fence[""market_id""])"
+src/polymaker/rdp_sm_sync.py,SyncObserver._orders_round,301,market,self.reader.market(epoch)
+src/polymaker/rdp_sm_sync_reads.py,ObserverReader.server_time,241,get_server_time,self.client.get_server_time()
+src/polymaker/rdp_sm_sync_reads.py,ObserverReader.order,295,get_order,self.client.get_order(order_id)
+src/polymaker/execution/filltruth.py,reconcile_owned_order_once,78,get_order,gateway.get_order(order_id)
+src/polymaker/execution/filltruth.py,reconcile_owned_order_once,80,get_trades,"gateway.get_trades(market=str(owned[""condition_id""]))"
+src/polymaker/execution/filltruth.py,reconcile_owned_order,234,reconcile_owned_order_once,"reconcile_owned_order_once(order_id, gateway, processor)"
+src/polymaker/execution/filltruth.py,reconcile_owned_order,240,reconcile_owned_order_once,"reconcile_owned_order_once( order_id, gateway, processor, active_order_deadline=deadline)"
+src/polymaker/execution/gateway.py,ExecutionGateway.prepare.build,227,_ClobClient__resolve_version,client._ClobClient__resolve_version()
+src/polymaker/execution/gateway.py,ExecutionGateway.collateral_balance,701,balance_allowance,self.balance_allowance()
+src/polymaker/execution/gateway.py,ExecutionGateway.open_orders._get,754,get_open_orders,self._client.get_open_orders()
+src/polymaker/execution/gateway.py,ExecutionGateway.get_order._get,866,get_order,self._client.get_order(order_id)
+src/polymaker/execution/gateway.py,ExecutionGateway.get_trades._get,890,get_trades,self._client.get_trades(params)
+src/polymaker/execution/gateway.py,ExecutionGateway.required_collateral_spenders._resolve,929,_ClobClient__resolve_version,self._client._ClobClient__resolve_version()

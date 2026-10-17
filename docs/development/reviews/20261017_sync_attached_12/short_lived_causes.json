@@ -1,0 +1,306 @@
+{
+  "scope": "The 14 ACK orders missing observer detail in the reviewed 12 sessions; not all canceled orders",
+  "orders": [
+    {
+      "market": "20:25",
+      "window": "w5",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 87.57,
+      "post_ms": 318.688,
+      "close_before_post_return": true,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.3068219600415100802998398033"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.3352144633688711765304786700"
+      },
+      "signal_age_ms": 1.18953175842762,
+      "close_line": 321,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5f83d815c20548d9964c193884b8aa4e.jsonl"
+    },
+    {
+      "market": "20:30",
+      "window": "w1",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 54.085,
+      "post_ms": 283.081,
+      "close_before_post_return": true,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.922993993531495456645618358"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.780219780219780219780219780"
+      },
+      "signal_age_ms": 1.9576149061322212,
+      "close_line": 28,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_dac6d84080274b02a15316a6c4a26cc7.jsonl"
+    },
+    {
+      "market": "20:30",
+      "window": "w9",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 98.448,
+      "post_ms": 310.752,
+      "close_before_post_return": true,
+      "original_direction": "NO",
+      "entry_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.3124365215564038805029243862"
+      },
+      "exit_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.3955512572533849129593810445"
+      },
+      "signal_age_ms": 0.7634023204445839,
+      "close_line": 840,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_dac6d84080274b02a15316a6c4a26cc7.jsonl"
+    },
+    {
+      "market": "20:40",
+      "window": "w1",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 570.18,
+      "post_ms": 218.343,
+      "close_before_post_return": false,
+      "original_direction": "NO",
+      "entry_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.5173127407208691819801866365"
+      },
+      "exit_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.9444444444444444444444444445"
+      },
+      "signal_age_ms": 2.2254777140915394,
+      "close_line": 37,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_534f6433923f4335956983d8f2e0e661.jsonl"
+    },
+    {
+      "market": "20:40",
+      "window": "w12",
+      "phase": "REBALANCE",
+      "reason": "WS_BOOK_STALE",
+      "post_to_close_ms": 154.945,
+      "post_ms": 496.613,
+      "close_before_post_return": true,
+      "original_direction": null,
+      "entry_signal": {
+        "label": null,
+        "imbalance": null
+      },
+      "exit_signal": {
+        "label": null,
+        "imbalance": null
+      },
+      "signal_age_ms": null,
+      "close_line": 1286,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_534f6433923f4335956983d8f2e0e661.jsonl",
+      "close_details": {
+        "window_id": "534f6433923f4335956983d8f2e0e661:w12",
+        "reason": "WS_BOOK_STALE",
+        "requested_monotonic": 2752263.652068042,
+        "deadline": 2752266.497122595,
+        "snapshot_id": "0x78e4341d1353b7cbc58d8b2c6c7fea847ecdfac46c0d3a521d098ea1527b23b1:1:99339"
+      }
+    },
+    {
+      "market": "20:55",
+      "window": "w2",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 192.078,
+      "post_ms": 411.468,
+      "close_before_post_return": true,
+      "original_direction": "NO",
+      "entry_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.978241002654597676139083511"
+      },
+      "exit_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.545580274232425811040423598"
+      },
+      "signal_age_ms": 1.4099557884037495,
+      "close_line": 67,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c30c8b1d069643bfaab1a0729d5fc21b.jsonl"
+    },
+    {
+      "market": "20:55",
+      "window": "w3",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 347.989,
+      "post_ms": 224.806,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.694391750571525852424728829"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.8623853211009174311926605505"
+      },
+      "signal_age_ms": 3.4493599086999893,
+      "close_line": 122,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c30c8b1d069643bfaab1a0729d5fc21b.jsonl"
+    },
+    {
+      "market": "21:00",
+      "window": "w3",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 281.105,
+      "post_ms": 207.487,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.9907797560323446158385350875"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.666110183639398998330550918"
+      },
+      "signal_age_ms": 1.189662143588066,
+      "close_line": 176,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5383c288cd964ba4b29fbffc549e51e1.jsonl"
+    },
+    {
+      "market": "21:00",
+      "window": "w7",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 756.355,
+      "post_ms": 638.042,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.932719124046402100899610422"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.4784230727840154966459805574"
+      },
+      "signal_age_ms": 1.234740950167179,
+      "close_line": 562,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5383c288cd964ba4b29fbffc549e51e1.jsonl"
+    },
+    {
+      "market": "21:05",
+      "window": "w5",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 839.915,
+      "post_ms": 216.788,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.833971171452622078744804006"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.4270864594985403650451531935"
+      },
+      "signal_age_ms": 3.1789159402251244,
+      "close_line": 413,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cc0e62c96e724b55b8835532c1aef8e5.jsonl"
+    },
+    {
+      "market": "21:05",
+      "window": "w7",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 489.622,
+      "post_ms": 195.993,
+      "close_before_post_return": false,
+      "original_direction": "NO",
+      "entry_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.4263235571534782560449193826"
+      },
+      "exit_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.4144207611776463456591903272"
+      },
+      "signal_age_ms": 4.17983066290617,
+      "close_line": 569,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cc0e62c96e724b55b8835532c1aef8e5.jsonl"
+    },
+    {
+      "market": "21:15",
+      "window": "w1",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 304.395,
+      "post_ms": 575.62,
+      "close_before_post_return": true,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.9833586159569473037887817385"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.3627867459643160577740016992"
+      },
+      "signal_age_ms": 1.1515137739479542,
+      "close_line": 27,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4a6f039db10c438d8702df8a014333bd.jsonl"
+    },
+    {
+      "market": "21:15",
+      "window": "w4",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 981.553,
+      "post_ms": 206.998,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.3629913298676664012240186824"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.503545505538021046991552739"
+      },
+      "signal_age_ms": 1.156482845544815,
+      "close_line": 190,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4a6f039db10c438d8702df8a014333bd.jsonl"
+    },
+    {
+      "market": "21:15",
+      "window": "w10",
+      "phase": "NORMAL",
+      "reason": "SIGNAL_REVERSED",
+      "post_to_close_ms": 339.95,
+      "post_ms": 262.589,
+      "close_before_post_return": false,
+      "original_direction": "YES",
+      "entry_signal": {
+        "label": "VALID_YES",
+        "imbalance": "0.993344780311198072648378123"
+      },
+      "exit_signal": {
+        "label": "VALID_NO",
+        "imbalance": "-0.735652173913043478260869565"
+      },
+      "signal_age_ms": 1.6432320699095726,
+      "close_line": 836,
+      "journal": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4a6f039db10c438d8702df8a014333bd.jsonl"
+    }
+  ]
+}

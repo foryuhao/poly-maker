@@ -465,7 +465,8 @@ class SMTradingLoop:
                     pass
                 await asyncio.sleep(executor.cfg.rdp_sm.obi.network_probe_interval_sec)
 
-        warmer = asyncio.create_task(warm_network(), name="rdp-network-warmup")
+        warmer = (None if executor.shared_reads is not None else
+                  asyncio.create_task(warm_network(), name="rdp-network-warmup"))
         try:
             while True:
                 executor.drain_network_events()
@@ -585,8 +586,9 @@ class SMTradingLoop:
         finally:
             executor.record("sm_obi_metrics", dict(lifecycle.metrics))
             executor.record("sm_ws_diagnostics", feed.diagnostics())
-            warmer.cancel()
-            await asyncio.gather(warmer, return_exceptions=True)
+            if warmer is not None:
+                warmer.cancel()
+                await asyncio.gather(warmer, return_exceptions=True)
             executor.drain_network_events()
 
     async def _wait_for_inventory(self, result):

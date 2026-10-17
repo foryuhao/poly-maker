@@ -290,6 +290,12 @@ class ExecutionClobClient(ReadOnlyClobClient):
         )
 
     def _get(self, endpoint, headers=None, params=None):
+        path = urlsplit(endpoint).path
+        if getattr(self, "cache_reads_only", False) and (
+            path in {"/time", "/data/orders", "/data/trades", "/balance-allowance"}
+            or path.startswith("/data/order/")
+        ):
+            raise RuntimeError("SYNC_DIRECT_READ_PROHIBITED")
         if getattr(getattr(self, "operation_local", None), "no_get", False):
             raise ValueError("OPERATION_EXTRA_GET_FORBIDDEN")
         began, started_wall = time.monotonic(), time.time()
@@ -502,6 +508,7 @@ class _ExecutionReads(_Reads):
         self.feed = getattr(risk_reads, "feed", None)
         self.lease = getattr(risk_reads, "lease", None)
         self.network = getattr(risk_reads, "network", None)
+        self.market_raw = getattr(risk_reads, "market_raw", None)
         if cfg.rdp_sm.normal_entry_mode == "obi_v1" and self.network is None:
             from polymaker.rdp_sm_network import NetworkHealth
 
@@ -556,11 +563,14 @@ class _ExecutionReads(_Reads):
 
     async def market(self, slug: str):
         if self.account_policy is None:
-            return await super().market(slug)
-        from polymaker.rdp_sm_entry import exact_market
+            raw = await super().market(slug)
+        else:
+            from polymaker.rdp_sm_entry import exact_market
 
-        async with GammaClient(self.cfg.wallet.gamma_host) as gamma:
-            return await exact_market(gamma, slug=slug)
+            async with GammaClient(self.cfg.wallet.gamma_host) as gamma:
+                raw = await exact_market(gamma, slug=slug)
+        self.market_raw = raw
+        return raw
 
     async def book(self, token: str):
         _require(self.cfg.rdp_sm.normal_entry_mode != "obi_v1", "OBI_REST_BOOK_FORBIDDEN")
@@ -778,6 +788,14 @@ class SMWindowExecutor:
         # Optional CLI-only references to already-created Journal payloads.
         # No formatting, I/O, callbacks or queue writes inside execution.
         self.display_events = display_events
+        self.shared_reads = None
+        if cfg.rdp_sm.sync_observe.use_for_execution:
+            companion = getattr(reads.account_policy, "sync_observer", None)
+            _require(cfg.rdp_sm.normal_entry_mode == "obi_v1" and companion is not None,
+                     "SYNC_CACHE_SERVICE_REQUIRED")
+            from polymaker.rdp_sm_cached_reads import CachedExecutionReads
+
+            self.shared_reads = CachedExecutionReads(self, companion)
 
     @classmethod
     async def open(
@@ -1004,6 +1022,10 @@ class SMWindowExecutor:
         return books
 
     async def _recover_pagination(self):
+        if self.shared_reads is not None:
+            # The cache scope already requires the latest complete collections;
+            # partial observations are retained by its single ingest path.
+            return
         client = self.gateway._client
         if client.pagination_failure is not None:
             try:
@@ -1014,6 +1036,15 @@ class SMWindowExecutor:
                 raise
 
     async def _snapshot(self, *, include_books=True):
+        if self.shared_reads is not None and self.shared_reads.active is None:
+            async with self.shared_reads.scope("account", account=True):
+                if self.attempts and not self.safe_to_continue:
+                    _require(await self._verify_close(), self.reason or "CLOSE_EVIDENCE_INVALIDATED")
+                result = await self._snapshot(include_books=include_books)
+                clock = await self.shared_reads.source("time")
+                self.official_time_read_duration_s = (
+                    clock.completed_monotonic - clock.started_monotonic)
+                return result
         began = self.monotonic()
         await self._recover_pagination()
         _require(
@@ -1463,7 +1494,8 @@ class SMWindowExecutor:
         it; this independent known-ID cancellation can run on the existing pool.
         Final reconciliation starts only after that owner regains control.
         """
-        scope = frozenset(self.known)
+        scope = frozenset(self.shared_reads.cancel_ids(self.known)
+                          if self.shared_reads is not None else self.known)
         if not scope:
             return
         job = self._cancel_jobs.get(scope)
@@ -1495,6 +1527,20 @@ class SMWindowExecutor:
 
     async def _verify_close(self, *, cancel: bool = False) -> bool:
         """Fresh official order/trade facts; no old COMPLETE or terminal cache."""
+        if self.shared_reads is not None and self.shared_reads.active is None:
+            try:
+                if cancel:
+                    await self._cancel_known()
+                async with self.shared_reads.scope("close"):
+                    return await self._verify_close(cancel=False)
+            except Exception as exc:
+                self.reason = self.fatal or str(exc)
+                self.proof_revision = -1
+                with suppress(Exception):
+                    self.record("sm_close_barrier", {"result": "BLOCKED", "reason": self.reason,
+                        "attempts": [asdict(a) for a in self.attempts],
+                        "capital_committed": str(self.committed())})
+                return False
         self.proof_revision = -1
         self.proofs = {}
         self.pending_confirmations = set()
@@ -1742,7 +1788,10 @@ class SMWindowExecutor:
             )
             and self.monotonic() < deadline
         ):
-            await self.sleep(min(2.0, deadline - self.monotonic()))
+            if self.shared_reads is not None:
+                await self.shared_reads.acquire(newer=True)
+            else:
+                await self.sleep(min(2.0, deadline - self.monotonic()))
             if self.fatal is not None:
                 return False
             if await self._verify_close():

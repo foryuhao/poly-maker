@@ -1,0 +1,26 @@
+{
+  "scope": "2026-10-17 22:45–23:45 Asia/Shanghai",
+  "incomplete_detail_reads": [
+    {
+      "market": "22:50",
+      "snapshot_line": 130,
+      "error_type": "ValueError",
+      "error_code": "SYNC_ORDER_INVALID",
+      "http_transport_status": 200,
+      "recovered_snapshot_line": 132,
+      "recovery_after_failed_read_s": 2.4191269874572754,
+      "recovered_status": "LIVE"
+    },
+    {
+      "market": "22:55",
+      "snapshot_line": 123,
+      "error_type": "ValueError",
+      "error_code": "SYNC_ORDER_INVALID",
+      "http_transport_status": 200,
+      "recovered_snapshot_line": 125,
+      "recovery_after_failed_read_s": 2.3919639587402344,
+      "recovered_status": "CANCELED"
+    }
+  ],
+  "caveat": "Raw invalid HTTP response bodies were not persisted. Cannot identify which order validation field failed from these logs."
+}
