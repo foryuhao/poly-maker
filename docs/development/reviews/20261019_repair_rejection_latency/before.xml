@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="3" time="8.648" timestamp="2026-10-19T03:12:36.166364+08:00" hostname="VM-0-17-ubuntu"><testcase classname="tests.test_repair_rejection_latency" name="test_sl_native_rejection_closes_on_fresh_account_without_delete_loop" time="7.642"><properties><property name="post_response_to_close_sec" value="5.186416835989803" /><property name="rejected_id_delete_count" value="13" /></properties><failure message="AssertionError: SYNC_CACHE_NOT_READY&#10;assert 'BLOCKED' == 'SAFE_TO_CONTINUE'&#10;  &#10;  - SAFE_TO_CONTINUE&#10;  + BLOCKED">env = (&lt;test_rdp_sm_m2_execution.ExecutionVenue object at 0x7d0a02e61370&gt;, Config(wallet=WalletConfig(chain_id=137, signatur...ecret=None, builder_passphrase=None, relayer_url='https://relayer-v2.polymarket.com'), config_dir=PosixPath('config')))
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x7d0a02703c20&gt;
+tmp_path = PosixPath('/home/ubuntu/poly-maker-data/research_outputs/REPAIR_20261019_RELEASE_TMP/rejection_before/test_sl_native_rejection_close0')
+record_property = &lt;function record_property.&lt;locals&gt;.append_property at 0x7d0a0270cf40&gt;
+
+    async def test_sl_native_rejection_closes_on_fresh_account_without_delete_loop(
+            env, monkeypatch, tmp_path, record_property):
+        setup, repair = await setup_policy(env, monkeypatch)
+        v, e, feed, lifecycle, _, wire, _, pump, _ = setup
+        e.cfg.rdp_sm.repair.path = RDPRepairPathConfig()
+        e.cfg.rdp_sm.obi.cancel_retry_sec = .25
+        repair.observe(feed.snapshot(repair=True))
+        pump.update(bid=".39", yes_ask=".41", no_bid=".59", no_ask=".61")
+        await asyncio.sleep(.03)
+        repair.observe(feed.snapshot(repair=True))
+        assert repair.policy.mode == "SL"
+    
+        cfg = e.cfg
+        cfg.rdp_sm.sync_observe.enabled = cfg.rdp_sm.sync_observe.use_for_execution = True
+        # Production cadence and observed live request latency, without real I/O.
+        cfg.rdp_sm.sync_observe.order_interval_s = 1.
+        cfg.rdp_sm.sync_observe.account_interval_s = 2.
+        cfg.rdp_sm.sync_observe.output_dir = str(tmp_path / "cache")
+        official, anchor = e.official_time, e.time_anchor
+    
+        def reads(request):
+            time.sleep(.2)
+            if request.url.path == "/time":
+                return httpx.Response(200, json=official+time.monotonic()-anchor)
+            return v.response(request)
+    
+        companion = SyncCompanion(cfg, e.session_id, reader_factory=lambda emit, stop:
+            ObserverReader(cfg, emit=emit, stop=stop, transport=httpx.MockTransport(reads)))
+        companion.bind_market(e.meta, int(e.slug.rsplit("-", 1)[1]))
+        companion.start()
+        policy = AccountRiskPolicy(use_starting_balance=True, sync_observer=companion)
+        policy.market_id = CID
+        e.reads.account_policy = e.gateway._client.account_policy = policy
+        e.shared_reads = CachedExecutionReads(e, companion)
+        # Shorten only the test's failure deadline; the production timeout stays 10s.
+        e.shared_reads.timeout_s = 4.5
+        wire.reject_index = 0
+        post_returned = []
+    
+        def writes(request):
+            if request.method in {"POST", "DELETE"}:
+                time.sleep(.2)
+            response = wire(request)
+            if request.method == "POST":
+                post_returned.append(time.monotonic())
+                return httpx.Response(200, json=[{
+                    "success": True, "errorMsg": "invalid post-only order: order crosses book",
+                    "orderID": "", "status": "", "makingAmount": "", "takingAmount": "",
+                }], request=request)
+            return response
+    
+        client = boundary(monkeypatch, v, writes)
+        try:
+            lifecycle.account = (await e._snapshot(include_books=False))[3]
+            result, _ = await repair.repair(*e.economic_inventory(), "sl-native-rejected")
+            duration = time.monotonic()-post_returned[0]
+            rejected_id = e.attempts[-1].expected_order_id
+            deletes = sum(rejected_id in ids for ids in v.cancels)
+            record_property("post_response_to_close_sec", duration)
+            record_property("rejected_id_delete_count", deletes)
+&gt;           assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+E           AssertionError: SYNC_CACHE_NOT_READY
+E           assert 'BLOCKED' == 'SAFE_TO_CONTINUE'
+E             
+E             - SAFE_TO_CONTINUE
+E             + BLOCKED
+
+/home/ubuntu/poly-maker/tests/test_repair_rejection_latency.py:85: AssertionError</failure></testcase><testcase classname="tests.test_repair_rejection_latency" name="test_ambiguous_post_keeps_canceling_owned_signed_id[False]" time="0.289" /><testcase classname="tests.test_repair_rejection_latency" name="test_ambiguous_post_keeps_canceling_owned_signed_id[True]" time="0.294" /></testsuite></testsuites>

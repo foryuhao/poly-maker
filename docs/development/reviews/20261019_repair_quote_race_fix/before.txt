@@ -1,0 +1,52 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[SL] __
+/home/ubuntu/poly-maker/tests/test_repair_preparation_quote_race.py:81: in test_quote_crosses_during_flush_retries_and_pairs_without_session_exit
+    assert await repair.repair(*e.economic_inventory(), "quote-race") is None
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_path_repair.py:345: in repair
+    slot = await self.lifecycle.prepare(self, yes, no, window_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_lifecycle.py:210: in prepare
+    e._validate(q, window_id, snapshot.books(), e.meta)
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_execution.py:1443: in _validate
+    _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm.py:102: in _require
+    raise _Issue(SessionStatus.BLOCKED, code)
+E   polymaker.rdp_sm._Issue: QUOTE_WOULD_TAKE
+----------------------------- Captured stdout call -----------------------------
+2026-10-19 10:54:49 [info     ] order_reconcile_started        order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0
+2026-10-19 10:54:49 [info     ] owned_maker_fill_seen          order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 price=0.39 qty=5.0 side=BUY source=REST status=CONFIRMED token=2 trade_id=opening-no
+2026-10-19 10:54:49 [info     ] owned_maker_fill_seen          order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 price=0.39 qty=5.0 side=BUY source=REST status=MATCHED token=2 trade_id=opening-no
+2026-10-19 10:54:49 [info     ] fill                           pos=5.0 price=0.39 side=BUY size=5.0 token=2
+2026-10-19 10:54:49 [info     ] owned_maker_fill_applied       order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 price=0.39 qty=5.0 side=BUY source=REST status=MATCHED token=2 trade_id=opening-no
+2026-10-19 10:54:49 [info     ] order_reconcile_fill_recovered order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 price=0.39 qty=5.0 side=BUY source=REST status=CONFIRMED token=2 trade_id=opening-no
+2026-10-19 10:54:49 [info     ] order_reconcile_complete       order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 tracked_qty=5.0 venue_qty=5.0
+2026-10-19 10:54:49 [info     ] order_match_checksum           order_id=0x921415321f1a651b7d4a8619cc6ebc594f0d22dd873bbb77b321df1630cbbdc0 status=CANCELED tracked_qty=5.0 venue_qty=5.0
+__ test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[TP] __
+/home/ubuntu/poly-maker/tests/test_repair_preparation_quote_race.py:81: in test_quote_crosses_during_flush_retries_and_pairs_without_session_exit
+    assert await repair.repair(*e.economic_inventory(), "quote-race") is None
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_path_repair.py:345: in repair
+    slot = await self.lifecycle.prepare(self, yes, no, window_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_lifecycle.py:210: in prepare
+    e._validate(q, window_id, snapshot.books(), e.meta)
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm_execution.py:1443: in _validate
+    _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
+/home/ubuntu/poly-maker/src/polymaker/rdp_sm.py:102: in _require
+    raise _Issue(SessionStatus.BLOCKED, code)
+E   polymaker.rdp_sm._Issue: QUOTE_WOULD_TAKE
+----------------------------- Captured stdout call -----------------------------
+2026-10-19 10:54:49 [info     ] order_reconcile_started        order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e
+2026-10-19 10:54:49 [info     ] owned_maker_fill_seen          order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 10:54:49 [info     ] owned_maker_fill_seen          order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 10:54:49 [info     ] fill                           pos=5.0 price=0.3 side=BUY size=5.0 token=1
+2026-10-19 10:54:49 [info     ] owned_maker_fill_applied       order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 10:54:49 [info     ] order_reconcile_fill_recovered order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 10:54:49 [info     ] order_reconcile_complete       order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e tracked_qty=5.0 venue_qty=5.0
+2026-10-19 10:54:49 [info     ] order_match_checksum           order_id=0xfac3ac93539d5059069cdcd466cd04950d24fc9d40218c1296e419375149881e status=CANCELED tracked_qty=5.0 venue_qty=5.0
+=========================== short test summary info ============================
+FAILED tests/test_repair_preparation_quote_race.py::test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[SL]
+FAILED tests/test_repair_preparation_quote_race.py::test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[TP]
+2 failed, 4 deselected in 1.35s

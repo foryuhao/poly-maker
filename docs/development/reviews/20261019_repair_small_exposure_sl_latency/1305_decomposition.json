@@ -1,0 +1,7 @@
+{
+  "buy_to_first_post_sec": 0.0195310115814209,
+  "four_post_wall_durations_sec": 0.8804049491882324,
+  "first_three_ack_to_close_sec": 2.791527509689331,
+  "first_three_close_to_next_post_sec": 7.611975908279419,
+  "last_ack_to_observed_matched_sec": 3.1977438926696777
+}

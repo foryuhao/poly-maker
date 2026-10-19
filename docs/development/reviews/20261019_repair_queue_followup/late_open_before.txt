@@ -1,0 +1,17 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_late_open_order_restarts_cancel_while_canceled_proof_is_pending _____
+/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:268: in test_late_open_order_restarts_cancel_while_canceled_proof_is_pending
+    assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+E   AssertionError: 0xf29c4a0c766f26ec6cf53437537e0c22a26a98236d5bd848a4a5c5ef9e3ba07a:ORDER_NOT_TERMINAL
+E   assert 'BLOCKED' == 'SAFE_TO_CONTINUE'
+E     
+E     - SAFE_TO_CONTINUE
+E     + BLOCKED
+----------------------------- Captured stdout call -----------------------------
+2026-10-19 03:47:11 [info     ] order_reconcile_started        order_id=0xf29c4a0c766f26ec6cf53437537e0c22a26a98236d5bd848a4a5c5ef9e3ba07a
+2026-10-19 03:47:11 [info     ] order_reconcile_complete       order_id=0xf29c4a0c766f26ec6cf53437537e0c22a26a98236d5bd848a4a5c5ef9e3ba07a tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:47:11 [info     ] order_match_checksum           order_id=0xf29c4a0c766f26ec6cf53437537e0c22a26a98236d5bd848a4a5c5ef9e3ba07a status=LIVE tracked_qty=0.0 venue_qty=0.0
+=========================== short test summary info ============================
+FAILED tests/test_repair_queue_followup.py::test_late_open_order_restarts_cancel_while_canceled_proof_is_pending
+1 failed, 12 deselected in 0.77s

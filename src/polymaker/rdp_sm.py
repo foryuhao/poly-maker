@@ -33,6 +33,14 @@ from polymaker.marketdata.parse import parse_book
 from polymaker.userstream.parse import strict_number
 
 TEST_CAPITAL_LIMIT_USDC = 15.0
+
+
+def session_capital_limit(cfg):
+    """The path strategy's confirmed session budget; legacy tools retain 15."""
+    return (20.0 if cfg.rdp_sm.normal_entry_mode == "obi_v1"
+            and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1" else TEST_CAPITAL_LIMIT_USDC)
+
+
 TRADING_START_S = 15
 NORMAL_END_S = 120
 DUST_SHARES = Decimal("0.1")
@@ -445,14 +453,14 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
         "available_balance_usd": available,
         "available_balance_source": ("official CLOB balance; pre-existing commitments managed by operator"
                                      if balance_basis else "official CLOB balance minus official open BUY commitment"),
-        "basic_spendable_budget_usd": min(TEST_CAPITAL_LIMIT_USDC, available, spendable),
+        "basic_spendable_budget_usd": min(session_capital_limit(reads.cfg), available, spendable),
         "minimum_pair_commitment_usd": minimum,
     }
 
 
 async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None) -> PreflightResult:
     """Read one selected market/account once; never submit, cancel or persist."""
-    result = PreflightResult()
+    result = PreflightResult(test_capital_limit_usdc=session_capital_limit(cfg))
     if _reads is None and cfg.rdp_sm.normal_entry_mode == "obi_v1":
         from polymaker.rdp_sm_execution import _ExecutionReads
 
@@ -527,7 +535,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check(
                 "capital",
                 "PASS" if eligible else "REJECTED",
-                f"basic venue minimum within available balance, allowance and ${TEST_CAPITAL_LIMIT_USDC:g} cap",
+                f"basic venue minimum within available balance, allowance and ${session_capital_limit(cfg):g} cap",
             )
         )
         stage = "freshness"

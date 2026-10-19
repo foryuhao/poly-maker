@@ -1,0 +1,55 @@
+{
+  "session_id": "52b1dd0a83be482e8844f82829ed228a",
+  "slug": "btc-updown-5m-1792318200",
+  "start_epoch": 1792318200,
+  "journal_rows": 11659,
+  "actions": {
+    "HOLD": 79,
+    "BUY": 2
+  },
+  "actual_post_requests": 3,
+  "repair_prepared_lines": [
+    3593,
+    4529
+  ],
+  "repair_actual_posts": 0,
+  "held_despite_positive_buy_incremental_EV": 43,
+  "model_versions": [
+    "review_lease_v2"
+  ],
+  "result": {
+    "normal_windows": 3,
+    "repair_windows": 0,
+    "delta": 5.0,
+    "confirmed_yes": 5.0,
+    "confirmed_no": 0.0,
+    "merged_pairs": 0.0,
+    "final_close_barrier": "SAFE_TO_CONTINUE",
+    "execution_status": "COMPLETED",
+    "stop_reason": "MARKET_CUTOFF"
+  },
+  "sources": [
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_52b1dd0a83be482e8844f82829ed228a.jsonl",
+      "sha256": "603003787799cfd55b90fe3fc03bb35a66d31db1725ec29cc02456a994a1842f"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/52b1dd0a83be482e8844f82829ed228a/snapshots.jsonl",
+      "sha256": "4c14656d8c21de9c2341a9cbc2faabec7eae3dc65b92293ac7cb53fff1e35d15"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/52b1dd0a83be482e8844f82829ed228a/summary.json",
+      "sha256": "3af65e9e2283b02e74d665f42da2582651579843d83b475b611beea52918661d"
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/52b1dd0a83be482e8844f82829ed228a/manifest.json",
+      "sha256": "5fa1e99d2f739a34cae4a6a28528d7da129cab901d3435e96993a97a34c971e0"
+    }
+  ],
+  "limitations": [
+    "event wall time is observation/logging time, not native matching time",
+    "no official winner/payout evidence in this reconstruction",
+    "second activation failure deduplicated: counter evidence, no independent reason snapshot",
+    "81 model results are not 81 accepted orders or evidence of positive realized EV"
+  ]
+}

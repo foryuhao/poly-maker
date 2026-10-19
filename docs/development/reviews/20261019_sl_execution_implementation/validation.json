@@ -1,0 +1,271 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-19T10:20:23.987738+00:00",
+  "scope": "SIGNAL_DRIVEN_SL_EXECUTION_AND_REQUIRED_HANDOFF_ACCOUNTING",
+  "policy": "hd_tp_sl_v1",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "user_confirmed_cost_basis": "FIFO actual session fills; residual own mark PnL for reverse ordinary REPAIR; session PnL continuous",
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_sl.py",
+    "src/polymaker/rdp_sm_sl_ledger.py",
+    "src/polymaker/rdp_sm_path_repair.py",
+    "src/polymaker/rdp_sm_lifecycle.py",
+    "src/polymaker/rdp_sm_execution.py",
+    "src/polymaker/rdp_sm_cached_reads.py",
+    "src/polymaker/rdp_sm_network.py",
+    "src/polymaker/rdp_sm.py",
+    "src/polymaker/rdp_sm_logging.py",
+    "src/polymaker/execution/gateway.py",
+    "src/polymaker/state/store.py"
+  ],
+  "changed_tests": [
+    "tests/test_repair_sl_execution.py",
+    "tests/test_rdp_sm_path_repair.py",
+    "tests/test_repair_preparation_quote_race.py",
+    "tests/test_repair_live_cache_regression.py"
+  ],
+  "confirmed_limits": {
+    "session_capital_usdc": "20",
+    "possible_delta_interval": [
+      "-5",
+      "5"
+    ],
+    "small_actual_reverse_stop_shares": "2.5",
+    "normal_cutoff_elapsed_s": 120,
+    "forced_sl_elapsed_s": 180,
+    "repair_cutoff_elapsed_s": 240
+  },
+  "strategy_signal_or_threshold_changes": false,
+  "changes": [
+    "Prioritize new SL POST and independently cancel old TP/SL without waiting for old POST or DELETE acknowledgments or full-account reconciliation.",
+    "Per-request signing/send context and pre-POST durable identity; late acceptance triggers another cancellation.",
+    "All possible in-flight quantities and costs reserved; session total 20 USDC only for obi_v1 + hd_tp_sl_v1; other modes retain 15.",
+    "MATCHED offsets execution need but remains risk until proven; identity-consistent terminal and complete trades release only proven unfilled remainder.",
+    "Actual reverse >2.5 enters ordinary HD using FIFO remaining actual lots including prior proven dust, own floating PnL and actual acquisition time.",
+    "Keep existing network circuit/cooldown, final full close, T180/T240 and Merge boundaries."
+  ],
+  "initial_main_regression": {
+    "tests": 1356,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 1354,
+    "seconds": 271.035,
+    "artifact": "regression_initial.xml",
+    "skipped_cases": []
+  },
+  "final_main_regression": {
+    "tests": 1359,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 1359,
+    "seconds": 267.637,
+    "artifact": "regression.xml",
+    "skipped_cases": []
+  },
+  "final_disjoint_shared_regression": {
+    "tests": 715,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "passed": 713,
+    "seconds": 10.31,
+    "artifact": "shared_regression.xml",
+    "skipped_cases": [
+      "tests.test_live_marketdata.test_market_service_builds_a_live_book",
+      "tests.test_live_marketdata.test_live_market_ws_raw_frames"
+    ]
+  },
+  "combined_tests": {
+    "passed": 2072,
+    "skipped": 2,
+    "failures": 0,
+    "errors": 0,
+    "selection": "All tests in tests/ partitioned by test_repair*.py or test_rdp_sm*.py versus the remaining files; no duplicate runs in combined count"
+  },
+  "initial_failures_resolved": [
+    "Legacy journal Decimal format restored to 15 rather than 15.0.",
+    "NORMAL-only cache regression fixture uses existing production ws_stale_halt_s instead of a 0.6 second fixture timeout; production timeout and starvation-specific test unchanged."
+  ],
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "simulated_native_http_latency": {
+    "samples": 27,
+    "mean_ms": 5.813738814106694,
+    "p95_nearest_rank_ms": 9.462322108447552,
+    "max_ms": 10.07932797074318
+  },
+  "latency_scope": "Offline mocked HTTP samples after SL target admission. Excludes preceding policy detection and capacity wait; not live-exchange or fill latency.",
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true,
+      "validation_reference": "docs/development/reviews/20261019_sl_execution_implementation/validation.json"
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true,
+      "validation_reference": "docs/development/reviews/20261019_sl_execution_implementation/validation.json"
+    }
+  },
+  "ready_for_supervised_live_test": true,
+  "ready_for_live": true,
+  "actual_live_latency_validated": false,
+  "positive_ev_validated": false,
+  "live_processes_started_or_restarted": false,
+  "real_orders_sent": 0,
+  "configuration_change": "validation_reference only; numeric strategy parameters unchanged. Budget increase is scoped code policy, not a new TOML threshold.",
+  "previous_validation": "../20261019_repair_queue_followup/validation.json",
+  "deferred_issue_unchanged": "RP-001",
+  "automatic_trading_continuation_after_crash": false,
+  "predevelopment_source_continuity": [
+    {
+      "path": "src/polymaker/rdp_sm.py",
+      "before_sha256": "38c30ecc950762b2d7e741cedc98e0a8916f5ad488938ba98ccaa4ecb96ee65a",
+      "after_sha256": "12d68e072e9ff1fb9587840585ca3dfe68edcc7b229cb2ab2e8cb9415b836454",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_entry.py",
+      "before_sha256": "4e056c5ac38ae06918ae2d8c8a01e862b614fb7d7bd203cc5987408bc5648765",
+      "after_sha256": "4e056c5ac38ae06918ae2d8c8a01e862b614fb7d7bd203cc5987408bc5648765",
+      "unchanged": true
+    },
+    {
+      "path": "src/polymaker/rdp_sm_execution.py",
+      "before_sha256": "2f43bb7b5561f64da358ff8a8588ea21db10230d505e891840e90d84ec7decda",
+      "after_sha256": "19027c984d965eb8612cc0aea1a5c06538d289ab604c8389d548fcc4e9a6eb92",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_lifecycle.py",
+      "before_sha256": "f6a3935b6b06d069b345f607abcf40603b8de6fcf794d70ad7889ffacd0ac215",
+      "after_sha256": "41415c244f1e349946ef609c0d79bc6793d992f6b48ecc90eee7f49654cfd2cc",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_loop.py",
+      "before_sha256": "30787be221ae9a258b3526e085160ef45d8ad76e764eab1680c08837521f716d",
+      "after_sha256": "30787be221ae9a258b3526e085160ef45d8ad76e764eab1680c08837521f716d",
+      "unchanged": true
+    },
+    {
+      "path": "src/polymaker/rdp_sm_cached_reads.py",
+      "before_sha256": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f",
+      "after_sha256": "6dabb97970361efee28d43c4871b5b0d02c529ce458073655276cf13c177d454",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_network.py",
+      "before_sha256": "225874f4ed4f5a5e75ae6b4ac27bb8d153c1113f7de551fc878330fac6e18263",
+      "after_sha256": "dbe5f03af498ab4158098cbfb706e56f5259f3f919b0f5dd4e12c4efb355d4b6",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_path_repair.py",
+      "before_sha256": "c893ff6d243f4f24a95f02be1bfd2fd9226e05bdec5f71233dfd878aecaab2f4",
+      "after_sha256": "2cddc33aa9f4407b42359034c3c1a16a0c9034b3a64e369f35f8396399e6f00a",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_repair.py",
+      "before_sha256": "75c52e670a751a6b63029bc2dfabde5de1605ec13f195dee5d83fb4c26269d9c",
+      "after_sha256": "75c52e670a751a6b63029bc2dfabde5de1605ec13f195dee5d83fb4c26269d9c",
+      "unchanged": true
+    },
+    {
+      "path": "src/polymaker/repair_policy.py",
+      "before_sha256": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285",
+      "after_sha256": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285",
+      "unchanged": true
+    },
+    {
+      "path": "src/polymaker/execution/gateway.py",
+      "before_sha256": "22fca5c9c202b566044a0194ad9ae0567d2330284f2fc2e90c71b1b710a2d686",
+      "after_sha256": "3bfebab15903b153f3655aec4491ce4efd8823ef57f06a2164d8f13d1375d38a",
+      "unchanged": false
+    },
+    {
+      "path": "src/polymaker/rdp_sm_writer.py",
+      "before_sha256": "9cad9cf16cebb1df3fa9f48a1ef9d194e9004320865fb8b15ace5f3eb0edd32b",
+      "after_sha256": "9cad9cf16cebb1df3fa9f48a1ef9d194e9004320865fb8b15ace5f3eb0edd32b",
+      "unchanged": true
+    },
+    {
+      "path": "src/polymaker/config.py",
+      "before_sha256": "17993c2f3507a75dc164a4b625985f62c4e26f7e675b404bed74be4065b21815",
+      "after_sha256": "17993c2f3507a75dc164a4b625985f62c4e26f7e675b404bed74be4065b21815",
+      "unchanged": true
+    },
+    {
+      "path": "config/config.toml",
+      "before_sha256": "37baf7345f8b30feb252f4cd9365652ec058298e174e97ccada9a84f7eb2a423",
+      "after_sha256": "095addd921dd6161eba54772954c8129b8e4286d66725151d12fa081dd03fae1",
+      "unchanged": false
+    },
+    {
+      "path": "livecfg/config.toml",
+      "before_sha256": "2d38808c1551f343f943d3aec5059b420c8ebeae83b7f2c1e2b2556937baf6f1",
+      "after_sha256": "b9bddd6c19fc08358f3c4babf0d67072dc09b2c154fa735ebe01c64eb2ee7033",
+      "unchanged": false
+    },
+    {
+      "path": "pyproject.toml",
+      "before_sha256": "6bc74b4fb7fdd160614e1edde6997e205aa8a52f1824d5ac29c69a658694147c",
+      "after_sha256": "6bc74b4fb7fdd160614e1edde6997e205aa8a52f1824d5ac29c69a658694147c",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_repair_policy.py",
+      "before_sha256": "c53075f58e18640dfcdf24f754b379252b5baff93b5a0763d673f3d307f865a0",
+      "after_sha256": "c53075f58e18640dfcdf24f754b379252b5baff93b5a0763d673f3d307f865a0",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_rdp_sm_path_repair.py",
+      "before_sha256": "1de41b5d1f1ec9bd6cf2566d1f7c33804d500ce243805802f5d7bf4de7b3f4cc",
+      "after_sha256": "a1198cf7c3a479c0001159940f110d5ccab48a9c0086bf89cd97375b80f3d3c3",
+      "unchanged": false
+    },
+    {
+      "path": "tests/test_repair_small_exposure.py",
+      "before_sha256": "6c350e528c29827cff1b83992898088e746ea6d92ef41dc1a50fa8c411329256",
+      "after_sha256": "6c350e528c29827cff1b83992898088e746ea6d92ef41dc1a50fa8c411329256",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_repair_queue_followup.py",
+      "before_sha256": "59612ce169444d4c58912ba3dc185da41fef3eb9388defd2884c28005ca42dd3",
+      "after_sha256": "59612ce169444d4c58912ba3dc185da41fef3eb9388defd2884c28005ca42dd3",
+      "unchanged": true
+    },
+    {
+      "path": "tests/test_rdp_sm_network.py",
+      "before_sha256": "09a6c704a8a7172c4bb7898c76573a1c07da274dac5c1b4faa90ed85d1f16996",
+      "after_sha256": "09a6c704a8a7172c4bb7898c76573a1c07da274dac5c1b4faa90ed85d1f16996",
+      "unchanged": true
+    }
+  ],
+  "final_source_sha256": {
+    "src/polymaker/rdp_sm_sl.py": "f69d7b745e281bbeaa9874069c5d88a15561152b47e7befc272154eb63525e2c",
+    "src/polymaker/rdp_sm_sl_ledger.py": "9c4b0f6e857a570d3d59555fb3e413470f4311f7aedf5647044a38acd91875e2",
+    "src/polymaker/rdp_sm_path_repair.py": "2cddc33aa9f4407b42359034c3c1a16a0c9034b3a64e369f35f8396399e6f00a",
+    "src/polymaker/rdp_sm_lifecycle.py": "41415c244f1e349946ef609c0d79bc6793d992f6b48ecc90eee7f49654cfd2cc",
+    "src/polymaker/rdp_sm_execution.py": "19027c984d965eb8612cc0aea1a5c06538d289ab604c8389d548fcc4e9a6eb92",
+    "src/polymaker/rdp_sm_cached_reads.py": "6dabb97970361efee28d43c4871b5b0d02c529ce458073655276cf13c177d454",
+    "src/polymaker/rdp_sm_network.py": "dbe5f03af498ab4158098cbfb706e56f5259f3f919b0f5dd4e12c4efb355d4b6",
+    "src/polymaker/rdp_sm.py": "12d68e072e9ff1fb9587840585ca3dfe68edcc7b229cb2ab2e8cb9415b836454",
+    "src/polymaker/rdp_sm_logging.py": "d83441dccd6b8c7e39e6b7476dce57d70a255245ff3f597769e2b53c03c791df",
+    "src/polymaker/execution/gateway.py": "3bfebab15903b153f3655aec4491ce4efd8823ef57f06a2164d8f13d1375d38a",
+    "src/polymaker/state/store.py": "7368ef94ffc6266e12e3427091e4427fd2e5e078f6706dfedfd1ba0993f5599b",
+    "tests/test_repair_sl_execution.py": "f0ad0bb352067a06334517cca4282038568fc398be658214df9b0431680c8f15",
+    "tests/test_rdp_sm_path_repair.py": "a1198cf7c3a479c0001159940f110d5ccab48a9c0086bf89cd97375b80f3d3c3",
+    "tests/test_repair_preparation_quote_race.py": "0750962614bf2ecf22e871495fa1b2803c98df55251fe2ad6ac99bf159aa00c9",
+    "tests/test_repair_live_cache_regression.py": "b9a2a58cada7958ffbc5380c60303b955c48c5695798a01ecee8d11af80a3100",
+    "config/config.toml": "095addd921dd6161eba54772954c8129b8e4286d66725151d12fa081dd03fae1",
+    "livecfg/config.toml": "b9bddd6c19fc08358f3c4babf0d67072dc09b2c154fa735ebe01c64eb2ee7033"
+  }
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "market": "12:20",
+    "slug": "btc-updown-5m-1792383600",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792383600",
+    "queried_utc": "2026-10-19T07:40:39.902259+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "12:30",
+    "slug": "btc-updown-5m-1792384200",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792384200",
+    "queried_utc": "2026-10-19T07:40:39.902729+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "12:40",
+    "slug": "btc-updown-5m-1792384800",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792384800",
+    "queried_utc": "2026-10-19T07:40:39.903067+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "12:50",
+    "slug": "btc-updown-5m-1792385400",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792385400",
+    "queried_utc": "2026-10-19T07:40:39.903330+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "14:50",
+    "slug": "btc-updown-5m-1792392600",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792392600",
+    "queried_utc": "2026-10-19T07:40:39.903611+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "15:15",
+    "slug": "btc-updown-5m-1792394100",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792394100",
+    "queried_utc": "2026-10-19T07:40:39.904152+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "15:20",
+    "slug": "btc-updown-5m-1792394400",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792394400",
+    "queried_utc": "2026-10-19T07:40:39.904929+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  },
+  {
+    "market": "15:30",
+    "slug": "btc-updown-5m-1792395000",
+    "url": "https://gamma-api.polymarket.com/markets?slug=btc-updown-5m-1792395000",
+    "queried_utc": "2026-10-19T07:40:39.906062+00:00",
+    "error": "HTTP Error 403: Forbidden"
+  }
+]

@@ -81,7 +81,34 @@ class SyncObserver:
         self._target = None
         self._history = deque(maxlen=1024)
         self._detail_requirements = {}
+        self._retired_rejections = set()
+        self._detail_retries = {}
+        self._position_proofs = {}
         self.network = None
+
+    @staticmethod
+    def position_proof_signature(oid, order, trades, capital, positions):
+        legs = sorted(((t["trade_id"], t["status"], leg) for t in trades
+                       for leg in t["maker_legs"] if leg["order_id"] == oid), key=lambda x: x[0])
+        return json.dumps([order, legs, capital, positions], sort_keys=True)
+
+    def accept_position_proofs(self, snapshot, ids):
+        """Retire detail polling only after the executor's economic proof.
+
+        This is diagnostic work scheduling, never execution admission. Any
+        subsequent order, trade, position or capital change invalidates it.
+        """
+        if snapshot.session_id != self.session_id:
+            raise ValueError("SYNC_POSITION_PROOF_SESSION_MISMATCH")
+        good = {r.name: r for r in snapshot.last_good}
+        if not all(n in good for n in ("trades", "capital", "positions")):
+            return
+        with self._condition:
+            for oid in ids:
+                if "order:"+oid in good:
+                    self._position_proofs[oid] = self.position_proof_signature(oid,
+                        good["order:"+oid].data, good["trades"].data,
+                        good["capital"].data, good["positions"].data)
 
     def track_orders(self, requirements):
         """Passive pending-proof work, consumed only by the next periodic round.
@@ -92,8 +119,20 @@ class SyncObserver:
         """
         with self._condition:
             for oid, after in requirements.items():
+                self._retired_rejections.discard(oid)
                 self._detail_requirements[oid] = max(
                     after, self._detail_requirements.get(oid, float("-inf")))
+
+    def retire_rejected_orders(self, ids):
+        """Executor-proven nonacceptance retires detail work, never observations.
+
+        Passive scheduling only. Fresh open/trade facts can queue the ID again;
+        the executor retains ownership and independently revokes its proof.
+        """
+        with self._condition:
+            self._retired_rejections.update(ids)
+            for oid in ids:
+                self._detail_requirements.pop(oid, None)
 
     def bind_market(self, market):
         """Passive main-process context, never an out-of-cycle refresh request."""
@@ -289,6 +328,10 @@ class SyncObserver:
     def _change_market(self, market):
         self._market = market
         self._pending, self._details, self._legs = {}, {}, {}
+        self._detail_retries.clear()
+        with self._condition:
+            self._position_proofs.clear()
+            self._retired_rejections.clear()
         self.reader.observed_ids = frozenset()
         for cache in (self._attempts, self._good):
             for name in list(cache):
@@ -298,10 +341,14 @@ class SyncObserver:
 
     def _observe_rows(self, opened, trade_evidence):
         market = self._market
+        with self._condition:
+            retired = set(self._retired_rejections)
         rows = opened.data if opened.complete else json.loads(opened.partial_json)
         for row in rows:
             if row["market_id"] == market.condition_id:
                 oid = row["order_id"]
+                with self._condition:
+                    self._retired_rejections.discard(oid)
                 self._pending.setdefault(oid, 0)
         trades = (trade_evidence.data if trade_evidence.complete
                   else json.loads(trade_evidence.partial_json))
@@ -309,8 +356,11 @@ class SyncObserver:
             for leg in trade["maker_legs"]:
                 oid = leg["order_id"]
                 if (oid not in self._pending and oid not in self._details
+                        and oid not in retired
                         and (leg["maker_address"] or "").lower() != self.reader.funder.lower()):
                     continue
+                with self._condition:
+                    self._retired_rejections.discard(oid)
                 key = (trade["trade_id"], oid)
                 signature = (trade["status"], leg["asset_id"], leg["side"],
                              leg["matched_amount"], leg["price"])
@@ -350,13 +400,32 @@ class SyncObserver:
         self._observe_rows(opened, trades)
         with self._condition:
             requirements = dict(self._detail_requirements)
+            position_proofs = dict(self._position_proofs)
+            retired = set(self._retired_rejections)
+        for oid in retired:
+            self._pending.pop(oid, None)
+            self._detail_retries.pop(oid, None)
+        for oid, signature in position_proofs.items():
+            sources = [self._good.get(n) for n in ("order:"+oid, "trades", "capital", "positions")]
+            if not all(sources) or self.position_proof_signature(oid, *(s.data for s in sources)) != signature:
+                self._pending.setdefault(oid, 0)
+                # Invalidation queues ONE new reconciliation, not a permanent
+                # priority-zero job on every round. Otherwise four retired
+                # proofs can monopolize the detail budget and starve a newer
+                # filled order forever after account inventory changes.
+                with self._condition:
+                    if self._position_proofs.get(oid) == signature:
+                        del self._position_proofs[oid]
         for oid, after in requirements.items():
             known = self._good.get("order:" + oid)
             if known is None or known.started_monotonic < after:
                 self._pending.setdefault(oid, 0)
         self.reader.observed_ids = (frozenset(self._pending) | frozenset(self._details)
                                     | frozenset(requirements))
-        selected = sorted(self._pending, key=lambda oid: (self._pending[oid], oid))[
+        now = time.monotonic()
+        selected = sorted((oid for oid in self._pending
+                           if now >= self._detail_retries.get(oid, (0, 0))[1]),
+                          key=lambda oid: (self._pending[oid], oid))[
             :self.settings.detail_limit]
         backlog = len(self._pending) - len(selected)
         details = await asyncio.gather(*[
@@ -365,10 +434,23 @@ class SyncObserver:
             for oid in selected
         ])
         for oid, evidence in zip(selected, details, strict=True):
+            with self._condition:
+                if oid in self._retired_rejections:
+                    self._pending.pop(oid, None)
+                    self._detail_retries.pop(oid, None)
+                    continue
             self._detail_sequence += 1
             self._pending[oid] = self._detail_sequence
             if not evidence.complete:
+                failures = self._detail_retries.get(oid, (0, 0))[0] + 1
+                delay = max(evidence.retry_after_s, min(8.0, 2.0 ** min(failures, 3)))
+                self._detail_retries[oid] = (failures, time.monotonic() + delay)
+                self._emit({"kind": "sync_detail_retry", "order_id": oid,
+                            "failures": failures, "retry_delay_s": delay,
+                            "error_type": evidence.error_type, "error_code": evidence.error_code,
+                            "http_status": evidence.http_status})
                 continue
+            self._detail_retries.pop(oid, None)
             row = evidence.data
             self._details[oid] = row
             agrees = False
@@ -388,17 +470,19 @@ class SyncObserver:
             statuses = [signature[0] for (_, known), signature in self._legs.items() if known == oid]
             terminal = row["status"] in {"CANCELED", "CANCELLED", "EXPIRED"} or (
                 row["status"] == "MATCHED" and row["remaining_size"] == 0)
-            if terminal and agrees and all(status == "CONFIRMED" for status in statuses):
+            proven = (all(n in self._good for n in ("capital", "positions")) and trades.complete
+                and position_proofs.get(oid) == self.position_proof_signature(oid, row, trades.data,
+                    self._good["capital"].data, self._good["positions"].data))
+            if terminal and agrees and (all(status == "CONFIRMED" for status in statuses) or proven):
                 del self._pending[oid]
         self._publish()
-        reads = [clock, opened, trades, *details]
+        reads = [clock, opened, trades]
         # Coverage backlog is reported separately: it should not induce fault backoff.
         self._emit({"kind": "sync_detail_coverage", "market_slug": market.slug,
                     "selected": len(selected), "unread_pending": backlog})
-        # A not-yet-visible signed ID remains unresolved without delaying all
-        # collection refreshes through exponential fault backoff.
-        complete = all(r.complete or (r.name.startswith("order:") and r.http_status == 404)
-                       for r in reads)
+        # Individual detail errors keep their own retry and unresolved facts.
+        # They must not starve /time probes or healthy complete collections.
+        complete = all(r.complete for r in reads)
         return complete, max(r.retry_after_s for r in reads), (
             backlog == 0 and all(r.complete for r in details))
 

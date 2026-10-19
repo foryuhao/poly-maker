@@ -1,0 +1,1292 @@
+[
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791953700/b7d7bcee3fa34644b0d683e7ea7d2243/market_events.jsonl",
+    "sha256": "4876c1f0d58522473647763353c7f1ca0a0b1c3f58194b1edc629e2e3bbf8a86",
+    "bytes": 398843950,
+    "slug": "btc-updown-5m-1791953700",
+    "session_id": "N/A",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 2634,
+      "DELTA": 335928,
+      "TRADE": 1313,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 241,
+      "raw_valid": 241,
+      "p_exact_match": 241,
+      "p_different": 0
+    },
+    "grid_valid": 241,
+    "grid_sigma_valid": 199,
+    "seconds": 13.177405409049243
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979200/bbdeaf0f36884cbca7cd324e8605d31a/market_events.jsonl",
+    "sha256": "203b0aabef68672894710af3a6f6a4dafaeeaa7a015d92376ed488ad5e0e9500",
+    "bytes": 332841917,
+    "slug": "btc-updown-5m-1791979200",
+    "session_id": "b2ac72b0d0734baf85583ddc774767bd",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 2522,
+      "DELTA": 272024,
+      "TRADE": 1257,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 190,
+      "raw_valid": 190,
+      "p_exact_match": 190,
+      "p_different": 0
+    },
+    "grid_valid": 190,
+    "grid_sigma_valid": 149,
+    "seconds": 14.398204132448882
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979500/ef54151c6fd24301bf92b337e8dba5ee/market_events.jsonl",
+    "sha256": "7a3577f4e4d9d6c769cf840a0cb6610de6e999e0d1281b0d9a203e09941abef1",
+    "bytes": 549548742,
+    "slug": "btc-updown-5m-1791979500",
+    "session_id": "05c70bd0cb8f4e34a21ae473433c3e6c",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4270,
+      "DELTA": 449574,
+      "TRADE": 2133,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 237,
+      "raw_valid": 237,
+      "p_exact_match": 237,
+      "p_different": 0
+    },
+    "grid_valid": 237,
+    "grid_sigma_valid": 216,
+    "seconds": 19.239194750785828
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979800/0cee886478f34d81a56e97db405a0cac/market_events.jsonl",
+    "sha256": "a6b67a91b97db7beb455de678caddf337fac229e94a9adfea670cae5d960f790",
+    "bytes": 299274971,
+    "slug": "btc-updown-5m-1791979800",
+    "session_id": "d32a6f3fe57341d4a901818cb6aef47a",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2402,
+      "DELTA": 244470,
+      "TRADE": 1202,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 147,
+      "raw_valid": 147,
+      "p_exact_match": 147,
+      "p_different": 0
+    },
+    "grid_valid": 147,
+    "grid_sigma_valid": 127,
+    "seconds": 8.921543919015676
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981000/9b3921df606d4eb09fe28aaa6f952310/market_events.jsonl",
+    "sha256": "5d5b0367d2d6c539f69633b176ae61d31ec7803605dd280eb788f4491c26e318",
+    "bytes": 310998114,
+    "slug": "btc-updown-5m-1791981000",
+    "session_id": "aaf9f10676ba4784a41f3892f2d82d0b",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2912,
+      "DELTA": 252916,
+      "TRADE": 1454,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 157,
+      "raw_valid": 157,
+      "p_exact_match": 157,
+      "p_different": 0
+    },
+    "grid_valid": 157,
+    "grid_sigma_valid": 137,
+    "seconds": 8.906354316975921
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981300/66602e5d47eb4812af20aee78c0f7e2d/market_events.jsonl",
+    "sha256": "26ef812a19d83a8ad23d94100b638261a93c88ca0435e3d1703a49759e2ed543",
+    "bytes": 724355677,
+    "slug": "btc-updown-5m-1791981300",
+    "session_id": "3106ee4955c64b2cba0e2fc8b8ce7dd6",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 5432,
+      "DELTA": 593026,
+      "TRADE": 2717,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 256,
+      "raw_valid": 256,
+      "p_exact_match": 256,
+      "p_different": 0
+    },
+    "grid_valid": 256,
+    "grid_sigma_valid": 236,
+    "seconds": 16.53998760599643
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981600/c9e8b806b4f54b1e9340f595fb1e4f48/market_events.jsonl",
+    "sha256": "d166b739fd09cb337ed7cba595532117315b7fbce29a3217b383ec4183190be3",
+    "bytes": 597848591,
+    "slug": "btc-updown-5m-1791981600",
+    "session_id": "b5ebb5c07a5347c6a18889eadc3a943b",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4392,
+      "DELTA": 489606,
+      "TRADE": 2193,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 233,
+      "raw_valid": 233,
+      "p_exact_match": 233,
+      "p_different": 0
+    },
+    "grid_valid": 233,
+    "grid_sigma_valid": 213,
+    "seconds": 13.477589537855238
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981900/72c41dba66874d099441648925a69fb2/market_events.jsonl",
+    "sha256": "0af7fd9219c83a647e4133f1673058a3746bd07c3eed31567b6ef5db34f1cad0",
+    "bytes": 553534490,
+    "slug": "btc-updown-5m-1791981900",
+    "session_id": "1cebf6fc06ae4564a8d17c5af82ea621",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4048,
+      "DELTA": 453216,
+      "TRADE": 2023,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 229,
+      "raw_valid": 229,
+      "p_exact_match": 229,
+      "p_different": 0
+    },
+    "grid_valid": 229,
+    "grid_sigma_valid": 209,
+    "seconds": 12.455714483745396
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983100/34368e9544db4667996713e4eb1147db/market_events.jsonl",
+    "sha256": "de46433c83ae57a73154e32f8bd0416089c53fa71067fe37830c03437fffd33d",
+    "bytes": 609935348,
+    "slug": "btc-updown-5m-1791983100",
+    "session_id": "0d81001828b043a4bf10f1b74ce08160",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4502,
+      "DELTA": 500130,
+      "TRADE": 2247,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 258,
+      "raw_valid": 258,
+      "p_exact_match": 258,
+      "p_different": 0
+    },
+    "grid_valid": 258,
+    "grid_sigma_valid": 237,
+    "seconds": 13.798679023049772
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983400/ed0a732a659f4173b746de0cd08be559/market_events.jsonl",
+    "sha256": "2bdc6b309e10944f4cbd1bc49c7a16133e8a9a9c8eb03708643d7d788dbd48e9",
+    "bytes": 457458042,
+    "slug": "btc-updown-5m-1791983400",
+    "session_id": "3b03033c90c543fe88ed0c2cf938ca33",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 3124,
+      "DELTA": 375426,
+      "TRADE": 1561,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 197,
+      "raw_valid": 197,
+      "p_exact_match": 197,
+      "p_different": 0
+    },
+    "grid_valid": 196,
+    "grid_sigma_valid": 175,
+    "seconds": 10.848941575270146
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983700/ef854b2343f149f6951b63556df6b1dc/market_events.jsonl",
+    "sha256": "f6b9e98a037b13483e8f7bf75a57e16c167fab871c6213511763ffb15906d48d",
+    "bytes": 557302511,
+    "slug": "btc-updown-5m-1791983700",
+    "session_id": "369db93f2f8b489fbfafa6fd945790c8",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4368,
+      "DELTA": 455620,
+      "TRADE": 2182,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 233,
+      "raw_valid": 233,
+      "p_exact_match": 233,
+      "p_different": 0
+    },
+    "grid_valid": 233,
+    "grid_sigma_valid": 213,
+    "seconds": 13.14384879777208
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984000/03d749aa244149e18b1d2efa7ad3cd6e/market_events.jsonl",
+    "sha256": "fce6b36a03c05976b04ebff3120d46fa63209f1186dd87a6aeb3de20da6cca95",
+    "bytes": 620109725,
+    "slug": "btc-updown-5m-1791984000",
+    "session_id": "515f7aa174b2444cbbb5877b28795694",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4420,
+      "DELTA": 507582,
+      "TRADE": 2209,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 246,
+      "raw_valid": 246,
+      "p_exact_match": 246,
+      "p_different": 0
+    },
+    "grid_valid": 245,
+    "grid_sigma_valid": 224,
+    "seconds": 14.244925126899034
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984300/2f0cae81eca049b48718702ef183ebbc/market_events.jsonl",
+    "sha256": "8674448cee143c70869824274312df5f3bec82001fbf62013a90415ccfb439ed",
+    "bytes": 245505389,
+    "slug": "btc-updown-5m-1791984300",
+    "session_id": "ee2431dcd538411aa36bbecb99216d7e",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 1592,
+      "DELTA": 201404,
+      "TRADE": 794,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 172,
+      "raw_valid": 172,
+      "p_exact_match": 172,
+      "p_different": 0
+    },
+    "grid_valid": 172,
+    "grid_sigma_valid": 130,
+    "seconds": 5.387950413394719
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984600/ead6ac986477411abb4880bb5360fb31/market_events.jsonl",
+    "sha256": "e0689b35f146be24f94e7b79d919ee958e0c17a45f6aacecb252161ec5ad03c0",
+    "bytes": 283390279,
+    "slug": "btc-updown-5m-1791984600",
+    "session_id": "304b92835ae74fe1adba5308c531b0b5",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2226,
+      "DELTA": 231796,
+      "TRADE": 1112,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 163,
+      "raw_valid": 163,
+      "p_exact_match": 163,
+      "p_different": 0
+    },
+    "grid_valid": 163,
+    "grid_sigma_valid": 123,
+    "seconds": 6.500744194723666
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984900/29cb2a98d67d40b2b47b3a6fde021698/market_events.jsonl",
+    "sha256": "99f62a2c18aa2112f0a3ac5b9a79624a8fc8c18891cc67faed272389994bcbc4",
+    "bytes": 587179632,
+    "slug": "btc-updown-5m-1791984900",
+    "session_id": "6bcff357209b4239af3041bc7ca0ce43",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4068,
+      "DELTA": 481644,
+      "TRADE": 2031,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 226,
+      "raw_valid": 226,
+      "p_exact_match": 226,
+      "p_different": 0
+    },
+    "grid_valid": 226,
+    "grid_sigma_valid": 206,
+    "seconds": 13.900827852077782
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985200/b849e1b9393a45f392dbf35d5a24ebe9/market_events.jsonl",
+    "sha256": "9d718ef50d0cf547a48a73d7187e0e9006d94ec69c01db5e18bee01604ef5c9f",
+    "bytes": 622000403,
+    "slug": "btc-updown-5m-1791985200",
+    "session_id": "82600a05a06e429d8165744ea2e0e9d1",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4052,
+      "DELTA": 509250,
+      "TRADE": 2025,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 232,
+      "raw_valid": 232,
+      "p_exact_match": 232,
+      "p_different": 0
+    },
+    "grid_valid": 232,
+    "grid_sigma_valid": 212,
+    "seconds": 14.291881627868861
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985500/00780f95bc5d4c0d9cb82768e91e9be3/market_events.jsonl",
+    "sha256": "61b253df9309a293eb150726060b204f8cc2e22b8efecf6399ed9683729cd507",
+    "bytes": 427288519,
+    "slug": "btc-updown-5m-1791985500",
+    "session_id": "662fabd0728944cb97c944306e173690",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 2938,
+      "DELTA": 350602,
+      "TRADE": 1467,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 202,
+      "raw_valid": 201,
+      "p_exact_match": 201,
+      "p_different": 0
+    },
+    "grid_valid": 201,
+    "grid_sigma_valid": 159,
+    "seconds": 9.692685198970139
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002600/32f3345e80374ff68e4e657e5d0c0784/market_events.jsonl",
+    "sha256": "62f440fd4e5c3c3bf18e5f1a17827da70c15700ad1472b5436f46ad564cc52ad",
+    "bytes": 563580310,
+    "slug": "btc-updown-5m-1792002600",
+    "session_id": "c1a5ab7585134d7f828a2929fb03cb8f",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 4070,
+      "DELTA": 461942,
+      "TRADE": 2033,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 277,
+      "raw_valid": 275,
+      "p_exact_match": 275,
+      "p_different": 0
+    },
+    "grid_valid": 275,
+    "grid_sigma_valid": 234,
+    "seconds": 12.794981773942709
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002900/e160e78c52c643edb8aa1fba90f540b7/market_events.jsonl",
+    "sha256": "06f2e86e617ef9c9d6d85da2d568229102d7e9d9ebc54c088e74b59bf4be715b",
+    "bytes": 547087193,
+    "slug": "btc-updown-5m-1792002900",
+    "session_id": "9e8fb789fd964676b0b51b6add0ef427",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 3828,
+      "DELTA": 448724,
+      "TRADE": 1915,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 262,
+      "raw_valid": 262,
+      "p_exact_match": 262,
+      "p_different": 0
+    },
+    "grid_valid": 262,
+    "grid_sigma_valid": 241,
+    "seconds": 12.23381696920842
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003200/e15d00730765426193c5783ce6b73b2c/market_events.jsonl",
+    "sha256": "2aac799cfcaad9159049ba4a3ce6219fac93d6b02304fd059fbf61d073ecc114",
+    "bytes": 469926575,
+    "slug": "btc-updown-5m-1792003200",
+    "session_id": "75bc2a57aac849b9a05e0413829618bf",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2678,
+      "DELTA": 385738,
+      "TRADE": 1338,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 257,
+      "raw_valid": 257,
+      "p_exact_match": 257,
+      "p_different": 0
+    },
+    "grid_valid": 257,
+    "grid_sigma_valid": 237,
+    "seconds": 10.83132040174678
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003500/d702c1a96e364461954413487618c31f/market_events.jsonl",
+    "sha256": "50f28eca990a14cd3a53ba6a879ec50224780740adc3fb4f9480103855339f1d",
+    "bytes": 363975644,
+    "slug": "btc-updown-5m-1792003500",
+    "session_id": "16827385a15440b1ab6f0c228fc96d85",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2398,
+      "DELTA": 299200,
+      "TRADE": 1196,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 215,
+      "raw_valid": 215,
+      "p_exact_match": 215,
+      "p_different": 0
+    },
+    "grid_valid": 215,
+    "grid_sigma_valid": 193,
+    "seconds": 8.032073381822556
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003800/b7a53cdece91447e9416c82d997952ed/market_events.jsonl",
+    "sha256": "7cf4ca9fb43f1d00c91c3cad8b548867a898794baa6d2fff0374368a1f21a045",
+    "bytes": 257249143,
+    "slug": "btc-updown-5m-1792003800",
+    "session_id": "1f2648db647e49218d488152738b4cae",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1840,
+      "DELTA": 210450,
+      "TRADE": 921,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 201,
+      "raw_valid": 201,
+      "p_exact_match": 201,
+      "p_different": 0
+    },
+    "grid_valid": 201,
+    "grid_sigma_valid": 181,
+    "seconds": 6.0105637442320585
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040100/f3f9fc5f2a514a0f8db73fd6fe0a3243/market_events.jsonl",
+    "sha256": "fd7530834f9535352205fdefe884cdfe301134f9bc9c54ef2b9d4d25ef5b6140",
+    "bytes": 362534405,
+    "slug": "btc-updown-5m-1792040100",
+    "session_id": "071c40a16cc64f5590bfb3af63a48f9b",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 6,
+      "BOOK": 1918,
+      "DELTA": 298410,
+      "TRADE": 955,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 236,
+      "raw_valid": 233,
+      "p_exact_match": 233,
+      "p_different": 0
+    },
+    "grid_valid": 233,
+    "grid_sigma_valid": 172,
+    "seconds": 7.727794724982232
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040400/b6a70ee59337459f82ba4d07425c5639/market_events.jsonl",
+    "sha256": "328d506c47d584a7c64559659bbce1266e9ddf30e98383a7a36c7bf5fd0e4e0e",
+    "bytes": 352141188,
+    "slug": "btc-updown-5m-1792040400",
+    "session_id": "21ce8166cb1d4a4180b9116c9121ea55",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 2136,
+      "DELTA": 289610,
+      "TRADE": 1064,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 204,
+      "raw_valid": 203,
+      "p_exact_match": 203,
+      "p_different": 0
+    },
+    "grid_valid": 203,
+    "grid_sigma_valid": 162,
+    "seconds": 7.416134367696941
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040700/f5795d67eb3a490aaec1ca10f037ad2c/market_events.jsonl",
+    "sha256": "8278bc7e3390711af5c7a2e7b707f6dcdd834922e2adde101e2786081268540b",
+    "bytes": 358932890,
+    "slug": "btc-updown-5m-1792040700",
+    "session_id": "4b13c107f0474103b86b07b5422e6f96",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2146,
+      "DELTA": 294900,
+      "TRADE": 1072,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 177,
+      "raw_valid": 177,
+      "p_exact_match": 177,
+      "p_different": 0
+    },
+    "grid_valid": 177,
+    "grid_sigma_valid": 157,
+    "seconds": 9.21491036331281
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792041000/fe6344cb039d47ca938ae24a61231d4c/market_events.jsonl",
+    "sha256": "3c732a043dad3c7b65af6cbb99ef509cd4eb9fa32bebd0f584e65dfa7f83a45b",
+    "bytes": 118736963,
+    "slug": "btc-updown-5m-1792041000",
+    "session_id": "78105fc6afd9450a82390e9bf6ceca93",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 938,
+      "DELTA": 97032,
+      "TRADE": 467,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 117,
+      "raw_valid": 117,
+      "p_exact_match": 117,
+      "p_different": 0
+    },
+    "grid_valid": 117,
+    "grid_sigma_valid": 97,
+    "seconds": 2.903987906873226
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792049100/355a02c81f5045a1bb9d3ca1cf773dd4/market_events.jsonl",
+    "sha256": "3cc2b85dd9e601b675ead6b12ff8c45941dcc051686a18557adf90a9ae2c4780",
+    "bytes": 363863403,
+    "slug": "btc-updown-5m-1792049100",
+    "session_id": "d2885b6d9be643ecbe8e7d6ce3e1a6f0",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1894,
+      "DELTA": 300438,
+      "TRADE": 946,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 202,
+      "raw_valid": 202,
+      "p_exact_match": 202,
+      "p_different": 0
+    },
+    "grid_valid": 202,
+    "grid_sigma_valid": 182,
+    "seconds": 8.285926553420722
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050300/70caa0692f864f25b6fee16f45f7f08b/market_events.jsonl",
+    "sha256": "536fb8cf16116addb667035dfb3ab0e65db70d93b8b9a68b467fc02e8352b47d",
+    "bytes": 306665196,
+    "slug": "btc-updown-5m-1792050300",
+    "session_id": "c61688a846204e5b9a8f5717ee48f85c",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1992,
+      "DELTA": 251352,
+      "TRADE": 995,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 163,
+      "raw_valid": 163,
+      "p_exact_match": 163,
+      "p_different": 0
+    },
+    "grid_valid": 163,
+    "grid_sigma_valid": 143,
+    "seconds": 6.961359173990786
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050600/390040f368ed47d0a7a0c6e8088a43f0/market_events.jsonl",
+    "sha256": "9d7ccb2629c48b50a9b59ba6641164b1bffc4cc7c17b425fd4fa3dd9833ed91f",
+    "bytes": 426875252,
+    "slug": "btc-updown-5m-1792050600",
+    "session_id": "a704dbf74aac40b78a77a8d578c378b2",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 4,
+      "BOOK": 2251,
+      "DELTA": 351918,
+      "TRADE": 1120,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 219,
+      "raw_valid": 219,
+      "p_exact_match": 219,
+      "p_different": 0
+    },
+    "grid_valid": 219,
+    "grid_sigma_valid": 178,
+    "seconds": 9.380306734703481
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050900/370fb10428e34d08ad87630b9bb35414/market_events.jsonl",
+    "sha256": "a9b42f773b8f6b00789c32889aabe737006e4e32e7a729e5541dbb2df4ef1803",
+    "bytes": 251895732,
+    "slug": "btc-updown-5m-1792050900",
+    "session_id": "9ed3eb99b5b0487b95da6d087b27e313",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1604,
+      "DELTA": 206928,
+      "TRADE": 797,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 144,
+      "raw_valid": 144,
+      "p_exact_match": 144,
+      "p_different": 0
+    },
+    "grid_valid": 144,
+    "grid_sigma_valid": 124,
+    "seconds": 5.527794191148132
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052100/bdef06569d6c4e20baa7c7e851efbfaf/market_events.jsonl",
+    "sha256": "54a327833a16e59c9ced229f9e49f051a48f9df3cdc571e986c5a421c496b588",
+    "bytes": 289585350,
+    "slug": "btc-updown-5m-1792052100",
+    "session_id": "a6296284d3034393ad6741920a43cba5",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1600,
+      "DELTA": 238538,
+      "TRADE": 799,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 162,
+      "raw_valid": 162,
+      "p_exact_match": 162,
+      "p_different": 0
+    },
+    "grid_valid": 162,
+    "grid_sigma_valid": 142,
+    "seconds": 6.173936263658106
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052400/33e0e741d5424ac6b2a9d7430211e26a/market_events.jsonl",
+    "sha256": "6f7e71b7f4dcc2187ad9d34c784e120773c6c36533fae7f93fe74ccbd11ee122",
+    "bytes": 563387833,
+    "slug": "btc-updown-5m-1792052400",
+    "session_id": "62161b3c081243eab5abca5d16e3adc0",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 3602,
+      "DELTA": 462898,
+      "TRADE": 1801,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 247,
+      "raw_valid": 247,
+      "p_exact_match": 247,
+      "p_different": 0
+    },
+    "grid_valid": 247,
+    "grid_sigma_valid": 227,
+    "seconds": 11.910148131195456
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052700/729ad3f5ca19490fa6451383aa4c0504/market_events.jsonl",
+    "sha256": "bfa73ce31f362cbc529206b90fbaa7015decde33bac66e06a8a3fa748cc00002",
+    "bytes": 371255238,
+    "slug": "btc-updown-5m-1792052700",
+    "session_id": "751b28525c3848ada756331b87f082f0",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2330,
+      "DELTA": 304850,
+      "TRADE": 1163,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 210,
+      "raw_valid": 210,
+      "p_exact_match": 210,
+      "p_different": 0
+    },
+    "grid_valid": 210,
+    "grid_sigma_valid": 188,
+    "seconds": 8.758095965255052
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053000/c87617919e66455380c356ec36b9a28d/market_events.jsonl",
+    "sha256": "ea3bed9db32c4c93af33afc5d77825478dea85145e7612f59e23058a87d035e3",
+    "bytes": 552437692,
+    "slug": "btc-updown-5m-1792053000",
+    "session_id": "fa870f51759b462995f20f18d8f2be42",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 3910,
+      "DELTA": 451456,
+      "TRADE": 1956,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 241,
+      "raw_valid": 241,
+      "p_exact_match": 241,
+      "p_different": 0
+    },
+    "grid_valid": 241,
+    "grid_sigma_valid": 221,
+    "seconds": 11.690431175753474
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053300/ff8fe999dc2644fe8f6b350e4a93eec8/market_events.jsonl",
+    "sha256": "057095963aaf469fd806d849a400e3bbe14df169a0ea451091de97884e115337",
+    "bytes": 546441094,
+    "slug": "btc-updown-5m-1792053300",
+    "session_id": "dde15549109a465a967d89a17957e9e4",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4178,
+      "DELTA": 447494,
+      "TRADE": 2087,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 272,
+      "raw_valid": 272,
+      "p_exact_match": 272,
+      "p_different": 0
+    },
+    "grid_valid": 272,
+    "grid_sigma_valid": 251,
+    "seconds": 13.43198782298714
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069500/a56b041ae5f84a969f2a52fa831d419f/market_events.jsonl",
+    "sha256": "592ccddd65cd69292287441059edb8bd20a4f0ba8a3451fc6446a02e8c4a8828",
+    "bytes": 514132881,
+    "slug": "btc-updown-5m-1792069500",
+    "session_id": "19c359db67e841898fa7d1ee54d85633",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2622,
+      "DELTA": 424160,
+      "TRADE": 1307,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 215,
+      "raw_valid": 215,
+      "p_exact_match": 215,
+      "p_different": 0
+    },
+    "grid_valid": 215,
+    "grid_sigma_valid": 195,
+    "seconds": 12.2517250017263
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069800/66646dc31a574770ac705be6ca1d6571/market_events.jsonl",
+    "sha256": "f37d96984db2a0359d76095211655b6da4567424a84b51a16e912febd5c5b336",
+    "bytes": 529978627,
+    "slug": "btc-updown-5m-1792069800",
+    "session_id": "ad8d1cf321ab48e69cfd5439d10bed54",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4230,
+      "DELTA": 432654,
+      "TRADE": 2112,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 228,
+      "raw_valid": 228,
+      "p_exact_match": 228,
+      "p_different": 0
+    },
+    "grid_valid": 228,
+    "grid_sigma_valid": 208,
+    "seconds": 12.41436404036358
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070100/be178901c560411d87991a1a812bfc62/market_events.jsonl",
+    "sha256": "d1e49367f002d62f119bb059aa0d123405a49f3a19687dbd9e96d1ccf29a1c6e",
+    "bytes": 589399305,
+    "slug": "btc-updown-5m-1792070100",
+    "session_id": "13bae4d1778d4565b87c1915278ba656",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4008,
+      "DELTA": 483532,
+      "TRADE": 2000,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 243,
+      "raw_valid": 243,
+      "p_exact_match": 243,
+      "p_different": 0
+    },
+    "grid_valid": 243,
+    "grid_sigma_valid": 222,
+    "seconds": 12.884340127930045
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070400/496a53eef848481680af4f5891c3048a/market_events.jsonl",
+    "sha256": "ef1ca8e08250ec89913be3de3bc1712746f031a73c9cce09e3fe9ee3f2b6563c",
+    "bytes": 406060501,
+    "slug": "btc-updown-5m-1792070400",
+    "session_id": "5c6289deba634b659c8c7124bb12d607",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2644,
+      "DELTA": 332892,
+      "TRADE": 1321,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 236,
+      "raw_valid": 236,
+      "p_exact_match": 236,
+      "p_different": 0
+    },
+    "grid_valid": 236,
+    "grid_sigma_valid": 215,
+    "seconds": 8.962409478146583
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072500/fee8b393c40b447fbf31de46d0745816/market_events.jsonl",
+    "sha256": "a5c86c71173229cc449874508c60a583efce2dbebbf7acf2080cfbfd2c5f80ec",
+    "bytes": 407338451,
+    "slug": "btc-updown-5m-1792072500",
+    "session_id": "b4ee8e91a1344fcc9b79fe3be547a6e8",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 3234,
+      "DELTA": 333020,
+      "TRADE": 1615,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 187,
+      "raw_valid": 187,
+      "p_exact_match": 187,
+      "p_different": 0
+    },
+    "grid_valid": 187,
+    "grid_sigma_valid": 167,
+    "seconds": 8.854275030083954
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072800/829c56cdd1c043fc97227e713b228ffb/market_events.jsonl",
+    "sha256": "3b24b18d3788fc0e191daa7042f0dbcb798ed211b3da439f4a4feefabd1c21ca",
+    "bytes": 445351253,
+    "slug": "btc-updown-5m-1792072800",
+    "session_id": "10630d662da5457aa277d57c0e05439d",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2724,
+      "DELTA": 366204,
+      "TRADE": 1362,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 188,
+      "raw_valid": 188,
+      "p_exact_match": 188,
+      "p_different": 0
+    },
+    "grid_valid": 188,
+    "grid_sigma_valid": 166,
+    "seconds": 10.222600171808153
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073100/ebc4437ab8414ee4a53ea7f489153bb2/market_events.jsonl",
+    "sha256": "00cbdb566f0d00cc12a155998254023395dc570795b0c5c999a7d9de553f0c87",
+    "bytes": 400687264,
+    "slug": "btc-updown-5m-1792073100",
+    "session_id": "87c0fc5ada4b4fecbc62b81a77ba7a35",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 2544,
+      "DELTA": 329192,
+      "TRADE": 1273,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 175,
+      "raw_valid": 175,
+      "p_exact_match": 175,
+      "p_different": 0
+    },
+    "grid_valid": 175,
+    "grid_sigma_valid": 155,
+    "seconds": 9.021352722775191
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073400/0446508fd1a1458093f90a6930ee8a8f/market_events.jsonl",
+    "sha256": "ab9775e8a5c0fba4d0ac245b67da3329e6d3acfd36e603ec7c5c1e6f8aa0812d",
+    "bytes": 319681074,
+    "slug": "btc-updown-5m-1792073400",
+    "session_id": "e9e2b8fa77214c10a1ba0b17d617c581",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 1800,
+      "DELTA": 263040,
+      "TRADE": 901,
+      "TICK": 2,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 218,
+      "raw_valid": 218,
+      "p_exact_match": 218,
+      "p_different": 0
+    },
+    "grid_valid": 218,
+    "grid_sigma_valid": 198,
+    "seconds": 7.112813580781221
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073700/7af724cc9ce947bf8796d8478c622c1a/market_events.jsonl",
+    "sha256": "26a6bbbd5d83a2e85c80e12ee9c8ec22378d60c60f61c2392bd235d23fa79c44",
+    "bytes": 542015971,
+    "slug": "btc-updown-5m-1792073700",
+    "session_id": "9a815f1cc7b541619ba55a2afbef8512",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4602,
+      "DELTA": 442810,
+      "TRADE": 2302,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 235,
+      "raw_valid": 235,
+      "p_exact_match": 235,
+      "p_different": 0
+    },
+    "grid_valid": 235,
+    "grid_sigma_valid": 215,
+    "seconds": 12.016722158063203
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076100/b15bc5b4c0b6445082401eff91fab320/market_events.jsonl",
+    "sha256": "f2e2a4d25acd751fcb5f51999d039f5bc96c4535d71f2dfaf027af62dddabe4d",
+    "bytes": 640068118,
+    "slug": "btc-updown-5m-1792076100",
+    "session_id": "0113e055ef4f49ee817f820fa16cf094",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4992,
+      "DELTA": 523444,
+      "TRADE": 2494,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 248,
+      "raw_valid": 248,
+      "p_exact_match": 248,
+      "p_different": 0
+    },
+    "grid_valid": 248,
+    "grid_sigma_valid": 227,
+    "seconds": 13.437648687977344
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076400/78f7cdad1e7e4e3f9674f6f152ba8c43/market_events.jsonl",
+    "sha256": "aaf77a6a4bb7e7c4a4ca26e0063d72ccfb37aae348dbe22624dcde0c472697df",
+    "bytes": 487330092,
+    "slug": "btc-updown-5m-1792076400",
+    "session_id": "568d97aff33845b696568f0fb9abce38",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 4383,
+      "DELTA": 397010,
+      "TRADE": 2189,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 218,
+      "raw_valid": 218,
+      "p_exact_match": 218,
+      "p_different": 0
+    },
+    "grid_valid": 218,
+    "grid_sigma_valid": 198,
+    "seconds": 12.071266809944063
+  },
+  {
+    "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076700/b9229a014fb54f98ab99717c4e7e3f84/market_events.jsonl",
+    "sha256": "d8f01610e6d623a1bf92b6f8d1e038b3b5c4ec2b5859cc98341c99060ab19ac9",
+    "bytes": 629030560,
+    "slug": "btc-updown-5m-1792076700",
+    "session_id": "69ba2594f06f4bff951ac8503d0366f1",
+    "events": {
+      "OFFICIAL_METADATA": 1,
+      "CONNECTION": 2,
+      "BOOK": 5730,
+      "DELTA": 514384,
+      "TRADE": 2858,
+      "OBSERVATION_END": 1
+    },
+    "issues": {
+      "dropped_flag_rows": 0
+    },
+    "comparison": {
+      "archive_valid": 238,
+      "raw_valid": 238,
+      "p_exact_match": 238,
+      "p_different": 0
+    },
+    "grid_valid": 238,
+    "grid_sigma_valid": 218,
+    "seconds": 5.848324813880026
+  }
+]

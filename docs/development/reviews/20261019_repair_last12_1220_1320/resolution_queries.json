@@ -1,0 +1,26 @@
+[
+  {
+    "queried_at_utc": "2026-10-19T05:22:08.213485+00:00",
+    "slug": "btc-updown-5m-1792383600",
+    "http_status": 200,
+    "market": null
+  },
+  {
+    "queried_at_utc": "2026-10-19T05:22:08.210852+00:00",
+    "slug": "btc-updown-5m-1792384200",
+    "http_status": 200,
+    "market": null
+  },
+  {
+    "queried_at_utc": "2026-10-19T05:22:08.295376+00:00",
+    "slug": "btc-updown-5m-1792384800",
+    "http_status": 200,
+    "market": null
+  },
+  {
+    "queried_at_utc": "2026-10-19T05:22:08.051389+00:00",
+    "slug": "btc-updown-5m-1792385400",
+    "http_status": 200,
+    "market": null
+  }
+]

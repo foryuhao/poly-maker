@@ -1,0 +1,60 @@
+{
+  "recorded_at_utc": "2026-10-18T16:21:10.470652+00:00",
+  "files": [
+    {
+      "file": "extract.py",
+      "sha256": "5a406aa81345c7322817d067073bae425cd5091b9630b0f3077c739ee3e63f8f",
+      "bytes": 7363
+    },
+    {
+      "file": "analyze.py",
+      "sha256": "7728a92adadbd3160f5792f38288b77f8220909f22bdfb0928ce8ced10c6e20b",
+      "bytes": 18340
+    },
+    {
+      "file": "validate.py",
+      "sha256": "0bbeda120cff3977ec637ca4a9367a6de040fd7680e6460125924f25d44f5d36",
+      "bytes": 4172
+    },
+    {
+      "file": "build_notebook.py",
+      "sha256": "fc1eb7b34105ec2ac477c51cf6e6c020b859da7cd58ee9c62d085ae93fb067a7",
+      "bytes": 9707
+    },
+    {
+      "file": "evidence.json",
+      "sha256": "121fcde6e33c3e7d25439930f5d1c9200825ce1b94d7b15c2d5f2549405807f3",
+      "bytes": 460650
+    },
+    {
+      "file": "raw_manifest.json",
+      "sha256": "c9a581bbdc2332b0e0b366a0b8c9417abe69daf5c06c669907c9aa41c5f02e11",
+      "bytes": 37841
+    },
+    {
+      "file": "candidate_summary.csv",
+      "sha256": "d33cf8501ab8703785dad87d4105b5fe8f7bcc0d2e9f6c44ff6404382a46a1bb",
+      "bytes": 135399
+    },
+    {
+      "file": "validation.json",
+      "sha256": "fbff3d477e16a714d6b03a71e6f2373b475eca0d814de22fc20f78c2d201c0f2",
+      "bytes": 533
+    },
+    {
+      "file": "research.ipynb",
+      "sha256": "80c14b80d02b88e92a3e872079c84f884b3129100afc673759f5ac551189726b",
+      "bytes": 187534
+    },
+    {
+      "file": "tp_rate_sensitivity.png",
+      "sha256": "9c7e58fe8d24390029c8160a468b900e0b9443424f8ad7f29bb3a1f2dd0128d3",
+      "bytes": 130925
+    },
+    {
+      "file": "sl_threshold_tradeoff.png",
+      "sha256": "25464782526a8f19eeeb30df08e7e855ed738883728a21dea2ba68e5335a9324",
+      "bytes": 101396
+    }
+  ]
+}

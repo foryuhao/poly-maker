@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "cases_checked": 78084,
+  "market_clusters": 47,
+  "source_quote_comparisons_exact": 10047,
+  "source_quote_comparisons_different": 0,
+  "fixed_normal_episodes_economics_checked": 13,
+  "raw_fixed_normal_journals_read": 10,
+  "checks": [
+    "unique market/case identity",
+    "recorded source hashes",
+    "causal event order",
+    "TP rate monotonicity",
+    "SL independence of TP rate without assumed fills",
+    "censoring and quote-cross ordering",
+    "primary confirmed opening and repair legs"
+  ]
+}

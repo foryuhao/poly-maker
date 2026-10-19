@@ -252,7 +252,7 @@ class ExecutionGateway:
 
         return await self._io(build)
 
-    async def send_prepared(self, prepared, *, submit_guard):
+    async def send_prepared(self, prepared, *, submit_guard, operation_context=None):
         """Restricted RDP path: send original objects, no signing, logs or GET."""
         await self._order_bucket.acquire(len(prepared.orders))
 
@@ -269,13 +269,18 @@ class ExecutionGateway:
                 return None
             if not hasattr(client, "operation_local"):
                 client.operation_local = local()
+            previous_context = getattr(client.operation_local, "context", None)
+            context = dict(operation_context or {
+                key: getattr(client, key, None) for key in (
+                    "attempt", "batch_attempts", "network_batch_id", "on_post_start")})
+            context.update(submit_guard=submit_guard, expected_body_hash=prepared.body_hash)
+            client.operation_local.context = context
             client.operation_local.no_get = True
-            client.expected_body_hash = prepared.body_hash
             try:
                 return client.post_orders(list(prepared.orders), post_only=True)
             finally:
                 client.operation_local.no_get = False
-                client.expected_body_hash = None
+                client.operation_local.context = previous_context
 
         return await self._io(send)
 
@@ -611,14 +616,13 @@ class ExecutionGateway:
             log.warning("get_full_book_failed", err=str(exc))
             return None
 
-    async def token_balance(self, token_id: str) -> float:
+    async def token_balance(self, token_id: str) -> float | None:
         """Exact on-chain conditional-token balance (shares) held by the funder.
 
         Returns None on total RPC failure so callers can distinguish "0 shares"
         from "couldn't read".
         """
-        bal = await self._token_balance_opt(token_id)
-        return bal if bal is not None else 0.0
+        return await self._token_balance_opt(token_id)
 
     async def _token_balance_opt(self, token_id: str) -> float | None:
         def _read() -> float | None:

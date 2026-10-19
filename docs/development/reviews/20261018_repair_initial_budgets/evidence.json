@@ -1,0 +1,597 @@
+{
+  "scope": {
+    "start": "2026-10-14T12:55:00+08:00",
+    "last_market_start": "2026-10-15T23:05:00+08:00",
+    "filter": "15 <= elapsed_sec < 240; exclude DECISION; volatility and probability VALID",
+    "grain": "market / session / base risk_snapshot_id",
+    "fixed_inventory_shares": 5,
+    "timezone": "Asia/Shanghai"
+  },
+  "coverage": {
+    "base_slots_pre240": 10650,
+    "unknown_or_invalid_vol_probability": 2061,
+    "excluded_decision_records": 299,
+    "valid_vol_probability_slots": 8589,
+    "valid_actual_nonzero_inventory_slots": 1777,
+    "runs": 47,
+    "unique_markets": 47
+  },
+  "fixed5_sd_1s": {
+    "n": 8589,
+    "minimum": 0.0,
+    "maximum": 0.4020477280734414,
+    "p10": 0.04548621941384347,
+    "p25": 0.07599672648869472,
+    "p50": 0.11216526805654674,
+    "p75": 0.15242586625073506,
+    "p90": 0.19729889323440206,
+    "p95": 0.230808760083368
+  },
+  "fixed5_sd_2s": {
+    "n": 8589,
+    "minimum": 0.0,
+    "maximum": 0.568581349762751,
+    "p10": 0.06432722839613582,
+    "p25": 0.10747560129627073,
+    "p50": 0.1586256433127821,
+    "p75": 0.21556272730825699,
+    "p90": 0.2790227706532927,
+    "p95": 0.3264128788244169
+  },
+  "market_median_fixed5_sd_1s": {
+    "n": 47,
+    "minimum": 0.01888771173179791,
+    "maximum": 0.1924257688366053,
+    "p10": 0.05711712494304795,
+    "p25": 0.07879342486045594,
+    "p50": 0.10975214582276141,
+    "p75": 0.1326796192939582,
+    "p90": 0.1529375323182662,
+    "p95": 0.16212314205009679
+  },
+  "actual_inventory_sd_1s": {
+    "n": 1777,
+    "minimum": 0.0039056343770665996,
+    "maximum": 0.39607859422406766,
+    "p10": 0.013672383974659382,
+    "p25": 0.020278157271431722,
+    "p50": 0.06303150009840032,
+    "p75": 0.1330984954761703,
+    "p90": 0.18759969079114322,
+    "p95": 0.24115985267182166
+  },
+  "period_sensitivity": {
+    "entry_period_15_120": {
+      "n": 3958,
+      "minimum": 0.01736980922253201,
+      "maximum": 0.3578361583707266,
+      "p10": 0.055291824335813596,
+      "p25": 0.08122000622725384,
+      "p50": 0.10907459228233382,
+      "p75": 0.14124187630653365,
+      "p90": 0.1707075970784634,
+      "p95": 0.1997448936140853
+    },
+    "later_period_120_240": {
+      "n": 4631,
+      "minimum": 0.0,
+      "maximum": 0.4020477280734414,
+      "p10": 0.034736335683987804,
+      "p25": 0.06906954359715256,
+      "p50": 0.11522688318866287,
+      "p75": 0.1651754065925385,
+      "p90": 0.2138481113797442,
+      "p95": 0.2560694920472216
+    }
+  },
+  "wait_candidates": [
+    {
+      "budget": 0.1,
+      "median_h_seconds": 0.7948463840321415,
+      "fraction_allowing_1s": 0.41436721387821634,
+      "fraction_allowing_2s": 0.22016532774478983,
+      "p10_h_seconds": 0.2568920734952124
+    },
+    {
+      "budget": 0.15,
+      "median_h_seconds": 1.7884043640723182,
+      "fraction_allowing_1s": 0.7383863080684596,
+      "fraction_allowing_2s": 0.4539527302363488,
+      "p10_h_seconds": 0.5780071653642279
+    },
+    {
+      "budget": 0.2,
+      "median_h_seconds": 3.179385536128566,
+      "fraction_allowing_1s": 0.9058097566655023,
+      "fraction_allowing_2s": 0.6899522645243916,
+      "p10_h_seconds": 1.0275682939808497
+    }
+  ],
+  "latest_entries": {
+    "date": "2026-10-17 22:45-23:45 Asia/Shanghai",
+    "markets": 10,
+    "count": 13,
+    "initial_costs": {
+      "n": 13,
+      "minimum": 1.2,
+      "maximum": 4.55,
+      "p10": 1.48,
+      "p25": 2.1,
+      "p50": 2.6,
+      "p75": 3.3,
+      "p90": 3.6500000000000004,
+      "p95": 4.039999999999999
+    },
+    "loss_candidates": [
+      {
+        "budget": 1.0,
+        "below_budget": 0,
+        "total": 13,
+        "above_budget": 13
+      },
+      {
+        "budget": 1.5,
+        "below_budget": 2,
+        "total": 13,
+        "above_budget": 11
+      },
+      {
+        "budget": 2.0,
+        "below_budget": 3,
+        "total": 13,
+        "above_budget": 10
+      }
+    ],
+    "rows": [
+      {
+        "market": "22:45",
+        "window": "w7",
+        "quantity": 5.0,
+        "entry_price": 0.66,
+        "initial_worst_loss": 3.3,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl"
+      },
+      {
+        "market": "23:00",
+        "window": "w16",
+        "quantity": 5.0,
+        "entry_price": 0.24,
+        "initial_worst_loss": 1.2,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl"
+      },
+      {
+        "market": "23:05",
+        "window": "w11",
+        "quantity": 5.0,
+        "entry_price": 0.54,
+        "initial_worst_loss": 2.7,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl"
+      },
+      {
+        "market": "23:10",
+        "window": "w1",
+        "quantity": 5.0,
+        "entry_price": 0.42,
+        "initial_worst_loss": 2.1,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl"
+      },
+      {
+        "market": "23:15",
+        "window": "w1",
+        "quantity": 5.0,
+        "entry_price": 0.51,
+        "initial_worst_loss": 2.55,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl"
+      },
+      {
+        "market": "23:20",
+        "window": "w8",
+        "quantity": 5.0,
+        "entry_price": 0.91,
+        "initial_worst_loss": 4.55,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl"
+      },
+      {
+        "market": "23:20",
+        "window": "w13",
+        "quantity": 5.0,
+        "entry_price": 0.32,
+        "initial_worst_loss": 1.6,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl"
+      },
+      {
+        "market": "23:25",
+        "window": "w1",
+        "quantity": 5.0,
+        "entry_price": 0.52,
+        "initial_worst_loss": 2.6,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl"
+      },
+      {
+        "market": "23:25",
+        "window": "w3",
+        "quantity": 5.0,
+        "entry_price": 0.53,
+        "initial_worst_loss": 2.65,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl"
+      },
+      {
+        "market": "23:25",
+        "window": "w7",
+        "quantity": 5.0,
+        "entry_price": 0.69,
+        "initial_worst_loss": 3.45,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl"
+      },
+      {
+        "market": "23:30",
+        "window": "w1",
+        "quantity": 5.0,
+        "entry_price": 0.29,
+        "initial_worst_loss": 1.45,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl"
+      },
+      {
+        "market": "23:35",
+        "window": "w1",
+        "quantity": 5.0,
+        "entry_price": 0.74,
+        "initial_worst_loss": 3.7,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl"
+      },
+      {
+        "market": "23:40",
+        "window": "w2",
+        "quantity": 5.0,
+        "entry_price": 0.42,
+        "initial_worst_loss": 2.1,
+        "source": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl"
+      }
+    ]
+  },
+  "recommendation": {
+    "B_loss": 1.5,
+    "B_wait": 0.15,
+    "scope": "per-episode acceptance / per-wait standard-deviation proxy",
+    "stage": "provisional shadow and replay candidates, not production defaults",
+    "max_recheck_seconds": 2.0,
+    "rationale": "B_loss is a chosen risk tolerance informed by entry costs; B_wait is sized from historical fixed-5-share local variance."
+  },
+  "caveats": [
+    "Volatility data cover October 14-15; the latest entry cohort is October 17. They are separate populations.",
+    "Base slots are serially correlated; 8589 slots are not 8589 independent trades.",
+    "The fixed-5-share series is a standardized scenario based on observed variance, not actual inventory or realized loss.",
+    "Excluded missing/invalid risk slots are not zero risk; actual inventory is often UNKNOWN while orders are active.",
+    "Original matched timestamps were not preserved; local observations cannot establish exact execution latency.",
+    "Loss-budget counts describe initial isolated entry cost only, not all risk gates or counterfactual HOLD profitability.",
+    "No new-policy fill simulation, settlement-HOLD outcome backtest or parameter optimality test was performed.",
+    "B_loss is an acceptance budget, not a guaranteed realized stop; B_wait is a standard-deviation proxy, not VaR.",
+    "One-second and two-second projections assume locally constant variance and inventory."
+  ],
+  "source_manifests": [
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791953700/b7d7bcee3fa34644b0d683e7ea7d2243/risk_snapshots.jsonl",
+      "sha256": "6d9baeae167a284d3ba8940a45da755e437fb03a3c76c5a8ab7936ed53c8646e",
+      "market": "btc-updown-5m-1791953700",
+      "session_id": "N/A"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791979200/bbdeaf0f36884cbca7cd324e8605d31a/risk_snapshots.jsonl",
+      "sha256": "bfdeb582c67ac851aac05d4ab495d432c0d5f6e16d5bbc3d3919b672d6c91c9d",
+      "market": "btc-updown-5m-1791979200",
+      "session_id": "b2ac72b0d0734baf85583ddc774767bd"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791979500/ef54151c6fd24301bf92b337e8dba5ee/risk_snapshots.jsonl",
+      "sha256": "35a49ac3cdc927e37ae2dbc7bbd29e4e6ed1a4049257d75fa61f30b3bd965cd6",
+      "market": "btc-updown-5m-1791979500",
+      "session_id": "05c70bd0cb8f4e34a21ae473433c3e6c"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791979800/0cee886478f34d81a56e97db405a0cac/risk_snapshots.jsonl",
+      "sha256": "e31aa3bfc624f11e2d087e3fd444fcb31280d138a6771130a7084797e1b959f6",
+      "market": "btc-updown-5m-1791979800",
+      "session_id": "d32a6f3fe57341d4a901818cb6aef47a"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791981000/9b3921df606d4eb09fe28aaa6f952310/risk_snapshots.jsonl",
+      "sha256": "699cd134062cc07a251c16083e99f4c6b1c65ce30f3c84ef7d134d951732f4c3",
+      "market": "btc-updown-5m-1791981000",
+      "session_id": "aaf9f10676ba4784a41f3892f2d82d0b"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791981300/66602e5d47eb4812af20aee78c0f7e2d/risk_snapshots.jsonl",
+      "sha256": "ed6f45a09f62a9608cb3151c7499b1599a27e6e5b991afedeee40d9685ee129a",
+      "market": "btc-updown-5m-1791981300",
+      "session_id": "3106ee4955c64b2cba0e2fc8b8ce7dd6"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791981600/c9e8b806b4f54b1e9340f595fb1e4f48/risk_snapshots.jsonl",
+      "sha256": "3fe3223d88de7d5b9db655c4c3f4ea370d595c90d9acbbf25458f2effd7d47eb",
+      "market": "btc-updown-5m-1791981600",
+      "session_id": "b5ebb5c07a5347c6a18889eadc3a943b"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791981900/72c41dba66874d099441648925a69fb2/risk_snapshots.jsonl",
+      "sha256": "b00f2539874f543ff4e31686dd6423be684d57385c17c82abdce2a6b128d07bd",
+      "market": "btc-updown-5m-1791981900",
+      "session_id": "1cebf6fc06ae4564a8d17c5af82ea621"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791983100/34368e9544db4667996713e4eb1147db/risk_snapshots.jsonl",
+      "sha256": "1ba43822d7de4356635c6622b871fa04898822e16d099ab9136104d5fb1fc39b",
+      "market": "btc-updown-5m-1791983100",
+      "session_id": "0d81001828b043a4bf10f1b74ce08160"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791983400/ed0a732a659f4173b746de0cd08be559/risk_snapshots.jsonl",
+      "sha256": "46ee56a71482bdbbb52bbcd4ae7e6b71f5ce5008b267be88271dc7fe98154cd9",
+      "market": "btc-updown-5m-1791983400",
+      "session_id": "3b03033c90c543fe88ed0c2cf938ca33"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791983700/ef854b2343f149f6951b63556df6b1dc/risk_snapshots.jsonl",
+      "sha256": "8a5106bf5f74d6914a004e995bb5d61f711001247a606a2953809b1f8bd53885",
+      "market": "btc-updown-5m-1791983700",
+      "session_id": "369db93f2f8b489fbfafa6fd945790c8"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791984000/03d749aa244149e18b1d2efa7ad3cd6e/risk_snapshots.jsonl",
+      "sha256": "dc90510aa5e8e185263abb38b6e9dfb8cdb98bf54f70bf8793a9f8085ada6358",
+      "market": "btc-updown-5m-1791984000",
+      "session_id": "515f7aa174b2444cbbb5877b28795694"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791984300/2f0cae81eca049b48718702ef183ebbc/risk_snapshots.jsonl",
+      "sha256": "03b908d2885dcfd86dedd2e3c3261adbe0e58a33e0655ffc3ee7016758bb4898",
+      "market": "btc-updown-5m-1791984300",
+      "session_id": "ee2431dcd538411aa36bbecb99216d7e"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791984600/ead6ac986477411abb4880bb5360fb31/risk_snapshots.jsonl",
+      "sha256": "0de021b132d42ef6d15b3bec77ed2067d265d08df1004c78a4c57b1be9756c3d",
+      "market": "btc-updown-5m-1791984600",
+      "session_id": "304b92835ae74fe1adba5308c531b0b5"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791984900/29cb2a98d67d40b2b47b3a6fde021698/risk_snapshots.jsonl",
+      "sha256": "c3f14ba7ad9b08210d2325f6e089607da4a749d27269a726877395e7bf7c8514",
+      "market": "btc-updown-5m-1791984900",
+      "session_id": "6bcff357209b4239af3041bc7ca0ce43"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791985200/b849e1b9393a45f392dbf35d5a24ebe9/risk_snapshots.jsonl",
+      "sha256": "b2ca0336bfcc0693126ea10050f8e52474c81dd7d6e134bc3f73a860ae28ce69",
+      "market": "btc-updown-5m-1791985200",
+      "session_id": "82600a05a06e429d8165744ea2e0e9d1"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1791985500/00780f95bc5d4c0d9cb82768e91e9be3/risk_snapshots.jsonl",
+      "sha256": "5d1587aced5ebb55fe666ffb76dcc1cac1398b81a384143a5144e2d487718a6a",
+      "market": "btc-updown-5m-1791985500",
+      "session_id": "662fabd0728944cb97c944306e173690"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792002600/32f3345e80374ff68e4e657e5d0c0784/risk_snapshots.jsonl",
+      "sha256": "b883b49c8753cfeca0f353c8974418471659b735e1f358d38cac5b839521d759",
+      "market": "btc-updown-5m-1792002600",
+      "session_id": "c1a5ab7585134d7f828a2929fb03cb8f"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792002900/e160e78c52c643edb8aa1fba90f540b7/risk_snapshots.jsonl",
+      "sha256": "a98468e34fea86b67a2146cc925eba7b131c8909c6a1e50020c7ef5462bed4f4",
+      "market": "btc-updown-5m-1792002900",
+      "session_id": "9e8fb789fd964676b0b51b6add0ef427"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792003200/e15d00730765426193c5783ce6b73b2c/risk_snapshots.jsonl",
+      "sha256": "d9b9d824f35b7a3edfe662a627d43d7e04e483921244a4ba3ec94ca912a39bae",
+      "market": "btc-updown-5m-1792003200",
+      "session_id": "75bc2a57aac849b9a05e0413829618bf"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792003500/d702c1a96e364461954413487618c31f/risk_snapshots.jsonl",
+      "sha256": "29646459a6e0c23473199692620dd177c7a4c65d393c164948a0b9430acf30ef",
+      "market": "btc-updown-5m-1792003500",
+      "session_id": "16827385a15440b1ab6f0c228fc96d85"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792003800/b7a53cdece91447e9416c82d997952ed/risk_snapshots.jsonl",
+      "sha256": "48f90647dae45406c3122d510d10c36fb76e8a44f78f717bad3cfaf4b99a6009",
+      "market": "btc-updown-5m-1792003800",
+      "session_id": "1f2648db647e49218d488152738b4cae"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792040100/f3f9fc5f2a514a0f8db73fd6fe0a3243/risk_snapshots.jsonl",
+      "sha256": "96e425ab8587d9226bec67d3062dd3d1e93d1d44c29eff98b3265d53ce3a3936",
+      "market": "btc-updown-5m-1792040100",
+      "session_id": "071c40a16cc64f5590bfb3af63a48f9b"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792040400/b6a70ee59337459f82ba4d07425c5639/risk_snapshots.jsonl",
+      "sha256": "e9db4194ba4f4d45b4a63a852897fe3f405773817ae15c412b694b688aed599d",
+      "market": "btc-updown-5m-1792040400",
+      "session_id": "21ce8166cb1d4a4180b9116c9121ea55"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792040700/f5795d67eb3a490aaec1ca10f037ad2c/risk_snapshots.jsonl",
+      "sha256": "fe5540407e914db678a4295b756a50caa6388848cc492671c4b61eee6d8b038c",
+      "market": "btc-updown-5m-1792040700",
+      "session_id": "4b13c107f0474103b86b07b5422e6f96"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792041000/fe6344cb039d47ca938ae24a61231d4c/risk_snapshots.jsonl",
+      "sha256": "33192bd9a78b4ef9d5131b3db35de4f7522c7b28a456af50e9e76d3a2c4fac99",
+      "market": "btc-updown-5m-1792041000",
+      "session_id": "78105fc6afd9450a82390e9bf6ceca93"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792049100/355a02c81f5045a1bb9d3ca1cf773dd4/risk_snapshots.jsonl",
+      "sha256": "e7071e0319d13772740ac4db58fd8c1a12a4f1c5c07b43eff990e675ab1c08c0",
+      "market": "btc-updown-5m-1792049100",
+      "session_id": "d2885b6d9be643ecbe8e7d6ce3e1a6f0"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792050300/70caa0692f864f25b6fee16f45f7f08b/risk_snapshots.jsonl",
+      "sha256": "12e0cf319ee1820af09a96d5b66803ecc0e50d994310c8a669e68ea15bbb9f6d",
+      "market": "btc-updown-5m-1792050300",
+      "session_id": "c61688a846204e5b9a8f5717ee48f85c"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792050600/390040f368ed47d0a7a0c6e8088a43f0/risk_snapshots.jsonl",
+      "sha256": "1dbe3c8f7aa88e16bd490b0584b71ef5457291d9b1c1f1b138d4a3579df09ee5",
+      "market": "btc-updown-5m-1792050600",
+      "session_id": "a704dbf74aac40b78a77a8d578c378b2"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792050900/370fb10428e34d08ad87630b9bb35414/risk_snapshots.jsonl",
+      "sha256": "d8b6a984012c3764284c65f53f8416ddfa17ea0be266ff082c187064410796f1",
+      "market": "btc-updown-5m-1792050900",
+      "session_id": "9ed3eb99b5b0487b95da6d087b27e313"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792052100/bdef06569d6c4e20baa7c7e851efbfaf/risk_snapshots.jsonl",
+      "sha256": "17c2f3401df74c15f3ebc6c2aa5755fab9213df5d9365fb3322ea3b672b02235",
+      "market": "btc-updown-5m-1792052100",
+      "session_id": "a6296284d3034393ad6741920a43cba5"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792052400/33e0e741d5424ac6b2a9d7430211e26a/risk_snapshots.jsonl",
+      "sha256": "f67074cf4e847edce22be8f25c219f3b257be52721c34ccaec6f558d1a20d189",
+      "market": "btc-updown-5m-1792052400",
+      "session_id": "62161b3c081243eab5abca5d16e3adc0"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792052700/729ad3f5ca19490fa6451383aa4c0504/risk_snapshots.jsonl",
+      "sha256": "280e091e10cb352718bcd6eb028628841c8d6ecb47c3dd8f76a0a7eb524768c3",
+      "market": "btc-updown-5m-1792052700",
+      "session_id": "751b28525c3848ada756331b87f082f0"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792053000/c87617919e66455380c356ec36b9a28d/risk_snapshots.jsonl",
+      "sha256": "78e0e37e7f16f75ede0e8f29e400e9df5cb367a192ff2bc17b68e91e54c01abb",
+      "market": "btc-updown-5m-1792053000",
+      "session_id": "fa870f51759b462995f20f18d8f2be42"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792053300/ff8fe999dc2644fe8f6b350e4a93eec8/risk_snapshots.jsonl",
+      "sha256": "aa40bf3b0a07d6200782473579b9f445b2141cfaca7e04439f3a1e5bac892f9e",
+      "market": "btc-updown-5m-1792053300",
+      "session_id": "dde15549109a465a967d89a17957e9e4"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792069500/a56b041ae5f84a969f2a52fa831d419f/risk_snapshots.jsonl",
+      "sha256": "221819de2a6c631485a9581bea453deb21494136bc3005188c5cbf2e4e9156da",
+      "market": "btc-updown-5m-1792069500",
+      "session_id": "19c359db67e841898fa7d1ee54d85633"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792069800/66646dc31a574770ac705be6ca1d6571/risk_snapshots.jsonl",
+      "sha256": "5f719e13348ec94608ef6c06a0db2bfd15a4e11067f28a35b8ec20b23a2ed625",
+      "market": "btc-updown-5m-1792069800",
+      "session_id": "ad8d1cf321ab48e69cfd5439d10bed54"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792070100/be178901c560411d87991a1a812bfc62/risk_snapshots.jsonl",
+      "sha256": "52289fbb76f2a5f6571069a1d501cbc247045d762eff868c1d9aac92c32127ac",
+      "market": "btc-updown-5m-1792070100",
+      "session_id": "13bae4d1778d4565b87c1915278ba656"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792070400/496a53eef848481680af4f5891c3048a/risk_snapshots.jsonl",
+      "sha256": "a13e986fab38c3552fb82f5f4b0a5a5fd0b14cb0b812886eefae281a3412e061",
+      "market": "btc-updown-5m-1792070400",
+      "session_id": "5c6289deba634b659c8c7124bb12d607"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792072500/fee8b393c40b447fbf31de46d0745816/risk_snapshots.jsonl",
+      "sha256": "6eae12bd14d68cd336e072f4a194a2fccbc54a234cbfbe7d7d89d2a6546b1a78",
+      "market": "btc-updown-5m-1792072500",
+      "session_id": "b4ee8e91a1344fcc9b79fe3be547a6e8"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792072800/829c56cdd1c043fc97227e713b228ffb/risk_snapshots.jsonl",
+      "sha256": "a1e9684a7f8b75e0b082853ae8f780d29cb3090b4f9a369bd4d32f146513a1ae",
+      "market": "btc-updown-5m-1792072800",
+      "session_id": "10630d662da5457aa277d57c0e05439d"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792073100/ebc4437ab8414ee4a53ea7f489153bb2/risk_snapshots.jsonl",
+      "sha256": "51e79571d68b11ba85e8fd1cd9846af0e1cfade5d2b471fdaa86e5597316bc86",
+      "market": "btc-updown-5m-1792073100",
+      "session_id": "87c0fc5ada4b4fecbc62b81a77ba7a35"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792073400/0446508fd1a1458093f90a6930ee8a8f/risk_snapshots.jsonl",
+      "sha256": "16ab1b61a85ca3b13ce873f30c3b87937658cc759dc04204c8d2c20f26f5b7c1",
+      "market": "btc-updown-5m-1792073400",
+      "session_id": "e9e2b8fa77214c10a1ba0b17d617c581"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792073700/7af724cc9ce947bf8796d8478c622c1a/risk_snapshots.jsonl",
+      "sha256": "dd8c80f35174685063d3a172ed689fc0bb06305e7f7148c8b7d45e2d6dc6f115",
+      "market": "btc-updown-5m-1792073700",
+      "session_id": "9a815f1cc7b541619ba55a2afbef8512"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792076100/b15bc5b4c0b6445082401eff91fab320/risk_snapshots.jsonl",
+      "sha256": "137f7425cff43bf400c66c36ae5bc5e2b7767425e97c597a1b678be945f7b906",
+      "market": "btc-updown-5m-1792076100",
+      "session_id": "0113e055ef4f49ee817f820fa16cf094"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792076400/78f7cdad1e7e4e3f9674f6f152ba8c43/risk_snapshots.jsonl",
+      "sha256": "1c29154b0f7dd148710a2d603cf8dcd44b03d5fee07bd7ef923bc2d9f2a8f9c4",
+      "market": "btc-updown-5m-1792076400",
+      "session_id": "568d97aff33845b696568f0fb9abce38"
+    },
+    {
+      "path": "research_outputs/rdp_risk_shadow/btc-updown-5m-1792076700/b9229a014fb54f98ab99717c4e7e3f84/risk_snapshots.jsonl",
+      "sha256": "e50b653697adeab3badc57829ec14c02a13783eadb7370e34530f7c59a08a76c",
+      "market": "btc-updown-5m-1792076700",
+      "session_id": "69ba2594f06f4bff951ac8503d0366f1"
+    }
+  ],
+  "journal_manifests": [
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "sha256": "16cc5f0b6f2732e1aecf7766b293a7cd67d8c8d70e2e08b6f5ad6c371e95d83b"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "sha256": "8cad6806082a9228d12c3c500918cf5369c702d7fec2cc793387a90c30a414d3"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "sha256": "e3666a2efb0e277e20e0b790ba686bfe1858ead8ef84fcac1f02702556d8185c"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "sha256": "6a1487e412910e688a86d245db9bac94cbbc3e5b9dc49c39f63d4b7d674eeb6f"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "sha256": "442a727ff3496ab5bf16e02f7d14f546f69b3f50fdac4bc1c390566baf67a718"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "sha256": "435a4f3dcd8bfbab4368480a2a344f3238747d01dfafad793114d55da287930f"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "sha256": "a8b24ec224b7dae62850667daa8f667199b804e23a7336681588dfc764d20dad"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "sha256": "4d388bd33396bd2294127468e97b28ae624b5a77c584b8f4fddfa28564983586"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "sha256": "1611c9d1fa350b0cceef2dd88973c70e61cf8610da3c6ec6fbd8dcfa603afa75"
+    },
+    {
+      "filename": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "sha256": "a6c25a5a18849bc0b2c242441a8a23f3d27219afef7bf626511bd9397821bcb0"
+    }
+  ]
+}

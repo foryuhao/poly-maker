@@ -1,0 +1,61 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-18T18:52:22.269990+00:00",
+  "scope": "CACHE_PROOF_INVALIDATION_FAIRNESS_FIX_AND_REGRESSION",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "policy": "hd_tp_sl_v1",
+  "live_session": "51f32a9bf91f4ef6a7661e2c3dabbffe",
+  "market": "btc-updown-5m-1792348500",
+  "root_cause": "Stale economic proof signatures requeued retired orders at priority zero on every round, monopolizing the 4-detail budget and starving a newer order reconciliation.",
+  "fix": "Queue one recheck and retire only the invalidated signature under the condition lock; preserve a concurrently installed replacement proof.",
+  "changed_production_module": "src/polymaker/rdp_sm_sync.py",
+  "strategy_parameter_changes": false,
+  "admission_or_proof_requirements_relaxed": false,
+  "detail_limit": 4,
+  "pre_fix_reproduction": {
+    "expected_failed_tests": 2,
+    "integration_block_reason": "SYNC_CACHE_NOT_READY",
+    "method": "In a separate test process, remove only the new invalidation block from _orders_round; production workspace file was not reverted.",
+    "reference": "before_fix_reproduction.txt"
+  },
+  "full_suite": {
+    "passed": 2002,
+    "skipped": 2,
+    "seconds": 309.292
+  },
+  "final_focused_suite": {
+    "passed": 62,
+    "skipped": 0,
+    "seconds": 54.618
+  },
+  "test_revision_note": "After full collection, strengthened the integration fixture from 3 to 4 preceding unfilled orders; final focused suite ran the final stronger fixture. Production code did not change during regression.",
+  "ready_for_live": true,
+  "ready_for_supervised_live_test": true,
+  "automatic_trading_continuation_after_crash": false,
+  "positive_ev_validated": false,
+  "real_orders_sent_during_fix": 0,
+  "previous_release": "../20261019_repair_release/validation.json",
+  "diagnosis": "diagnosis.json",
+  "parameters_reference": "../../REPAIR_PARAMETER_PROPOSAL_20261019.md",
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "configuration_before_metadata_update": {
+    "config/config.toml": "1aa7e790169a69a37bfaa6f9337693fe51e1432d5cc6955ba35838857d9ee14b",
+    "livecfg/config.toml": "beb9f4b264c96d4bb106bb9bf6135e83ad3cb88309f1ca86cb8d742d22f65603"
+  },
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    }
+  },
+  "production_changes_since_first_release": [
+    "src/polymaker/rdp_sm_sync.py"
+  ]
+}

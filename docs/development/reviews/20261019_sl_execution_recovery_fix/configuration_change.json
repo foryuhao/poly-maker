@@ -1,0 +1,12 @@
+{
+  "config/config.toml": {
+    "only_changed": "rdp_sm.repair.path.validation_reference",
+    "previous": "docs/development/reviews/20261019_sl_execution_implementation/validation.json",
+    "current": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+  },
+  "livecfg/config.toml": {
+    "only_changed": "rdp_sm.repair.path.validation_reference",
+    "previous": "docs/development/reviews/20261019_sl_execution_implementation/validation.json",
+    "current": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+  }
+}

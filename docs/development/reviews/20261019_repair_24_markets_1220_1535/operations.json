@@ -1,0 +1,308 @@
+[
+  {
+    "market": "12:20",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "TP_VOLATILITY_UNKNOWN": {
+        "count": 7,
+        "first_wall_elapsed": 36.608352184295654,
+        "last_wall_elapsed": 37.31334090232849
+      },
+      "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+        "count": 130,
+        "first_wall_elapsed": 53.580466508865356,
+        "last_wall_elapsed": 184.72149896621704
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:25",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "TP_VOLATILITY_UNKNOWN": {
+        "count": 1,
+        "first_wall_elapsed": 38.74903917312622,
+        "last_wall_elapsed": 38.74903917312622
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:30",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "SESSION_DELTA_LIMIT": {
+        "count": 4,
+        "first_wall_elapsed": 45.97910237312317,
+        "last_wall_elapsed": 47.88243389129639
+      },
+      "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+        "count": 55,
+        "first_wall_elapsed": 64.91054606437683,
+        "last_wall_elapsed": 146.77125215530396
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:35",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:40",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "TP_VOLATILITY_UNKNOWN": {
+        "count": 7,
+        "first_wall_elapsed": 30.976430654525757,
+        "last_wall_elapsed": 36.91961145401001
+      },
+      "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+        "count": 114,
+        "first_wall_elapsed": 47.75346922874451,
+        "last_wall_elapsed": 146.6091229915619
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:45",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:50",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [
+      {
+        "journal_line": 931,
+        "payload": {
+          "open_orders": [],
+          "resolution": "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
+        }
+      }
+    ],
+    "small_exposure_events": []
+  },
+  {
+    "market": "12:55",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "13:00",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "13:05",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "13:10",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "TP_VOLATILITY_UNKNOWN": {
+        "count": 16,
+        "first_wall_elapsed": 29.56149649620056,
+        "last_wall_elapsed": 38.093998432159424
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "13:15",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "14:35",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "14:40",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "14:45",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "14:50",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "TP_VOLATILITY_UNKNOWN": {
+        "count": 25,
+        "first_wall_elapsed": 30.063162565231323,
+        "last_wall_elapsed": 37.46151375770569
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": [
+      {
+        "elapsed_wall": 59.3177433013916,
+        "payload": {
+          "reason": "EXPOSURE_AT_OR_BELOW_REPAIR_MINIMUM",
+          "actual_delta": "2.136341",
+          "threshold_shares": "2.5",
+          "action": "WAIT_WITH_RESIDUAL",
+          "inventory_flat": false
+        }
+      }
+    ]
+  },
+  {
+    "market": "14:55",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:00",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [
+      {
+        "journal_line": 1044,
+        "payload": {
+          "open_orders": [],
+          "resolution": "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
+        }
+      }
+    ],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:05",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:10",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:15",
+    "blocked_windows": [],
+    "execution_blocks": {
+      "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+        "count": 9206,
+        "first_wall_elapsed": 109.75202703475952,
+        "last_wall_elapsed": 203.62525868415833
+      },
+      "REPAIR_PATH_TIME_REVERSED": {
+        "count": 15,
+        "first_wall_elapsed": 112.65352010726929,
+        "last_wall_elapsed": 198.8155219554901
+      }
+    },
+    "unknown_lookups": [
+      {
+        "journal_line": 375,
+        "payload": {
+          "open_orders": [],
+          "resolution": "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
+        }
+      },
+      {
+        "journal_line": 771,
+        "payload": {
+          "open_orders": [],
+          "resolution": "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
+        }
+      }
+    ],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:20",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": [
+      {
+        "elapsed_wall": 107.80131959915161,
+        "payload": {
+          "reason": "EXPOSURE_AT_OR_BELOW_REPAIR_MINIMUM",
+          "actual_delta": "0.27",
+          "threshold_shares": "2.5",
+          "action": "WAIT_WITH_RESIDUAL",
+          "inventory_flat": false
+        }
+      }
+    ]
+  },
+  {
+    "market": "15:25",
+    "blocked_windows": [
+      {
+        "window": "48661340d6dc458b843b769d1b412195:w4",
+        "reason": "SYNC_CACHE_NOT_READY",
+        "journal_line": 3341
+      }
+    ],
+    "execution_blocks": {
+      "REPAIR_PATH_TIME_REVERSED": {
+        "count": 25,
+        "first_wall_elapsed": 46.144789934158325,
+        "last_wall_elapsed": 46.234609842300415
+      }
+    },
+    "unknown_lookups": [],
+    "small_exposure_events": []
+  },
+  {
+    "market": "15:30",
+    "blocked_windows": [],
+    "execution_blocks": {},
+    "unknown_lookups": [],
+    "small_exposure_events": [
+      {
+        "elapsed_wall": 125.89070057868958,
+        "payload": {
+          "reason": "EXPOSURE_AT_OR_BELOW_REPAIR_MINIMUM",
+          "actual_delta": "-0.27",
+          "threshold_shares": "2.5",
+          "action": "WAIT_WITH_RESIDUAL",
+          "inventory_flat": false
+        }
+      }
+    ]
+  }
+]

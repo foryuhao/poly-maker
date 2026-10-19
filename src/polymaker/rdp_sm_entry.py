@@ -168,6 +168,16 @@ class AccountRiskPolicy:
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):
     """One market per invocation; optionally own a read-only sync companion."""
+    if cfg.rdp_sm.normal_entry_mode == "obi_v1" and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
+        from polymaker.repair_policy import repair_readiness
+
+        readiness = repair_readiness(cfg.rdp_sm.repair)
+        if not readiness["ready_for_live"]:
+            if observer is not None:
+                observer.emit("diagnostic", {"reason": "REPAIR_NOT_READY_FOR_LIVE",
+                                              "repair_readiness": readiness})
+            return RunResult(None, "", stop_time=time.time(),
+                             stop_reason="REPAIR_NOT_READY_FOR_LIVE", repair_readiness=readiness)
     companion = None
     session = None
     if cfg.rdp_sm.sync_observe.enabled:

@@ -1,0 +1,1242 @@
+{
+  "scope": "SIMULATED_VENUE_PRODUCTION_ENTRY_AND_EXECUTION",
+  "lost_tp_ack": false,
+  "cached_execution": true,
+  "orders": [
+    {
+      "id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+      "price": 0.3,
+      "size": 5.0,
+      "side": "YES",
+      "elapsed": 60.1319146156311,
+      "mono": 2859422.74605236,
+      "mode": "NORMAL"
+    },
+    {
+      "id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+      "price": 0.47,
+      "size": 5.0,
+      "side": "NO",
+      "elapsed": 62.09625720977783,
+      "mono": 2859424.710394867,
+      "mode": "TP",
+      "decision_to_mock_post_ms": 15.200254041701555
+    },
+    {
+      "id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+      "price": 0.629,
+      "size": 5.0,
+      "side": "NO",
+      "elapsed": 66.08488941192627,
+      "mono": 2859428.699027297,
+      "mode": "SL",
+      "decision_to_mock_post_ms": 18.14265502616763
+    },
+    {
+      "id": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+      "price": 0.3,
+      "size": 5.0,
+      "side": "YES",
+      "elapsed": 70.09794020652771,
+      "mono": 2859432.712078556,
+      "mode": "NORMAL"
+    },
+    {
+      "id": "0x71d44fc232081f00bd8b9681996cad6abdf6f2f7a718967df4f8b039449e90b9",
+      "price": 0.719,
+      "size": 5.0,
+      "side": "NO",
+      "elapsed": 180.939120054245,
+      "mono": 2859435.744316659,
+      "mode": "SL",
+      "decision_to_mock_post_ms": 24.176184087991714
+    }
+  ],
+  "close_requests": [
+    {
+      "window_id": "0f902a4273954c959c22ab8d14f86d0e:w1",
+      "reason": "ORDER_DEADLINE",
+      "requested_monotonic": 2859423.247586837,
+      "deadline": 2859423.24389928,
+      "snapshot_id": "0xabababababababababababababababababababababababababababababababab:1:55",
+      "health": {
+        "allowed": false,
+        "reason": "NETWORK_BATCH_IN_FLIGHT",
+        "p95_ms": 0.8554398082196712,
+        "samples": [
+          [
+            "GET",
+            15,
+            0.3622109070420265,
+            0.5469137658365071
+          ],
+          [
+            "POST",
+            1,
+            0.8554398082196712,
+            0.5013080830685794
+          ]
+        ],
+        "write_proxy": false,
+        "state": "NORMAL",
+        "pause_until": 0.0,
+        "active_batch": "0f902a4273954c959c22ab8d14f86d0e:w1",
+        "close_active": false,
+        "write_evidence": {
+          "POST": {
+            "status": "FAST",
+            "observed_monotonic": 2859422.746187727
+          },
+          "DELETE": {
+            "status": "UNKNOWN",
+            "observed_monotonic": null
+          }
+        }
+      }
+    },
+    {
+      "window_id": "0f902a4273954c959c22ab8d14f86d0e:w2",
+      "reason": "REPAIR_MODE_SL_CANCEL_OLD_STATE",
+      "requested_monotonic": 2859428.229794734,
+      "deadline": 2859542.614248991,
+      "snapshot_id": "0xabababababababababababababababababababababababababababababababab:1:521",
+      "health": {
+        "allowed": false,
+        "reason": "NETWORK_BATCH_IN_FLIGHT",
+        "p95_ms": 1.8011890351772308,
+        "samples": [
+          [
+            "GET",
+            40,
+            0.3622109070420265,
+            0.5821323390118778
+          ],
+          [
+            "POST",
+            2,
+            1.8011890351772308,
+            3.519205881282687
+          ],
+          [
+            "DELETE",
+            20,
+            0.4407591186463833,
+            4.583991460036486
+          ]
+        ],
+        "write_proxy": false,
+        "state": "NORMAL",
+        "pause_until": 0.0,
+        "active_batch": "0f902a4273954c959c22ab8d14f86d0e:w2",
+        "close_active": false,
+        "write_evidence": {
+          "POST": {
+            "status": "FAST",
+            "observed_monotonic": 2859424.710519314
+          },
+          "DELETE": {
+            "status": "FAST",
+            "observed_monotonic": 2859423.645733735
+          }
+        }
+      }
+    },
+    {
+      "window_id": "0f902a4273954c959c22ab8d14f86d0e:w3",
+      "reason": "REPAIR_PAIRED",
+      "requested_monotonic": 2859430.657543251,
+      "deadline": 2859602.614266157
+    },
+    {
+      "window_id": "0f902a4273954c959c22ab8d14f86d0e:w4",
+      "reason": "ORDER_DEADLINE",
+      "requested_monotonic": 2859433.205731847,
+      "deadline": 2859433.204773736,
+      "snapshot_id": "0xabababababababababababababababababababababababababababababababab:1:985",
+      "health": {
+        "allowed": false,
+        "reason": "NETWORK_BATCH_IN_FLIGHT",
+        "p95_ms": 5.983720999211073,
+        "samples": [
+          [
+            "GET",
+            72,
+            0.4657283425331116,
+            0.5163729097694159
+          ],
+          [
+            "POST",
+            4,
+            5.983720999211073,
+            0.49325640173628926
+          ],
+          [
+            "DELETE",
+            86,
+            0.5911760963499546,
+            1.5654667471535504
+          ]
+        ],
+        "write_proxy": false,
+        "state": "NORMAL",
+        "pause_until": 0.0,
+        "active_batch": "0f902a4273954c959c22ab8d14f86d0e:w4",
+        "close_active": false,
+        "write_evidence": {
+          "POST": {
+            "status": "FAST",
+            "observed_monotonic": 2859432.71229181
+          },
+          "DELETE": {
+            "status": "FAST",
+            "observed_monotonic": 2859431.640081465
+          }
+        }
+      }
+    },
+    {
+      "window_id": "0f902a4273954c959c22ab8d14f86d0e:w5",
+      "reason": "WS_RECONNECT_REQUIRED",
+      "requested_monotonic": 2859435.760969389,
+      "deadline": 2859494.8054213524,
+      "snapshot_id": "0xabababababababababababababababababababababababababababababababab:2:1130",
+      "health": {
+        "allowed": false,
+        "reason": "NETWORK_BATCH_IN_FLIGHT",
+        "p95_ms": 6.926906760782003,
+        "samples": [
+          [
+            "GET",
+            90,
+            0.4657283425331116,
+            0.10497124213725328
+          ],
+          [
+            "POST",
+            5,
+            6.926906760782003,
+            0.016285948920994997
+          ],
+          [
+            "DELETE",
+            108,
+            0.538976863026619,
+            2.107257251162082
+          ]
+        ],
+        "write_proxy": false,
+        "state": "NORMAL",
+        "pause_until": 0.0,
+        "active_batch": "0f902a4273954c959c22ab8d14f86d0e:w5",
+        "close_active": false,
+        "write_evidence": {
+          "POST": {
+            "status": "FAST",
+            "observed_monotonic": 2859435.744550833
+          },
+          "DELETE": {
+            "status": "FAST",
+            "observed_monotonic": 2859433.653579531
+          }
+        }
+      }
+    }
+  ],
+  "inventory": [
+    [
+      "5",
+      "0"
+    ],
+    [
+      "5",
+      "2"
+    ],
+    [
+      "5",
+      "3"
+    ],
+    [
+      "5",
+      "5"
+    ],
+    [
+      "10",
+      "5"
+    ]
+  ],
+  "result": {
+    "market_id": "0xabababababababababababababababababababababababababababababababab",
+    "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+    "start_time": 1792348130.4536252,
+    "stop_time": 1800000302.0349867,
+    "stop_reason": "MARKET_CUTOFF",
+    "total_windows": 5,
+    "normal_windows": 2,
+    "rebalance_windows": 3,
+    "repair_windows": 3,
+    "active_cycles": 4,
+    "confirmed_fills": 5,
+    "merged_pairs": 5.0,
+    "recovered_collateral_usdc": 5.0,
+    "blocked_windows": 0,
+    "confirmed_yes": 5.0,
+    "confirmed_no": 0.0,
+    "delta": 5.0,
+    "completed_pairs": 5.0,
+    "residual_shares": 5.0,
+    "average_yes_cost": 0.3,
+    "average_no_cost": null,
+    "realized_merge_pnl": 0.832,
+    "unmerged_pair_pnl_estimate": 0.0,
+    "theoretical_pair_pnl": 0.832,
+    "final_close_barrier": "SAFE_TO_CONTINUE",
+    "execution_status": "COMPLETED",
+    "live_authority": "LOCAL_EOA_KEY_VERIFIED",
+    "windows": [
+      {
+        "state": "NORMAL",
+        "elapsed_s": 60.08498954772949,
+        "result": {
+          "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+          "window_id": "0f902a4273954c959c22ab8d14f86d0e:w1",
+          "market_id": "0xabababababababababababababababababababababababababababababababab",
+          "start_time": 1800000060.1303096,
+          "end_time": 1800000062.0423152,
+          "requested_quotes": [
+            {
+              "market_id": "0xabababababababababababababababababababababababababababababababab",
+              "token_id": "1",
+              "outcome": "YES",
+              "side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "window_id": "0f902a4273954c959c22ab8d14f86d0e:w1"
+            }
+          ],
+          "placement_results": [
+            {
+              "attempt_id": "7cb367ef5e70471c981d9c69e62dc440",
+              "quote": {
+                "market_id": "0xabababababababababababababababababababababababababababababababab",
+                "token_id": "1",
+                "outcome": "YES",
+                "side": "BUY",
+                "price": 0.3,
+                "size": 5.0,
+                "window_id": "0f902a4273954c959c22ab8d14f86d0e:w1"
+              },
+              "outcome": "ACK",
+              "order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "post_started": true,
+              "request_hash": "b45a6c0cc4a7268c59ae6f1e6f6f36543143c0fdf759b7cd489cf6ff8b7907b1",
+              "raw_response": [
+                {
+                  "success": true,
+                  "orderID": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56"
+                }
+              ],
+              "expected_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56"
+            }
+          ],
+          "known_order_ids": [
+            "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56"
+          ],
+          "confirmed_fills": [
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-FIRST",
+              "status": "MATCHED",
+              "ts": 0,
+              "maker_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            }
+          ],
+          "yes_inventory": 5.0,
+          "no_inventory": 0.0,
+          "delta": 5.0,
+          "capital_committed": 1.5,
+          "close_barrier": "SAFE_TO_CONTINUE",
+          "block_reason": null,
+          "journal_references": [],
+          "t0_monotonic": 2859422.74389928,
+          "fill_deadline_monotonic": 2859423.24389928,
+          "close_monotonic": 2859424.65645134
+        },
+        "sizing": {
+          "base_size": "5",
+          "configured_target_delta": "0",
+          "favorite_threshold": "0.70",
+          "favorite_side": "NONE",
+          "favorite_probability": "UNKNOWN",
+          "favorite_data_validity": "DISABLED",
+          "favorite_data_reason": "TARGET_DISABLED",
+          "favorite_clock_resolution_s": "0",
+          "favorite_clock_read_duration_s": "0",
+          "favorite_clock_uncertainty_s": "0",
+          "favorite_max_book_ahead_s": "0",
+          "signed_target_delta": "0",
+          "actual_delta_before": "0",
+          "decision_delta_before": "0",
+          "sizing_adjustment_reason": "LEGACY_INVENTORY_SKEW",
+          "sizing_constraint_reason": [],
+          "minimum_order_size": "5.0",
+          "favorite_at_decision": "NONE",
+          "final_winning_outcome": "UNKNOWN",
+          "favorite_prediction_correct": "UNKNOWN",
+          "target_sizing_applied": false,
+          "planned_yes_size": "5.0",
+          "planned_no_size": "0",
+          "submitted_yes_size": "5.0",
+          "submitted_no_size": "0",
+          "confirmed_yes_fill": "5.0",
+          "confirmed_no_fill": "0",
+          "actual_delta_after": "5.0",
+          "order_policy": "SIGNAL_SIDE_ONLY",
+          "normal_signal_side": "YES"
+        }
+      },
+      {
+        "state": "REPAIR",
+        "elapsed_s": 62.08054852485657,
+        "result": {
+          "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+          "window_id": "0f902a4273954c959c22ab8d14f86d0e:w2",
+          "market_id": "0xabababababababababababababababababababababababababababababababab",
+          "start_time": 1800000062.0937734,
+          "end_time": 1800000066.0575812,
+          "requested_quotes": [
+            {
+              "market_id": "0xabababababababababababababababababababababababababababababababab",
+              "token_id": "2",
+              "outcome": "NO",
+              "side": "BUY",
+              "price": 0.47,
+              "size": 5.0,
+              "window_id": "0f902a4273954c959c22ab8d14f86d0e:w2"
+            }
+          ],
+          "placement_results": [
+            {
+              "attempt_id": "df2ddf6487ac4a1990556f3257c9b2e3",
+              "quote": {
+                "market_id": "0xabababababababababababababababababababababababababababababababab",
+                "token_id": "2",
+                "outcome": "NO",
+                "side": "BUY",
+                "price": 0.47,
+                "size": 5.0,
+                "window_id": "0f902a4273954c959c22ab8d14f86d0e:w2"
+              },
+              "outcome": "ACK",
+              "order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "post_started": true,
+              "request_hash": "cf973da005c62c4ace0c20a2b987c7c257ef21a0c795d24b1b173ad8f3bbbd92",
+              "raw_response": [
+                {
+                  "success": true,
+                  "orderID": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+                }
+              ],
+              "expected_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+            }
+          ],
+          "known_order_ids": [
+            "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+            "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+          ],
+          "confirmed_fills": [
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-FIRST",
+              "status": "MATCHED",
+              "ts": 0,
+              "maker_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 1.0,
+              "trade_id": "tp-late-on-cancel",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 2.0,
+              "trade_id": "tp-partial",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            }
+          ],
+          "yes_inventory": 5.0,
+          "no_inventory": 3.0,
+          "delta": 2.0,
+          "capital_committed": 2.91,
+          "close_barrier": "SAFE_TO_CONTINUE",
+          "block_reason": null,
+          "journal_references": [],
+          "t0_monotonic": 2859424.708711206,
+          "fill_deadline_monotonic": 2859542.614248991,
+          "close_monotonic": 2859428.671717286
+        },
+        "sizing": {
+          "repair_plan": {
+            "mode": "TP",
+            "previous_mode": "TP",
+            "transition": false,
+            "reason": "PROFIT_RATE_TARGET",
+            "observations": {
+              "elapsed": 62.08062934875488,
+              "p": 0.5,
+              "sigma": 0.019751789420648945,
+              "generation": 1,
+              "delta": 5.0,
+              "pnl_per_share": 0.2,
+              "episode_delta": 5.0,
+              "tick": 0.01,
+              "path_segment": 1,
+              "inventory_path_valid": true,
+              "short_adverse": null,
+              "short_z": null,
+              "short_threshold": null,
+              "shock_triggered": false,
+              "sigma_pre": null,
+              "short_elapsed": null,
+              "price_pnl_per_share": 0.21,
+              "price_peak_per_share": 0.21,
+              "drawdown_per_share": 0.0,
+              "drawdown_valid": true,
+              "path_status": "PARTIAL_PATH",
+              "path_breaks": [
+                {
+                  "reason": "INVENTORY_PATH_UNKNOWN",
+                  "price_pnl": "0.0",
+                  "peak": "0.0",
+                  "elapsed": null
+                }
+              ]
+            },
+            "target_remaining_delta": "0",
+            "hold_seconds": 1.048410415649414,
+            "last_transition": {
+              "from": "HD",
+              "to": "TP",
+              "reason": "PROFIT_RATE_TARGET",
+              "observations": {
+                "elapsed": 62.07807636260986,
+                "p": 0.5,
+                "sigma": 0.019751789420648945,
+                "generation": 1,
+                "delta": 5.0,
+                "pnl_per_share": 0.2,
+                "episode_delta": 5.0,
+                "tick": 0.01,
+                "path_segment": 1,
+                "inventory_path_valid": true,
+                "short_adverse": null,
+                "short_z": null,
+                "short_threshold": null,
+                "shock_triggered": false,
+                "sigma_pre": null,
+                "short_elapsed": null,
+                "price_pnl_per_share": 0.21,
+                "price_peak_per_share": 0.21,
+                "drawdown_per_share": 0.0,
+                "drawdown_valid": true,
+                "path_status": "PARTIAL_PATH",
+                "path_breaks": [
+                  {
+                    "reason": "INVENTORY_PATH_UNKNOWN",
+                    "price_pnl": "0.0",
+                    "peak": "0.0",
+                    "elapsed": null
+                  }
+                ]
+              }
+            },
+            "next_review_at": 64.08062934875488,
+            "wake_on": [
+              "PRICE_EVENT",
+              "EXECUTION_FACT",
+              "TIME_BOUNDARY"
+            ],
+            "policy": "hd_tp_sl_v1",
+            "action": "BUY",
+            "side": "NO",
+            "price": 0.47,
+            "quantity": 5.0,
+            "tick": "0.001",
+            "cancel_at": 180.0,
+            "switch_conditions": [
+              "PATH_SL",
+              "T180"
+            ],
+            "candidates": [],
+            "parameter_status": "REPLAY_VALIDATED"
+          },
+          "order_policy": "TP_FIXED_PRICE",
+          "signed_target_delta": "0",
+          "target_sizing_applied": false,
+          "actual_delta_before": "5.0",
+          "favorite_data_validity": "NOT_USED",
+          "submitted_yes_size": "0",
+          "submitted_no_size": "5.0",
+          "confirmed_yes_fill": "0",
+          "confirmed_no_fill": "3.0",
+          "actual_delta_after": "2.0",
+          "actual_delta_after_repair": "2.0"
+        }
+      },
+      {
+        "state": "REPAIR",
+        "elapsed_s": 66.06604051589966,
+        "result": {
+          "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+          "window_id": "0f902a4273954c959c22ab8d14f86d0e:w3",
+          "market_id": "0xabababababababababababababababababababababababababababababababab",
+          "start_time": 1800000066.0810623,
+          "end_time": 1800000070.0522559,
+          "requested_quotes": [
+            {
+              "market_id": "0xabababababababababababababababababababababababababababababababab",
+              "token_id": "2",
+              "outcome": "NO",
+              "side": "BUY",
+              "price": 0.629,
+              "size": 5.0,
+              "window_id": "0f902a4273954c959c22ab8d14f86d0e:w3"
+            }
+          ],
+          "placement_results": [
+            {
+              "attempt_id": "e2f59cfef18b4581852e9fc61c5e6d6d",
+              "quote": {
+                "market_id": "0xabababababababababababababababababababababababababababababababab",
+                "token_id": "2",
+                "outcome": "NO",
+                "side": "BUY",
+                "price": 0.629,
+                "size": 5.0,
+                "window_id": "0f902a4273954c959c22ab8d14f86d0e:w3"
+              },
+              "outcome": "ACK",
+              "order_id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+              "post_started": true,
+              "request_hash": "36b218c22c3ea35332fb43b08f274a38bdfec240f6bdd61e64c80e53e87be3db",
+              "raw_response": [
+                {
+                  "success": true,
+                  "orderID": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61"
+                }
+              ],
+              "expected_order_id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61"
+            }
+          ],
+          "known_order_ids": [
+            "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+            "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+            "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+          ],
+          "confirmed_fills": [
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-FIRST",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.629,
+              "size": 2.0,
+              "trade_id": "sl-partial-to-pair",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 1.0,
+              "trade_id": "tp-late-on-cancel",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 2.0,
+              "trade_id": "tp-partial",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            }
+          ],
+          "yes_inventory": 5.0,
+          "no_inventory": 5.0,
+          "delta": 0.0,
+          "capital_committed": 4.168,
+          "close_barrier": "SAFE_TO_CONTINUE",
+          "block_reason": null,
+          "journal_references": [],
+          "t0_monotonic": 2859428.695984078,
+          "fill_deadline_monotonic": 2859602.614266157,
+          "close_monotonic": 2859432.666391896
+        },
+        "sizing": {
+          "repair_plan": {
+            "mode": "SL",
+            "previous_mode": "SL",
+            "transition": false,
+            "reason": "CUMULATIVE_DRAWDOWN",
+            "observations": {
+              "elapsed": 66.06617641448975,
+              "p": 0.38,
+              "sigma": 0.04852089566922417,
+              "generation": 1,
+              "delta": 2.0,
+              "pnl_per_share": 0.17,
+              "episode_delta": 2.0,
+              "tick": 0.01,
+              "path_segment": 1,
+              "inventory_path_valid": true,
+              "short_adverse": 0.12,
+              "short_z": 1.9402488845952433,
+              "short_threshold": 0.09277160339022689,
+              "shock_triggered": true,
+              "sigma_pre": 0.04341937486775741,
+              "short_elapsed": 2.0289926528930664,
+              "price_pnl_per_share": 0.0,
+              "price_peak_per_share": 0.0,
+              "drawdown_per_share": 0.0,
+              "drawdown_valid": true,
+              "path_status": "PARTIAL_PATH",
+              "path_breaks": [
+                {
+                  "reason": "INVENTORY_PATH_UNKNOWN",
+                  "price_pnl": "0.0",
+                  "peak": "0.0",
+                  "elapsed": null
+                },
+                {
+                  "reason": "FILL_TIME_OR_AVAILABILITY_UNKNOWN",
+                  "price_pnl": "0.21",
+                  "peak": "0.21",
+                  "elapsed": 62.09996771812439
+                },
+                {
+                  "reason": "FILL_TIME_OR_AVAILABILITY_UNKNOWN",
+                  "price_pnl": "-0.072",
+                  "peak": "0.012",
+                  "elapsed": 65.60995388031006
+                }
+              ]
+            },
+            "target_remaining_delta": "0",
+            "hold_seconds": 5.033957481384277,
+            "last_transition": {
+              "from": "TP",
+              "to": "SL",
+              "reason": "CUMULATIVE_DRAWDOWN",
+              "observations": {
+                "elapsed": 65.60656428337097,
+                "p": 0.38,
+                "sigma": 0.043255139251818404,
+                "generation": 1,
+                "delta": 3.0,
+                "pnl_per_share": 0.14,
+                "episode_delta": 3.0,
+                "tick": 0.01,
+                "path_segment": 1,
+                "inventory_path_valid": true,
+                "short_adverse": null,
+                "short_z": null,
+                "short_threshold": null,
+                "shock_triggered": false,
+                "sigma_pre": null,
+                "short_elapsed": null,
+                "price_pnl_per_share": -0.072,
+                "price_peak_per_share": 0.012,
+                "drawdown_per_share": 0.084,
+                "drawdown_valid": true,
+                "path_status": "PARTIAL_PATH",
+                "path_breaks": [
+                  {
+                    "reason": "INVENTORY_PATH_UNKNOWN",
+                    "price_pnl": "0.0",
+                    "peak": "0.0",
+                    "elapsed": null
+                  },
+                  {
+                    "reason": "FILL_TIME_OR_AVAILABILITY_UNKNOWN",
+                    "price_pnl": "0.21",
+                    "peak": "0.21",
+                    "elapsed": 62.09996771812439
+                  }
+                ]
+              }
+            },
+            "next_review_at": 68.06617641448975,
+            "wake_on": [
+              "PRICE_EVENT",
+              "EXECUTION_FACT",
+              "TIME_BOUNDARY"
+            ],
+            "policy": "hd_tp_sl_v1",
+            "action": "BUY",
+            "side": "NO",
+            "price": 0.629,
+            "quantity": 5.0,
+            "tick": "0.001",
+            "cancel_at": 240.0,
+            "switch_conditions": [
+              "PAIRED",
+              "T240"
+            ],
+            "candidates": [],
+            "parameter_status": "REPLAY_VALIDATED"
+          },
+          "order_policy": "SL_ASK_MINUS_TICK",
+          "signed_target_delta": "0",
+          "target_sizing_applied": false,
+          "actual_delta_before": "2.0",
+          "favorite_data_validity": "NOT_USED",
+          "submitted_yes_size": "0",
+          "submitted_no_size": "5.0",
+          "confirmed_yes_fill": "0",
+          "confirmed_no_fill": "2.0",
+          "actual_delta_after": "0.0",
+          "actual_delta_after_repair": "0.0"
+        }
+      },
+      {
+        "state": "NORMAL",
+        "elapsed_s": 70.07331919670105,
+        "result": {
+          "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+          "window_id": "0f902a4273954c959c22ab8d14f86d0e:w4",
+          "market_id": "0xabababababababababababababababababababababababababababababababab",
+          "start_time": 1800000070.091127,
+          "end_time": 1800000072.059396,
+          "requested_quotes": [
+            {
+              "market_id": "0xabababababababababababababababababababababababababababababababab",
+              "token_id": "1",
+              "outcome": "YES",
+              "side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "window_id": "0f902a4273954c959c22ab8d14f86d0e:w4"
+            }
+          ],
+          "placement_results": [
+            {
+              "attempt_id": "c99d05ffbd374577a991d737b05f2934",
+              "quote": {
+                "market_id": "0xabababababababababababababababababababababababababababababababab",
+                "token_id": "1",
+                "outcome": "YES",
+                "side": "BUY",
+                "price": 0.3,
+                "size": 5.0,
+                "window_id": "0f902a4273954c959c22ab8d14f86d0e:w4"
+              },
+              "outcome": "ACK",
+              "order_id": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+              "post_started": true,
+              "request_hash": "e31a2f8e3484fd4b66ea357b38ea0ae709dd454910ee98743f559728d3008130",
+              "raw_response": [
+                {
+                  "success": true,
+                  "orderID": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84"
+                }
+              ],
+              "expected_order_id": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84"
+            }
+          ],
+          "known_order_ids": [
+            "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+            "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+            "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+            "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+          ],
+          "confirmed_fills": [
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-FIRST",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-SECOND",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.629,
+              "size": 2.0,
+              "trade_id": "sl-partial-to-pair",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 1.0,
+              "trade_id": "tp-late-on-cancel",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 2.0,
+              "trade_id": "tp-partial",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            }
+          ],
+          "yes_inventory": 10.0,
+          "no_inventory": 5.0,
+          "delta": 5.0,
+          "capital_committed": 5.668,
+          "close_barrier": "SAFE_TO_CONTINUE",
+          "block_reason": null,
+          "journal_references": [],
+          "t0_monotonic": 2859432.704773736,
+          "fill_deadline_monotonic": 2859433.204773736,
+          "close_monotonic": 2859434.67353203
+        },
+        "sizing": {
+          "base_size": "5",
+          "configured_target_delta": "0",
+          "favorite_threshold": "0.70",
+          "favorite_side": "NONE",
+          "favorite_probability": "UNKNOWN",
+          "favorite_data_validity": "DISABLED",
+          "favorite_data_reason": "TARGET_DISABLED",
+          "favorite_clock_resolution_s": "0",
+          "favorite_clock_read_duration_s": "0",
+          "favorite_clock_uncertainty_s": "0",
+          "favorite_max_book_ahead_s": "0",
+          "signed_target_delta": "0",
+          "actual_delta_before": "0.0",
+          "decision_delta_before": "0",
+          "sizing_adjustment_reason": "LEGACY_INVENTORY_SKEW",
+          "sizing_constraint_reason": [],
+          "minimum_order_size": "5.0",
+          "favorite_at_decision": "NONE",
+          "final_winning_outcome": "UNKNOWN",
+          "favorite_prediction_correct": "UNKNOWN",
+          "target_sizing_applied": false,
+          "planned_yes_size": "5.0",
+          "planned_no_size": "0",
+          "submitted_yes_size": "5.0",
+          "submitted_no_size": "0",
+          "confirmed_yes_fill": "5.0",
+          "confirmed_no_fill": "0",
+          "actual_delta_after": "5.0",
+          "order_policy": "SIGNAL_SIDE_ONLY",
+          "normal_signal_side": "YES"
+        }
+      },
+      {
+        "state": "REPAIR",
+        "elapsed_s": 180.9142541885376,
+        "result": {
+          "session_id": "0f902a4273954c959c22ab8d14f86d0e",
+          "window_id": "0f902a4273954c959c22ab8d14f86d0e:w5",
+          "market_id": "0xabababababababababababababababababababababababababababababababab",
+          "start_time": 1800000180.9315882,
+          "end_time": 1800000242.9662547,
+          "requested_quotes": [
+            {
+              "market_id": "0xabababababababababababababababababababababababababababababababab",
+              "token_id": "2",
+              "outcome": "NO",
+              "side": "BUY",
+              "price": 0.719,
+              "size": 5.0,
+              "window_id": "0f902a4273954c959c22ab8d14f86d0e:w5"
+            }
+          ],
+          "placement_results": [
+            {
+              "attempt_id": "5733903339e74d7fbfec37bcec8be7b8",
+              "quote": {
+                "market_id": "0xabababababababababababababababababababababababababababababababab",
+                "token_id": "2",
+                "outcome": "NO",
+                "side": "BUY",
+                "price": 0.719,
+                "size": 5.0,
+                "window_id": "0f902a4273954c959c22ab8d14f86d0e:w5"
+              },
+              "outcome": "ACK",
+              "order_id": "0x71d44fc232081f00bd8b9681996cad6abdf6f2f7a718967df4f8b039449e90b9",
+              "post_started": true,
+              "request_hash": "20dd8ccbf1581a8318717e42aeb9830079f3861dbeefef1314f24d48fe058061",
+              "raw_response": [
+                {
+                  "success": true,
+                  "orderID": "0x71d44fc232081f00bd8b9681996cad6abdf6f2f7a718967df4f8b039449e90b9"
+                }
+              ],
+              "expected_order_id": "0x71d44fc232081f00bd8b9681996cad6abdf6f2f7a718967df4f8b039449e90b9"
+            }
+          ],
+          "known_order_ids": [
+            "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+            "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+            "0x71d44fc232081f00bd8b9681996cad6abdf6f2f7a718967df4f8b039449e90b9",
+            "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+            "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f"
+          ],
+          "confirmed_fills": [
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-FIRST",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x68ce774ddc57513f770ef6766f2cc1d9133b5631b1e5a82d5f061ea24bb02a56",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "1",
+              "our_side": "BUY",
+              "price": 0.3,
+              "size": 5.0,
+              "trade_id": "opening-SECOND",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x473852ef4d4f94cd22004bcd8ca8285abea8a014e8f49d4d17b511bd1ccbac84",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.629,
+              "size": 2.0,
+              "trade_id": "sl-partial-to-pair",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0x732b6c31bd8ed0c0ea22d1d07844421fd2a7776b95745fe11683e934aadb8b61",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 1.0,
+              "trade_id": "tp-late-on-cancel",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            },
+            {
+              "token_id": "2",
+              "our_side": "BUY",
+              "price": 0.47,
+              "size": 2.0,
+              "trade_id": "tp-partial",
+              "status": "CONFIRMED",
+              "ts": 1800000060.0,
+              "maker_order_id": "0xe16fc29c0dfb83d67e0c5bad9e97584396e6d63a3a923c305ac72433a2242a4f",
+              "market_id": "0xabababababababababababababababababababababababababababababababab"
+            }
+          ],
+          "yes_inventory": 10.0,
+          "no_inventory": 5.0,
+          "delta": 5.0,
+          "capital_committed": 5.668,
+          "close_barrier": "SAFE_TO_CONTINUE",
+          "block_reason": null,
+          "journal_references": [],
+          "t0_monotonic": 2859435.737614716,
+          "fill_deadline_monotonic": 2859494.8054213524,
+          "close_monotonic": 2859438.671412043
+        },
+        "sizing": {
+          "repair_plan": {
+            "mode": "SL",
+            "previous_mode": "SL",
+            "transition": false,
+            "reason": "TIME_FORCE_SL",
+            "observations": {
+              "elapsed": 180.91453456878662,
+              "p": 0.29,
+              "sigma": null,
+              "generation": 2,
+              "delta": 5.0,
+              "pnl_per_share": -0.01,
+              "episode_delta": 5.0,
+              "tick": 0.01,
+              "path_segment": 2,
+              "inventory_path_valid": true,
+              "short_adverse": null,
+              "short_z": null,
+              "short_threshold": null,
+              "shock_triggered": false,
+              "sigma_pre": null,
+              "short_elapsed": null,
+              "price_pnl_per_share": 0.0,
+              "price_peak_per_share": 0.0,
+              "drawdown_per_share": 0.0,
+              "drawdown_valid": true,
+              "path_status": "PARTIAL_PATH",
+              "path_breaks": [
+                {
+                  "reason": "INVENTORY_PATH_UNKNOWN",
+                  "price_pnl": "0.0",
+                  "peak": "0.0",
+                  "elapsed": null
+                },
+                {
+                  "reason": "OFFICIAL_CLOCK_CORRECTION",
+                  "price_pnl": "0.00",
+                  "peak": "0",
+                  "elapsed": 72.08336138725281
+                }
+              ]
+            },
+            "target_remaining_delta": "0",
+            "hold_seconds": 109.87179732322693,
+            "last_transition": {
+              "from": "HD",
+              "to": "SL",
+              "reason": "TIME_FORCE_SL",
+              "observations": {
+                "elapsed": 180.91443514823914,
+                "source": "TIME_BOUNDARY"
+              }
+            },
+            "next_review_at": 182.91453456878662,
+            "wake_on": [
+              "PRICE_EVENT",
+              "EXECUTION_FACT",
+              "TIME_BOUNDARY"
+            ],
+            "policy": "hd_tp_sl_v1",
+            "action": "BUY",
+            "side": "NO",
+            "price": 0.719,
+            "quantity": 5.0,
+            "tick": "0.001",
+            "cancel_at": 240.0,
+            "switch_conditions": [
+              "PAIRED",
+              "T240"
+            ],
+            "candidates": [],
+            "parameter_status": "REPLAY_VALIDATED"
+          },
+          "order_policy": "SL_ASK_MINUS_TICK",
+          "signed_target_delta": "0",
+          "target_sizing_applied": false,
+          "actual_delta_before": "5.0",
+          "favorite_data_validity": "NOT_USED",
+          "submitted_yes_size": "0",
+          "submitted_no_size": "5.0",
+          "confirmed_yes_fill": "0",
+          "confirmed_no_fill": "0",
+          "actual_delta_after": "5.0",
+          "actual_delta_after_repair": "5.0"
+        }
+      }
+    ],
+    "skipped_quotes": [],
+    "stop_elapsed_s": 301.99757723975927,
+    "sizing_report": {
+      "final_target_delta": 0.0,
+      "final_actual_delta": 5.0,
+      "intentional_residual_side": "NONE",
+      "intentional_residual_shares": 0,
+      "unintentional_residual_shares": 5.0,
+      "intentional_residual_pnl": "UNKNOWN",
+      "unintentional_residual_pnl": "UNKNOWN",
+      "pair_pnl": 0.832,
+      "trading_pnl_before_rebate": "UNKNOWN",
+      "actual_maker_rebate": "UNKNOWN",
+      "maker_filled_shares": 15.0,
+      "maker_fill_count": 5,
+      "safe_exit_status": "SAFE_TO_CONTINUE",
+      "final_winning_outcome": "UNKNOWN",
+      "favorite_prediction_correct": "UNKNOWN",
+      "intentional_residual_evidence": {}
+    },
+    "repair_readiness": {
+      "policy": "hd_tp_sl_v1",
+      "selected_policy": "hd_tp_sl_v1",
+      "parameters_complete": true,
+      "ready_for_live": true,
+      "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+      "parameters": {
+        "tp_profit_rate": "0.002",
+        "shock_window_sec": 2.0,
+        "shock_max_age_sec": 3.0,
+        "shock_min_ticks": 2,
+        "shock_z": 1.5,
+        "drawdown_per_share": "0.06",
+        "calibration_status": "REPLAY_VALIDATED",
+        "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+        "validation_reference": "offline-acceptance-fixture"
+      },
+      "calibration_status": "REPLAY_VALIDATED",
+      "reasons": [],
+      "validation_reference": "offline-acceptance-fixture"
+    }
+  },
+  "journal_sha256": "831039f33b1ad5b8cfec8db6a6b101d0c0be12ac4fd74bf0fc86df3bfe5bdab7",
+  "tp_first_cancel_ack_to_sl_mock_post_ms": 468.2772848755121,
+  "tp_last_cancel_ack_to_sl_mock_post_ms": 71.95073505863547
+}

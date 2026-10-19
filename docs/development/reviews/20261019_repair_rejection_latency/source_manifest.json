@@ -1,0 +1,205 @@
+{
+  "recorded_at_utc": "2026-10-18T19:21:55.267289+00:00",
+  "files": [
+    {
+      "path": "config/config.toml",
+      "sha256": "3bc1be170cc6a84b0b5ecfc115d8f17135f343cf89a866b4224eda27b20b0298"
+    },
+    {
+      "path": "docs/development/REPAIR_HD_TP_SL_IMPLEMENTATION_20261019.md",
+      "sha256": "8343ba390008f95a45ec5f98a146f418ea5c6885137cab4542fb868087792330"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/README.md",
+      "sha256": "934cbac03a9987fe4ad611c8177839232ccc99bf8f1477944a76febafb737dcf"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/after.xml",
+      "sha256": "976cca2c448a1db6dd8ef4bebabb5302cb96fc859fc1e607553090dfb7317792"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/after_summary.txt",
+      "sha256": "e9f087e39ee0dc4fca1a08214a0b2a9f510afff07d2aa1ce24f14e3e2baaab93"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/analyze_latency.py",
+      "sha256": "c706602dc7a3afea7045dc1fdace2b6d2c141539029abf0a029ae69424af6ab8"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/before.xml",
+      "sha256": "9d3635a6ec777c4a63cc2f9f43f4648e709db5c22266b92e9669a38e358ad442"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/before_summary.txt",
+      "sha256": "0a8cf8b84cd55a2f3e0a02c639dd354eedc4e3c5ba2d6db7db2866f4b0b602c2"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/change_scope.json",
+      "sha256": "36962e1cd36abebfe915bf78393477cfa0bb19d880a5b17277347a9cdb04a7b7"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/focused.xml",
+      "sha256": "3d98ec94b8cb1c33d325940ae4b75aeb447b20e7c12ac8961bb202a1b30c81cd"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/focused_summary.txt",
+      "sha256": "d60d0a623a1960863d9ae31eff10443dd24481c9089262a5c65608fa9a04c7fe"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/full.xml",
+      "sha256": "8ce04cfe898bf7d5227012f8a94442ae3160d269bb4bda6d45ad55cb7a0bbb0b"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/full_summary.txt",
+      "sha256": "228a69757a553d2781558479cb8880c766322de20a008f46e6938167c85c6e40"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/lifecycle_change.patch",
+      "sha256": "80a409dfc8d1225891b11f1ca0ccdc9f745a78aa8df6957392c1b65c3aa732d4"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/live_latency.json",
+      "sha256": "df5b1f23d9987c0c99317142ad7a22702394bc230b6e815db37e336dfdf91583"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/readiness_config.json",
+      "sha256": "8eefbe5d5494aa1816177edeba14a3716ea441246edce433a28750c57773f3a0"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/readiness_livecfg.json",
+      "sha256": "8eefbe5d5494aa1816177edeba14a3716ea441246edce433a28750c57773f3a0"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_rejection_latency/validation.json",
+      "sha256": "4ded756b8fd51793b737cc9aab3acf27528685947e083d1a65b5fef8cf93001d"
+    },
+    {
+      "path": "livecfg/config.toml",
+      "sha256": "ff1e72fb0eb34e08f01c46ca9ff48d3653cb6b7f2c13ec24998bdc5a384a35d2"
+    },
+    {
+      "path": "src/polymaker/cli.py",
+      "sha256": "89fc4f7dc590a027bc6a4394c3c9dc78878bf2a0919bd34263f67ca8baccced5"
+    },
+    {
+      "path": "src/polymaker/config.py",
+      "sha256": "17993c2f3507a75dc164a4b625985f62c4e26f7e675b404bed74be4065b21815"
+    },
+    {
+      "path": "src/polymaker/execution/gateway.py",
+      "sha256": "22fca5c9c202b566044a0194ad9ae0567d2330284f2fc2e90c71b1b710a2d686"
+    },
+    {
+      "path": "src/polymaker/rdp_sm.py",
+      "sha256": "38c30ecc950762b2d7e741cedc98e0a8916f5ad488938ba98ccaa4ecb96ee65a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_cached_reads.py",
+      "sha256": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_entry.py",
+      "sha256": "4e056c5ac38ae06918ae2d8c8a01e862b614fb7d7bd203cc5987408bc5648765"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_execution.py",
+      "sha256": "102733afe74c809fc8be48d7666f528c1251e49ae8c83c146a3faedaf9a731a3"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_fence.py",
+      "sha256": "3defa23075324f63902dc653b6c1b0f8b3ff77f21f2fd59a62a558a91c6c6e33"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_lifecycle.py",
+      "sha256": "a837c593b6f4a6f75eccd2f97bc573283c26929f13c4ca346602f214ab0e44c4"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_logging.py",
+      "sha256": "0cfc148144359e2503340ccc88b8e646aead49e3d2acaf653f891948b3ff10c2"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_loop.py",
+      "sha256": "30787be221ae9a258b3526e085160ef45d8ad76e764eab1680c08837521f716d"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_marketdata.py",
+      "sha256": "35805f6672b823bffb4c787c700c24342bcd0a6eeeca50020f97e5a7b08a6e1d"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_merge.py",
+      "sha256": "aa8528b94281e27ed2a42f58207adedebf6bfa38d0b499621144175b349ba861"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_network.py",
+      "sha256": "225874f4ed4f5a5e75ae6b4ac27bb8d153c1113f7de551fc878330fac6e18263"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_normal.py",
+      "sha256": "2212fd186e755ba87171f826949e292ad8dd53aa01cb509196e55b68c4c26ba1"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_path_repair.py",
+      "sha256": "521225b53baece1a07c7b622591e04791da4661f17ac43ac9887f67b59394c1a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_quotes.py",
+      "sha256": "a7372dbcca676d37efe23c9ef3e989969e89215f1750b893ed187af4432c164c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_rebalance.py",
+      "sha256": "ccb7f714f45cf60fef2771ab2a2423fe10bbc5d5a54d36cd82791814c82a44c2"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_recovery.py",
+      "sha256": "9fb64e78a3c09b986f9978e6006d78c85a06e328207e1e197d9cf54955783a91"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_repair.py",
+      "sha256": "75c52e670a751a6b63029bc2dfabde5de1605ec13f195dee5d83fb4c26269d9c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_signal.py",
+      "sha256": "da2f7c5cf9479e29516c7ad5f860ba0890e619ec8edb4ffde8a085a4c365c77a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sizing.py",
+      "sha256": "10421654057640d8dd4794c294a5ceb96c2ac80de86de6da4d901631397b6452"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync.py",
+      "sha256": "45952f79cea6af76fa10d73a5b8bc6954e072cfd465252c7765aaef2608ffc1c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_companion.py",
+      "sha256": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_observe.py",
+      "sha256": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_reads.py",
+      "sha256": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_writer.py",
+      "sha256": "9cad9cf16cebb1df3fa9f48a1ef9d194e9004320865fb8b15ace5f3eb0edd32b"
+    },
+    {
+      "path": "src/polymaker/repair_model.py",
+      "sha256": "45dc90e9171c606673d38bc9ed6e6554f88f452af0b375987fe1cf75da0b882b"
+    },
+    {
+      "path": "src/polymaker/repair_policy.py",
+      "sha256": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285"
+    },
+    {
+      "path": "src/polymaker/risk_shadow_model.py",
+      "sha256": "f019a2160b59d09b20ac46ca32dfdefbb3a78e7fba35e49eb4863693018b41f2"
+    },
+    {
+      "path": "tests/test_repair_rejection_latency.py",
+      "sha256": "379a91763bced4466e8b98a021978e7fd0e6590f0f2649a3aec2a2be29a6d99c"
+    }
+  ]
+}

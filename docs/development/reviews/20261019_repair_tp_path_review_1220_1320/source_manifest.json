@@ -1,0 +1,74 @@
+[
+  {
+    "market": "12:20",
+    "session_id": "d44a1224727047c8999aa1a585a6d93c",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_d44a1224727047c8999aa1a585a6d93c.jsonl",
+    "sha256": "1e6913dbf39be04e9829a40c192685560f74a695332ed548a5644ae204a6b6c8"
+  },
+  {
+    "market": "12:25",
+    "session_id": "4c87022b5b1d4252b02ab31272f6ef82",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4c87022b5b1d4252b02ab31272f6ef82.jsonl",
+    "sha256": "a7e7f56440a0361aac6d67007210f55ca2261a9cc823419dd47cc07ed715fe79"
+  },
+  {
+    "market": "12:30",
+    "session_id": "2f15361d56554ca082fa787e82ea3b9d",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_2f15361d56554ca082fa787e82ea3b9d.jsonl",
+    "sha256": "de7867e56bc319ec443c9541d772a0a627163f5e7ecc3e69618c8b33820f9311"
+  },
+  {
+    "market": "12:35",
+    "session_id": "bfc87b1bbff041e3b78c0c6ebd4392cf",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bfc87b1bbff041e3b78c0c6ebd4392cf.jsonl",
+    "sha256": "f4a48befb711253a0ba5c0c2ecd47cf1e04adfc4277dbe34fed4b0bb1907b61b"
+  },
+  {
+    "market": "12:40",
+    "session_id": "579f1d40cf5e48ffb49ebeca4b3a58a6",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_579f1d40cf5e48ffb49ebeca4b3a58a6.jsonl",
+    "sha256": "81f00e8eecbf8ca8b54b8166fa9dac0e7805b492933031bbddcabfcc507bf211"
+  },
+  {
+    "market": "12:45",
+    "session_id": "71123a66c78447fe962e2deefde545b5",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_71123a66c78447fe962e2deefde545b5.jsonl",
+    "sha256": "a4cca5a75bf97b09e73c87db78420c3e1f4c0cc53c60f78533ae2b4e523ab58c"
+  },
+  {
+    "market": "12:50",
+    "session_id": "1e3e434c46a94be9b41d20a21b8d4c3b",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_1e3e434c46a94be9b41d20a21b8d4c3b.jsonl",
+    "sha256": "64384ddca1fbf867469a2c743bedf17f836a119253bbda2435ff034e959e94e1"
+  },
+  {
+    "market": "12:55",
+    "session_id": "784dcfa6b2d94ef18a6d5c27a4548d45",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_784dcfa6b2d94ef18a6d5c27a4548d45.jsonl",
+    "sha256": "733892734ce28d397a2ce2df610f3bc93b59e91d6f2e41a22e9f34a649413115"
+  },
+  {
+    "market": "13:00",
+    "session_id": "5c7ceb7eb5a147fab276e7717c0048fd",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5c7ceb7eb5a147fab276e7717c0048fd.jsonl",
+    "sha256": "6c7bfa6a874c5e8895e7e1c6e3f367de026f8bdfb6f1dff5ae97640c9e07677d"
+  },
+  {
+    "market": "13:05",
+    "session_id": "4e772fcf9ec64522a49f61c83d449c2a",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4e772fcf9ec64522a49f61c83d449c2a.jsonl",
+    "sha256": "ee7cca008c6effa834dad55a66bc3dbfe9eb1d1ce04039ec947c7cec88df2bf3"
+  },
+  {
+    "market": "13:10",
+    "session_id": "a22554bc79bc4a3982fe13d2699b7715",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a22554bc79bc4a3982fe13d2699b7715.jsonl",
+    "sha256": "261d31f02a3f7a4cc0a19876a5149bb5988270feb52bc37ef890787bf3fd4209"
+  },
+  {
+    "market": "13:15",
+    "session_id": "33e45756eb9642f49e31160c1f224f32",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_33e45756eb9642f49e31160c1f224f32.jsonl",
+    "sha256": "9e51a97ed77bbcfb737daafebcb8dd7681454f172417ca74c3214600e4e43028"
+  }
+]

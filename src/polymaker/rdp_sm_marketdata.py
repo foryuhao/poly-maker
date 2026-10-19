@@ -107,6 +107,22 @@ class PairSnapshot:
         }
 
 
+@dataclass(frozen=True)
+class RepairPricePoint:
+    sequence: int
+    monotonic: float
+    wall: float
+    generation: int
+    p: float
+    yes_bid: str
+    yes_ask: str
+    no_bid: str
+    no_ask: str
+    yes_tick: str
+    no_tick: str
+    path_segment: int = 0
+
+
 class SessionFeed:
     def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
@@ -125,6 +141,13 @@ class SessionFeed:
         self.ws = None
         self.task = None
         self.last_receipt = None
+        self.last_transport_receipt = None
+        self.probability_points = deque(maxlen=128)
+        # Preserve intrasecond price changes independently of the sigma buckets.
+        # Generations stay explicit; reconnect must not invent a continuous path.
+        self.repair_price_points = deque(maxlen=16384)
+        self.repair_path_segment = 0
+        self.repair_path_valid = False
         self.last_wall = None
         self.tick_revision = 0
         self.tick_verified = {}
@@ -210,12 +233,16 @@ class SessionFeed:
                 for t, b in self.books.items()
             }
             self.last_receipt = None
+            self.last_transport_receipt = self.monotonic()
+            self.probability_points.clear()
+            self.repair_path_valid = False
             self.last_wall = None
             self.changed.set()
 
     def invalidate(self, reason):
         with self.lock:
             self.connected = False
+            self.repair_path_valid = False
             self.reason = reason
             self.books = {t: replace(b, snapshot_generation=0) for t, b in self.books.items()}
             self._track_signal(evaluate(self.snapshot(), self.cfg.threshold), self.monotonic())
@@ -232,14 +259,14 @@ class SessionFeed:
                 self.books[token] = replace(b, tick=tick)
                 self.tick_verified[token] = tick
 
-    def snapshot(self, *, repair_token=None):
+    def snapshot(self, *, repair_token=None, repair=False):
         now = self.monotonic()
         with self.lock:
             yes, no = (self.books[t] for t in (self.meta.yes.token_id, self.meta.no.token_id))
             reason = self.reason if not self.connected else ""
             if any(b.snapshot_generation != self.generation for b in (yes, no)):
                 reason = reason or "WS_REBUILD_REQUIRED"
-            needed = (self.books[repair_token],) if repair_token else (yes, no)
+            needed = (self.books[repair_token],) if repair_token and not repair else (yes, no)
             for b in needed:
                 if not b.bids or not b.asks:
                     reason = reason or "WS_EMPTY_BOOK"
@@ -248,11 +275,14 @@ class SessionFeed:
                 if ((b.reported_bid is not None and b.reported_bid != (b.best_bid or Decimal(0)))
                         or (b.reported_ask is not None and b.reported_ask != (b.best_ask or Decimal(1)))):
                     reason = reason or "WS_TOP_PENDING"
-                if not 0 <= (now - b.received_mono) * 1000 <= self.cfg.max_book_age_ms:
+                if not repair and not 0 <= (now - b.received_mono) * 1000 <= self.cfg.max_book_age_ms:
                     reason = reason or "WS_BOOK_STALE"
                 if self.tick_verified.get(b.token_id) != b.tick:
                     reason = reason or "WS_TICK_UNVERIFIED"
-            if not repair_token and (
+            if repair and (self.last_transport_receipt is None or
+                           not 0 <= now-self.last_transport_receipt <= 2*WS_HEARTBEAT_SEC):
+                reason = reason or "WS_TRANSPORT_STALE"
+            if not repair and not repair_token and (
                 abs(yes.received_mono - no.received_mono) * 1000 > self.cfg.max_pair_skew_ms
                 or int(abs(yes.source_time - no.source_time)) * 1000 > self.cfg.max_pair_skew_ms
             ):
@@ -289,7 +319,13 @@ class SessionFeed:
         """Only the consumer calls apply; SDK workers only call snapshot()."""
         received_mono = self.monotonic() if received_mono is None else received_mono
         received_wall = self.wall() if received_wall is None else received_wall
+        with self.lock:
+            if (self.last_transport_receipt is not None
+                    and received_mono-self.last_transport_receipt > 2*WS_HEARTBEAT_SEC):
+                self.repair_path_valid = False
         if raw in ("PONG", "PING"):
+            if self.connected:
+                self.last_transport_receipt = received_mono
             return
         row = None
         try:
@@ -435,8 +471,18 @@ class SessionFeed:
                 depth_changed = any((updated[t].bids, updated[t].asks) !=
                                     (self.books[t].bids, self.books[t].asks) for t in touched)
                 self.last_receipt = received_mono
+                self.last_transport_receipt = received_mono
                 self.last_wall = received_wall
                 self.books = updated
+                y = updated[self.meta.yes.token_id]
+                if (self.meta.yes.token_id in touched and y.best_bid is not None
+                        and y.best_ask is not None and y.best_bid < y.best_ask):
+                    point = (math.floor(received_wall), received_mono,
+                             float((y.best_bid+y.best_ask)/2), self.generation)
+                    if self.probability_points and self.probability_points[-1][0] == point[0]:
+                        self.probability_points[-1] = point
+                    else:
+                        self.probability_points.append(point)
                 if touched or tick_changed:
                     self.sequence += 1
                     self.tick_revision += tick_changed
@@ -444,6 +490,28 @@ class SessionFeed:
                         self.signal_event = received_mono
                     self.reason = ""
                     self._track_signal(evaluate(self.snapshot(), self.cfg.threshold), received_mono)
+                    snapshot = self.snapshot(repair=True)
+                    coherent = (snapshot.valid and abs(
+                        (snapshot.yes.best_bid+snapshot.yes.best_ask
+                         + snapshot.no.best_bid+snapshot.no.best_ask)/2-1) <= Decimal(".02"))
+                    if coherent:
+                        if not self.repair_path_valid:
+                            self.repair_path_segment += 1
+                        self.repair_path_valid = True
+                        y, n = snapshot.yes, snapshot.no
+                        signature = (str(y.best_bid), str(y.best_ask), str(n.best_bid),
+                                     str(n.best_ask), str(y.tick), str(n.tick))
+                        previous = self.repair_price_points[-1] if self.repair_price_points else None
+                        old_signature = ((previous.yes_bid, previous.yes_ask, previous.no_bid,
+                                          previous.no_ask, previous.yes_tick, previous.no_tick)
+                                         if previous else None)
+                        if (previous is None or previous.generation != self.generation
+                                or previous.path_segment != self.repair_path_segment or signature != old_signature):
+                            self.repair_price_points.append(RepairPricePoint(
+                                self.sequence, received_mono, received_wall, self.generation,
+                                float((y.best_bid+y.best_ask)/2), *signature, self.repair_path_segment))
+                    else:
+                        self.repair_path_valid = False
                     self.changed.set()
         except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
             self.record_failure(exc, {"received_wall": received_wall,

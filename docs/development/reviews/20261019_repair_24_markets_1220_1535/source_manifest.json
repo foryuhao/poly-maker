@@ -1,0 +1,434 @@
+[
+  {
+    "market": "12:20",
+    "session_id": "d44a1224727047c8999aa1a585a6d93c",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_d44a1224727047c8999aa1a585a6d93c.jsonl",
+    "sha256": "1e6913dbf39be04e9829a40c192685560f74a695332ed548a5644ae204a6b6c8",
+    "journal_rows": 22838,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/d44a1224727047c8999aa1a585a6d93c/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/d44a1224727047c8999aa1a585a6d93c/manifest.json",
+        "sha256": "db584948273828736ba588267f72b61adc36f0791027f7102159a78ecd31fd70"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/d44a1224727047c8999aa1a585a6d93c/summary.json",
+        "sha256": "62fffb3f4f5dceeeaa36626767413863a6410c497a04dd728c9e444a8cea2bce"
+      }
+    ]
+  },
+  {
+    "market": "12:25",
+    "session_id": "4c87022b5b1d4252b02ab31272f6ef82",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4c87022b5b1d4252b02ab31272f6ef82.jsonl",
+    "sha256": "a7e7f56440a0361aac6d67007210f55ca2261a9cc823419dd47cc07ed715fe79",
+    "journal_rows": 3056,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4c87022b5b1d4252b02ab31272f6ef82/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4c87022b5b1d4252b02ab31272f6ef82/manifest.json",
+        "sha256": "c5f28b6efb3ae3ac4bdc26a0f5961fb395b2b8e951b4fee914b8aeae2b989d04"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4c87022b5b1d4252b02ab31272f6ef82/summary.json",
+        "sha256": "441afa2306e4f69199283d4ff797aa3bc82f5a9d4d9c43e509b90d34e0500c8e"
+      }
+    ]
+  },
+  {
+    "market": "12:30",
+    "session_id": "2f15361d56554ca082fa787e82ea3b9d",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_2f15361d56554ca082fa787e82ea3b9d.jsonl",
+    "sha256": "de7867e56bc319ec443c9541d772a0a627163f5e7ecc3e69618c8b33820f9311",
+    "journal_rows": 15736,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2f15361d56554ca082fa787e82ea3b9d/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2f15361d56554ca082fa787e82ea3b9d/manifest.json",
+        "sha256": "a98b73e1ed5efff5374977c0a30944c1e912139512978812996b9f786422992b"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2f15361d56554ca082fa787e82ea3b9d/summary.json",
+        "sha256": "185f86422005e5a363527ba8c89177ec6c0a7ceb9a1a48eadfefb79ee008253c"
+      }
+    ]
+  },
+  {
+    "market": "12:35",
+    "session_id": "bfc87b1bbff041e3b78c0c6ebd4392cf",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bfc87b1bbff041e3b78c0c6ebd4392cf.jsonl",
+    "sha256": "f4a48befb711253a0ba5c0c2ecd47cf1e04adfc4277dbe34fed4b0bb1907b61b",
+    "journal_rows": 2388,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bfc87b1bbff041e3b78c0c6ebd4392cf/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bfc87b1bbff041e3b78c0c6ebd4392cf/manifest.json",
+        "sha256": "81d6a2cca6ffd2dcebdaaf51f5fffe4f0a22cff75c3b0e991ea6651436318c64"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/bfc87b1bbff041e3b78c0c6ebd4392cf/summary.json",
+        "sha256": "38f8281679bb31b4fec6ecb20041096243677219a1a3602ee19f3fdfc6737be2"
+      }
+    ]
+  },
+  {
+    "market": "12:40",
+    "session_id": "579f1d40cf5e48ffb49ebeca4b3a58a6",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_579f1d40cf5e48ffb49ebeca4b3a58a6.jsonl",
+    "sha256": "81f00e8eecbf8ca8b54b8166fa9dac0e7805b492933031bbddcabfcc507bf211",
+    "journal_rows": 24046,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/579f1d40cf5e48ffb49ebeca4b3a58a6/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/579f1d40cf5e48ffb49ebeca4b3a58a6/manifest.json",
+        "sha256": "5f000f8ee37e15e886e348b428f70f07683e47c01c4c63dbc0b73ad7d6183cdf"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/579f1d40cf5e48ffb49ebeca4b3a58a6/summary.json",
+        "sha256": "390c8d15170ebf93c7d3a560f44df5047d1e1b2a50f7612ec51dde653f460a4a"
+      }
+    ]
+  },
+  {
+    "market": "12:45",
+    "session_id": "71123a66c78447fe962e2deefde545b5",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_71123a66c78447fe962e2deefde545b5.jsonl",
+    "sha256": "a4cca5a75bf97b09e73c87db78420c3e1f4c0cc53c60f78533ae2b4e523ab58c",
+    "journal_rows": 4678,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/71123a66c78447fe962e2deefde545b5/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/71123a66c78447fe962e2deefde545b5/manifest.json",
+        "sha256": "f0f206436d6c7bab0dd8d103e9435a01f6fe8c07ad5d25fdf01d60fcc5a87863"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/71123a66c78447fe962e2deefde545b5/summary.json",
+        "sha256": "45b9cf8b0103d6f17d839a4e159d2471642ac4fbf70329bfd302bcc253687cb7"
+      }
+    ]
+  },
+  {
+    "market": "12:50",
+    "session_id": "1e3e434c46a94be9b41d20a21b8d4c3b",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_1e3e434c46a94be9b41d20a21b8d4c3b.jsonl",
+    "sha256": "64384ddca1fbf867469a2c743bedf17f836a119253bbda2435ff034e959e94e1",
+    "journal_rows": 2168,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/1e3e434c46a94be9b41d20a21b8d4c3b/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/1e3e434c46a94be9b41d20a21b8d4c3b/manifest.json",
+        "sha256": "742efb90969991effef2320d8fed3b318dbd9276157b6e9c60d554b06140db0f"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/1e3e434c46a94be9b41d20a21b8d4c3b/summary.json",
+        "sha256": "52ad28c8a07815fbfdba26ba0faec67dd1c2b10f051831ca8229e7929ece685a"
+      }
+    ]
+  },
+  {
+    "market": "12:55",
+    "session_id": "784dcfa6b2d94ef18a6d5c27a4548d45",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_784dcfa6b2d94ef18a6d5c27a4548d45.jsonl",
+    "sha256": "733892734ce28d397a2ce2df610f3bc93b59e91d6f2e41a22e9f34a649413115",
+    "journal_rows": 4470,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/784dcfa6b2d94ef18a6d5c27a4548d45/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/784dcfa6b2d94ef18a6d5c27a4548d45/manifest.json",
+        "sha256": "20f1d4150bb93c7f42b55dde972359a717c61f7e9645150647fcfbbc35565417"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/784dcfa6b2d94ef18a6d5c27a4548d45/summary.json",
+        "sha256": "f7b5c10e3b7eddca93291b56d812e8b6368e66dae68c5d9676807fd5675267c2"
+      }
+    ]
+  },
+  {
+    "market": "13:00",
+    "session_id": "5c7ceb7eb5a147fab276e7717c0048fd",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5c7ceb7eb5a147fab276e7717c0048fd.jsonl",
+    "sha256": "6c7bfa6a874c5e8895e7e1c6e3f367de026f8bdfb6f1dff5ae97640c9e07677d",
+    "journal_rows": 6167,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5c7ceb7eb5a147fab276e7717c0048fd/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5c7ceb7eb5a147fab276e7717c0048fd/manifest.json",
+        "sha256": "fe73bc5c974249e786da32e6b54056427f09c079b0cb01f8927dce0b6a90bb05"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5c7ceb7eb5a147fab276e7717c0048fd/summary.json",
+        "sha256": "fe8bbfca697b9629cd9ae5c40cf12ed20c12316a87fb541b15d78ceda22779a4"
+      }
+    ]
+  },
+  {
+    "market": "13:05",
+    "session_id": "4e772fcf9ec64522a49f61c83d449c2a",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4e772fcf9ec64522a49f61c83d449c2a.jsonl",
+    "sha256": "ee7cca008c6effa834dad55a66bc3dbfe9eb1d1ce04039ec947c7cec88df2bf3",
+    "journal_rows": 2512,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4e772fcf9ec64522a49f61c83d449c2a/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4e772fcf9ec64522a49f61c83d449c2a/manifest.json",
+        "sha256": "017b2e97a2c714974247399e3a615a673bd0645e40fcb7b998264afb9532f125"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/4e772fcf9ec64522a49f61c83d449c2a/summary.json",
+        "sha256": "ec5c0172259c13e0d031be88af1ef44bddf43f1907e899c51a7b2719628a9591"
+      }
+    ]
+  },
+  {
+    "market": "13:10",
+    "session_id": "a22554bc79bc4a3982fe13d2699b7715",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a22554bc79bc4a3982fe13d2699b7715.jsonl",
+    "sha256": "261d31f02a3f7a4cc0a19876a5149bb5988270feb52bc37ef890787bf3fd4209",
+    "journal_rows": 5673,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a22554bc79bc4a3982fe13d2699b7715/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a22554bc79bc4a3982fe13d2699b7715/manifest.json",
+        "sha256": "106c2f65519e811c4728407e201ffb5c86bc0a7cf39945cd7c130c4a19ef56b0"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a22554bc79bc4a3982fe13d2699b7715/summary.json",
+        "sha256": "ec625674449e3af3eb1785de5585076b8fd8b73668f60a49a45f80f6df0d49a3"
+      }
+    ]
+  },
+  {
+    "market": "13:15",
+    "session_id": "33e45756eb9642f49e31160c1f224f32",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_33e45756eb9642f49e31160c1f224f32.jsonl",
+    "sha256": "9e51a97ed77bbcfb737daafebcb8dd7681454f172417ca74c3214600e4e43028",
+    "journal_rows": 4558,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/33e45756eb9642f49e31160c1f224f32/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/33e45756eb9642f49e31160c1f224f32/manifest.json",
+        "sha256": "caca10fd158e79dfbaf121ea1bff0da750344f5669b4119d901f63d2c63b4cca"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/33e45756eb9642f49e31160c1f224f32/summary.json",
+        "sha256": "55359f821c6055bb1f01c6722e075f5789be3b7031e44bf9f63d18aa1d0ee347"
+      }
+    ]
+  },
+  {
+    "market": "14:35",
+    "session_id": "2693008f1f6044c4848880c61a122347",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_2693008f1f6044c4848880c61a122347.jsonl",
+    "sha256": "48e0cd17c2c853290efc1b3bbbb0d9f84d3eeb6f4de8199fdb9a740ee0e5ca48",
+    "journal_rows": 6127,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2693008f1f6044c4848880c61a122347/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2693008f1f6044c4848880c61a122347/manifest.json",
+        "sha256": "3125a60ccaf5749193afbc82428da8e482967b71b06844f8f0ec7a9f52335348"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/2693008f1f6044c4848880c61a122347/summary.json",
+        "sha256": "2831a259c42a45e8685a32e5f7852a8545be56ba50491e488538acde93b3cc60"
+      }
+    ]
+  },
+  {
+    "market": "14:40",
+    "session_id": "a94a6a2279f24e7495971b3c5321301a",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a94a6a2279f24e7495971b3c5321301a.jsonl",
+    "sha256": "60f5e440de896edc3f651037ab37c52ed5f1ace06d0db739b02b2d9b47323900",
+    "journal_rows": 2416,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a94a6a2279f24e7495971b3c5321301a/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a94a6a2279f24e7495971b3c5321301a/manifest.json",
+        "sha256": "eb59f6b04051a0d31001609dcf5af2ae68dd54f8935c2f089919a48a63c5eeb0"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/a94a6a2279f24e7495971b3c5321301a/summary.json",
+        "sha256": "3f655e671e032e8d033687948f1a1ab92aff88f71eb1ac2ba070f53de7b7c109"
+      }
+    ]
+  },
+  {
+    "market": "14:45",
+    "session_id": "e866262881f24758b52b81c983ee1878",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e866262881f24758b52b81c983ee1878.jsonl",
+    "sha256": "18f557cc05239d3538215432957270c9f9cb996b0faffa26cac254de88f4fc54",
+    "journal_rows": 5170,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e866262881f24758b52b81c983ee1878/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e866262881f24758b52b81c983ee1878/manifest.json",
+        "sha256": "f480fc467f73d12ff85f1968446555795584ac57a981491f811979741bd97381"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e866262881f24758b52b81c983ee1878/summary.json",
+        "sha256": "f85008317843594fc8945cfd86b881cd859674b8d98f2f0f96307ba16bb8a9da"
+      }
+    ]
+  },
+  {
+    "market": "14:50",
+    "session_id": "e5fa972920f64912a6f91fd263885321",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e5fa972920f64912a6f91fd263885321.jsonl",
+    "sha256": "5962af8056f3f2cfab2e49a1e1cfc4f927c727b1f9549cf04b6e3838ab2b4b9d",
+    "journal_rows": 31223,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e5fa972920f64912a6f91fd263885321/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e5fa972920f64912a6f91fd263885321/manifest.json",
+        "sha256": "b38dee70e4932e66e976aeeadd8fd9e1f6e6835b1edf1d553095adbe81515847"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/e5fa972920f64912a6f91fd263885321/summary.json",
+        "sha256": "226b7e11db5e01076181e6a76f92ab81e8735dca33e023a3d150affb2ab3141a"
+      }
+    ]
+  },
+  {
+    "market": "14:55",
+    "session_id": "46b1f02594a34f3ca3b25f9ea17c485a",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_46b1f02594a34f3ca3b25f9ea17c485a.jsonl",
+    "sha256": "9ca2f21a2f8428dc22faaf209cd6f69a91a473cd82a1ef66fb5f1dce033b7701",
+    "journal_rows": 6932,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/46b1f02594a34f3ca3b25f9ea17c485a/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/46b1f02594a34f3ca3b25f9ea17c485a/manifest.json",
+        "sha256": "85a540e3c1515898043648b3684e56dddf76e9259f28c1261471119e6d5daf5f"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/46b1f02594a34f3ca3b25f9ea17c485a/summary.json",
+        "sha256": "7293fea3da1bb513915bedbc1a0edaab673c0539d64bab4a1adb640ec9153dd5"
+      }
+    ]
+  },
+  {
+    "market": "15:00",
+    "session_id": "f35091eced5341f2b96b34810eb7472c",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_f35091eced5341f2b96b34810eb7472c.jsonl",
+    "sha256": "9b64a9eb60253960c73f30ebf5a9c13e7a3dd7e91c322313bc00f2c1e0a8cde9",
+    "journal_rows": 3715,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/f35091eced5341f2b96b34810eb7472c/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/f35091eced5341f2b96b34810eb7472c/manifest.json",
+        "sha256": "17571019c1b1bd5628f309d9d5dd1c2e626fc66ecfc7994d6de8f72209befaae"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/f35091eced5341f2b96b34810eb7472c/summary.json",
+        "sha256": "434b183227fd4e770f078d5eb47fe9448c7a6c4773edbe4c4a3f817ff07afcf3"
+      }
+    ]
+  },
+  {
+    "market": "15:05",
+    "session_id": "0a4621fb630741c99e334a7fed1bf436",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_0a4621fb630741c99e334a7fed1bf436.jsonl",
+    "sha256": "7f370eb8316737841b4002ff09f096209c6b462ee200dfe5d582768bbb5ece78",
+    "journal_rows": 6989,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/0a4621fb630741c99e334a7fed1bf436/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/0a4621fb630741c99e334a7fed1bf436/manifest.json",
+        "sha256": "00234a9fe413d285ebae14857ba553e753e8a16cbcef5c79df94fd8df8c515e0"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/0a4621fb630741c99e334a7fed1bf436/summary.json",
+        "sha256": "d225a05dc7645e3e4f06cc873eab17cb1fea193f2b3e3108da5fb52c15d4ce4b"
+      }
+    ]
+  },
+  {
+    "market": "15:10",
+    "session_id": "cd8e93e921f24b8b9f31629fa55b46e7",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cd8e93e921f24b8b9f31629fa55b46e7.jsonl",
+    "sha256": "6ffbb6b365ca3113e3ff7bdeb2abedc298bbb6eb4a56705a42eab67bd31c88ea",
+    "journal_rows": 2693,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cd8e93e921f24b8b9f31629fa55b46e7/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cd8e93e921f24b8b9f31629fa55b46e7/manifest.json",
+        "sha256": "f2724db85f41fb2a4f734c12e4797289a064f0d7ac686642deeecfc2d4c6b5cf"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/cd8e93e921f24b8b9f31629fa55b46e7/summary.json",
+        "sha256": "30230150239b71e291604263fea595219c69b31b74eb6321d57e784c9488daa5"
+      }
+    ]
+  },
+  {
+    "market": "15:15",
+    "session_id": "908e3945b31640cdb4d5cd809b9653ae",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_908e3945b31640cdb4d5cd809b9653ae.jsonl",
+    "sha256": "2c2167084d91f8ad882aede917931062a651c87adf94620668e79d73a03fbfcf",
+    "journal_rows": 23595,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/908e3945b31640cdb4d5cd809b9653ae/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/908e3945b31640cdb4d5cd809b9653ae/manifest.json",
+        "sha256": "81c611403e34d6968e24be10971f4a2d62ba371fc3bc571f7fbb9e7136f98d90"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/908e3945b31640cdb4d5cd809b9653ae/summary.json",
+        "sha256": "25061d254ad22d43714e75d2c5e7f2e7997a9d9098c14e3c1b827f4857ca2535"
+      }
+    ]
+  },
+  {
+    "market": "15:20",
+    "session_id": "5d985467ded645459f437550f22bcb6d",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5d985467ded645459f437550f22bcb6d.jsonl",
+    "sha256": "8f6ef4d04e9219abd7e54fb7b69c629d669411b4ffac7adb06eb326465738a1d",
+    "journal_rows": 23889,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5d985467ded645459f437550f22bcb6d/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5d985467ded645459f437550f22bcb6d/manifest.json",
+        "sha256": "01f3d9d0b60509343a5253a0cf60a50cbed3334e67f0562c7c2a10377f5f6792"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/5d985467ded645459f437550f22bcb6d/summary.json",
+        "sha256": "26c27cc276043c77e31aeb9674daeaf0cabe2fae0eb93a851bbcf52cec2b76d4"
+      }
+    ]
+  },
+  {
+    "market": "15:25",
+    "session_id": "48661340d6dc458b843b769d1b412195",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_48661340d6dc458b843b769d1b412195.jsonl",
+    "sha256": "4dcc5d71c4812f8850faee6d864dac6986bde73d46ec83caea80c08c9eeebd29",
+    "journal_rows": 7188,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/48661340d6dc458b843b769d1b412195/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/48661340d6dc458b843b769d1b412195/manifest.json",
+        "sha256": "ddb158d8b7c2e1de0ba6b6a381e827eb86f4a4664118990faf30efdd3913fa70"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/48661340d6dc458b843b769d1b412195/summary.json",
+        "sha256": "7960dfaedd3413ffabe2f609b1d4966c35a12e8f2e43d00af49d56ac3ee06b7b"
+      }
+    ]
+  },
+  {
+    "market": "15:30",
+    "session_id": "917e65f87a5348e496a9e69e26355f47",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_917e65f87a5348e496a9e69e26355f47.jsonl",
+    "sha256": "06243291cf70017893a65efcaf72f551d73593de618deca74616036e6ee06310",
+    "journal_rows": 22382,
+    "cache_summary": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/917e65f87a5348e496a9e69e26355f47/summary.json",
+    "supporting_sources": [
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/917e65f87a5348e496a9e69e26355f47/manifest.json",
+        "sha256": "da57ab6a883b8e6a8354e4d25624387b72711f62c8ab31852c3fb06da3d523b8"
+      },
+      {
+        "source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/917e65f87a5348e496a9e69e26355f47/summary.json",
+        "sha256": "7ef13e4aa590327c046f2ad3076b99812f7a7eb8a78437ae229b8e273430729c"
+      }
+    ]
+  }
+]

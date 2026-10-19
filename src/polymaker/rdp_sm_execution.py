@@ -253,6 +253,19 @@ class ExecutionClobClient(ReadOnlyClobClient):
     on this transport. No success inference is made from Gateway's empty list.
     """
 
+    def __getattribute__(self, name):
+        if name in {"attempt", "batch_attempts", "network_batch_id", "submit_guard",
+                    "on_post_start", "expected_body_hash"}:
+            local = object.__getattribute__(self, "__dict__").get("operation_local")
+            context = getattr(local, "context", None)
+            if context is not None and name in context:
+                return context[name]
+        return super().__getattribute__(name)
+
+    def _operation_value(self, name, default=None):
+        context = getattr(getattr(self, "operation_local", None), "context", None)
+        return context.get(name, default) if context is not None else getattr(self, name, default)
+
     def create_order(self, order_args, options=None):
         # The SDK floors size*100. Binary float 5.02*100 is below 502 and
         # otherwise signs 5.01 shares. Preserve the validated 0.01-share size;
@@ -417,14 +430,14 @@ class ExecutionClobClient(ReadOnlyClobClient):
             )
 
     def _post(self, endpoint, headers=None, data=None, params=None):
-        attempt = getattr(self, "attempt", None)
-        attempts = getattr(self, "batch_attempts", None) or ([attempt] if attempt is not None else [])
+        attempt = self._operation_value("attempt")
+        attempts = self._operation_value("batch_attempts") or ([attempt] if attempt is not None else [])
         _require(
             endpoint == f"{OFFICIAL_HOSTS['clob_host']}/orders"
             and bool(attempts)
             and all(not a.post_started for a in attempts)
             and self.pagination_failure is None
-            and self.submit_guard(),
+            and self._operation_value("submit_guard")(),
             "SM_POST_NOT_PERMITTED",
         )
         rows = json.loads(data)
@@ -445,18 +458,18 @@ class ExecutionClobClient(ReadOnlyClobClient):
                 and Decimal(str(signed["makerAmount"])) == current.maximum * 1_000_000,
                 "SIGNED_QUOTE_ECONOMICS_CHANGED",
             )
-        expected = getattr(self, "expected_body_hash", None)
+        expected = self._operation_value("expected_body_hash")
         _require(
             expected is None or hashlib.sha256(data.encode()).hexdigest() == expected,
             "PREPARED_BODY_CHANGED",
         )
-        if getattr(self, "on_post_start", None) is not None:
-            self.on_post_start()
+        if self._operation_value("on_post_start") is not None:
+            self._operation_value("on_post_start")()
         for current in attempts:
             current.post_started = True
             current.request_hash = hashlib.sha256(data.encode()).hexdigest()
         began, started_wall = time.monotonic(), time.time()
-        batch_id = getattr(self, "network_batch_id", None)
+        batch_id = self._operation_value("network_batch_id")
         operation_id = "post:" + hashlib.sha256(data.encode()).hexdigest()
         try:
             raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
@@ -662,6 +675,14 @@ class _SMProcessor(UserEventProcessor):
     def tracked_trade_qty(self, order_id):
         return float(sum((Decimal(str(f.size)) for f in self.economic_fills_for_order(order_id)), Decimal(0)))
 
+    def retire_unaccepted_order(self, order_id, *, source):
+        row = self.owned_record(order_id)
+        if (row is not None and row["source"] == source
+                and not any(key[1] == order_id for key in self.fill_records)
+                and order_id not in self.quarantined_orders):
+            self._store.retire_unaccepted_order(order_id, source)
+            self._owned.discard(order_id)
+
     def __init__(self, executor: SMWindowExecutor, store: StateStore):
         super().__init__(store)
         self.executor = executor
@@ -676,6 +697,46 @@ class _SMProcessor(UserEventProcessor):
 
     def on_trade(self, ev: TradeEvent, condition_id: str, **kwargs):
         self._external_commitment_changed(ev.maker_order_id)
+        e = self.executor
+        if ev.maker_order_id in getattr(e, "sl_order_ids", set()) and any(
+                (a.order_id or a.expected_order_id) == ev.maker_order_id
+                and a.outcome in {"REJECTED", "ABORTED"} for a in e.attempts):
+            e.fatal = "REJECTED_ORDER_FILL_CONTRADICTION"
+            for a in e.attempts:
+                if (a.order_id or a.expected_order_id) == ev.maker_order_id:
+                    a.outcome, a.order_id = "UNKNOWN", ev.maker_order_id
+                    e.known.add(a.order_id)
+                    if self.owned_record(a.order_id) is None:
+                        self.register_order(a.order_id, e.meta.condition_id, a.quote.token_id,
+                            Side.BUY, a.quote.size, a.quote.price, "rdp_sm_sl", quiet=True)
+        key = (ev.trade_id, ev.maker_order_id)
+        proven = e.position_reconciled.get(key)
+        prior = self.fill_records.get(key)
+        confirmation_only = (
+            ev.status is TradeState.CONFIRMED
+            and proven is not None and prior is not None
+            and prior.status in {TradeState.MATCHED, TradeState.MINED}
+            and condition_id == proven.market_id
+            and e.proofs.get(ev.maker_order_id, {}).get("outcome") == "POSITION_RECONCILED"
+            and all(replace(f, status=ev.status, ts=ev.ts) == ev for f in (proven, prior))
+        )
+        if key not in e.fill_observed_at:
+            start = int(e.slug.rsplit("-", 1)[1])
+            now = e.official_time + e.monotonic() - e.time_anchor
+            native = float(ev.ts or 0)
+            if native > 1e12:
+                native /= 1000
+            lower_bound = e.order_post_elapsed.get(ev.maker_order_id)
+            valid_native = (lower_bound is not None and start+lower_bound <= native <= now + .5)
+            e.fill_observed_at[key] = {
+                "elapsed": (native if valid_native else now)-start,
+                "observed_elapsed": now-start,
+                "source": "VENUE_TRADE_TIME" if valid_native else "LOCAL_FIRST_TRADE_OBSERVATION",
+            }
+        if ev.status is TradeState.CONFIRMED:
+            e.fill_observed_at[key].setdefault(
+                "economic_observed_elapsed", e.official_time+e.monotonic()-e.time_anchor
+                - int(e.slug.rsplit("-", 1)[1]))
         before = (
             dict(self.fill_records),
             set(self.applied_fill_keys),
@@ -686,9 +747,27 @@ class _SMProcessor(UserEventProcessor):
         if before != after:
             if kwargs.get("source", "WS") == "WS":
                 self.executor.external_revision += 1
-            self.executor.invalidate("TRADE_EVIDENCE_CHANGED", ev.maker_order_id)
+            confirmation_only = (
+                confirmation_only and key in self.applied_fill_keys
+                and key not in self.quarantined_fill_keys
+                and ev.maker_order_id not in self.quarantined_orders
+                and not self.has_unresolved_fill_key(ev.maker_order_id)
+                and not self.has_failed_fill(ev.maker_order_id)
+            )
+            # A proven fill's unchanged CONFIRMED upgrade preserves its queue
+            # economics. Invalidate the session revision regardless: admission
+            # and final close still require fresh reconciliation of all orders.
+            self.executor.invalidate(
+                "TRADE_CONFIRMATION_ADVANCED" if confirmation_only else "TRADE_EVIDENCE_CHANGED",
+                None if confirmation_only else ev.maker_order_id,
+            )
             with suppress(Exception):
                 self.executor.record("sm_trade", asdict(ev))
+                if confirmation_only:
+                    self.executor.record("sm_trade_confirmation_advanced", {
+                        "order_id": ev.maker_order_id, "trade_id": ev.trade_id,
+                        "queue_economics_unchanged": True, "close_recheck_required": True,
+                    })
 
     def on_order(self, ev: OrderEvent, condition_id: str, **kwargs):
         self._external_commitment_changed(ev.order_id)
@@ -696,6 +775,11 @@ class _SMProcessor(UserEventProcessor):
             self.executor.observed_order_events.add(ev.order_id)
             self.executor.external_revision += 1
             previous = self.executor.terminal.get(ev.order_id)
+            released = getattr(self.executor, "sl_terminal_quantities", {})
+            if ev.order_id in released and (not _terminal(ev, self.executor.matched_remaining_tolerance_shares)
+                    or Decimal(str(ev.size_matched)) != released[ev.order_id]):
+                released.pop(ev.order_id, None)
+                self.executor.fatal = "SL_TERMINAL_EVIDENCE_CONTRADICTION"
             if previous is not None and not _terminal(ev, self.executor.matched_remaining_tolerance_shares):
                 self.executor.fatal = "TERMINAL_LIVE_CONTRADICTION"
             self.executor.invalidate("ORDER_EVIDENCE_CHANGED", ev.order_id)
@@ -766,6 +850,13 @@ class SMWindowExecutor:
         self.canceled_submission_proofs: dict[str, dict[str, Any]] = {}
         self.observed_order_events: set[str] = set()
         self.pending_confirmations: set[str] = set()
+        self.position_reconciled: dict[tuple[str, str], TradeEvent] = {}
+        self.position_excluded: set[tuple[str, str]] = set()
+        self.starting_collateral: Decimal | None = None
+        self.repair_episode: dict | None = None
+        self.repair_order_started: dict[str, float] = {}
+        self.fill_observed_at: dict[tuple[str, str], dict] = {}
+        self.order_post_elapsed: dict[str, float] = {}
         self.merged_pairs = Decimal(0)
         self.merged_cost: dict[str, Decimal] = {}
         self.merge_pending = False
@@ -845,6 +936,7 @@ class SMWindowExecutor:
                     reads.lease,
                 )
             executor = cls(cfg, slug, session_id, reads, journal, **clock)
+            executor.starting_collateral = Decimal(str(preflight.account["official_balance_usd"]))
             executor.record(
                 "sm_session",
                 {
@@ -856,6 +948,7 @@ class SMWindowExecutor:
                             "normal_active_order_policy": "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL",
                             "config_dir": str(cfg.config_dir),
                             "obi": cfg.rdp_sm.obi.model_dump(mode="json"),
+                            "repair": cfg.rdp_sm.repair.model_dump(mode="json"),
                         }
                         if cfg.rdp_sm.normal_entry_mode == "obi_v1"
                         else {}
@@ -871,7 +964,7 @@ class SMWindowExecutor:
                         - preflight.account["existing_buy_commitment_usd"],
                     ),
                     "starting_official_balance_usdc": preflight.account["official_balance_usd"],
-                    "test_capital_limit_usdc": str(CAPITAL_LIMIT),
+                    "test_capital_limit_usdc": str(executor.capital_limit),
                     # Compatibility fields only; no prior Session evidence.
                     "historical_pending_cost_reserved_usd": 0,
                     "historical_matched": {},
@@ -986,6 +1079,73 @@ class SMWindowExecutor:
             key=lambda ev: (ev.trade_id, ev.maker_order_id),
         )
 
+    def economic_fills(self) -> list[TradeEvent]:
+        """One economic leg per identity, independent of a delayed status label."""
+        by_key = dict(self.position_reconciled)
+        by_key.update({(f.trade_id, f.maker_order_id): f for f in self.confirmed()})
+        return [by_key[k] for k in sorted(by_key)]
+
+    @property
+    def capital_limit(self):
+        from polymaker.rdp_sm import session_capital_limit
+
+        return Decimal(int(session_capital_limit(self.cfg)))
+
+    def economic_inventory(self):
+        return tuple(sum((Decimal(str(f.size)) for f in self.economic_fills()
+                          if f.token_id == t), Decimal(0))-self.merged_pairs
+                     for t in (self.meta.yes.token_id, self.meta.no.token_id))
+
+    def delta_candidate_allowed(self, delta, side, quantity):
+        limit = self.cfg.rdp_sm.repair.delta_limit
+        after = delta+(quantity if side == "YES" else -quantity)
+        if abs(delta) > limit:
+            return abs(after) < abs(delta) and delta*after >= -abs(delta)*limit
+        return max(abs(delta), abs(after)) <= limit
+
+    def begin_repair_episode(self, window_id, quotes):
+        if self.repair_episode is not None:
+            raise ValueError("REPAIR_EPISODE_ALREADY_OWNS_SESSION")
+        self.repair_episode = {"opening_window": window_id, "side": quotes[0].outcome,
+                               "opening_monotonic": self.monotonic(),
+                               "path_clock_offset": self.official_time-self.time_anchor
+                               - int(self.slug.rsplit("-", 1)[1]),
+                               "original_qty": "0", "submissions": 0,
+                               "windows": [window_id]}
+        self.record("sm_repair_episode", {"event": "OPENING_SUBMITTED", **self.repair_episode})
+
+    def update_repair_episode(self):
+        ep = self.repair_episode
+        if ep is None:
+            return
+        if "source_lots" in ep:
+            # FIFO reverse legs already carry actual acquisition quantity/time.
+            # Repair fills must not reset their opening inputs or HD policy.
+            if self.safe_to_continue and not inventory_delta(*self.economic_inventory()):
+                self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE",
+                    "opening_window": ep["opening_window"], "direction_leg": ep["direction_leg"]})
+                self.repair_episode = None
+            return
+        ids = {a.order_id for a in self.attempts if a.order_id and
+               a.quote.window_id == ep["opening_window"]}
+        qty = sum((Decimal(str(f.size)) for f in self.economic_fills()
+                   if f.maker_order_id in ids), Decimal(0))
+        original = [f for f in self.economic_fills() if f.maker_order_id in ids]
+        times = [self.fill_observed_at[(f.trade_id, f.maker_order_id)] for f in original
+                 if (f.trade_id, f.maker_order_id) in self.fill_observed_at]
+        if times:
+            first = min(times, key=lambda t: t["elapsed"])
+            ep["first_fill_elapsed"], ep["first_fill_time_source"] = first["elapsed"], first["source"]
+        ep["original_cost"] = str(sum((Decimal(str(f.price))*Decimal(str(f.size))
+                                       for f in original), Decimal(0)))
+        if ep["original_qty"] != str(qty):
+            ep["original_qty"] = str(qty)
+            self.record("sm_repair_episode", {"event": "ACTUAL_OPENING_QUANTITY", **ep})
+        if self.safe_to_continue and not inventory_delta(*self.economic_inventory()):
+            self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE", **ep,
+                                              "actual_delta": str(self.economic_inventory()[0]-self.economic_inventory()[1])})
+            self.repair_episode = None
+
     def committed(self) -> Decimal:
         """One exposure per placement; terminal proof releases only unfilled size."""
         total = Decimal(0)
@@ -994,7 +1154,7 @@ class SMWindowExecutor:
                 continue
             oid = attempt.order_id
             proof = self.proofs.get(oid)
-            fills = self.processor.economic_fills_for_order(oid) if oid else []
+            fills = [f for f in self.economic_fills() if f.maker_order_id == oid] if oid else []
             if proof is not None and oid in self.terminal:
                 # Only verified confirmed fills remain after a complete barrier.
                 total += sum(
@@ -1003,7 +1163,9 @@ class SMWindowExecutor:
             else:
                 # Full limit-price exposure covers fills + remaining + uncertainty
                 # once, even if cancellation returned ACK or a WS fill was seen.
-                total += attempt.maximum
+                matched = getattr(self, "sl_terminal_quantities", {}).get(oid)
+                total += (attempt.maximum if matched is None else
+                          matched*Decimal(str(attempt.quote.price)))
         return max(Decimal(0), total - sum(self.merged_cost.values(), Decimal(0)))
 
     async def _read_books(self, meta):
@@ -1197,7 +1359,7 @@ class SMWindowExecutor:
             max(
                 Decimal(0),
                 min(
-                    CAPITAL_LIMIT,
+                    self.capital_limit,
                     Decimal(str(account["official_balance_usd"])) - reserved,
                     Decimal(str(account["applicable_allowance_usd"])) - reserved,
                 ),
@@ -1205,17 +1367,28 @@ class SMWindowExecutor:
         )
         inventory = {}
         consistent = True
+        inventory_tolerance = (Decimal(".01") if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                               else INVENTORY_TOLERANCE_SHARES)
         for token, name in ((meta.yes.token_id, "yes"), (meta.no.token_id, "no")):
             owned_qty = sum(
                 (Decimal(str(ev.size))
-                for ev in self.processor.economic_fills_for_orders(self.known)
+                for ev in self.economic_fills()
                 if ev.token_id == token), Decimal(0)
             ) - self.merged_pairs
             actual = Decimal(str(account[f"{name}_inventory"]))
-            consistent = consistent and abs(actual - owned_qty) < INVENTORY_TOLERANCE_SHARES
+            # A closed, proven session can retain dust omitted by the Data API.
+            # Keep its exact ledger quantity/cost; only waive this missing row.
+            omitted_known_dust = (
+                actual == 0 and 0 < owned_qty < DUST_SHARES and self.safe_to_continue
+            )
+            consistent = consistent and (
+                abs(actual - owned_qty) < inventory_tolerance or omitted_known_dust
+            )
             inventory[name.upper()] = {"expected": float(owned_qty), "actual": float(actual),
                                        "difference": float(actual - owned_qty)}
-        context = {"source": "DATA_API", "tolerance_shares": float(DUST_SHARES),
+            if omitted_known_dust:
+                inventory[name.upper()]["data_api_omitted_known_dust"] = True
+        context = {"source": "DATA_API", "tolerance_shares": float(inventory_tolerance),
                    "tolerance_exclusive": True,
                    "inventory": inventory}
         self.inventory_observation = context
@@ -1376,8 +1549,15 @@ class SMWindowExecutor:
         if oid in self.terminal and not _terminal(ev, self.matched_remaining_tolerance_shares):
             self.fatal = "TERMINAL_LIVE_CONTRADICTION"
         _require(_terminal(ev, self.matched_remaining_tolerance_shares), "ORDER_NOT_TERMINAL")
-        _require(outcome is ReconciliationOutcome.COMPLETE, "FILLTRUTH_NOT_COMPLETE")
         official = self._official_fills(trades, {oid})
+        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" and (
+            any(v[0] is not TradeState.CONFIRMED for v in official.values())
+            or any(k[1] == oid for k in self.position_excluded)
+        ) and await self._reconcile_actual_positions():
+            self.terminal[oid] = ev
+            self.proofs[oid] = {"order": row, "trades": trades, "outcome": "POSITION_RECONCILED"}
+            return
+        _require(outcome is ReconciliationOutcome.COMPLETE, "FILLTRUTH_NOT_COMPLETE")
         local = self._local_fills({oid})
         _require(
             all(
@@ -1442,10 +1622,111 @@ class SMWindowExecutor:
         return official
 
     def _local_fills(self, ids):
-        return {
+        result = {
             (f.trade_id, f.maker_order_id): (f.status, f.token_id, f.our_side, f.price, f.size)
             for f in self.processor.economic_fills_for_orders(ids)
         }
+        for key in self.position_excluded | self.position_reconciled.keys():
+            f = self.processor.fill_records.get(key)
+            if key[1] in ids and f is not None:
+                result[key] = (f.status, f.token_id, f.our_side, f.price, f.size)
+        return result
+
+    async def _reconcile_actual_positions(self):
+        """Positive position + exact owned economics + collateral evidence.
+
+        Never timeout-promote MATCHED or turn a missing/failed read into zero.
+        Only native FAILED legs may be excluded by a zero-position proof.
+        """
+        if self.starting_collateral is None:
+            return False
+        try:
+            # Cache account reads must also postdate writes; an order-only
+            # scope cannot supply the position fallback.
+            if self.shared_reads is not None and self.shared_reads.active is None:
+                async with self.shared_reads.scope("repair_position_proof", account=True):
+                    return await self._reconcile_actual_positions()
+            trades = await self.gateway.get_trades(market=self.meta.condition_id)
+            all_legs = self._official_fills(trades, self.known)
+            rows = {}
+            for oid in sorted(self.known):
+                row = await self.gateway.get_order(oid)
+                ev = normalize_order(row)
+                owned = self.processor.owned_record(oid)
+                if (ev is None or owned is None or not _terminal(ev, self.matched_remaining_tolerance_shares)
+                    or self.processor.has_unresolved_fill_key(oid)
+                    or ev.token_id != owned["token_id"] or ev.side is not Side.BUY
+                    or ev.market_id != self.meta.condition_id
+                    or Decimal(str(ev.original_size)) != Decimal(str(owned["submitted_qty"]))
+                    or Decimal(str(ev.price)) != Decimal(str(owned["submitted_price"]))):
+                    return False
+                legs = {k: v for k, v in all_legs.items() if k[1] == oid}
+                if ("associate_trades" not in row or set(ev.associate_trades) != {k[0] for k in legs}
+                    or abs(sum((Decimal(str(v[4])) for v in legs.values()), Decimal(0))-
+                           Decimal(str(ev.size_matched))) > Decimal(".000001")):
+                    return False
+                rows[oid] = row
+            targets = {self.meta.yes.token_id, self.meta.no.token_id}
+            if any(o.token_id in targets for o in await self.gateway.open_orders()):
+                return False
+            before = await self.gateway.positions()
+            capital = await self.gateway.balance_allowance()
+            after = await self.gateway.positions()
+            if before != after or not isinstance(before, dict) or not isinstance(capital, dict):
+                return False
+            balance = Decimal(str(capital["balance"]))/Decimal(1000000)
+            if not balance.is_finite() or balance < 0:
+                return False
+            expected = {t: Decimal(str(before.get(t, (0, 0))[0]))+self.merged_pairs
+                        for t in (self.meta.yes.token_id, self.meta.no.token_id)}
+            if any(not q.is_finite() or q < 0 for q in expected.values()):
+                return False
+            fixed, optional = [], []
+            for key, (status, token, side, price, qty) in all_legs.items():
+                owned = self.processor.owned_record(key[1])
+                if (token != owned["token_id"] or side is not Side.BUY
+                    or Decimal(str(price)) != Decimal(str(owned["submitted_price"]))
+                    or not math.isfinite(qty) or qty <= 0):
+                    return False
+                f = TradeEvent(token, side, price, qty, key[0], status, 0, key[1], self.meta.condition_id)
+                (optional if status is TradeState.FAILED else fixed).append(f)
+            if len(optional) > 12:
+                return False
+            matches = []
+            for mask in range(1 << len(optional)):
+                selected = fixed+[f for i, f in enumerate(optional) if mask & (1 << i)]
+                quantities = {t: sum((Decimal(str(f.size)) for f in selected if f.token_id == t), Decimal(0))
+                              for t in expected}
+                cost = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in selected), Decimal(0))
+                if (all(abs(quantities[t]-expected[t]) <= Decimal(".000001") for t in expected)
+                    and abs(self.starting_collateral-cost+self.merged_pairs-balance) <= Decimal(".000001")):
+                    matches.append(selected)
+            if len(matches) != 1:
+                return False
+            selected = {(f.trade_id, f.maker_order_id): f for f in matches[0]
+                        if f.status is not TradeState.CONFIRMED}
+            cost = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in matches[0]), Decimal(0))
+            excluded = set(all_legs)-{(f.trade_id, f.maker_order_id) for f in matches[0]}
+            changed = selected != self.position_reconciled or excluded != self.position_excluded
+            self.position_reconciled, self.position_excluded = selected, excluded
+            for key in selected:
+                if key in self.fill_observed_at:
+                    self.fill_observed_at[key].setdefault(
+                        "economic_observed_elapsed", self.official_time+self.monotonic()
+                        - self.time_anchor-int(self.slug.rsplit("-", 1)[1]))
+            if self.shared_reads is not None and self.shared_reads.active is not None:
+                self.shared_reads.service.accept_position_proofs(self.shared_reads.active, rows)
+            if changed:
+                self.record("sm_position_reconciled", {
+                    "source": "COMPLETE_DATA_API_POSITIONS_AND_COLLATERAL",
+                    "actual": {t: str(q-self.merged_pairs) for t, q in expected.items()},
+                    "collateral": str(balance), "cost": str(cost),
+                    "included": [asdict(f) for f in selected.values()],
+                    "excluded_failed_keys": sorted(excluded), "order_ids": sorted(rows)})
+            return True
+        except Exception as exc:
+            self.record("sm_repair_position_wait", {"reason": type(exc).__name__})
+            return False
 
     async def verify_close(self, *, cancel: bool = False) -> bool:
         """Explicit read/cleanup request; serialize with any active window."""
@@ -1531,7 +1812,7 @@ class SMWindowExecutor:
             try:
                 if cancel:
                     await self._cancel_known()
-                async with self.shared_reads.scope("close"):
+                async with self.shared_reads.scope("close", account=True):
                     return await self._verify_close(cancel=False)
             except Exception as exc:
                 self.reason = self.fatal or str(exc)
@@ -1633,6 +1914,8 @@ class SMWindowExecutor:
                     "result": "SAFE_TO_CONTINUE",
                     "proofs": self.proofs,
                     "confirmed_fills": [asdict(f) for f in self.confirmed()],
+                    "economic_fills": [asdict(f) for f in self.economic_fills()],
+                    "position_reconciled_keys": sorted(self.position_reconciled),
                 },
             )
             return True
@@ -1767,6 +2050,8 @@ class SMWindowExecutor:
         self.known.discard(oid)
         self.proofs.pop(oid, None)
         self.terminal.pop(oid, None)
+        if self.shared_reads is not None:
+            self.shared_reads.service.retire_rejected_orders({oid})
         return True
 
     async def _wait_for_confirmation(self) -> bool:
@@ -1934,7 +2219,7 @@ class SMWindowExecutor:
                     _require(all(Decimal(str(q.price)) * Decimal(str(q.size)) >= MIN_MAKER_BUY_NOTIONAL
                                  for q in quotes), "MAKER_BUY_NOTIONAL_BELOW_MINIMUM")
                 new = sum((Decimal(str(q.price)) * Decimal(str(q.size)) for q in quotes), Decimal(0))
-                _require(self.committed() + new <= CAPITAL_LIMIT, "TEST_CAPITAL_LIMIT_EXCEEDED")
+                _require(self.committed() + new <= self.capital_limit, "TEST_CAPITAL_LIMIT_EXCEEDED")
                 _require(new <= Decimal(str(account["basic_spendable_budget_usd"])),
                          "OFFICIAL_CAPITAL_INSUFFICIENT")
                 elapsed = self.official_time + self.monotonic() - self.time_anchor - start

@@ -1,0 +1,137 @@
+[
+  {
+    "window_id": "414c7743c8b24879a0f7d81aeec8a850:w15:sl:1",
+    "order_id": "0x14643abfa7c61c069de190f13e75e5514b71c9a5fc8a1437b56dcb9e30915d18",
+    "price": "0.84",
+    "quantity": "5.00",
+    "initial_response": "ACK",
+    "raw_response": [
+      {
+        "errorMsg": "",
+        "orderID": "0x14643abfa7c61c069de190f13e75e5514b71c9a5fc8a1437b56dcb9e30915d18",
+        "takingAmount": "",
+        "makingAmount": "",
+        "status": "live",
+        "success": true
+      }
+    ],
+    "journal_line": 3961,
+    "native_post_line": 3962,
+    "post_wall_elapsed": 105.42323637008667,
+    "response_wall_elapsed": 105.67573690414429,
+    "signal_to_native_http_ms": 11.825426947325468,
+    "native_http_ms": 252.1143052726984,
+    "post_to_first_cancel_ms": 2393.698902335018,
+    "actor_cancel_count": 1,
+    "all_cancel_count": 1,
+    "first_cancel_line": 3982
+  },
+  {
+    "window_id": "414c7743c8b24879a0f7d81aeec8a850:w15:sl:2",
+    "order_id": "0xdb1ed97f5578e9ef94a5a835b7c296574bb51bf2c4c505df870f73fdb26ab29a",
+    "price": "0.85",
+    "quantity": "5.00",
+    "initial_response": "ACK",
+    "raw_response": [
+      {
+        "errorMsg": "",
+        "orderID": "0xdb1ed97f5578e9ef94a5a835b7c296574bb51bf2c4c505df870f73fdb26ab29a",
+        "takingAmount": "",
+        "makingAmount": "",
+        "status": "live",
+        "success": true
+      }
+    ],
+    "journal_line": 3981,
+    "native_post_line": 3979,
+    "post_wall_elapsed": 107.82579040527344,
+    "response_wall_elapsed": 108.09321427345276,
+    "signal_to_native_http_ms": 9.738053660839796,
+    "native_http_ms": 266.6840963065624,
+    "post_to_first_cancel_ms": 1152.3750140331686,
+    "actor_cancel_count": 1,
+    "all_cancel_count": 1,
+    "first_cancel_line": 3993
+  },
+  {
+    "window_id": "414c7743c8b24879a0f7d81aeec8a850:w15:sl:3",
+    "order_id": "0xb13267b700f51d947ca41f30e047b5bc4c2d5547bac2167bdd93c527ffce21ed",
+    "price": "0.86",
+    "quantity": "5.00",
+    "initial_response": "ACK",
+    "raw_response": [
+      {
+        "errorMsg": "",
+        "orderID": "0xb13267b700f51d947ca41f30e047b5bc4c2d5547bac2167bdd93c527ffce21ed",
+        "takingAmount": "",
+        "makingAmount": "",
+        "status": "live",
+        "success": true
+      }
+    ],
+    "journal_line": 3995,
+    "native_post_line": 3998,
+    "post_wall_elapsed": 108.986661195755,
+    "response_wall_elapsed": 109.49833154678345,
+    "signal_to_native_http_ms": 9.555377997457981,
+    "native_http_ms": 511.3641042262316,
+    "post_to_first_cancel_ms": 901.8227648921311,
+    "actor_cancel_count": 1,
+    "all_cancel_count": 1,
+    "first_cancel_line": 4007
+  },
+  {
+    "window_id": "414c7743c8b24879a0f7d81aeec8a850:w15:sl:4",
+    "order_id": "0x617a117414e57456cc788008b0904c95e217f2a741aefcbda42d9e60dd8044fb",
+    "price": "0.89",
+    "quantity": "5.00",
+    "initial_response": "ACK",
+    "raw_response": [
+      {
+        "errorMsg": "",
+        "orderID": "0x617a117414e57456cc788008b0904c95e217f2a741aefcbda42d9e60dd8044fb",
+        "takingAmount": "",
+        "makingAmount": "",
+        "status": "live",
+        "success": true
+      }
+    ],
+    "journal_line": 4018,
+    "native_post_line": 4019,
+    "post_wall_elapsed": 110.74258160591125,
+    "response_wall_elapsed": 110.96227669715881,
+    "signal_to_native_http_ms": 10.585834737867117,
+    "native_http_ms": 219.3351029418409,
+    "post_to_first_cancel_ms": 1131.6013960167766,
+    "actor_cancel_count": 1,
+    "all_cancel_count": 1,
+    "first_cancel_line": 4029
+  },
+  {
+    "window_id": "414c7743c8b24879a0f7d81aeec8a850:w15:sl:5",
+    "order_id": "0x799bca7f4c6ac15882a54ff46dcca28653d67300bec37122db251a594978023b",
+    "price": "0.90",
+    "quantity": "5.00",
+    "initial_response": "UNKNOWN",
+    "raw_response": [
+      {
+        "errorMsg": "order 0x799bca7f4c6ac15882a54ff46dcca28653d67300bec37122db251a594978023b is invalid. Already canceled.",
+        "orderID": "",
+        "takingAmount": "",
+        "makingAmount": "",
+        "status": "",
+        "success": true
+      }
+    ],
+    "journal_line": 4031,
+    "native_post_line": 4035,
+    "post_wall_elapsed": 111.88457798957825,
+    "response_wall_elapsed": 112.39755415916443,
+    "signal_to_native_http_ms": 11.424954980611801,
+    "native_http_ms": 512.6751926727593,
+    "post_to_first_cancel_ms": 132.7315978705883,
+    "actor_cancel_count": 29,
+    "all_cancel_count": 30,
+    "first_cancel_line": 4028
+  }
+]

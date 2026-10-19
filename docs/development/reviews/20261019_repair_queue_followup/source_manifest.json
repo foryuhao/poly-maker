@@ -1,0 +1,221 @@
+{
+  "recorded_at_utc": "2026-10-18T19:55:35.900757+00:00",
+  "files": [
+    {
+      "path": "config/config.toml",
+      "sha256": "37baf7345f8b30feb252f4cd9365652ec058298e174e97ccada9a84f7eb2a423"
+    },
+    {
+      "path": "docs/development/REPAIR_HD_TP_SL_IMPLEMENTATION_20261019.md",
+      "sha256": "8258f94794808ca7b579bef3ae745a5c18bd78e8af55226c29ca9a1860b9dba5"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/README.md",
+      "sha256": "0bfc3d288202d572f232a7b280fb72e6e723f77dfdde03228e3348fcfead1c11"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/after.xml",
+      "sha256": "19d4e744dd621a64900999438de54dad1abd42bc64f3c21fbbd624d6ea50b599"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/after_summary.txt",
+      "sha256": "524e1f5828894484356118874d0111aa02def2dcd72c8a79f6ee4222e12f24ce"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/before.xml",
+      "sha256": "88ee5cd81cc2d2da22a8b028c96dd15496d1c1788d6a43d06ca481a95d232f9b"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/before_summary.txt",
+      "sha256": "7d4fd4358229186ad756571720ccfa819f2bbf4837a96653b0b31144200a9019"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/execution_changes.patch",
+      "sha256": "61315c1ba82357f0a73a6104ff8adca6f7df028e776a83cdf24c1e5c1b4b655c"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/focused.xml",
+      "sha256": "a3175225675462e6781593a67f2135551de46631f4805ab42a4da687e8f65e87"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/focused_summary.txt",
+      "sha256": "35ec9b2013a4258fe49de4bbed8cbc67fa711642a82e1fc0bba3d03d4869ce72"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/full.xml",
+      "sha256": "ba6c6a64b5c35358cd88a65c07ea8cabec6a9ab3a64ae1cd70ada98cf88a5515"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/full_summary.txt",
+      "sha256": "066f6fb4638202618c97b74b6406442224633cfea003ee9e4cc0cd14b8967811"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/late_open_before.txt",
+      "sha256": "397be1eb1b32eeb020f5e960c5087ed885fb31568f911d96f275b483cb7408e6"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/rdp_sm_execution.py.before",
+      "sha256": "102733afe74c809fc8be48d7666f528c1251e49ae8c83c146a3faedaf9a731a3"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/rdp_sm_lifecycle.py.before",
+      "sha256": "a837c593b6f4a6f75eccd2f97bc573283c26929f13c4ca346602f214ab0e44c4"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/readiness_config.json",
+      "sha256": "f67ab2a22209c92efc7c7d23928b8bf09b2d4abb11d724d55e7441f0dfae5437"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/readiness_livecfg.json",
+      "sha256": "f67ab2a22209c92efc7c7d23928b8bf09b2d4abb11d724d55e7441f0dfae5437"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/reproduce_before.py",
+      "sha256": "7604b2878a16f1291d3a53b7062d4bded6c31d728fe4ab25d1ad42c22596830c"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/source_after.json",
+      "sha256": "4d2bec4f491ac9cd55228bfe7320fba580cd4fc1f3304580109a6005ca6ab39d"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/source_before.json",
+      "sha256": "a694ce62dc07cf1e61aeee0f00c7c44d21cccdf1cb0567b65119d91e08c8f0a8"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/superseded_full_summary.txt",
+      "sha256": "b3dd7c13264981decf1251fb96680323ed4cb02bf978a640f7c52c58a52bde33"
+    },
+    {
+      "path": "docs/development/reviews/20261019_repair_queue_followup/validation.json",
+      "sha256": "f5ee25c1e45a2572b7ce1c7a9c04994c75f2a8dec3e1a1cad99506467e551b73"
+    },
+    {
+      "path": "livecfg/config.toml",
+      "sha256": "2d38808c1551f343f943d3aec5059b420c8ebeae83b7f2c1e2b2556937baf6f1"
+    },
+    {
+      "path": "src/polymaker/cli.py",
+      "sha256": "89fc4f7dc590a027bc6a4394c3c9dc78878bf2a0919bd34263f67ca8baccced5"
+    },
+    {
+      "path": "src/polymaker/config.py",
+      "sha256": "17993c2f3507a75dc164a4b625985f62c4e26f7e675b404bed74be4065b21815"
+    },
+    {
+      "path": "src/polymaker/execution/gateway.py",
+      "sha256": "22fca5c9c202b566044a0194ad9ae0567d2330284f2fc2e90c71b1b710a2d686"
+    },
+    {
+      "path": "src/polymaker/rdp_sm.py",
+      "sha256": "38c30ecc950762b2d7e741cedc98e0a8916f5ad488938ba98ccaa4ecb96ee65a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_cached_reads.py",
+      "sha256": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_entry.py",
+      "sha256": "4e056c5ac38ae06918ae2d8c8a01e862b614fb7d7bd203cc5987408bc5648765"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_execution.py",
+      "sha256": "1667d558611178566cd1a4aa973beb878833b794f325c5e0368ae4001938c422"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_fence.py",
+      "sha256": "3defa23075324f63902dc653b6c1b0f8b3ff77f21f2fd59a62a558a91c6c6e33"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_lifecycle.py",
+      "sha256": "f6a3935b6b06d069b345f607abcf40603b8de6fcf794d70ad7889ffacd0ac215"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_logging.py",
+      "sha256": "0cfc148144359e2503340ccc88b8e646aead49e3d2acaf653f891948b3ff10c2"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_loop.py",
+      "sha256": "30787be221ae9a258b3526e085160ef45d8ad76e764eab1680c08837521f716d"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_marketdata.py",
+      "sha256": "35805f6672b823bffb4c787c700c24342bcd0a6eeeca50020f97e5a7b08a6e1d"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_merge.py",
+      "sha256": "aa8528b94281e27ed2a42f58207adedebf6bfa38d0b499621144175b349ba861"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_network.py",
+      "sha256": "225874f4ed4f5a5e75ae6b4ac27bb8d153c1113f7de551fc878330fac6e18263"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_normal.py",
+      "sha256": "2212fd186e755ba87171f826949e292ad8dd53aa01cb509196e55b68c4c26ba1"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_path_repair.py",
+      "sha256": "521225b53baece1a07c7b622591e04791da4661f17ac43ac9887f67b59394c1a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_quotes.py",
+      "sha256": "a7372dbcca676d37efe23c9ef3e989969e89215f1750b893ed187af4432c164c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_rebalance.py",
+      "sha256": "ccb7f714f45cf60fef2771ab2a2423fe10bbc5d5a54d36cd82791814c82a44c2"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_recovery.py",
+      "sha256": "9fb64e78a3c09b986f9978e6006d78c85a06e328207e1e197d9cf54955783a91"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_repair.py",
+      "sha256": "75c52e670a751a6b63029bc2dfabde5de1605ec13f195dee5d83fb4c26269d9c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_signal.py",
+      "sha256": "da2f7c5cf9479e29516c7ad5f860ba0890e619ec8edb4ffde8a085a4c365c77a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sizing.py",
+      "sha256": "10421654057640d8dd4794c294a5ceb96c2ac80de86de6da4d901631397b6452"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync.py",
+      "sha256": "45952f79cea6af76fa10d73a5b8bc6954e072cfd465252c7765aaef2608ffc1c"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_companion.py",
+      "sha256": "60f744e49d1ea3d37bbf8d88a0e2b9003530e6986b49a31e5aa0bc4c1b292ed4"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_observe.py",
+      "sha256": "50fad4deb65ec8f8ddee4361bdfa4b11f12fe4560ae3153262ad70eb25f4c87e"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_sync_reads.py",
+      "sha256": "00a918d8d66fb30056510a5762914648882633b8a39b7600e82f3841182c1b44"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_writer.py",
+      "sha256": "9cad9cf16cebb1df3fa9f48a1ef9d194e9004320865fb8b15ace5f3eb0edd32b"
+    },
+    {
+      "path": "src/polymaker/repair_model.py",
+      "sha256": "45dc90e9171c606673d38bc9ed6e6554f88f452af0b375987fe1cf75da0b882b"
+    },
+    {
+      "path": "src/polymaker/repair_policy.py",
+      "sha256": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285"
+    },
+    {
+      "path": "src/polymaker/risk_shadow_model.py",
+      "sha256": "f019a2160b59d09b20ac46ca32dfdefbb3a78e7fba35e49eb4863693018b41f2"
+    },
+    {
+      "path": "tests/test_repair_queue_followup.py",
+      "sha256": "59612ce169444d4c58912ba3dc185da41fef3eb9388defd2884c28005ca42dd3"
+    }
+  ]
+}

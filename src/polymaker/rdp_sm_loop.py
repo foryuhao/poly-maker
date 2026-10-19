@@ -55,6 +55,7 @@ class RunResult:
     total_windows: int = 0
     normal_windows: int = 0
     rebalance_windows: int = 0
+    repair_windows: int = 0
     active_cycles: int = 0
     confirmed_fills: int = 0
     merged_pairs: float = 0
@@ -77,6 +78,7 @@ class RunResult:
     skipped_quotes: list[dict] = field(default_factory=list)
     stop_elapsed_s: float | None = None
     sizing_report: dict = field(default_factory=empty_sizing_report)
+    repair_readiness: dict | None = None
 
     def to_dict(self):
         result = asdict(self)
@@ -191,7 +193,7 @@ class SMTradingLoop:
 
     def _inventory(self, result):
         executor = self.executor
-        fills = executor.confirmed()
+        fills = executor.economic_fills()
         yes = sum(
             (Decimal(str(f.size)) for f in fills if f.token_id == executor.meta.yes.token_id),
             Decimal(0),
@@ -440,12 +442,20 @@ class SMTradingLoop:
         """Single writer coordinator; controllers share only order primitives."""
         from polymaker.rdp_sm_lifecycle import BatchLifecycle
         from polymaker.rdp_sm_normal import NormalController
-        from polymaker.rdp_sm_rebalance import RebalanceController
+        from polymaker.rdp_sm_repair import RepairController
+        from polymaker.rdp_sm_path_repair import PathRepairController
 
         executor = self.executor
         lifecycle = BatchLifecycle(executor)
         normal = NormalController(executor, lifecycle)
-        rebalance = RebalanceController(executor, lifecycle)
+        rebalance = (PathRepairController(executor, lifecycle)
+                     if self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1"
+                     else RepairController(executor, lifecycle))
+        if isinstance(rebalance, PathRepairController):
+            from polymaker.repair_policy import repair_readiness
+
+            result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)
+            executor.record("sm_repair_readiness", result.repair_readiness)
         self.normal_controller, self.rebalance_controller = normal, rebalance
         feed = executor.reads.feed
         failed = False
@@ -517,11 +527,12 @@ class SMTradingLoop:
                         "DISCOVERED_MARKET_CHANGED",
                     )
                 yes, no = self._inventory(result)
+                executor.update_repair_episode()
                 if await self._merge(result, elapsed):
                     continue
                 if executor.merge_pending or executor.fatal:
                     continue
-                controller = normal if inventory_trading_state(inventory_delta(yes, no)) == "NORMAL" else rebalance
+                controller = normal if not inventory_delta(yes, no) and executor.repair_episode is None else rebalance
                 elapsed = (
                     executor.official_time + executor.monotonic() - executor.time_anchor - start
                 )
@@ -558,6 +569,7 @@ class SMTradingLoop:
                 result.total_windows += 1
                 result.normal_windows += controller is normal
                 result.rebalance_windows += controller is rebalance
+                result.repair_windows += controller is rebalance
                 result.windows.append(
                     {
                         "state": controller.phase,
@@ -622,6 +634,14 @@ class SMTradingLoop:
         fill_window_sec=3.0,
     ) -> RunResult:
         result = RunResult(None, self.session_id)
+        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" and self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
+            from polymaker.repair_policy import repair_readiness
+
+            result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)
+            if production and not result.repair_readiness["ready_for_live"]:
+                result.stop_reason = "REPAIR_NOT_READY_FOR_LIVE"
+                result.stop_time = time.time()
+                return result
         if self.started:
             result.stop_reason = "M3_RUN_ALREADY_USED"
             result.stop_time = time.time()

@@ -1,0 +1,12 @@
+{
+  "market_count": 24,
+  "economic_fills": 66,
+  "all_final_fill_statuses_confirmed": true,
+  "source_hashes_verified": 73,
+  "independent_total_drawdown_and_path_bridge_checks": "PASS",
+  "executed_notebook": "PASS",
+  "settlement_results": "8_CLOB_WINNERS_VERIFIED",
+  "full_pnl": "-10.153166",
+  "full_pnl_max_drawdown": "11.434",
+  "browser_interaction_qa": "NOT_AVAILABLE"
+}

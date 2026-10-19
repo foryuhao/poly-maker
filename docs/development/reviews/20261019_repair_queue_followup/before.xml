@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="3" time="8.171" timestamp="2026-10-19T03:42:38.103191+08:00" hostname="VM-0-17-ubuntu"><testcase classname="tests.test_repair_queue_followup" name="test_position_proven_confirmation_preserves_same_tp_queue[REST]" file="tests/test_repair_queue_followup.py" line="32" time="0.541"><failure message="AssertionError: assert 'CANCELED' == 'LIVE'&#10;  &#10;  - LIVE&#10;  + CANCELED">/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:83: in test_position_proven_confirmation_preserves_same_tp_queue
+    assert observations["queue_status"] == "LIVE"
+E   AssertionError: assert 'CANCELED' == 'LIVE'
+E     
+E     - LIVE
+E     + CANCELED</failure></testcase><testcase classname="tests.test_repair_queue_followup" name="test_position_proven_confirmation_preserves_same_tp_queue[WS]" file="tests/test_repair_queue_followup.py" line="32" time="0.591"><failure message="AssertionError: assert 'CANCELED' == 'LIVE'&#10;  &#10;  - LIVE&#10;  + CANCELED">/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:83: in test_position_proven_confirmation_preserves_same_tp_queue
+    assert observations["queue_status"] == "LIVE"
+E   AssertionError: assert 'CANCELED' == 'LIVE'
+E     
+E     - LIVE
+E     + CANCELED</failure></testcase><testcase classname="tests.test_repair_queue_followup" name="test_identity_bound_canceled_post_allows_fresh_account_without_timeout" file="tests/test_repair_queue_followup.py" line="98" time="6.784"><properties><property name="post_response_to_close_sec" value="4.915078436024487" /><property name="deletes_after_post_response" value="13" /></properties><failure message="AssertionError: SYNC_CACHE_NOT_READY&#10;assert 'BLOCKED' == 'SAFE_TO_CONTINUE'&#10;  &#10;  - SAFE_TO_CONTINUE&#10;  + BLOCKED">/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:149: in test_identity_bound_canceled_post_allows_fresh_account_without_timeout
+    assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+E   AssertionError: SYNC_CACHE_NOT_READY
+E   assert 'BLOCKED' == 'SAFE_TO_CONTINUE'
+E     
+E     - SAFE_TO_CONTINUE
+E     + BLOCKED</failure></testcase></testsuite></testsuites>

@@ -29,7 +29,7 @@ def _progress(callback):
 
 
 def holdings(executor):
-    fills = executor.confirmed()
+    fills = executor.economic_fills()
     return {
         token: sum((Decimal(str(f.size)) for f in fills if f.token_id == token), Decimal(0))
         - executor.merged_pairs
@@ -190,7 +190,7 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             released = {}
             if result["status"] == "CONFIRMED":
                 for token, size in before.items():
-                    cost = sum((Decimal(str(f.price)) * Decimal(str(f.size)) for f in executor.confirmed()
+                    cost = sum((Decimal(str(f.price)) * Decimal(str(f.size)) for f in executor.economic_fills()
                                 if f.token_id == token), Decimal(0)) - executor.merged_cost.get(token, Decimal(0))
                     released[token] = cost * qty / size
                 result["released_cost_usdc"] = str(sum(released.values(), Decimal(0)))

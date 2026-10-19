@@ -1,0 +1,14 @@
+{
+  "fixed_base_markets": 24,
+  "sl_episodes": 22,
+  "sl_posts": 47,
+  "replacement_gaps": 25,
+  "final_price_checks": "47/47",
+  "raw_path_post_mid_checks": "47/47",
+  "unmapped_path_batches": 0,
+  "time_and_money_bridges": "PASS",
+  "narrow_evidence_cases": 22,
+  "executed_notebook": "PASS",
+  "production_changes": false,
+  "browser_qa": "NOT_AVAILABLE"
+}

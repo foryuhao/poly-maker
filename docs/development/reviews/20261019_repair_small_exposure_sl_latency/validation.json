@@ -1,0 +1,70 @@
+{
+  "scope": "SMALL_EXPOSURE_RULE_AND_READ_ONLY_SL_DIAGNOSTICS",
+  "live_orders_sent": false,
+  "live_process_restarted": false,
+  "sl_execution_optimizations_implemented": false,
+  "new_rule": "abs(session delta) <= 2.5: wait with real residual; new full repair orders strictly reduce abs(delta)",
+  "first_targeted_suite": "49 passed in 14.77s; before human-log case added",
+  "final_execution_suite": "61 passed in 70.79s",
+  "final_execution_log": "/home/ubuntu/poly-maker-data/research_outputs/REPAIR_SMALL_EXPOSURE_ACCEPTANCE_FINAL_20261019.log",
+  "earlier_acceptance_result": "3 failed because fixtures expected repair with residual 2; updated fixture leaves residual 3; final suite passed",
+  "ruff": "passed",
+  "git_diff_check": "passed",
+  "source_hashes": {
+    "src/polymaker/rdp_sm_path_repair.py": "c893ff6d243f4f24a95f02be1bfd2fd9226e05bdec5f71233dfd878aecaab2f4",
+    "src/polymaker/rdp_sm_logging.py": "87fa9aab137ec4442f63a63fc9cc7b7035c8417b2129ed9da58c2223c72a8a43",
+    "tests/test_repair_small_exposure.py": "6c350e528c29827cff1b83992898088e746ea6d92ef41dc1a50fa8c411329256",
+    "tests/test_repair_execution_acceptance.py": "47ed329421fd26f945135bd2bb9ed295d3ba804bc8dbcc40e050cec834fc7f01"
+  },
+  "readiness": {
+    "CONFIG": {
+      "policy": "hd_tp_sl_v1",
+      "selected_policy": "hd_tp_sl_v1",
+      "parameters_complete": true,
+      "ready_for_live": true,
+      "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+      "parameters": {
+        "tp_profit_rate": "0.002",
+        "shock_window_sec": 2.0,
+        "shock_max_age_sec": 3.0,
+        "shock_min_ticks": 2,
+        "shock_z": 1.5,
+        "drawdown_per_share": "0.06",
+        "calibration_status": "REPLAY_VALIDATED",
+        "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      },
+      "calibration_status": "REPLAY_VALIDATED",
+      "reasons": [],
+      "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json",
+      "policy_selected": true
+    },
+    "LIVECFG": {
+      "policy": "hd_tp_sl_v1",
+      "selected_policy": "hd_tp_sl_v1",
+      "parameters_complete": true,
+      "ready_for_live": true,
+      "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+      "parameters": {
+        "tp_profit_rate": "0.002",
+        "shock_window_sec": 2.0,
+        "shock_max_age_sec": 3.0,
+        "shock_min_ticks": 2,
+        "shock_z": 1.5,
+        "drawdown_per_share": "0.06",
+        "calibration_status": "REPLAY_VALIDATED",
+        "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      },
+      "calibration_status": "REPLAY_VALIDATED",
+      "reasons": [],
+      "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json",
+      "policy_selected": true
+    }
+  },
+  "analysis_scope": {
+    "sl_episodes": 10,
+    "sl_order_windows": 21,
+    "source_journals_unchanged": true
+  }
+}

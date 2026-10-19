@@ -1,0 +1,10 @@
+{
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_lifecycle.py"
+  ],
+  "before_sha256": "e51ac6f50caa79138c4fa3820a0db5bd748dd118fce5bca8fccb5ca6aa8473cb",
+  "after_sha256": "a837c593b6f4a6f75eccd2f97bc573283c26929f13c4ca346602f214ab0e44c4",
+  "reconstructed_before_matches_previous_release": true,
+  "strategy_parameter_changes": false,
+  "cache_freshness_or_close_evidence_relaxed": false
+}

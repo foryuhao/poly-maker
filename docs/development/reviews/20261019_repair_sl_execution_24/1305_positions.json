@@ -1,0 +1,51 @@
+[
+  {
+    "read_id": "772b6d0934d2427c9fefa33e03bdca19",
+    "started_elapsed": 61.18910551071167,
+    "completed_elapsed": 61.416465520858765,
+    "yes": 0,
+    "no": 0
+  },
+  {
+    "read_id": "7ca38a7f9bc340c7927a40c3ff081a8c",
+    "started_elapsed": 63.19033980369568,
+    "completed_elapsed": 63.42291855812073,
+    "yes": 0,
+    "no": 0
+  },
+  {
+    "read_id": "8614850ed3854208ac7b2800559621cc",
+    "started_elapsed": 65.1924614906311,
+    "completed_elapsed": 65.53029608726501,
+    "yes": 0,
+    "no": 0
+  },
+  {
+    "read_id": "f27b205bb2ee4cee9f3ef7d08f7dd501",
+    "started_elapsed": 67.19328427314758,
+    "completed_elapsed": 67.41842007637024,
+    "yes": 0,
+    "no": 0
+  },
+  {
+    "read_id": "69b8861167ab4ec191ae3042cca0a228",
+    "started_elapsed": 69.1939103603363,
+    "completed_elapsed": 69.41839623451233,
+    "yes": 0,
+    "no": 0
+  },
+  {
+    "read_id": "95ee91f831594dd9a7c490dd9042e50f",
+    "started_elapsed": 71.19546389579773,
+    "completed_elapsed": 71.53226923942566,
+    "yes": 0,
+    "no": 5.0
+  },
+  {
+    "read_id": "f6b9f817c61f4e57bb235d05d1e6729e",
+    "started_elapsed": 73.1956672668457,
+    "completed_elapsed": 73.43495321273804,
+    "yes": 0,
+    "no": 5.0
+  }
+]

@@ -1,0 +1,3410 @@
+{
+  "status": "UNCALIBRATED_SYNTHETIC_MODEL_NOT_A_LIVE_RECOMMENDATION",
+  "parameters": {
+    "tick": 0.01,
+    "step_s": 0.1,
+    "liquidity_rate": 2.0,
+    "queue_scale_s": 2.0,
+    "depth_decay": 50.0,
+    "half_spread": 0.01,
+    "submit_delay_s": 0.2,
+    "cancel_delay_s": 0.2,
+    "partial_chunk": 1.0,
+    "stop_s": 240.0,
+    "capital_limit": 15.0,
+    "cross_fill_shares": null,
+    "cross_fill_probability": 1.0,
+    "ask_spread": null,
+    "price_step": null,
+    "flow_decay_after_s": null,
+    "flow_decay_multiplier": 1.0
+  },
+  "fresh_states": [
+    {
+      "label": "fresh_state_without_active_order",
+      "results": [
+        {
+          "state": {
+            "p": 0.31,
+            "sigma": 0.02,
+            "elapsed": 100,
+            "yes": 5.0,
+            "no": 0.0,
+            "cost": 1.5,
+            "original_qty": 5.0,
+            "other_reserved": 0.0
+          },
+          "side": "NO",
+          "limit_price": 0.68,
+          "quantity": 5.0,
+          "existing": false,
+          "queue_age_s": 0.0,
+          "hold": {
+            "expected_pnl": 0.050000000000000044,
+            "settlement_sd": 2.3124662159694354
+          },
+          "candidates": [
+            {
+              "cancel_request_after_s": 2,
+              "modeled_cancel_effective_after_s": 2.2,
+              "expected_pnl": 0.03611730189688001,
+              "incremental_ev": -0.013882698103120098,
+              "settlement_sd": 1.4353862154124089,
+              "expected_filled_shares": 2.752969420775425,
+              "full_fill_probability": 0.46739747839792134,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.5326025216020782,
+              "increment_second_moment": 2.7548537592914344,
+              "increment_yes_joint_moment": -0.6084863806708528,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.26520128255772996
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.16003743058011274
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.07365801456812557
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.026194606514992745
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007511187381117272
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.46739747839792134
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 5,
+              "modeled_cancel_effective_after_s": 5.2,
+              "expected_pnl": 0.04526690426402666,
+              "incremental_ev": -0.004733095735973388,
+              "settlement_sd": 0.9788387963535853,
+              "expected_filled_shares": 3.8220751623219034,
+              "full_fill_probability": 0.6692474778477374,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.3307525221522615,
+              "increment_second_moment": 3.9449957988777444,
+              "increment_yes_joint_moment": -0.8349020604217058,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.10994049532102537
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.07751160504488377
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.06387834820495267
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.04711882269717668
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0323032508842232
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.6692474778477374
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 10,
+              "modeled_cancel_effective_after_s": 10.200000000000001,
+              "expected_pnl": 0.05469755488187997,
+              "incremental_ev": 0.004697554881880142,
+              "settlement_sd": 0.7625247327467001,
+              "expected_filled_shares": 4.271939924231305,
+              "full_fill_probability": 0.7927898349251269,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.20721016507487014,
+              "increment_second_moment": 4.512326357136769,
+              "increment_yes_joint_moment": -0.9263797901930624,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.07372309057823492
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.04043715382870676
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.03683091480810233
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.030984257278499877
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.025234748581326346
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.7927898349251269
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 20,
+              "modeled_cancel_effective_after_s": 20.200000000000003,
+              "expected_pnl": 0.061168427165693234,
+              "incremental_ev": 0.01116842716569331,
+              "settlement_sd": 0.6443792702437607,
+              "expected_filled_shares": 4.4866635669731405,
+              "full_fill_probability": 0.8589591478844041,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.14104085211559234,
+              "increment_second_moment": 4.789506118905799,
+              "increment_yes_joint_moment": -0.9687034617006858,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05932502185261953
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.023735441500971993
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.022227309606619488
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.019334549784585445
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.016418529370795885
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.8589591478844041
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 40,
+              "modeled_cancel_effective_after_s": 40.2,
+              "expected_pnl": 0.06517656514414374,
+              "incremental_ev": 0.015176565144143799,
+              "settlement_sd": 0.5752458568729003,
+              "expected_filled_shares": 4.598890837001177,
+              "full_fill_probability": 0.894747271080589,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.10525272891940851,
+              "increment_second_moment": 4.934671294260387,
+              "increment_yes_joint_moment": -0.9903985818334482,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05225310366901123
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.015176280439548611
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.014348245192840246
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.012618687698963946
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.010856411919044462
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.894747271080589
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 80,
+              "modeled_cancel_effective_after_s": 80.2,
+              "expected_pnl": 0.06767039389385872,
+              "incremental_ev": 0.01767039389385879,
+              "settlement_sd": 0.5321418403495151,
+              "expected_filled_shares": 4.663514773986219,
+              "full_fill_probability": 0.9157397133873318,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.08426028661266496,
+              "increment_second_moment": 5.018414871857936,
+              "increment_yes_joint_moment": -1.0027649469715973,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04835932736271174
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010279714696481498
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.009702253785309884
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.008543978290085992
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007375012478075794
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9157397133873318
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 120,
+              "modeled_cancel_effective_after_s": 120.2,
+              "expected_pnl": 0.06851438480106503,
+              "incremental_ev": 0.018514384801064196,
+              "settlement_sd": 0.5176672562420637,
+              "expected_filled_shares": 4.684721232276977,
+              "full_fill_probability": 0.9229104961159353,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.07708950388406423,
+              "increment_second_moment": 5.046272348300511,
+              "increment_yes_joint_moment": -1.0068055584787399,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.0472226880532333
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.00869402566970046
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.008084541134969751
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.00704735234700204
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.006040896679158696
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9229104961159353
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 140,
+              "modeled_cancel_effective_after_s": 140.20000000000002,
+              "expected_pnl": 0.06870925786906246,
+              "incremental_ev": 0.01870925786906086,
+              "settlement_sd": 0.5144137826899289,
+              "expected_filled_shares": 4.68954583138868,
+              "full_fill_probability": 0.9246068742199719,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.0753931257800315,
+              "increment_second_moment": 5.052699051137739,
+              "increment_yes_joint_moment": -1.0077228775592217,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04699248767582793
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.008341153628857704
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.007698512506851636
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.0066706062276594485
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.005690365740834793
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9246068742199719
+                }
+              ]
+            }
+          ],
+          "probability_mass_error": 3.9968028886505635e-15,
+          "payoff_identity_error": 1.5508427875232655e-15
+        }
+      ],
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 140,
+        "expected_pnl": 0.06870925786906246,
+        "incremental_ev": 0.01870925786906086,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.01870925786906086
+      }
+    },
+    {
+      "label": "fresh_state_without_active_order",
+      "results": [
+        {
+          "state": {
+            "p": 0.25,
+            "sigma": 0.02,
+            "elapsed": 102,
+            "yes": 5.0,
+            "no": 0.0,
+            "cost": 1.5,
+            "original_qty": 5.0,
+            "other_reserved": 0.0
+          },
+          "side": "NO",
+          "limit_price": 0.74,
+          "quantity": 5.0,
+          "existing": false,
+          "queue_age_s": 0.0,
+          "hold": {
+            "expected_pnl": -0.25,
+            "settlement_sd": 2.165063509461097
+          },
+          "candidates": [
+            {
+              "cancel_request_after_s": 2,
+              "modeled_cancel_effective_after_s": 2.2,
+              "expected_pnl": -0.26388269810311993,
+              "incremental_ev": -0.013882698103119855,
+              "settlement_sd": 1.3320948752137105,
+              "expected_filled_shares": 2.7529694207754223,
+              "full_fill_probability": 0.46739747839792123,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.5326025216020782,
+              "increment_second_moment": 2.451907872154446,
+              "increment_yes_joint_moment": -0.5399445131534993,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.2652012825577308
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.16003743058011266
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.0736580145681252
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.026194606514992485
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007511187381117159
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.46739747839792123
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 5,
+              "modeled_cancel_effective_after_s": 5.2,
+              "expected_pnl": -0.25473309573599406,
+              "incremental_ev": -0.004733095735994024,
+              "settlement_sd": 0.9005029229649634,
+              "expected_filled_shares": 3.8220751623218208,
+              "full_fill_probability": 0.6692474778477374,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.33075252215226225,
+              "increment_second_moment": 3.5002926978772404,
+              "increment_yes_joint_moment": -0.7388697520753551,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.10994049532110012
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.07751160504481683
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.06387834820494606
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.04711882269717615
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.032303250884223034
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.6692474778477374
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 10,
+              "modeled_cancel_effective_after_s": 10.200000000000001,
+              "expected_pnl": -0.24530244538144805,
+              "incremental_ev": 0.004697554618551131,
+              "settlement_sd": 0.6968530626210219,
+              "expected_filled_shares": 4.271939923114945,
+              "full_fill_probability": 0.7927898349207265,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.20721016507927434,
+              "increment_second_moment": 3.994320652345965,
+              "increment_yes_joint_moment": -0.8184450507895914,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.07372309136667302
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.04043715328540828
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.03683091462525925
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.03098425723233237
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.025234748569601388
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.7927898349207265
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 20,
+              "modeled_cancel_effective_after_s": 20.200000000000003,
+              "expected_pnl": -0.2388317066205358,
+              "incremental_ev": 0.011168293379463607,
+              "settlement_sd": 0.585965323739915,
+              "expected_filled_shares": 4.486662592007043,
+              "full_fill_probability": 0.8589591145756406,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.1410408854243605,
+              "increment_second_moment": 4.233594280864764,
+              "increment_yes_joint_moment": -0.8549693456013515,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05932549052284595
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.023735249734445598
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.022227164900926126
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.019334481472043804
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.016418498794099002
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.8589591145756406
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 40,
+              "modeled_cancel_effective_after_s": 40.2,
+              "expected_pnl": -0.23484430054900127,
+              "incremental_ev": 0.015155699450998775,
+              "settlement_sd": 0.5214732310844721,
+              "expected_filled_shares": 4.598493198307276,
+              "full_fill_probability": 0.894683177040639,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.10531682295936756,
+              "increment_second_moment": 4.357902012196855,
+              "increment_yes_joint_moment": -0.8735348737605858,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05232970348214489
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.015194028768107323
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.014341238044750043
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.012606602410931554
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.010845250253433724
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.894683177040639
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 80,
+              "modeled_cancel_effective_after_s": 80.2,
+              "expected_pnl": -0.23268954194875802,
+              "incremental_ev": 0.01731045805124199,
+              "settlement_sd": 0.4871846272649757,
+              "expected_filled_shares": 4.654834558289588,
+              "full_fill_probability": 0.9135527973816319,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.08644720261837655,
+              "increment_second_moment": 4.421228958699335,
+              "increment_yes_joint_moment": -0.8827804300569948,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04925087221227644
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010946182942941455
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.010074738403852045
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.008726724606427927
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007448684452878717
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9135527973816319
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 120,
+              "modeled_cancel_effective_after_s": 120.2,
+              "expected_pnl": -0.23224702982280862,
+              "incremental_ev": 0.01775297017719156,
+              "settlement_sd": 0.4806065836013502,
+              "expected_filled_shares": 4.665969625689326,
+              "full_fill_probability": 0.9176429588915951,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.0823570411084164,
+              "increment_second_moment": 4.434133862109074,
+              "increment_yes_joint_moment": -0.8845953580514936,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.048793045281466586
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010155663471478666
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.009137430763254583
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.007759300135488502
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.006511601456728086
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9176429588915951
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 138.0,
+              "modeled_cancel_effective_after_s": 138.20000000000002,
+              "expected_pnl": -0.23218882783530193,
+              "incremental_ev": 0.017811172164697926,
+              "settlement_sd": 0.4798020508369426,
+              "expected_filled_shares": 4.667398400809044,
+              "full_fill_probability": 0.9182050801744891,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.08179491982552337,
+              "increment_second_moment": 4.435827025391,
+              "increment_yes_joint_moment": -0.8848271849137943,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.048746476418003726
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010061236017882773
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.009010821544257766
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.007615422551188211
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.006360963294190891
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9182050801744891
+                }
+              ]
+            }
+          ],
+          "probability_mass_error": 1.2656542480726785e-14,
+          "payoff_identity_error": 8.213915658750182e-16
+        }
+      ],
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.74,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 138.0,
+        "expected_pnl": -0.23218882783530193,
+        "incremental_ev": 0.017811172164697926,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.017811172164697926
+      }
+    },
+    {
+      "label": "fresh_state_without_active_order",
+      "results": [
+        {
+          "state": {
+            "p": 0.3,
+            "sigma": 0.02,
+            "elapsed": 102,
+            "yes": 5.0,
+            "no": 0.0,
+            "cost": 1.5,
+            "original_qty": 5.0,
+            "other_reserved": 0.0
+          },
+          "side": "NO",
+          "limit_price": 0.69,
+          "quantity": 5.0,
+          "existing": false,
+          "queue_age_s": 0.0,
+          "hold": {
+            "expected_pnl": 2.220446049250313e-16,
+            "settlement_sd": 2.29128784747792
+          },
+          "candidates": [
+            {
+              "cancel_request_after_s": 2,
+              "modeled_cancel_effective_after_s": 2.2,
+              "expected_pnl": -0.013882698103119472,
+              "incremental_ev": -0.013882698103119855,
+              "settlement_sd": 1.4204484163838176,
+              "expected_filled_shares": 2.7529694207754223,
+              "full_fill_probability": 0.46739747839792123,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.5326025216020782,
+              "increment_second_moment": 2.7106105465547037,
+              "increment_yes_joint_moment": -0.5984392207950148,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.2652012825577308
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.16003743058011266
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.0736580145681252
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.026194606514992485
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007511187381117159
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.46739747839792123
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 5,
+              "modeled_cancel_effective_after_s": 5.2,
+              "expected_pnl": -0.00473309573597268,
+              "incremental_ev": -0.00473309573597311,
+              "settlement_sd": 0.9674610763678353,
+              "expected_filled_shares": 3.8220751623218985,
+              "full_fill_probability": 0.6692474778477374,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.33075252215226214,
+              "increment_second_moment": 3.879881182058891,
+              "increment_yes_joint_moment": -0.8208077132784759,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.10994049532102577
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.07751160504488401
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.06387834820495272
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.047118822697176606
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.03230325088422306
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.6692474778477374
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 10,
+              "modeled_cancel_effective_after_s": 10.200000000000001,
+              "expected_pnl": 0.004697554881513429,
+              "incremental_ev": 0.004697554881513063,
+              "settlement_sd": 0.7529648282676258,
+              "expected_filled_shares": 4.271939924230051,
+              "full_fill_probability": 0.792789834925125,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.20721016507487305,
+              "increment_second_moment": 4.436337133520215,
+              "increment_yes_joint_moment": -0.9105266369245697,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.07372309057919572
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.040437153827991276
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.036830914807908316
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.03098425727845991
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.025234748581317978
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.792789834925125
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 20,
+              "modeled_cancel_effective_after_s": 20.200000000000003,
+              "expected_pnl": 0.01116842635816576,
+              "incremental_ev": 0.01116842635816534,
+              "settlement_sd": 0.6358652654297194,
+              "expected_filled_shares": 4.486663562996898,
+              "full_fill_probability": 0.8589591478006049,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.1410408521993911,
+              "increment_second_moment": 4.707865867980918,
+              "increment_yes_joint_moment": -0.951991121937908,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.059325024031889634
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.023735440402421783
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.022227308970980724
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.019334549526886072
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.016418529267212878
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.8589591478006049
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 40,
+              "modeled_cancel_effective_after_s": 40.2,
+              "expected_pnl": 0.015176079176099729,
+              "incremental_ev": 0.0151760791760989,
+              "settlement_sd": 0.5673628686860497,
+              "expected_filled_shares": 4.598882957429467,
+              "full_fill_probability": 0.8947462406709839,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.1052537593290111,
+              "increment_second_moment": 4.8499548752977955,
+              "increment_yes_joint_moment": -0.9732295699626631,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.052254987285137486
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.015176407303058264
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.014347890096188228
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.012618331999347287
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.010856142645279869
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.8947462406709839
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 80,
+              "modeled_cancel_effective_after_s": 80.2,
+              "expected_pnl": 0.017645080849343908,
+              "incremental_ev": 0.017645080849343287,
+              "settlement_sd": 0.5251253607664883,
+              "expected_filled_shares": 4.662917039721308,
+              "full_fill_probability": 0.915597064756448,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.08440293524354547,
+              "increment_second_moment": 4.9312317260496545,
+              "increment_yes_joint_moment": -0.9852228490103287,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04842694962238416
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010324399536877058
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.009723553267658419
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.008551921399695005
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0073761114169308625
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.915597064756448
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 120,
+              "modeled_cancel_effective_after_s": 120.2,
+              "expected_pnl": 0.018438220989616443,
+              "incremental_ev": 0.018438220989615957,
+              "settlement_sd": 0.5117500012820938,
+              "expected_filled_shares": 4.682855069234913,
+              "full_fill_probability": 0.9224007428054422,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.0775992571945531,
+              "increment_second_moment": 4.956945963039155,
+              "increment_yes_joint_moment": -0.9889403268264727,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04738792711714291
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.0088393478309068
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.008183078867763437
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.007109763873869276
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0060791395048706365
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9224007428054422
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 138.0,
+              "modeled_cancel_effective_after_s": 138.20000000000002,
+              "expected_pnl": 0.018597684142211583,
+              "incremental_ev": 0.0185976841422108,
+              "settlement_sd": 0.5091453079619653,
+              "expected_filled_shares": 4.68680138959427,
+              "full_fill_probability": 0.9238055082210694,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.07619449177892762,
+              "increment_second_moment": 4.962112022662321,
+              "increment_yes_joint_moment": -0.9896744151760448,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04720688995434833
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.00855299235875079
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.007862776624886934
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.006792028483540756
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.005779804357400794
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9238055082210694
+                }
+              ]
+            }
+          ],
+          "probability_mass_error": 6.772360450213455e-15,
+          "payoff_identity_error": 6.071532165918825e-16
+        }
+      ],
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.69,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 138.0,
+        "expected_pnl": 0.018597684142211583,
+        "incremental_ev": 0.0185976841422108,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0185976841422108
+      }
+    },
+    {
+      "label": "fresh_state_without_active_order",
+      "results": [
+        {
+          "state": {
+            "p": 0.35,
+            "sigma": 0.02,
+            "elapsed": 102,
+            "yes": 5.0,
+            "no": 0.0,
+            "cost": 1.5,
+            "original_qty": 5.0,
+            "other_reserved": 0.0
+          },
+          "side": "NO",
+          "limit_price": 0.64,
+          "quantity": 5.0,
+          "existing": false,
+          "queue_age_s": 0.0,
+          "hold": {
+            "expected_pnl": 0.24999999999999978,
+            "settlement_sd": 2.384848003542364
+          },
+          "candidates": [
+            {
+              "cancel_request_after_s": 2,
+              "modeled_cancel_effective_after_s": 2.2,
+              "expected_pnl": 0.23611730189688004,
+              "incremental_ev": -0.013882698103119855,
+              "settlement_sd": 1.4869571066964444,
+              "expected_filled_shares": 2.752969420775424,
+              "full_fill_probability": 0.46739747839792145,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.5326025216020782,
+              "increment_second_moment": 2.9068355364272938,
+              "increment_yes_joint_moment": -0.6431690813326528,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.2652012825577301
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.1600374305801128
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.07365801456812551
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.026194606514992686
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0075111873811172375
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.46739747839792145
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 5,
+              "modeled_cancel_effective_after_s": 5.2,
+              "expected_pnl": 0.2452669042640266,
+              "incremental_ev": -0.0047330957359731085,
+              "settlement_sd": 1.0183979799709526,
+              "expected_filled_shares": 3.8220751623219025,
+              "full_fill_probability": 0.6692474778477376,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.3307525221522616,
+              "increment_second_moment": 4.169443999428147,
+              "increment_yes_joint_moment": -0.8836352986699886,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.1099404953210254
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.07751160504488382
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.0638783482049527
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.04711882269717669
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0323032508842232
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.6692474778477376
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 10,
+              "modeled_cancel_effective_after_s": 10.200000000000001,
+              "expected_pnl": 0.25469755488201207,
+              "incremental_ev": 0.004697554882013072,
+              "settlement_sd": 0.7958984020276474,
+              "expected_filled_shares": 4.271939924231736,
+              "full_fill_probability": 0.7927898349251277,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.20721016507486967,
+              "increment_second_moment": 4.774903009644233,
+              "increment_yes_joint_moment": -0.9812485234185173,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.07372309057789929
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.04043715382896171
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.03683091480816728
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.030984257278512495
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.025234748581328854
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.7927898349251277
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 20,
+              "modeled_cancel_effective_after_s": 20.200000000000003,
+              "expected_pnl": 0.261168427652092,
+              "incremental_ev": 0.011168427652094477,
+              "settlement_sd": 0.6741745321284733,
+              "expected_filled_shares": 4.486663569125235,
+              "full_fill_probability": 0.85895914792586,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.14104085207413697,
+              "increment_second_moment": 5.072020456620698,
+              "increment_yes_joint_moment": -1.0265794926291443,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05932502064722779
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.023735442128171816
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.022227309952926523
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.019334549921189253
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.01641852942462168
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.85895914792586
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 40,
+              "modeled_cancel_effective_after_s": 40.2,
+              "expected_pnl": 0.2651770417137144,
+              "incremental_ev": 0.015177041713718472,
+              "settlement_sd": 0.6028944421490555,
+              "expected_filled_shares": 4.598897934213254,
+              "full_fill_probability": 0.894748111177937,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.10525188882205605,
+              "increment_second_moment": 5.228059470427324,
+              "increment_yes_joint_moment": -1.049872777345989,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.05225124697067938
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.015176280323026821
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.0143486514408805
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.012619045230971362
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.01085666485649799
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.894748111177937
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 80,
+              "modeled_cancel_effective_after_s": 80.2,
+              "expected_pnl": 0.2677167554564058,
+              "incremental_ev": 0.017716755456409383,
+              "settlement_sd": 0.5575390713681776,
+              "expected_filled_shares": 4.664591524703384,
+              "full_fill_probability": 0.9159878538430394,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.08401214615695032,
+              "increment_second_moment": 5.319503981619301,
+              "increment_yes_joint_moment": -1.0633831637995894,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04822991874891717
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.010201204433950254
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.009669129093745524
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.00853478265451146
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.007377111225825937
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9159878538430394
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 120,
+              "modeled_cancel_effective_after_s": 120.2,
+              "expected_pnl": 0.2686969120553049,
+              "incremental_ev": 0.018696912055305638,
+              "settlement_sd": 0.539876780167295,
+              "expected_filled_shares": 4.6891708436976005,
+              "full_fill_probability": 0.9240998849283442,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.0759001150716444,
+              "increment_second_moment": 5.353945091203373,
+              "increment_yes_joint_moment": -1.06841893867255,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.04681110143499081
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.008349058778025512
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.007861860971366633
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.006913737213848508
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.0059643566734129605
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.9240998849283442
+                }
+              ]
+            },
+            {
+              "cancel_request_after_s": 138.0,
+              "modeled_cancel_effective_after_s": 138.20000000000002,
+              "expected_pnl": 0.2689418369074566,
+              "incremental_ev": 0.01894183690745658,
+              "settlement_sd": 0.5354998562832677,
+              "expected_filled_shares": 4.695244756825184,
+              "full_fill_probability": 0.926153002931968,
+              "post_only_rejection_probability": 0.04000000000000001,
+              "nonzero_residual_probability": 0.0738469970680195,
+              "increment_second_moment": 5.362531481958627,
+              "increment_yes_joint_moment": -1.0696616163517563,
+              "filled_share_distribution": [
+                {
+                  "shares": 0.0,
+                  "probability": 0.046483930715036134
+                },
+                {
+                  "shares": 1.0,
+                  "probability": 0.00789563934028274
+                },
+                {
+                  "shares": 2.0,
+                  "probability": 0.007399914203235673
+                },
+                {
+                  "shares": 3.0,
+                  "probability": 0.006485776819231437
+                },
+                {
+                  "shares": 4.0,
+                  "probability": 0.005581735990233559
+                },
+                {
+                  "shares": 5.0,
+                  "probability": 0.926153002931968
+                }
+              ]
+            }
+          ],
+          "probability_mass_error": 1.2212453270876722e-14,
+          "payoff_identity_error": 3.8267999880048365e-15
+        }
+      ],
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.64,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 138.0,
+        "expected_pnl": 0.2689418369074566,
+        "incremental_ev": 0.01894183690745658,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.01894183690745658
+      }
+    }
+  ],
+  "existing_order_states": [
+    {
+      "already_filled": 0,
+      "result": {
+        "state": {
+          "p": 0.25,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 0,
+          "cost": 1.5,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 5,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": -0.25,
+          "settlement_sd": 2.165063509461097
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": -0.24910761770715167,
+            "incremental_ev": 0.0008923822928482903,
+            "settlement_sd": 2.159849283253585,
+            "expected_filled_shares": 0.01331966423347478,
+            "full_fill_probability": 0.0,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 1.0,
+            "increment_second_moment": 0.0025960682299758283,
+            "increment_yes_joint_moment": -0.0022915389780672744,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.9867290949089071
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013222145948711314
+              },
+              {
+                "shares": 2.0,
+                "probability": 4.8759142381733606e-05
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": -0.23669799787827622,
+            "incremental_ev": 0.013302002121723737,
+            "settlement_sd": 2.043462160597096,
+            "expected_filled_shares": 0.32161778224254145,
+            "full_fill_probability": 0.007932752450029725,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.9920672475499702,
+            "increment_second_moment": 0.13105623008895503,
+            "increment_yes_joint_moment": -0.060938667973204734,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.7701768717811922
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17454329305839142
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.036715346942233565
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.008546910023078403
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.0020848257450746146
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.007932752450029725
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": -0.2164716209278849,
+            "incremental_ev": 0.033528379072115054,
+            "settlement_sd": 1.7592292467760717,
+            "expected_filled_shares": 1.207885785634589,
+            "full_fill_probability": 0.110241471429468,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.8897585285705318,
+            "increment_second_moment": 0.89269913444629,
+            "increment_yes_joint_moment": -0.24003664918504933,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.5036347209190173
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.2159596985211692
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.09582620401579564
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.048285298523706
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.026052606590843956
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.110241471429468
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": -0.19166043027165688,
+            "incremental_ev": 0.058339569728343234,
+            "settlement_sd": 1.439309992155661,
+            "expected_filled_shares": 2.2234111718665193,
+            "full_fill_probability": 0.30350673422104046,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.6964932657789604,
+            "increment_second_moment": 1.974799319064918,
+            "increment_yes_joint_moment": -0.44414336358288514,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.32733789012801934
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17310909291934204
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.09577123675687814
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.05987424957064639
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.0404007964040744
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.30350673422104046
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": -0.1665108064716838,
+            "incremental_ev": 0.08348919352831619,
+            "settlement_sd": 1.133680723277636,
+            "expected_filled_shares": 3.0860640114998166,
+            "full_fill_probability": 0.5033121331335849,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.49668786686641636,
+            "increment_second_moment": 2.9609741846192392,
+            "increment_yes_joint_moment": -0.6147548773031157,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.21258463427050925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.12274908164700538
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.07416547041574528
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.050331398779181524
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.03685728175397496
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.5033121331335849
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": -0.1464624880691846,
+            "incremental_ev": 0.10353751193081535,
+            "settlement_sd": 0.8727906745643372,
+            "expected_filled_shares": 3.689382137051522,
+            "full_fill_probability": 0.6547449954415991,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.34525500455840197,
+            "increment_second_moment": 3.667867806904969,
+            "increment_yes_joint_moment": -0.7324040449094679,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.14179354082338813
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0848683494594644
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.05315625899408994
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.037271128729917696
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.028165726551541724
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.6547449954415991
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": -0.13235356471271187,
+            "incremental_ev": 0.11764643528728784,
+            "settlement_sd": 0.6551365305113573,
+            "expected_filled_shares": 4.083879865495482,
+            "full_fill_probability": 0.7580683410017823,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.24193165899821703,
+            "increment_second_moment": 4.1361874729291745,
+            "increment_yes_joint_moment": -0.8086526827364761,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.09914528248345779
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.058916230735226574
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.03721839305922846
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.026421867248306707
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.02022988547199752
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.7580683410017823
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": -0.1262535891491574,
+            "incremental_ev": 0.12374641085084247,
+            "settlement_sd": 0.5452306439469616,
+            "expected_filled_shares": 4.247831587940019,
+            "full_fill_probability": 0.8041064334372025,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.195893566562793,
+            "increment_second_moment": 4.3362615979960655,
+            "increment_yes_joint_moment": -0.8401805941571762,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.08411660677814309
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0472514941243134
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.028914507521630228
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.0202249209684428
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.015386037170263621
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.8041064334372025
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 4.3298697960381105e-15,
+        "payoff_identity_error": 2.914335439641036e-16
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5,
+        "cancel_request_after_s": 138,
+        "expected_pnl": -0.1262535891491574,
+        "incremental_ev": 0.12374641085084247,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.12285402855799427
+      }
+    },
+    {
+      "already_filled": 1,
+      "result": {
+        "state": {
+          "p": 0.25,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 1,
+          "cost": 2.18,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 4,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": -0.18000000000000016,
+          "settlement_sd": 1.7320508075688772
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": -0.17910761770715186,
+            "incremental_ev": 0.0008923822928482903,
+            "settlement_sd": 1.7269852910414685,
+            "expected_filled_shares": 0.01331966423347478,
+            "full_fill_probability": 0.0,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 1.0,
+            "increment_second_moment": 0.0025960682299758283,
+            "increment_yes_joint_moment": -0.0022915389780672744,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.9867290949089071
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013222145948711314
+              },
+              {
+                "shares": 2.0,
+                "probability": 4.8759142381733606e-05
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": -0.16663365698754956,
+            "incremental_ev": 0.013366343012450628,
+            "settlement_sd": 1.6171119083660734,
+            "expected_filled_shares": 0.31368502979251156,
+            "full_fill_probability": 0.01001757819510433,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.9899824218048956,
+            "increment_second_moment": 0.11531226320486168,
+            "increment_yes_joint_moment": -0.05916874923438399,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.7701768717811922
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17454329305839142
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.036715346942233565
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.008546910023078403
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.01001757819510433
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": -0.14638446600589036,
+            "incremental_ev": 0.03361553399410981,
+            "settlement_sd": 1.371221377275494,
+            "expected_filled_shares": 1.0976443142051207,
+            "full_fill_probability": 0.13629407802031202,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.8637059219796875,
+            "increment_second_moment": 0.6765198548515574,
+            "increment_yes_joint_moment": -0.2159888396550406,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.5036347209190173
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.2159596985211692
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.09582620401579564
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.048285298523706
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.13629407802031202
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": -0.12329896180530563,
+            "incremental_ev": 0.056701038194694534,
+            "settlement_sd": 1.1114798655574345,
+            "expected_filled_shares": 1.9199044376454824,
+            "full_fill_probability": 0.34390753062511403,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.656092469374886,
+            "increment_second_moment": 1.385720572935456,
+            "increment_yes_joint_moment": -0.37921449965926807,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.32733789012801934
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17310909291934204
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.09577123675687814
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.05987424957064639
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.34390753062511403
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": -0.10141126878207088,
+            "incremental_ev": 0.07858873121792911,
+            "settlement_sd": 0.8713666150543699,
+            "expected_filled_shares": 2.582751878366254,
+            "full_fill_probability": 0.5401694148875579,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.4598305851124414,
+            "increment_second_moment": 1.991165200976089,
+            "increment_yes_joint_moment": -0.5085664715043104,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.21258463427050925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.12274908164700538
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.07416547041574528
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.050331398779181524
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.5401694148875579
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": -0.08462865882247024,
+            "incremental_ev": 0.09537134117752909,
+            "settlement_sd": 0.6695961364067755,
+            "expected_filled_shares": 3.034637141609962,
+            "full_fill_probability": 0.6829107219931371,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.31708927800686015,
+            "increment_second_moment": 2.4120736010727937,
+            "increment_yes_joint_moment": -0.595484530013609,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.14179354082338813
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0848683494594644
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.05315625899408994
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.037271128729917696
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.6829107219931371
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": -0.07308622152236205,
+            "incremental_ev": 0.10691377847763725,
+            "settlement_sd": 0.5031305815298431,
+            "expected_filled_shares": 3.325811524493715,
+            "full_fill_probability": 0.7782982264737734,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.22170177352621948,
+            "increment_second_moment": 2.686360241974501,
+            "increment_yes_joint_moment": -0.6509952183650386,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.09914528248345779
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.058916230735226574
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.03721839305922846
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.026421867248306707
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.7782982264737734
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": -0.06825340250871488,
+            "incremental_ev": 0.11174659749128402,
+            "settlement_sd": 0.421263810928872,
+            "expected_filled_shares": 3.4437251545027423,
+            "full_fill_probability": 0.81949247060746,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.1805075293925294,
+            "increment_second_moment": 2.800378954037553,
+            "increment_yes_joint_moment": -0.6733669073257309,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.08411660677814309
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0472514941243134
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.028914507521630228
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.0202249209684428
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.81949247060746
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 1.0658141036401503e-14,
+        "payoff_identity_error": 1.2628786905111156e-15
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 4,
+        "cancel_request_after_s": 138,
+        "expected_pnl": -0.06825340250871488,
+        "incremental_ev": 0.11174659749128402,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.11085421519843698
+      }
+    },
+    {
+      "already_filled": 3,
+      "result": {
+        "state": {
+          "p": 0.25,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 3,
+          "cost": 3.54,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 2,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": -0.040000000000000036,
+          "settlement_sd": 0.8660254037844386
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": -0.03910761770715174,
+            "incremental_ev": 0.0008923822928482903,
+            "settlement_sd": 0.861705711759358,
+            "expected_filled_shares": 0.01331966423347478,
+            "full_fill_probability": 4.8759142381733606e-05,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.9999512408576183,
+            "increment_second_moment": 0.0025960682299758283,
+            "increment_yes_joint_moment": -0.0022915389780672744,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.9867290949089071
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013222145948711314
+              },
+              {
+                "shares": 2.0,
+                "probability": 4.8759142381733606e-05
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": -0.0268142903747862,
+            "incremental_ev": 0.013185709625213775,
+            "settlement_sd": 0.7775055103953311,
+            "expected_filled_shares": 0.28510296337922436,
+            "full_fill_probability": 0.055279835160416305,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.9447201648395837,
+            "increment_second_moment": 0.08016288040333391,
+            "increment_yes_joint_moment": -0.053072122286173785,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.7701768717811922
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17454329305839142
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.055279835160416305
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": -0.00977085426263226,
+            "incremental_ev": 0.030229145737367867,
+            "settlement_sd": 0.6322208035247793,
+            "expected_filled_shares": 0.7767708596407974,
+            "full_fill_probability": 0.2804055805598133,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.7195944194401859,
+            "increment_second_moment": 0.27472417122460496,
+            "increment_yes_joint_moment": -0.14846951995642715,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.5036347209190173
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.2159596985211692
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.2804055805598133
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": 0.005417657014112376,
+            "incremental_ev": 0.045417657014112565,
+            "settlement_sd": 0.5013644941593614,
+            "expected_filled_shares": 1.1722151268246164,
+            "full_fill_probability": 0.4995530169526401,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.5004469830473613,
+            "increment_second_moment": 0.4456067958961997,
+            "increment_yes_joint_moment": -0.22419000482744061,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.32733789012801934
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.17310909291934204
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.4995530169526401
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": 0.017650375342559893,
+            "incremental_ev": 0.05765037534256015,
+            "settlement_sd": 0.3890469264980328,
+            "expected_filled_shares": 1.4520816498119722,
+            "full_fill_probability": 0.6646662840824846,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.3353337159175145,
+            "increment_second_moment": 0.5694142992018437,
+            "increment_yes_joint_moment": -0.27677071176614615,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.21258463427050925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.12274908164700538
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.6646662840824846
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": 0.026234606854712537,
+            "incremental_ev": 0.06623460685471332,
+            "settlement_sd": 0.29793510393327294,
+            "expected_filled_shares": 1.6315445688937649,
+            "full_fill_probability": 0.7733381097171447,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.22666189028285255,
+            "increment_second_moment": 0.6493252182759542,
+            "increment_yes_joint_moment": -0.30998456553007786,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.14179354082338813
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0848683494594644
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.7733381097171447
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": 0.0318148535879077,
+            "incremental_ev": 0.07181485358790866,
+            "settlement_sd": 0.22488208551871539,
+            "expected_filled_shares": 1.7427932042978516,
+            "full_fill_probability": 0.841938486781312,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.15806151321868434,
+            "increment_second_moment": 0.6991349824327601,
+            "increment_yes_joint_moment": -0.3303977008154353,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.09914528248345779
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.058916230735226574
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.841938486781312
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": 0.03394583287791011,
+            "incremental_ev": 0.07394583287791057,
+            "settlement_sd": 0.19140415374037217,
+            "expected_filled_shares": 1.784515292319387,
+            "full_fill_probability": 0.8686318990975352,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.1313681009024564,
+            "increment_second_moment": 0.718158814153888,
+            "increment_yes_joint_moment": -0.3380273612517207,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.08411660677814309
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.0472514941243134
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.8686318990975352
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 8.215650382226158e-15,
+        "payoff_identity_error": 9.298117831235686e-16
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 2,
+        "cancel_request_after_s": 138,
+        "expected_pnl": 0.03394583287791011,
+        "incremental_ev": 0.07394583287791057,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.07305345058506185
+      }
+    },
+    {
+      "already_filled": 0,
+      "result": {
+        "state": {
+          "p": 0.3,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 0,
+          "cost": 1.5,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 5,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": 2.220446049250313e-16,
+          "settlement_sd": 2.29128784747792
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": 0.002662158003401506,
+            "incremental_ev": 0.0026621580034014193,
+            "settlement_sd": 2.2265483911900508,
+            "expected_filled_shares": 0.1554500795695222,
+            "full_fill_probability": 0.0,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 1.0000000000000002,
+            "increment_second_moment": 0.03566799812659321,
+            "increment_yes_joint_moment": -0.032015669872015054,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.8511420835097421
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.14226575341099396
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.006592163079264127
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": 0.012708884578470992,
+            "incremental_ev": 0.012708884578470874,
+            "settlement_sd": 1.3629190880875708,
+            "expected_filled_shares": 2.684821966026003,
+            "full_fill_probability": 0.34838944197469096,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.6516105580253092,
+            "increment_second_moment": 2.401588793095069,
+            "increment_yes_joint_moment": -0.5755752182938979,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.16964895684001802
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.19974550196857194
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.14857174012615507
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.08859166243059304
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.045052696659971234
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.34838944197469096
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": 0.02822580222198445,
+            "incremental_ev": 0.02822580222198434,
+            "settlement_sd": 0.8928624371449984,
+            "expected_filled_shares": 3.8614465301224667,
+            "full_fill_probability": 0.6300612936988197,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.36993870630118036,
+            "increment_second_moment": 3.84324962867852,
+            "increment_yes_joint_moment": -0.821057219443701,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.06264771944920262
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.09011662531107284
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.0872839485330469
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.07310611278023114
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.05678430022762708
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.6300612936988197
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": 0.039893393458231716,
+            "incremental_ev": 0.03989339345823164,
+            "settlement_sd": 0.644107677886904,
+            "expected_filled_shares": 4.354602012883319,
+            "full_fill_probability": 0.7816997070480348,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.21830029295196413,
+            "increment_second_moment": 4.49048526844735,
+            "increment_yes_joint_moment": -0.9204338904518139,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.03279216140336499
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.04945234475173786
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.05082860058327493
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.04591481312947141
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.03931237308411494
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.7816997070480348
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": 0.047892009814775614,
+            "incremental_ev": 0.047892009814776065,
+            "settlement_sd": 0.4791545836609292,
+            "expected_filled_shares": 4.607729725478923,
+            "full_fill_probability": 0.865501629053099,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.13449837094689615,
+            "increment_second_moment": 4.826313004993495,
+            "increment_yes_joint_moment": -0.9700754215901699,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.01937402314316199
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.029710864627200163
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.03115656521698303
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.02883008668592406
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.02542683127362689
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.865501629053099
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": 0.05297085544912238,
+            "incremental_ev": 0.05297085544912366,
+            "settlement_sd": 0.3619417213360406,
+            "expected_filled_shares": 4.745858889215289,
+            "full_fill_probability": 0.9124299407633015,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.08757005923669461,
+            "increment_second_moment": 5.009507413396601,
+            "increment_yes_joint_moment": -0.9966787125878462,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.012420475703104533
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.019165602139848213
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.020247259510159862
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.01889782329568286
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.016838898587899095
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.9124299407633015
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": 0.05616703632333168,
+            "incremental_ev": 0.056167036323334266,
+            "settlement_sd": 0.27235661652270265,
+            "expected_filled_shares": 4.8267305051459,
+            "full_fill_probability": 0.94034837938393,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.05965162061606746,
+            "increment_second_moment": 5.116863703701905,
+            "increment_yes_joint_moment": -1.0121029732198887,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.008516341860755925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013061279568852412
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.013761987254079882
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.012844693580226132
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.011467318352153128
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.94034837938393
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": 0.057473297604233524,
+            "incremental_ev": 0.05747329760423536,
+            "settlement_sd": 0.22890270761669118,
+            "expected_filled_shares": 4.858780553096014,
+            "full_fill_probability": 0.9518996562944623,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.048100343705529625,
+            "increment_second_moment": 5.160007582132881,
+            "increment_yes_joint_moment": -1.0181888059828328,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.007158570933241426
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.010721726734736663
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.011073099615354076
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.010173440030408541
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.008973506391788923
+              },
+              {
+                "shares": 5.0,
+                "probability": 0.9518996562944623
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 8.104628079763643e-15,
+        "payoff_identity_error": 2.8102520310824275e-15
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5,
+        "cancel_request_after_s": 138,
+        "expected_pnl": 0.057473297604233524,
+        "incremental_ev": 0.05747329760423536,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.05481113960083202
+      }
+    },
+    {
+      "already_filled": 1,
+      "result": {
+        "state": {
+          "p": 0.3,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 1,
+          "cost": 2.18,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 4,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": 0.019999999999999907,
+          "settlement_sd": 1.833030277982336
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": 0.02266215800340129,
+            "incremental_ev": 0.0026621580034014193,
+            "settlement_sd": 1.7700695954840517,
+            "expected_filled_shares": 0.1554500795695222,
+            "full_fill_probability": 0.0,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 1.0000000000000002,
+            "increment_second_moment": 0.03566799812659321,
+            "increment_yes_joint_moment": -0.032015669872015054,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.8511420835097421
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.14226575341099396
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.006592163079264127
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": 0.03539946967445738,
+            "incremental_ev": 0.015399469674457407,
+            "settlement_sd": 1.0246467296080224,
+            "expected_filled_shares": 2.3364325240513075,
+            "full_fill_probability": 0.393442138634662,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.6065578613653382,
+            "increment_second_moment": 1.710585414220839,
+            "increment_yes_joint_moment": -0.4979360778549337,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.16964895684001802
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.19974550196857194
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.14857174012615507
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.08859166243059304
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.393442138634662
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": 0.0497095900079406,
+            "incremental_ev": 0.02970959000794062,
+            "settlement_sd": 0.6548046983579723,
+            "expected_filled_shares": 3.231385236423646,
+            "full_fill_probability": 0.6868455939264467,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.31315440607355355,
+            "increment_second_moment": 2.6045301186722547,
+            "increment_yes_joint_moment": -0.6829469062403855,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.06264771944920262
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.09011662531107284
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.0872839485330469
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.07310611278023114
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.6868455939264467
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": 0.05896320676208764,
+            "incremental_ev": 0.03896320676208782,
+            "settlement_sd": 0.46887103785309425,
+            "expected_filled_shares": 3.572902305835296,
+            "full_fill_probability": 0.8210120801321511,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.17898791986784915,
+            "increment_second_moment": 2.962618367059977,
+            "increment_yes_joint_moment": -0.7509685611515406,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.03279216140336499
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.04945234475173786
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.05082860058327493
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.04591481312947141
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.8210120801321511
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": 0.06492768593393779,
+            "incremental_ev": 0.044927685933938054,
+            "settlement_sd": 0.34786494800055134,
+            "expected_filled_shares": 3.7422280964258725,
+            "full_fill_probability": 0.8909284603267325,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.10907153967326925,
+            "increment_second_moment": 3.1409190240297735,
+            "increment_yes_joint_moment": -0.7837580073471889,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.01937402314316199
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.029710864627200163
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.03115656521698303
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.02883008668592406
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.8909284603267325
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": 0.06861471985907636,
+            "incremental_ev": 0.04861471985907717,
+            "settlement_sd": 0.26250855345460195,
+            "expected_filled_shares": 3.8334289484520605,
+            "full_fill_probability": 0.9292688393512083,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.07073116064879552,
+            "increment_second_moment": 3.2367184967175056,
+            "increment_yes_joint_moment": -0.8010961296789917,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.012420475703104533
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.019165602139848213
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.020247259510159862
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.01889782329568286
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.9292688393512083
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": 0.07089963090318575,
+            "incremental_ev": 0.05089963090318771,
+            "settlement_sd": 0.19769150733108518,
+            "expected_filled_shares": 3.8863821257620224,
+            "full_fill_probability": 0.9518156977361021,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.04818430226391434,
+            "increment_second_moment": 3.292351831077741,
+            "increment_yes_joint_moment": -0.8110650015516575,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.008516341860755925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013061279568852412
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.013761987254079882
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.012844693580226132
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.9518156977361021
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": 0.07180723932679933,
+            "incremental_ev": 0.05180723932680253,
+            "settlement_sd": 0.1669642968395969,
+            "expected_filled_shares": 3.9068808968017565,
+            "full_fill_probability": 0.9608731626862715,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.0391268373137407,
+            "increment_second_moment": 3.3141653240646964,
+            "increment_yes_joint_moment": -0.8149083604018328,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.007158570933241426
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.010721726734736663
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.011073099615354076
+              },
+              {
+                "shares": 3.0,
+                "probability": 0.010173440030408541
+              },
+              {
+                "shares": 4.0,
+                "probability": 0.9608731626862715
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 1.687538997430238e-14,
+        "payoff_identity_error": 3.101685575046531e-15
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 4,
+        "cancel_request_after_s": 138,
+        "expected_pnl": 0.07180723932679933,
+        "incremental_ev": 0.05180723932680253,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.04914508132339804
+      }
+    },
+    {
+      "already_filled": 3,
+      "result": {
+        "state": {
+          "p": 0.3,
+          "sigma": 0.02,
+          "elapsed": 102,
+          "yes": 5.0,
+          "no": 3,
+          "cost": 3.54,
+          "original_qty": 5.0,
+          "other_reserved": 0.0
+        },
+        "side": "NO",
+        "limit_price": 0.68,
+        "quantity": 2,
+        "existing": true,
+        "queue_age_s": 1.8,
+        "hold": {
+          "expected_pnl": 0.06,
+          "settlement_sd": 0.9165151389911679
+        },
+        "candidates": [
+          {
+            "cancel_request_after_s": 0,
+            "modeled_cancel_effective_after_s": 0.2,
+            "expected_pnl": 0.06266215800340146,
+            "incremental_ev": 0.0026621580034014193,
+            "settlement_sd": 0.8627882949769405,
+            "expected_filled_shares": 0.1554500795695222,
+            "full_fill_probability": 0.006592163079264127,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.9934078369207361,
+            "increment_second_moment": 0.03566799812659321,
+            "increment_yes_joint_moment": -0.032015669872015054,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.8511420835097421
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.14226575341099396
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.006592163079264127
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 2,
+            "modeled_cancel_effective_after_s": 2.2,
+            "expected_pnl": 0.07688913514152573,
+            "incremental_ev": 0.01688913514152572,
+            "settlement_sd": 0.4202750001597884,
+            "expected_filled_shares": 1.4609565843513908,
+            "full_fill_probability": 0.6306055411914098,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.3693944588085899,
+            "increment_second_moment": 0.5828614442494712,
+            "increment_yes_joint_moment": -0.3064195408586251,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.16964895684001802
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.19974550196857194
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.6306055411914098
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 5,
+            "modeled_cancel_effective_after_s": 5.2,
+            "expected_pnl": 0.08446678678723515,
+            "incremental_ev": 0.024466786787235413,
+            "settlement_sd": 0.2546514504877353,
+            "expected_filled_shares": 1.7845879357905183,
+            "full_fill_probability": 0.8472356552397237,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.15276434476027548,
+            "increment_second_moment": 0.741561808286671,
+            "increment_yes_joint_moment": -0.371688919812697,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.06264771944920262
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.09011662531107284
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.8472356552397237
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 10,
+            "modeled_cancel_effective_after_s": 10.200000000000001,
+            "expected_pnl": 0.08806359605633292,
+            "incremental_ev": 0.02806359605633357,
+            "settlement_sd": 0.1797112136550037,
+            "expected_filled_shares": 1.884963332441529,
+            "full_fill_probability": 0.9177554938448955,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.08224450615510286,
+            "increment_second_moment": 0.7910991042884497,
+            "increment_yes_joint_moment": -0.3910847758209692,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.03279216140336499
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.04945234475173786
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.9177554938448955
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 20,
+            "modeled_cancel_effective_after_s": 20.200000000000003,
+            "expected_pnl": 0.09012535503983125,
+            "incremental_ev": 0.030125355039832432,
+            "settlement_sd": 0.1326308347606052,
+            "expected_filled_shares": 1.9315410890864677,
+            "full_fill_probability": 0.9509151122296378,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.04908488777036216,
+            "increment_second_moment": 0.8139212996258915,
+            "increment_yes_joint_moment": -0.39981809955813036,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.01937402314316199
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.029710864627200163
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.9509151122296378
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 40,
+            "modeled_cancel_effective_after_s": 40.2,
+            "expected_pnl": 0.09133581390372046,
+            "incremental_ev": 0.031335813903722136,
+            "settlement_sd": 0.09989205794401475,
+            "expected_filled_shares": 1.9559934464539195,
+            "full_fill_probability": 0.9684139221570491,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.03158607784295275,
+            "increment_second_moment": 0.8258266151331496,
+            "increment_yes_joint_moment": -0.40431582049384657,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.012420475703104533
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.019165602139848213
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.9684139221570491
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 80,
+            "modeled_cancel_effective_after_s": 80.2,
+            "expected_pnl": 0.09206074393263905,
+            "incremental_ev": 0.032060743932640905,
+            "settlement_sd": 0.07541306279870835,
+            "expected_filled_shares": 1.9699060367096175,
+            "full_fill_probability": 0.9784223785703903,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.02157762142960835,
+            "increment_second_moment": 0.8325889049166489,
+            "increment_yes_joint_moment": -0.40685024771381906,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.008516341860755925
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.013061279568852412
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.9784223785703903
+              }
+            ]
+          },
+          {
+            "cancel_request_after_s": 138,
+            "modeled_cancel_effective_after_s": 138.20000000000002,
+            "expected_pnl": 0.09232805579326843,
+            "incremental_ev": 0.03232805579327093,
+            "settlement_sd": 0.06444782697937622,
+            "expected_filled_shares": 1.9749611313987587,
+            "full_fill_probability": 0.9821197023320177,
+            "post_only_rejection_probability": 0.0,
+            "nonzero_residual_probability": 0.017880297667978082,
+            "increment_second_moment": 0.835066149557465,
+            "increment_yes_joint_moment": -0.4077684642529493,
+            "filled_share_distribution": [
+              {
+                "shares": 0.0,
+                "probability": 0.007158570933241426
+              },
+              {
+                "shares": 1.0,
+                "probability": 0.010721726734736663
+              },
+              {
+                "shares": 2.0,
+                "probability": 0.9821197023320177
+              }
+            ]
+          }
+        ],
+        "probability_mass_error": 4.440892098500626e-15,
+        "payoff_identity_error": 2.4980018054066022e-15
+      },
+      "decision": {
+        "action": "KEEP",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 2,
+        "cancel_request_after_s": 138,
+        "expected_pnl": 0.09232805579326843,
+        "incremental_ev": 0.03232805579327093,
+        "comparison_baseline": "CANCEL_WITH_LATE_FILLS",
+        "advantage_vs_baseline": 0.029665897789866974
+      }
+    }
+  ],
+  "sensitivity": [
+    {
+      "liquidity_rate": 0.1,
+      "sigma": 0.02,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.022779379604959567
+    },
+    {
+      "liquidity_rate": 0.1,
+      "sigma": 0.03,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.022450867856157034
+    },
+    {
+      "liquidity_rate": 0.5,
+      "sigma": 0.02,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.017829827281838427
+    },
+    {
+      "liquidity_rate": 0.5,
+      "sigma": 0.03,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.02122813309607514
+    },
+    {
+      "liquidity_rate": 1,
+      "sigma": 0.02,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.000153647786969068
+    },
+    {
+      "liquidity_rate": 1,
+      "sigma": 0.03,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.01673457628285625
+    },
+    {
+      "liquidity_rate": 2,
+      "sigma": 0.02,
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 140,
+        "expected_pnl": 0.06870925786906246,
+        "incremental_ev": 0.01870925786906086,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.01870925786906086
+      },
+      "max_candidate_incremental_ev": 0.01870925786906086
+    },
+    {
+      "liquidity_rate": 2,
+      "sigma": 0.03,
+      "decision": {
+        "action": "HOLD",
+        "side": null,
+        "price": null,
+        "remaining_order_shares": 0,
+        "cancel_request_after_s": 0,
+        "expected_pnl": 0.050000000000000044,
+        "incremental_ev": 0.0,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.0
+      },
+      "max_candidate_incremental_ev": -0.002429718516757214
+    },
+    {
+      "liquidity_rate": 5,
+      "sigma": 0.02,
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 140,
+        "expected_pnl": 0.08800600798931328,
+        "incremental_ev": 0.038006007989312,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.038006007989312
+      },
+      "max_candidate_incremental_ev": 0.038006007989312
+    },
+    {
+      "liquidity_rate": 5,
+      "sigma": 0.03,
+      "decision": {
+        "action": "BUY",
+        "side": "NO",
+        "price": 0.68,
+        "remaining_order_shares": 5.0,
+        "cancel_request_after_s": 140,
+        "expected_pnl": 0.06994379384396575,
+        "incremental_ev": 0.019943793843965406,
+        "comparison_baseline": "NO_ACTIVE_ORDER_HOLD",
+        "advantage_vs_baseline": 0.019943793843965406
+      },
+      "max_candidate_incremental_ev": 0.019943793843965406
+    }
+  ]
+}

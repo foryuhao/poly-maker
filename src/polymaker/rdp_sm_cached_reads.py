@@ -200,6 +200,106 @@ class CachedExecutionReads:
                 and _canceled_submission_response(a)
                 and not self.e._canceled_submission_observed(a.order_id)}
 
+    async def observe_sl(self, owner):
+        """Consume available per-order evidence without acquiring a global scope.
+
+        This never starts a foreground GET or waits for capital/positions. The
+        ordinary companion supplies complete pages and requested order details.
+        NORMAL/TP's _ready/admission rules remain unchanged.
+        """
+        snap = self.service.latest()
+        if snap.status in {"FAILED", "STOPPED"} or self.companion.failure:
+            self.e.fatal = "SYNC_CACHE_UNAVAILABLE"
+            return
+        if not self.context_matches(snap):
+            self.e.fatal = "SYNC_MARKET_SCOPE_MISMATCH"
+            return
+        self._ingest(snap)
+        self.e._check_canceled_submission_observations()
+        good = {r.name: r for r in snap.last_good}
+        latest = {r.name: r for r in snap.attempts}
+        clock = good.get("time")
+        if clock is not None and latest.get("time") == clock and clock.complete:
+            now = time.monotonic()
+            if 0 <= now-clock.started_monotonic <= self.timeout_s:
+                self.e.official_time = clock.data+now-clock.completed_monotonic
+                self.e.time_anchor = self.e.monotonic()
+        opened = good.get("open_orders")
+        if opened is not None and latest.get("open_orders") == opened and opened.complete:
+            for row in opened.data:
+                if (row["order_id"] in self.e.sl_terminal_quantities
+                        and opened.started_monotonic >= owner.proof_after.get(row["order_id"], float("inf"))):
+                    self.e.sl_terminal_quantities.pop(row["order_id"], None)
+                    self.e.fatal = "SL_TERMINAL_EVIDENCE_CONTRADICTION"
+                if (row["token_id"] in {self.meta.yes.token_id, self.meta.no.token_id}
+                        and row["order_id"] not in self.e.gateway._client.known_ids):
+                    self.e.fatal = "EXTERNAL_TARGET_ORDER"
+        requirements = {}
+        trades = good.get("trades")
+        for a in list(owner.orders):
+            if not a.post_started or not owner.post_done(a) or a.outcome in {"REJECTED", "ABORTED"}:
+                continue
+            oid = owner.oid(a)
+            boundary = max(self.post_returns.get(oid, 0), self.order_writes.get(oid, 0),
+                           owner.post_returned.get(a.attempt_id, 0),
+                           owner.cancel_ack.get(a.attempt_id, 0))
+            if await self.prove_sl_canceled_submission(a, snap, boundary):
+                owner.last_progress = self.e.monotonic()
+                continue
+            read = good.get("order:"+oid)
+            if (read is None or latest.get(read.name) != read or not read.complete
+                    or read.started_monotonic < boundary):
+                requirements[oid] = boundary
+                continue
+            if (trades is None or latest.get("trades") != trades or not trades.complete
+                    or trades.started_monotonic < boundary
+                    or time.monotonic()-trades.started_monotonic > self.timeout_s):
+                continue
+            owner.observe_order(a, order_raw(read.data), [trade_raw(t) for t in trades.data],
+                                min(read.started_monotonic, trades.started_monotonic))
+        if requirements:
+            self.service.track_orders(requirements)
+
+    async def prove_sl_canceled_submission(self, attempt, snap, boundary):
+        """Use fresh complete cached pages and the existing exact POST proof.
+
+        No scope acquisition or foreground GET; other SL writes may continue.
+        DELETE not-found and malformed detail rows never establish rejection.
+        """
+        from polymaker.rdp_sm_execution import _canceled_submission_response
+
+        if not _canceled_submission_response(attempt):
+            return False
+        good = {r.name: r for r in snap.last_good}
+        latest = {r.name: r for r in snap.attempts}
+        now = time.monotonic()
+        for name in ("open_orders", "trades"):
+            r = good.get(name)
+            if (r is None or latest.get(name) != r or not r.complete
+                    or r.started_monotonic < boundary
+                    or not 0 <= now-r.started_monotonic <= self.timeout_s):
+                return False
+        oid = attempt.order_id
+        detail = latest.get("order:"+oid)
+        if detail is not None and detail.complete:
+            return False  # Positive order evidence must use regular reconciliation.
+        opened = [order_raw(r) for r in good["open_orders"].data]
+        orders = [OpenOrder(r["id"], r["asset_id"], Side(r["side"]), float(r["price"]),
+                            float(r["original_size"])-float(r["size_matched"]), OrderState.LIVE)
+                  for r in opened]
+        trades = [trade_raw(r) for r in good["trades"].data]
+        proven = await self.e._verify_canceled_submission(attempt, evidence=(
+            orders, opened, trades, self.e.external_revision))
+        if proven:
+            self.e.record("sm_sl_canceled_submission_proven", {
+                "order_id": oid, "snapshot_version": snap.version,
+                "operation_after_monotonic": boundary,
+                "source": "IDENTITY_BOUND_POST_RESPONSE_AND_COMPLETE_COLLECTIONS",
+                "sources": {name: {"read_id": good[name].read_id,
+                                    "started_monotonic": good[name].started_monotonic}
+                            for name in ("open_orders", "trades")}})
+        return proven
+
     def _ready(self, snap, account, details):
         if not self.context_matches(snap):
             return False

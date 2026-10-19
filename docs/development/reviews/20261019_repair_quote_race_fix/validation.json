@@ -1,0 +1,63 @@
+{
+  "status": "PASS",
+  "recorded_at": "2026-10-19T10:59:14.542718+08:00",
+  "scope": "REPAIR_PRE_POST_QUOTE_WOULD_TAKE_LOCAL_RETRY",
+  "source_session": "cdfc165b84be4cfcb9154efe427e8129",
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_path_repair.py"
+  ],
+  "pre_fix_reproduction": {
+    "failed": 2,
+    "reason": "QUOTE_WOULD_TAKE escapes repair -> prepare -> _validate"
+  },
+  "new_regressions": {
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 6,
+    "seconds": 3.208
+  },
+  "related_execution_suite": {
+    "tests": 128,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 128,
+    "seconds": 187.637
+  },
+  "full_suite_run_this_change": false,
+  "test_files": [
+    "test_repair_preparation_quote_race.py",
+    "test_rdp_sm_path_repair.py",
+    "test_repair_policy.py",
+    "test_rdp_sm_obi_execution.py",
+    "test_rdp_sm_repair.py",
+    "test_repair_queue_followup.py",
+    "test_repair_rejection_latency.py"
+  ],
+  "recovery_boundary": "Only _Issue(QUOTE_WOULD_TAKE) from prepare before POST; activation errors and all other hard errors propagate.",
+  "state_and_economic_proofs_preserved": true,
+  "strategy_or_configuration_changes": false,
+  "source_manifest_unchanged_during_verification": true,
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "readiness_checks": {
+    "config": {
+      "policy_selected": true,
+      "ready_for_live": true
+    },
+    "livecfg": {
+      "policy_selected": true,
+      "ready_for_live": true
+    }
+  },
+  "real_orders_sent_during_fix": 0,
+  "new_process_required": true,
+  "automatic_takeover_of_exited_session": false,
+  "post_fix_live_scenario_validated": false,
+  "positive_ev_validated": false,
+  "existing_test_note": "One partial-fill test awaited T180 force SL after an inventory path break; not used as proof of prompt path-SL triggering.",
+  "warnings": "Two existing record_property / junit_family=xunit2 report-format warnings; no test failures.",
+  "deferred_issue_unchanged": "RP-001"
+}

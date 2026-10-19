@@ -1,0 +1,43 @@
+--- src/polymaker/rdp_sm_lifecycle.py (before)
++++ src/polymaker/rdp_sm_lifecycle.py (after)
+@@ -491,13 +491,25 @@
+ 
+         client.on_post_start = on_post_start
+ 
++        def possible_cancel_ids():
++            # Before POST drains, every submitted signed ID may still be
++            # accepted. Afterwards only a positively classified rejection (or
++            # an unsubmitted leg) is excluded; UNKNOWN still needs cancellation.
++            if not post_done.is_set():
++                return list(prospective) if any(a.post_started for a in batch) else []
++            return [a.expected_order_id for a in batch
++                    if a.post_started and a.outcome not in {"REJECTED", "ABORTED"}]
++
+         async def cancel_possible():
++            ids = possible_cancel_ids()
++            if not ids:
++                return
+             began = e.monotonic()
+-            raw = await e.gateway.cancel_detailed(prospective)
++            raw = await e.gateway.cancel_detailed(ids)
+             e.record(
+                 "sm_cancel_ack",
+                 {
+-                    "ids": list(prospective),
++                    "ids": ids,
+                     "result": asdict(raw),
+                     "delete_requested": began,
+                     "delete_sdk_started": raw.sdk_started_monotonic,
+@@ -579,8 +591,11 @@
+                         last_review_price_sequence[0] = price_sequence
+                         active_review[0] = asyncio.create_task(controller.review_active(intent, deadline))
+                 if close_requested.is_set() and any(a.post_started for a in batch):
++                    ids = possible_cancel_ids()
++                    if not ids:
++                        return  # Fresh account/close checks still run below.
+                     if (e.shared_reads is not None and post_done.is_set()
+-                            and e.shared_reads.terminal_observed(prospective)):
++                            and e.shared_reads.terminal_observed(ids)):
+                         return  # The final close still verifies fills and reserves.
+                     await cancel_possible()
+                     if verification_done.is_set():

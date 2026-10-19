@@ -1,0 +1,92 @@
+{
+  "review_date": "2026-10-19",
+  "production_source_hashes_unchanged": 21,
+  "baseline_reused": {
+    "tests": 97,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "latest_user_decisions": {
+    "matched_execution_offset": "accepted",
+    "per_order_release_evidence": "accepted",
+    "reverse_actual_quantity": "<=2.5 stop, >2.5 ordinary REPAIR default HD",
+    "residual_acquisition_time_and_path": "accepted",
+    "existing_network_circuit": "accepted",
+    "reverse_cost_basis": "FIFO explicitly accepted; residual own floating PnL for TP; session PnL continuous"
+  },
+  "only_pending_decision": null,
+  "arithmetic_scenarios": [
+    {
+      "name": "live_old_order_does_not_offset_target",
+      "actual_delta": "5",
+      "execution_delta": "5",
+      "possible_delta": [
+        "0",
+        "5"
+      ],
+      "expected_behavior": "CURRENT_SL"
+    },
+    {
+      "name": "matched_three_leaves_two",
+      "actual_delta": "5",
+      "execution_delta": "2",
+      "possible_delta": [
+        "0",
+        "5"
+      ],
+      "expected_behavior": "STOP_SMALL_EXECUTION_GAP"
+    },
+    {
+      "name": "matched_one_leaves_four",
+      "actual_delta": "5",
+      "execution_delta": "4",
+      "possible_delta": [
+        "0",
+        "5"
+      ],
+      "expected_behavior": "CURRENT_SL"
+    },
+    {
+      "name": "unproven_double_fill_is_not_reverse_inventory",
+      "actual_delta": "5",
+      "execution_delta": "-5",
+      "possible_delta": [
+        "-5",
+        "5"
+      ],
+      "expected_behavior": "WAIT_DIRECTION_PROOF"
+    },
+    {
+      "name": "actual_reverse_at_threshold",
+      "actual_delta": "-2.5",
+      "execution_delta": "-2.5",
+      "possible_delta": [
+        "-2.5",
+        "-2.5"
+      ],
+      "expected_behavior": "STOP_SMALL_ACTUAL"
+    },
+    {
+      "name": "actual_reverse_above_threshold",
+      "actual_delta": "-2.500001",
+      "execution_delta": "-2.500001",
+      "possible_delta": [
+        "-2.500001",
+        "-2.500001"
+      ],
+      "expected_behavior": "ORDINARY_REPAIR_HD"
+    }
+  ],
+  "cost_example": {
+    "session_total_pnl": "0.20",
+    "fifo_locked": "0.25",
+    "fifo_residual": "-0.05",
+    "average_locked": "0.10",
+    "average_residual": "0.10"
+  },
+  "verification_scope": "Design arithmetic and source continuity only; no new strategy/execution acceptance tests or live orders",
+  "snapshot_stage": "PREDEVELOPMENT_BASELINE; historical continuity values describe the before-implementation check",
+  "design_confirmations_complete": true,
+  "current_implementation_record": "../20261019_sl_execution_implementation/validation.json"
+}

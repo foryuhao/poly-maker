@@ -1,0 +1,8 @@
+{
+  "src/polymaker/rdp_sm_path_repair.py": "fb040b33f832329f8adeef85eb6def136168e8b50dd368dd41e7b9d022c90bd9",
+  "tests/test_repair_preparation_quote_race.py": "fbd5323ae2bea2279f2c854289c05e3dee98b3f9d06171567cc1e96194b8943a",
+  "src/polymaker/risk_shadow_model.py": "f019a2160b59d09b20ac46ca32dfdefbb3a78e7fba35e49eb4863693018b41f2",
+  "config/config.toml": "37baf7345f8b30feb252f4cd9365652ec058298e174e97ccada9a84f7eb2a423",
+  "livecfg/config.toml": "2d38808c1551f343f943d3aec5059b420c8ebeae83b7f2c1e2b2556937baf6f1",
+  "before_path_repair_sha256": "521225b53baece1a07c7b622591e04791da4661f17ac43ac9887f67b59394c1a"
+}

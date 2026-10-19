@@ -1,0 +1,139 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-19T13:02:38.502952+00:00",
+  "scope": "RP_002_PER_ORDER_RETRY_ISOLATION_CANCELED_SL_PROOF_RETIREMENT_AND_ADMISSION_DIAGNOSTICS",
+  "policy": "hd_tp_sl_v1",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "source_session": "414c7743c8b24879a0f7d81aeec8a850",
+  "market": "btc-updown-5m-1792405500",
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_sync.py",
+    "src/polymaker/rdp_sm_cached_reads.py",
+    "src/polymaker/rdp_sm_execution.py",
+    "src/polymaker/rdp_sm_sl.py",
+    "src/polymaker/rdp_sm_sl_ledger.py"
+  ],
+  "changed_tests": [
+    "tests/test_repair_sl_recovery.py",
+    "tests/test_rdp_sm_obi_execution.py"
+  ],
+  "fixes": [
+    "Individual detail errors have their own bounded retry and keep unresolved evidence; healthy /time and complete collections retain their existing heartbeat. Core collection errors retain original backoff.",
+    "SL uses the existing exact signed-ID-bound Already canceled POST proof with fresh complete post-write collections in its independent observer; no final-close wait to establish nonacceptance.",
+    "Executor-proven rejected IDs retire pending detail requirements. Ownership and observations remain; late order/fill evidence requeues reads and revokes rejection, restoring risk.",
+    "SL admission and final POST guard return specific blocker reasons; wait telemetry includes target side, price, quantity and generation."
+  ],
+  "strategy_signal_or_parameter_changes": false,
+  "risk_proof_requirements_relaxed": false,
+  "network_circuit_parameters_changed": false,
+  "budget_or_delta_or_time_boundaries_changed": false,
+  "configuration_changes": {
+    "config/config.toml": {
+      "only_changed": "rdp_sm.repair.path.validation_reference",
+      "previous": "docs/development/reviews/20261019_sl_execution_implementation/validation.json",
+      "current": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+    },
+    "livecfg/config.toml": {
+      "only_changed": "rdp_sm.repair.path.validation_reference",
+      "previous": "docs/development/reviews/20261019_sl_execution_implementation/validation.json",
+      "current": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+    }
+  },
+  "initial_focused_regression": {
+    "tests": 69,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 69,
+    "seconds": 26.656,
+    "artifact": "initial.xml"
+  },
+  "new_regression_cases": {
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 20,
+    "seconds": 7.81,
+    "artifact": "new_tests.xml"
+  },
+  "initial_full_regression": {
+    "tests": 2094,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 2,
+    "passed": 2091,
+    "seconds": 296.066,
+    "artifact": "regression_initial.xml"
+  },
+  "initial_full_failure_cause": "Mock Wire journal snapshot parsed an in-progress trailing diagnostic JSON record; native fake POST raised JSONDecodeError before accepting the order. Production WAL was not changed.",
+  "test_harness_fix": "Only newline-terminated records are parsed; every complete JSON and prepared body hash remains mandatory. Cast both string and Path journal names through Path.",
+  "test_harness_check": {
+    "partial_diagnostic_tail_ignored": true,
+    "complete_corrupt_record_rejected": true,
+    "wrong_prepared_hash_rejected": true,
+    "scope": "Mock venue harness only; production WAL unchanged; no network I/O"
+  },
+  "superseded_harness_run_accepted": false,
+  "superseded_harness_run_note": "Stopped the first harness-patch run after finding missing str-to-Path compatibility in the test-only reader; not counted as validation. Corrected harness passed targeted suite and a fresh full run.",
+  "harness_and_new_focused": {
+    "tests": 29,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 29,
+    "seconds": 16.671,
+    "artifact": "harness_and_new.xml"
+  },
+  "final_full_regression": {
+    "tests": 2094,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "passed": 2092,
+    "seconds": 287.258,
+    "artifact": "regression.xml"
+  },
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "frozen_policy_sources_sha256": {
+    "src/polymaker/repair_policy.py": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285",
+    "src/polymaker/rdp_sm_path_repair.py": "2cddc33aa9f4407b42359034c3c1a16a0c9034b3a64e369f35f8396399e6f00a",
+    "src/polymaker/rdp_sm_network.py": "dbe5f03af498ab4158098cbfb706e56f5259f3f919b0f5dd4e12c4efb355d4b6"
+  },
+  "final_source_sha256": {
+    "src/polymaker/rdp_sm_sync.py": "a86db0c516e693d773c8fbd65a8164fbca6cc205b410356bdce4f615bbf7cb2e",
+    "src/polymaker/rdp_sm_cached_reads.py": "a709b771bdbdc571d1bc99fa0a80db1abff6822edbfe4627df3275bd93a56480",
+    "src/polymaker/rdp_sm_execution.py": "9236031576709d50c84adb2ef1240ef68571ac831649a491d0b23478667c8d2e",
+    "src/polymaker/rdp_sm_sl.py": "827cbf13b77f4e7bb8513d4c52326cff4ea643472919cad2884ce16c2498a46a",
+    "src/polymaker/rdp_sm_sl_ledger.py": "77412efdc3a492d65a8fb2dea30842e57708cfbcd8d88724af5479b151727935",
+    "tests/test_repair_sl_recovery.py": "a73dfb607179fcdf63df5843d05c24244092348ea96b8faac0614056f11b02ba",
+    "tests/test_rdp_sm_obi_execution.py": "1f859a33ae1ee0d0740e31d4624a82b414a460e32ee46df4f68c3059ce06c4f1",
+    "config/config.toml": "712eb1a862d8994a2639a886cc7df656442b94eb376b198472b8f4f3537deb95",
+    "livecfg/config.toml": "cbc019fb418acbd5769958db96e861ae6dcf093acec8bac85662a464cef96bbb"
+  },
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true,
+      "validation_reference": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true,
+      "validation_reference": "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+    }
+  },
+  "ready_for_supervised_live_test": true,
+  "ready_for_live": true,
+  "actual_live_latency_after_fix_validated": false,
+  "positive_ev_validated": false,
+  "real_orders_sent_during_fix": 0,
+  "live_processes_started_or_restarted": false,
+  "automatic_trading_continuation_after_crash": false,
+  "deferred_issue_unchanged": "RP-001",
+  "resolved_issue_offline": "RP-002; pending next supervised live test",
+  "previous_validation": "../20261019_sl_execution_implementation/validation.json"
+}

@@ -1,0 +1,35 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-18T18:13:22.237765+00:00",
+  "scope": "FINAL_PRODUCTION_CODE_FULL_REGRESSION_AND_FINAL_FIXTURE_FOCUSED_REGRESSION",
+  "full_suite": {
+    "passed": 1991,
+    "skipped": 2,
+    "seconds": 286.34,
+    "log_sha256": "bf64ab68a121401c6a970b246f89d017b6f7a116b43f2475c32dd290a5cd8082"
+  },
+  "final_focused_suite": {
+    "passed": 97,
+    "seconds": 18.88,
+    "log_sha256": "1e4e9ed15726d88ff6a24e4dd2216c9653f4909c559a3154a1eee19adca2f4a0",
+    "note": "Only test network-probe fixture changed after full regression; production source unchanged."
+  },
+  "historical_price_policy_replay": {
+    "markets": 47,
+    "cases": 704,
+    "differences": 0,
+    "assumed_fills": false
+  },
+  "ruff": "PASS",
+  "git_diff_check": "PASS",
+  "source_hashes": "PASS",
+  "ready_for_live": false,
+  "selected_policy": "ev_legacy",
+  "not_completed": [
+    "Full new-policy session execution / long resting maker validation",
+    "Automatic trading continuation after process crash",
+    "Positive EV validation"
+  ],
+  "test_environment_note": "/tmp usrquota interrupted the first attempt; final tests used separate data-volume TMPDIR.",
+  "redundant_full_suite": "Stopped once final production-code full suite and final fixture focused suite both passed."
+}

@@ -93,6 +93,7 @@ def rdp_sm_run(
                    cfg.secrets.builder_secret, cfg.secrets.builder_passphrase)
         if human:
             observer = HumanRunLog(signature_type=cfg.wallet.signature_type,
+                                   repair_mode=cfg.rdp_sm.normal_entry_mode == "obi_v1",
                                    secrets=secrets, console_handlers=logging.getLogger().handlers[:])
         result = asyncio.run(run_current_market(cfg, observer=observer, shadow_mode=True)
                              if shadow else run_current_market(cfg, observer=observer))
@@ -108,6 +109,23 @@ def rdp_sm_run(
         observer.close()  # Execution resources already closed; bounded display drain.
     typer.echo(json.dumps(redact_credentials(result.to_dict(), secrets), allow_nan=False))
     raise typer.Exit(0 if result.execution_status == "COMPLETED" else 2)
+
+
+@app.command("rdp-sm-repair-check")
+def rdp_sm_repair_check(
+    config_dir: str = typer.Option("config", help="existing config directory"),
+) -> None:
+    """Read local HD/TP/SL configuration; no exchange or order access."""
+    import json
+
+    from polymaker.repair_policy import repair_readiness
+
+    cfg = Config.load(config_dir)
+    result = repair_readiness(cfg.rdp_sm.repair)
+    result["policy_selected"] = (cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                                 and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1")
+    typer.echo(json.dumps(result, allow_nan=False))
+    raise typer.Exit(0 if result["ready_for_live"] and result["policy_selected"] else 2)
 
 
 @app.command("research-audit")

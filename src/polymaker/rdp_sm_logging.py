@@ -116,8 +116,10 @@ class _ConsoleQueue(QueueHandler):
 class HumanRunLog:
     """One CLI invocation, one FIFO writer; emit is an O(1) memory handoff."""
 
-    def __init__(self, *, signature_type=None, secrets=(), console_handlers=None):
+    def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False):
         self.signature_type = signature_type
+        self.repair_mode = repair_mode
+        self.capital_limit = TEST_CAPITAL_LIMIT_USDC
         self.secrets = tuple(s for s in secrets if isinstance(s, str) and s)
         self.queue = SimpleQueue()
         self.console_handlers = console_handlers
@@ -194,6 +196,7 @@ class HumanRunLog:
     def _market_lines(self, market):
         elapsed = market.get("elapsed_s")
         remaining = max(0, 300 - elapsed) if isinstance(elapsed, (int, float)) else None
+        repair_window = "REPAIR 15 <= T < 240s" if self.repair_mode else "REBALANCE 15 <= T < 300s"
         return [
             "BTC Up/Down 5m Market",
             f"Market Slug: {value(market.get('slug'))}",
@@ -201,7 +204,7 @@ class HumanRunLog:
             f"Market Time: {local_time(market['start']) if market.get('start') is not None else NA} -> "
             f"{local_time(market['end']) if market.get('end') is not None else NA}",
             f"Market Elapsed Seconds: {value(elapsed)} | Trading Window: "
-            f"NORMAL 15 <= T < {NORMAL_END_S}s | REBALANCE 15 <= T < 300s",
+            f"NORMAL 15 <= T < {NORMAL_END_S}s | {repair_window}",
             f"Completion: T >= 300s | NORMAL waits for market end after T >= {NORMAL_END_S}s",
             f"Remaining Trading Time: {value(remaining)}s",
         ]
@@ -209,12 +212,13 @@ class HumanRunLog:
     def _preflight(self, p):
         market, account = p.get("market") or self.discovery, p.get("account") or {}
         self.account = account
+        self.capital_limit = p.get("test_capital_limit_usdc", TEST_CAPITAL_LIMIT_USDC)
         status = value(p.get("status"))
         lines = [f"Local Timestamp: {local_time()}", *self._market_lines(market),
                  f"Account Type: signature_type={value(account.get('signature_type', self.signature_type))}",
                  f"Wallet: {shortened(account.get('funder'))}",
                  f"Available Capital: {value(account.get('available_balance_usd'))} USDC | "
-                 f"Spendable Budget (cap {TEST_CAPITAL_LIMIT_USDC:g}): {value(account.get('basic_spendable_budget_usd'))} USDC",
+                 f"Spendable Budget (cap {self.capital_limit:g}): {value(account.get('basic_spendable_budget_usd'))} USDC",
                  f"Current Inventory: YES={value(account.get('yes_inventory'))} "
                  f"NO={value(account.get('no_inventory'))}", f"Preflight Status: {status}"]
         if account.get("capital_basis") == "OFFICIAL_BALANCE_AT_SESSION_START":
@@ -296,7 +300,7 @@ class HumanRunLog:
             lines.append("Order Submission Result: NOT SUBMITTED")
         fresh = []
         for f in w.get("confirmed_fills", []):
-            if f.get("status") != "CONFIRMED":
+            if f.get("status") != "CONFIRMED" and not self.repair_mode:
                 continue
             key = (f["trade_id"], f["maker_order_id"])
             if key not in self.fills:
@@ -327,17 +331,21 @@ class HumanRunLog:
         token_ids = {p["quote"]["outcome"]: p["quote"]["token_id"] for p in attempts}
         latest = {r.get("order_id"): r.get("filltruth") for r in self.reconciliations}
         reconciliation = ", ".join(f"{shortened(oid)}={value(status)}" for oid, status in latest.items()) or NA
+        next_state = inventory_trading_state(inventory_delta(w.get("yes_inventory", 0), w.get("no_inventory", 0)))
+        if self.repair_mode:
+            next_state = "REPAIR" if inventory_delta(w.get("yes_inventory", 0), w.get("no_inventory", 0)) else "NORMAL"
+        fill_label = "Economic" if self.repair_mode else "Confirmed"
         lines.extend([
             f"Known Order IDs (run): {', '.join(shortened(i) for i in w.get('known_order_ids', [])) or NA}",
             f"FillWindow Duration (deadline - T0): {value(duration)}s",
-            f"Confirmed Fill Quantity (this window, newly observed): {sum(f['size'] for f in fresh):g} | "
+            f"{fill_label} Fill Quantity (this window, newly observed): {sum(f['size'] for f in fresh):g} | "
             f"YES={sum(f['size'] for f in fresh if f['token_id'] == token_ids.get('YES')):g} "
             f"NO={sum(f['size'] for f in fresh if f['token_id'] == token_ids.get('NO')):g}",
             f"Cancel Status: {cancel} | Reconciliation Status: {reconciliation}",
             f"Updated Inventory: YES={value(w.get('yes_inventory'))} NO={value(w.get('no_inventory'))} | Updated Delta={value(w.get('delta'))}",
-            f"Capital Used (confirmed cost): {used:g} USDC | Capital Committed (M2): {value(w.get('capital_committed'))} USDC",
+            f"Capital Used ({'economic' if self.repair_mode else 'confirmed'} cost): {used:g} USDC | Capital Committed (M2): {value(w.get('capital_committed'))} USDC",
             f"Close Barrier Result: {barrier} | {reason_label}: {value(w.get('block_reason'))}",
-            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else inventory_trading_state(inventory_delta(w.get('yes_inventory', 0), w.get('no_inventory', 0)))} "
+            f"Next Trading State: {'BLOCKED' if barrier != 'SAFE_TO_CONTINUE' or w.get('block_reason') == 'ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM' else next_state} "
             "(inventory state; next market/time check still required)",
         ])
         self.cancel_events, self.reconciliations, self.planned, self.decision = [], [], None, {}
@@ -373,6 +381,10 @@ class HumanRunLog:
         if kind == "diagnostic":
             context = payload.get("context") or {}
             lines = [f"Stop Diagnostic: {value(payload.get('reason'))} | BLOCKED"]
+            if payload.get("repair_readiness"):
+                readiness = payload["repair_readiness"]
+                lines.append(f"REPAIR Readiness: {value(readiness.get('ready_for_live'))} | "
+                             f"Reasons={', '.join(readiness.get('reasons', []))}")
             if "preflight" in context:
                 lines.extend(self._preflight(context["preflight"]))
             elif "missing_side" in context:
@@ -385,7 +397,36 @@ class HumanRunLog:
         if kind == "events":
             lines = []
             for name, p in payload or []:
-                if name == "sm_decision_book":
+                if name == "sm_repair_decision":
+                    if p.get("policy") == "hd_tp_sl_v1":
+                        lines.append(f"REPAIR: {p['action']} | Mode={p['mode']} | "
+                                     f"Side={value(p.get('side'))} Price={value(p.get('price'))} | "
+                                     f"Reason={value(p.get('execution_reason') or p.get('reason'))} | "
+                                     f"ReviewAt=T{value(p.get('next_review_at'))}")
+                    else:
+                        lines.append(f"REPAIR: {p['action']} | Mode={p['mode']} | "
+                                     f"ExpectedPnL={value(p['expected_pnl'])} | Advantage={value(p['advantage'])} | "
+                                     f"CancelAt=T{value(p.get('cancel_at'))} | {p['parameter_status']}")
+                elif name == "sm_repair_execution_blocked":
+                    lines.append(f"REPAIR BLOCKED: Mode={value(p.get('mode'))} | {value(p.get('reason'))}")
+                elif name == "sm_sl_signal":
+                    committed = float(p["spent_usdc"])+float(p["reserved_usdc"])
+                    self.maximum_committed = max(self.maximum_committed or 0, committed)
+                    lines.append(f"SL Submit Requested: {p['side']} {p['quantity']}@{p['price']} | "
+                                 f"Delta={p['actual_delta']} | PossibleDelta={p['delta_interval']}")
+                elif name == "sm_sl_wait":
+                    lines.append(f"SL Wait: {p['reason']} | Delta={p['actual_delta']} | "
+                                 f"ExecutionDelta={p['execution_delta']}")
+                elif name == "sm_repair_reverse":
+                    lines.append(f"REPAIR Reverse: HD | {p['side']} {p['original_qty']} shares | "
+                                 f"Cost={p['original_cost']} | Basis=FIFO")
+                elif name == "sm_repair_small_exposure":
+                    lines.append(f"REPAIR: WAIT_WITH_RESIDUAL | Delta={value(p['actual_delta'])} shares | "
+                                 f"Threshold={value(p['threshold_shares'])} shares | "
+                                 "Actual inventory and cost retained")
+                elif name == "sm_position_reconciled":
+                    lines.append("Position Reconciled: actual inventory and collateral agree; native trade status retained")
+                elif name == "sm_decision_book":
                     self.decision = p
                 elif name == "sm_strategy_window":
                     self.planned = {**p, **self.decision}
@@ -441,15 +482,16 @@ class HumanRunLog:
             return ["RDP-SM Exit Summary", f"Local Timestamp: {local_time()}", *self._market_lines(market),
                     f"Start Time: {local_time(r['start_time'])} | Stop Time: {local_time(r['stop_time']) if r.get('stop_time') is not None else NA}",
                     f"Stop Reason: {value(r.get('stop_reason'))} | Execution Status: {value(r.get('execution_status'))}",
-                    f"Total Windows: {r['total_windows']} | NORMAL Windows: {r['normal_windows']} | REBALANCE Windows: {r['rebalance_windows']}",
+                    f"Total Windows: {r['total_windows']} | NORMAL Windows: {r['normal_windows']} | "
+                    f"{'REPAIR' if self.repair_mode else 'REBALANCE'} Windows: {r.get('repair_windows', 0) if self.repair_mode else r['rebalance_windows']}",
                     f"ActiveCycles: {r['active_cycles']} | Submitted Orders: {self.submitted} | Confirmed Fills: {r['confirmed_fills']} (records)",
                     f"YES Inventory: {value(yes)} | NO Inventory: {value(no)} | Delta: {value(delta)}",
                     f"Completed Pairs: {value(r.get('completed_pairs') if delta is not None else None)} | Residual Shares: {value(abs(delta) if delta is not None else None)}",
                     f"Merged Pairs: {value(r.get('merged_pairs', 0))} | Recovered Collateral: {value(r.get('recovered_collateral_usdc', 0))} USDC",
                     f"Verified Merge Gross PnL: {value(r.get('realized_merge_pnl'))} USDC | "
                     f"Unmerged Pair PnL Estimate: {value(r.get('unmerged_pair_pnl_estimate'))} USDC",
-                    f"Maximum Capital Utilization (observed M2 commitment / {TEST_CAPITAL_LIMIT_USDC:g} USDC cap): {value(maximum)} USDC | "
-                    f"{value(maximum / TEST_CAPITAL_LIMIT_USDC * 100 if maximum is not None else None)}%",
+                    f"Maximum Capital Utilization (observed M2 commitment / {self.capital_limit:g} USDC cap): {value(maximum)} USDC | "
+                    f"{value(maximum / self.capital_limit * 100 if maximum is not None else None)}%",
                     f"Maximum Residual Exposure: {NA} | Exposure Duration: {NA}",
                     f"Close Barrier Result: {r['final_close_barrier']}",
                     f"Sizing Final: Target={value(sizing.get('final_target_delta'))} "

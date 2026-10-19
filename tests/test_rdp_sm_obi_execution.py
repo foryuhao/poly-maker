@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
@@ -43,7 +44,12 @@ class Wire:
         if request.method == "POST":
             body = json.loads(request.content)
             self.v.post_requests.append(body)
-            records = journal_records(self.e.journal.path)
+            # A concurrent diagnostic append may leave a partial final line.
+            # Prepared WAL is already durable and newline-terminated before
+            # native POST. Still parse/assert every complete record strictly.
+            snapshot = Path(self.e.journal.path).read_bytes()
+            records = [json.loads(line) for line in snapshot.splitlines(keepends=True)
+                       if line.endswith(b"\n")]
             prepared = [r["data"]["payload"] for r in records if r["kind"] == "sm_prepared"]
             assert prepared
             candidates = [c for p in prepared for c in p["candidates"]]

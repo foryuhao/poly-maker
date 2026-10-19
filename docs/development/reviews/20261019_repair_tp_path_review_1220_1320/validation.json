@@ -1,0 +1,21 @@
+{
+  "scope": "READ_ONLY_FIXED_12_MARKET_TP_PATH_AUDIT",
+  "production_code_changed": false,
+  "orders_sent": false,
+  "markets": 12,
+  "repair_episodes": 14,
+  "tp_first": 9,
+  "raw_path_unmapped_batches": 0,
+  "source_hashes_unchanged": true,
+  "independent_tp_point_mark_check": "within 1 micro-USDC",
+  "direct_sl_partial_anchor_limitation": "12:35 first opening: one original-fill anchor uses .01 actual quantity; fixed final-quantity mark explicitly labelled",
+  "mean_first_tp_mark": "0.06613807555555555555555555556",
+  "mean_corrected_from_interim_comment": "Interim verbal estimate .077 corrected; audited 9-row sum .59524268 / 9",
+  "notebook_executed_code_cells": 4,
+  "notebook_png_embedded": true,
+  "png_visually_inspected": true,
+  "inline_renderer": "input and shipped runtime integrity verified; 3 reviewed rows",
+  "browser_interaction_qa": "unavailable; not claimed",
+  "ruff": "passed",
+  "git_diff_check": "passed"
+}

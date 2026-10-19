@@ -1,0 +1,201 @@
+{
+  "scope": "Offline mocked HTTP tests; native SDK HTTP-start samples, not live-exchange latency. Includes injected races and cutoff tests; no production p95 claim.",
+  "source_pytest_directory": "/tmp/pytest-of-ubuntu/pytest-2463",
+  "summary": {
+    "samples": 27,
+    "mean_ms": 5.813738814106694,
+    "p95_nearest_rank_ms": 9.462322108447552,
+    "max_ms": 10.07932797074318
+  },
+  "samples": [
+    {
+      "case": "test_t180_cancels_tp_without_n0",
+      "window_id": "tp-before-t180:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 7.310232147574425,
+      "signal_to_sdk_guard_ms": 7.3082419112324715
+    },
+    {
+      "case": "test_partial_tp_hands_off_to_s0",
+      "window_id": "tp-partial:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 7.5752451084554195,
+      "signal_to_sdk_guard_ms": 7.573205046355724
+    },
+    {
+      "case": "test_third_reprice_waits_for_p0",
+      "window_id": "third-target:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.674439016729593,
+      "signal_to_sdk_guard_ms": 5.6720091961324215
+    },
+    {
+      "case": "test_third_reprice_waits_for_p0",
+      "window_id": "third-target:sl:2",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.912505857646465,
+      "signal_to_sdk_guard_ms": 4.910096060484648
+    },
+    {
+      "case": "test_third_reprice_waits_for_p0",
+      "window_id": "third-target:sl:3",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.538034088909626,
+      "signal_to_sdk_guard_ms": 4.535804037004709
+    },
+    {
+      "case": "test_sl_requotes_after_minimal0",
+      "window_id": "sl-signature-race:sl:2",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.206601995974779,
+      "signal_to_sdk_guard_ms": 4.2045521549880505
+    },
+    {
+      "case": "test_t240_cancels_a_post_accep0",
+      "window_id": "cutoff-post:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.96169987693429,
+      "signal_to_sdk_guard_ms": 5.9596397913992405
+    },
+    {
+      "case": "test_matched_three_cancels_rem0",
+      "window_id": "matched-three:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.3079258650541306,
+      "signal_to_sdk_guard_ms": 5.305744707584381
+    },
+    {
+      "case": "test_new_sl_does_not_wait_for_1",
+      "window_id": "unacked-old:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 6.277724169194698,
+      "signal_to_sdk_guard_ms": 6.27530412748456
+    },
+    {
+      "case": "test_new_sl_does_not_wait_for_0",
+      "window_id": "unacked-old:sl:2",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.282449070364237,
+      "signal_to_sdk_guard_ms": 5.280277691781521
+    },
+    {
+      "case": "test_new_sl_does_not_wait_for_0",
+      "window_id": "unacked-old:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.767595022916794,
+      "signal_to_sdk_guard_ms": 5.765324924141169
+    },
+    {
+      "case": "test_cached_sl_uses_background0",
+      "window_id": "cached-sl:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.660202655941248,
+      "signal_to_sdk_guard_ms": 4.657842684537172
+    },
+    {
+      "case": "test_sl_double_fill_returns_fi0",
+      "window_id": "double-fill:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.155051127076149,
+      "signal_to_sdk_guard_ms": 5.152922123670578
+    },
+    {
+      "case": "test_sl_double_fill_returns_fi0",
+      "window_id": "double-fill:sl:2",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.601974040269852,
+      "signal_to_sdk_guard_ms": 4.599533975124359
+    },
+    {
+      "case": "test_sl_replacement_posts_whil0",
+      "window_id": "concurrent:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.065972916781902,
+      "signal_to_sdk_guard_ms": 5.063813179731369
+    },
+    {
+      "case": "test_sl_replacement_posts_whil0",
+      "window_id": "concurrent:sl:2",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.638363607227802,
+      "signal_to_sdk_guard_ms": 4.636132624000311
+    },
+    {
+      "case": "test_sl_native_rejection_close0",
+      "window_id": "sl-native-rejected:sl:1",
+      "outcome": "REJECTED",
+      "signal_to_native_http_ms": 4.743131343275309,
+      "signal_to_sdk_guard_ms": 4.741181153804064
+    },
+    {
+      "case": "test_sl_native_rejection_close0",
+      "window_id": "sl-after-rejection:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 4.501697141677141,
+      "signal_to_sdk_guard_ms": 4.499606788158417
+    },
+    {
+      "case": "test_new_sl_failure_keeps_inve2",
+      "window_id": "sl-fault:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.809766706079245,
+      "signal_to_sdk_guard_ms": 5.807945970445871
+    },
+    {
+      "case": "test_new_sl_failure_keeps_inve1",
+      "window_id": "sl-fault:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.788098089396954,
+      "signal_to_sdk_guard_ms": 5.785937886685133
+    },
+    {
+      "case": "test_new_sl_t240_cancels_witho1",
+      "window_id": "new-sl-cutoff:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.8812350034713745,
+      "signal_to_sdk_guard_ms": 5.87883498519659
+    },
+    {
+      "case": "test_new_sl_t240_cancels_witho0",
+      "window_id": "new-sl-cutoff:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.83762489259243,
+      "signal_to_sdk_guard_ms": 5.835634656250477
+    },
+    {
+      "case": "test_cached_execution_producti0",
+      "window_id": "6c4f8bff680e41f1bda730d4a4af53a9:w2:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.9279752895236015,
+      "signal_to_sdk_guard_ms": 5.925904959440231
+    },
+    {
+      "case": "test_cached_execution_producti0",
+      "window_id": "6c4f8bff680e41f1bda730d4a4af53a9:w4:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 5.042032804340124,
+      "signal_to_sdk_guard_ms": 5.03986282274127
+    },
+    {
+      "case": "test_production_session_hd_tp_1",
+      "window_id": "d3a9f0f33bad472d9163ca2458a0980f:w5:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 9.462322108447552,
+      "signal_to_sdk_guard_ms": 9.459933266043663
+    },
+    {
+      "case": "test_production_session_hd_tp_0",
+      "window_id": "3e94f98b63e94913b950cd6e780ab3c5:w2:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 10.07932797074318,
+      "signal_to_sdk_guard_ms": 10.076467879116535
+    },
+    {
+      "case": "test_production_session_hd_tp_0",
+      "window_id": "3e94f98b63e94913b950cd6e780ab3c5:w4:sl:1",
+      "outcome": "ACK",
+      "signal_to_native_http_ms": 6.961720064282417,
+      "signal_to_sdk_guard_ms": 6.958190817385912
+    }
+  ]
+}

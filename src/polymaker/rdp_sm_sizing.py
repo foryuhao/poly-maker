@@ -165,7 +165,7 @@ def summarize_sizing(executor, windows, delta, barrier):
     never enlarge it. The projection is rebuilt from the existing fill evidence.
     """
     report = empty_sizing_report()
-    fills = executor.confirmed()
+    fills = executor.economic_fills()
     report.update(final_actual_delta=float(delta), unintentional_residual_shares=float(abs(delta)),
                   maker_filled_shares=float(sum((Decimal(str(f.size)) for f in fills), Decimal(0))),
                   maker_fill_count=len(fills), safe_exit_status=barrier)
@@ -185,7 +185,7 @@ def summarize_sizing(executor, windows, delta, barrier):
         e.update(submitted_yes_size=str(submitted["YES"]), submitted_no_size=str(submitted["NO"]),
                  confirmed_yes_fill=str(sums["YES"]), confirmed_no_fill=str(sums["NO"]),
                  actual_delta_after=str(result["delta"]))
-        if w["state"] == "REBALANCE":
+        if w["state"] in {"REBALANCE", "REPAIR"}:
             e["actual_delta_after_repair"] = e["actual_delta_after"]
         net = sums["YES"] - sums["NO"]
         if certified and net * certified_sign < 0:

@@ -1,0 +1,3119 @@
+{
+  "stats": {
+    "markets": 12,
+    "period": "2026-10-19 12:20\u201313:20 Asia/Shanghai",
+    "normal_windows": 111,
+    "repair_windows": 31,
+    "actual_fill_records": 32,
+    "repair_episodes": 14,
+    "dust_only_episodes": 1,
+    "repair_fill_modes": {
+      "SL": 10,
+      "TP": 4
+    },
+    "paths": [
+      {
+        "path": "HD\u2192TP",
+        "episodes": 4,
+        "share": 0.2857142857142857,
+        "paired_pnl": "1.2990285200",
+        "mean_paired_pnl": "0.3247571300",
+        "fully_paired": 2
+      },
+      {
+        "path": "HD\u2192TP\u2192SL",
+        "episodes": 5,
+        "share": 0.35714285714285715,
+        "paired_pnl": "-2.17293344000",
+        "mean_paired_pnl": "-0.43458668800",
+        "fully_paired": 4
+      },
+      {
+        "path": "HD\u2192SL",
+        "episodes": 5,
+        "share": 0.35714285714285715,
+        "paired_pnl": "-5.4000000",
+        "mean_paired_pnl": "-1.0800000",
+        "fully_paired": 5
+      }
+    ],
+    "merge_pnl": "-6.27390492000",
+    "mean_market_merge_pnl": "-0.52282541000",
+    "mean_repair_paired_pnl": "-0.4481360657142857142857142857",
+    "winning_merge_markets": 4,
+    "losing_merge_markets": 6,
+    "zero_merge_markets": 2,
+    "merged_pairs": "65.670950",
+    "buy_cost": "75.623052",
+    "residual_cost": "3.67819708000",
+    "residual_markets": [
+      "12:20",
+      "12:30",
+      "12:40",
+      "12:50"
+    ],
+    "large_residual_markets": [
+      "12:20",
+      "12:30",
+      "12:40"
+    ],
+    "full_pnl_lower": "-9.952102",
+    "full_pnl_upper": "-0.053052",
+    "realized_merge_max_drawdown": {
+      "amount": "6.30097148000",
+      "peak_index": 0,
+      "trough_index": 11
+    },
+    "market_close_full_pnl_drawdown_scenario_range": [
+      "5.196800",
+      "9.952102"
+    ],
+    "actual_post_count": 140,
+    "initial_placement_outcomes": {
+      "ACK": 139,
+      "UNKNOWN": 1,
+      "ABORTED": 2
+    },
+    "all_orders_safely_closed": true,
+    "all_inventory_flat": false
+  },
+  "markets": [
+    {
+      "market": "12:20",
+      "slug": "btc-updown-5m-1792383600",
+      "session_id": "d44a1224727047c8999aa1a585a6d93c",
+      "start_epoch": 1792383600,
+      "end_epoch": 1792383900,
+      "normal_windows": 2,
+      "repair_windows": 2,
+      "actual_fill_records": 2,
+      "buy_cost": "3.719166",
+      "merged_pairs": "0.676664",
+      "released_cost": "0.64959744000",
+      "merge_pnl": "0.02706656000",
+      "reported_merge_pnl": 0.02706656,
+      "residual_yes": "4.323336",
+      "residual_no": "0.000000",
+      "residual_cost": "3.06956856000",
+      "full_pnl_lower": "-3.042502",
+      "full_pnl_upper": "1.280834",
+      "full_pnl": null,
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.6369857788086,
+      "blocked_windows": 0,
+      "block_reason_counts": {
+        "TP_VOLATILITY_UNKNOWN": 7,
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": 130
+      },
+      "first_blocks": {
+        "TP_VOLATILITY_UNKNOWN": {
+          "journal_line": 686,
+          "elapsed_wall": 36.608352184295654
+        },
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+          "journal_line": 1370,
+          "elapsed_wall": 53.580466508865356
+        }
+      },
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "74352875452454525662790314078500828126502868356271581001910824070112585435230",
+          "our_side": "BUY",
+          "price": 0.25,
+          "size": 0.676664,
+          "trade_id": "e47517e2-780c-437b-9a3f-4cd3e2270b43",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xd9ba4cb1456b96a7c503a70e379df91776424dacd2f7174bc552e785eb298c7a",
+          "market_id": "0x36527d77917a4d18e97c1f03fc58060742d9d131259ebf6ade9df7f9cf4cbfa2",
+          "side": "NO",
+          "first_observed_elapsed": 27.495261430740356,
+          "journal_line": 210,
+          "statuses": [
+            [
+              27.495261430740356,
+              "MATCHED"
+            ],
+            [
+              29.501572847366333,
+              "MINED"
+            ],
+            [
+              34.499966859817505,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "68510478369496977636505389883781315179704727293367934996589785069450884840778",
+          "our_side": "BUY",
+          "price": 0.71,
+          "size": 5.0,
+          "trade_id": "0aa3d84f-6a4d-4d00-af39-e34ec2519faa",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xb61122afc25336912c59f2f293130aa5d5477be98f43ac71a2baf2ea69f6b57e",
+          "market_id": "0x36527d77917a4d18e97c1f03fc58060742d9d131259ebf6ade9df7f9cf4cbfa2",
+          "side": "YES",
+          "first_observed_elapsed": 47.4112331867218,
+          "journal_line": 1266,
+          "statuses": [
+            [
+              47.4112331867218,
+              "MATCHED"
+            ],
+            [
+              48.52353501319885,
+              "MINED"
+            ],
+            [
+              53.513946533203125,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:20",
+          "session_id": "d44a1224727047c8999aa1a585a6d93c",
+          "opening_window": "d44a1224727047c8999aa1a585a6d93c:w2",
+          "original_side": "NO",
+          "original_quantity": "0.676664",
+          "first_open_fill_elapsed": 27.495261430740356,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192TP\u2192SL",
+          "first_repair_fill_elapsed": 47.4112331867218,
+          "completed_elapsed": null,
+          "paired_quantity": "0.676664",
+          "paired_pnl": "0.02706656000",
+          "residual_yes": "4.323336",
+          "residual_no": "0.000000",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "74352875452454525662790314078500828126502868356271581001910824070112585435230",
+              "our_side": "BUY",
+              "price": 0.25,
+              "size": 0.676664,
+              "trade_id": "e47517e2-780c-437b-9a3f-4cd3e2270b43",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xd9ba4cb1456b96a7c503a70e379df91776424dacd2f7174bc552e785eb298c7a",
+              "market_id": "0x36527d77917a4d18e97c1f03fc58060742d9d131259ebf6ade9df7f9cf4cbfa2",
+              "side": "NO",
+              "first_observed_elapsed": 27.495261430740356,
+              "journal_line": 210,
+              "statuses": [
+                [
+                  27.495261430740356,
+                  "MATCHED"
+                ],
+                [
+                  29.501572847366333,
+                  "MINED"
+                ],
+                [
+                  34.499966859817505,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "68510478369496977636505389883781315179704727293367934996589785069450884840778",
+              "our_side": "BUY",
+              "price": 0.71,
+              "size": 5.0,
+              "trade_id": "0aa3d84f-6a4d-4d00-af39-e34ec2519faa",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xb61122afc25336912c59f2f293130aa5d5477be98f43ac71a2baf2ea69f6b57e",
+              "market_id": "0x36527d77917a4d18e97c1f03fc58060742d9d131259ebf6ade9df7f9cf4cbfa2",
+              "side": "YES",
+              "first_observed_elapsed": 47.4112331867218,
+              "journal_line": 1266,
+              "statuses": [
+                [
+                  47.4112331867218,
+                  "MATCHED"
+                ],
+                [
+                  48.52353501319885,
+                  "MINED"
+                ],
+                [
+                  53.513946533203125,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "d44a1224727047c8999aa1a585a6d93c:w2",
+            "d44a1224727047c8999aa1a585a6d93c:w3",
+            "d44a1224727047c8999aa1a585a6d93c:w4"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 22566,
+          "elapsed_wall": 254.43143606185913,
+          "payload": {
+            "merge_id": "bc4a1bac7c3748f6864622a7feb36ed5",
+            "condition_id": "0x36527d77917a4d18e97c1f03fc58060742d9d131259ebf6ade9df7f9cf4cbfa2",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "68510478369496977636505389883781315179704727293367934996589785069450884840778",
+            "no_token_id": "74352875452454525662790314078500828126502868356271581001910824070112585435230",
+            "amount_raw": 676664,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 5000000,
+            "before_no_raw": 676664,
+            "collateral_before_raw": 18282566,
+            "elapsed_s": 240.0061394330114,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15267-0483-7dcf-a1b3-35fd352ace13",
+            "tx_hash": "0xa677da037c9f0c085a5accf36621a6ac708523fe0c0397f62026b59be5f0d305",
+            "after_yes_raw": 4323336,
+            "after_no_raw": 0,
+            "collateral_after_raw": 18959230,
+            "released_cost_usdc": "0.64959744"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "0.02706656000",
+      "drawdown": "0E-11",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:25",
+      "slug": "btc-updown-5m-1792383900",
+      "session_id": "4c87022b5b1d4252b02ab31272f6ef82",
+      "start_epoch": 1792383900,
+      "end_epoch": 1792384200,
+      "normal_windows": 8,
+      "repair_windows": 8,
+      "actual_fill_records": 4,
+      "buy_cost": "11.200000",
+      "merged_pairs": "10.0",
+      "released_cost": "11.200000",
+      "merge_pnl": "-1.200000",
+      "reported_merge_pnl": -1.2,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-1.200000",
+      "full_pnl_upper": "-1.200000",
+      "full_pnl": "-1.200000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.69777631759644,
+      "blocked_windows": 0,
+      "block_reason_counts": {
+        "TP_VOLATILITY_UNKNOWN": 1
+      },
+      "first_blocks": {
+        "TP_VOLATILITY_UNKNOWN": {
+          "journal_line": 763,
+          "elapsed_wall": 38.74903917312622
+        }
+      },
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "42291419494701008241785402303602654547271657296707061661516791759886910583823",
+          "our_side": "BUY",
+          "price": 0.69,
+          "size": 5.0,
+          "trade_id": "d3aa26c7-39ad-4c08-a59b-f414a042be28",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x9f4f3f99c1a99257b07368cce64a5eba051733b1e722d0343ffd5c6c1136cd79",
+          "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+          "side": "NO",
+          "first_observed_elapsed": 27.583879470825195,
+          "journal_line": 189,
+          "statuses": [
+            [
+              27.583879470825195,
+              "MATCHED"
+            ],
+            [
+              29.433168172836304,
+              "MINED"
+            ],
+            [
+              33.597291469573975,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "99636310051474267517269730399198239133555674699231069410485600268795654105499",
+          "our_side": "BUY",
+          "price": 0.35,
+          "size": 5.0,
+          "trade_id": "82a49040-a4ea-433b-be55-f8e7e103c37a",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xbe80aa87dc12b59653a050f2bb650e7952270a0e4998550e8742bfaec99259ec",
+          "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+          "side": "YES",
+          "first_observed_elapsed": 61.620563983917236,
+          "journal_line": 1144,
+          "statuses": [
+            [
+              61.620563983917236,
+              "MATCHED"
+            ],
+            [
+              63.63498854637146,
+              "MINED"
+            ],
+            [
+              67.66110396385193,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "99636310051474267517269730399198239133555674699231069410485600268795654105499",
+          "our_side": "BUY",
+          "price": 0.34,
+          "size": 5.0,
+          "trade_id": "aa52328b-af11-4e38-83ae-7cd029f5e615",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x6788562cfebab01c6790bdf79b66dc125dfcf2e1e9e114f13d8b0d8d68ed4765",
+          "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+          "side": "YES",
+          "first_observed_elapsed": 93.65532398223877,
+          "journal_line": 1613,
+          "statuses": [
+            [
+              93.65532398223877,
+              "MATCHED"
+            ],
+            [
+              96.64790439605713,
+              "MINED"
+            ],
+            [
+              100.65512919425964,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "42291419494701008241785402303602654547271657296707061661516791759886910583823",
+          "our_side": "BUY",
+          "price": 0.86,
+          "size": 5.0,
+          "trade_id": "1923c8cd-f28c-454d-ac45-a0c9a8b7ec63",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xc2686afa5282671961b335e64dbf06933c5b701ee23a2f5acc642f674aece785",
+          "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+          "side": "NO",
+          "first_observed_elapsed": 114.66082406044006,
+          "journal_line": 1967,
+          "statuses": [
+            [
+              114.66082406044006,
+              "MATCHED"
+            ],
+            [
+              116.6807632446289,
+              "MINED"
+            ],
+            [
+              121.67554545402527,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:25",
+          "session_id": "4c87022b5b1d4252b02ab31272f6ef82",
+          "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+          "original_side": "NO",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 27.583879470825195,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192TP\u2192SL",
+          "first_repair_fill_elapsed": 61.620563983917236,
+          "completed_elapsed": 67.68381762504578,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-0.200000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "42291419494701008241785402303602654547271657296707061661516791759886910583823",
+              "our_side": "BUY",
+              "price": 0.69,
+              "size": 5.0,
+              "trade_id": "d3aa26c7-39ad-4c08-a59b-f414a042be28",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x9f4f3f99c1a99257b07368cce64a5eba051733b1e722d0343ffd5c6c1136cd79",
+              "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+              "side": "NO",
+              "first_observed_elapsed": 27.583879470825195,
+              "journal_line": 189,
+              "statuses": [
+                [
+                  27.583879470825195,
+                  "MATCHED"
+                ],
+                [
+                  29.433168172836304,
+                  "MINED"
+                ],
+                [
+                  33.597291469573975,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "99636310051474267517269730399198239133555674699231069410485600268795654105499",
+              "our_side": "BUY",
+              "price": 0.35,
+              "size": 5.0,
+              "trade_id": "82a49040-a4ea-433b-be55-f8e7e103c37a",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xbe80aa87dc12b59653a050f2bb650e7952270a0e4998550e8742bfaec99259ec",
+              "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+              "side": "YES",
+              "first_observed_elapsed": 61.620563983917236,
+              "journal_line": 1144,
+              "statuses": [
+                [
+                  61.620563983917236,
+                  "MATCHED"
+                ],
+                [
+                  63.63498854637146,
+                  "MINED"
+                ],
+                [
+                  67.66110396385193,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "4c87022b5b1d4252b02ab31272f6ef82:w2",
+            "4c87022b5b1d4252b02ab31272f6ef82:w3",
+            "4c87022b5b1d4252b02ab31272f6ef82:w4",
+            "4c87022b5b1d4252b02ab31272f6ef82:w5",
+            "4c87022b5b1d4252b02ab31272f6ef82:w6",
+            "4c87022b5b1d4252b02ab31272f6ef82:w7"
+          ]
+        },
+        {
+          "market": "12:25",
+          "session_id": "4c87022b5b1d4252b02ab31272f6ef82",
+          "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w13",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 93.65532398223877,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192TP\u2192SL",
+          "first_repair_fill_elapsed": 114.66082406044006,
+          "completed_elapsed": 121.72989153862,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-1.000000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "99636310051474267517269730399198239133555674699231069410485600268795654105499",
+              "our_side": "BUY",
+              "price": 0.34,
+              "size": 5.0,
+              "trade_id": "aa52328b-af11-4e38-83ae-7cd029f5e615",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x6788562cfebab01c6790bdf79b66dc125dfcf2e1e9e114f13d8b0d8d68ed4765",
+              "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+              "side": "YES",
+              "first_observed_elapsed": 93.65532398223877,
+              "journal_line": 1613,
+              "statuses": [
+                [
+                  93.65532398223877,
+                  "MATCHED"
+                ],
+                [
+                  96.64790439605713,
+                  "MINED"
+                ],
+                [
+                  100.65512919425964,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "42291419494701008241785402303602654547271657296707061661516791759886910583823",
+              "our_side": "BUY",
+              "price": 0.86,
+              "size": 5.0,
+              "trade_id": "1923c8cd-f28c-454d-ac45-a0c9a8b7ec63",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xc2686afa5282671961b335e64dbf06933c5b701ee23a2f5acc642f674aece785",
+              "market_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+              "side": "NO",
+              "first_observed_elapsed": 114.66082406044006,
+              "journal_line": 1967,
+              "statuses": [
+                [
+                  114.66082406044006,
+                  "MATCHED"
+                ],
+                [
+                  116.6807632446289,
+                  "MINED"
+                ],
+                [
+                  121.67554545402527,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "4c87022b5b1d4252b02ab31272f6ef82:w13",
+            "4c87022b5b1d4252b02ab31272f6ef82:w14",
+            "4c87022b5b1d4252b02ab31272f6ef82:w15",
+            "4c87022b5b1d4252b02ab31272f6ef82:w16"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 2763,
+          "elapsed_wall": 255.44124293327332,
+          "payload": {
+            "merge_id": "8b7d93bf2916493eba0e2e89d652c09f",
+            "condition_id": "0x58c9d343c090c2a691f8fde46a8d38672e52c221649518c789956a111e9e086c",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "99636310051474267517269730399198239133555674699231069410485600268795654105499",
+            "no_token_id": "42291419494701008241785402303602654547271657296707061661516791759886910583823",
+            "amount_raw": 10000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 10000000,
+            "before_no_raw": 10000000,
+            "collateral_before_raw": 12082566,
+            "elapsed_s": 240.76885136170313,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a1526b-9c5a-7b7a-9123-4c28fc5c144f",
+            "tx_hash": "0xc79b3e10274f9d361b73afa43e5d4a56ba07eb30c258aacc32ded1992cddf642",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 22082566,
+            "released_cost_usdc": "11.20"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-1.17293344000",
+      "drawdown": "1.20000000000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:30",
+      "slug": "btc-updown-5m-1792384200",
+      "session_id": "2f15361d56554ca082fa787e82ea3b9d",
+      "start_epoch": 1792384200,
+      "end_epoch": 1792384500,
+      "normal_windows": 4,
+      "repair_windows": 1,
+      "actual_fill_records": 2,
+      "buy_cost": "5.350000",
+      "merged_pairs": "5.0",
+      "released_cost": "4.850000",
+      "merge_pnl": "0.150000",
+      "reported_merge_pnl": 0.15,
+      "residual_yes": "0.0",
+      "residual_no": "5.0",
+      "residual_cost": "0.500000",
+      "full_pnl_lower": "-0.350000",
+      "full_pnl_upper": "4.650000",
+      "full_pnl": null,
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.35245156288147,
+      "blocked_windows": 0,
+      "block_reason_counts": {
+        "SESSION_DELTA_LIMIT": 4,
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": 55
+      },
+      "first_blocks": {
+        "SESSION_DELTA_LIMIT": {
+          "journal_line": 472,
+          "elapsed_wall": 45.97910237312317
+        },
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+          "journal_line": 956,
+          "elapsed_wall": 64.91054606437683
+        }
+      },
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "94135975313219259109572675235989667403314195694241134284479455292595189546588",
+          "our_side": "BUY",
+          "price": 0.87,
+          "size": 5.0,
+          "trade_id": "f306f403-4975-4510-bc53-9af5abaf3382",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x3f4e537abcc913bcfea542792659e95e5db0bf5f9b9dc235943d5fb085b4673a",
+          "market_id": "0xba7ce625fa4857e559efcc37cd7673b2eb95d190002e2efca0f4503f6ccdccf5",
+          "side": "YES",
+          "first_observed_elapsed": 41.04641103744507,
+          "journal_line": 402,
+          "statuses": [
+            [
+              41.04641103744507,
+              "MATCHED"
+            ],
+            [
+              43.830322265625,
+              "MINED"
+            ],
+            [
+              47.874866247177124,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "97943792500734943198043601713139535263250657127549793360882031359843626422913",
+          "our_side": "BUY",
+          "price": 0.1,
+          "size": 10.0,
+          "trade_id": "438a0409-8f95-42f7-b1f3-598a4cee950c",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x65606d8ffe596f8e14bb42a42f21d3eb7b8cdc159c8ae7034c703cef1aaa976b",
+          "market_id": "0xba7ce625fa4857e559efcc37cd7673b2eb95d190002e2efca0f4503f6ccdccf5",
+          "side": "NO",
+          "first_observed_elapsed": 55.02309989929199,
+          "journal_line": 843,
+          "statuses": [
+            [
+              55.02309989929199,
+              "MATCHED"
+            ],
+            [
+              57.02591586112976,
+              "MINED"
+            ],
+            [
+              59.82345795631409,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:30",
+          "session_id": "2f15361d56554ca082fa787e82ea3b9d",
+          "opening_window": "2f15361d56554ca082fa787e82ea3b9d:w4",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 41.04641103744507,
+          "repair_fill_mode": "TP",
+          "path_to_repair_fill": "HD\u2192TP",
+          "first_repair_fill_elapsed": 55.02309989929199,
+          "completed_elapsed": null,
+          "paired_quantity": "5.0",
+          "paired_pnl": "0.150000",
+          "residual_yes": "0.0",
+          "residual_no": "5.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "94135975313219259109572675235989667403314195694241134284479455292595189546588",
+              "our_side": "BUY",
+              "price": 0.87,
+              "size": 5.0,
+              "trade_id": "f306f403-4975-4510-bc53-9af5abaf3382",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x3f4e537abcc913bcfea542792659e95e5db0bf5f9b9dc235943d5fb085b4673a",
+              "market_id": "0xba7ce625fa4857e559efcc37cd7673b2eb95d190002e2efca0f4503f6ccdccf5",
+              "side": "YES",
+              "first_observed_elapsed": 41.04641103744507,
+              "journal_line": 402,
+              "statuses": [
+                [
+                  41.04641103744507,
+                  "MATCHED"
+                ],
+                [
+                  43.830322265625,
+                  "MINED"
+                ],
+                [
+                  47.874866247177124,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "97943792500734943198043601713139535263250657127549793360882031359843626422913",
+              "our_side": "BUY",
+              "price": 0.1,
+              "size": 10.0,
+              "trade_id": "438a0409-8f95-42f7-b1f3-598a4cee950c",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x65606d8ffe596f8e14bb42a42f21d3eb7b8cdc159c8ae7034c703cef1aaa976b",
+              "market_id": "0xba7ce625fa4857e559efcc37cd7673b2eb95d190002e2efca0f4503f6ccdccf5",
+              "side": "NO",
+              "first_observed_elapsed": 55.02309989929199,
+              "journal_line": 843,
+              "statuses": [
+                [
+                  55.02309989929199,
+                  "MATCHED"
+                ],
+                [
+                  57.02591586112976,
+                  "MINED"
+                ],
+                [
+                  59.82345795631409,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "2f15361d56554ca082fa787e82ea3b9d:w4",
+            "2f15361d56554ca082fa787e82ea3b9d:w5"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 15464,
+          "elapsed_wall": 254.42874813079834,
+          "payload": {
+            "merge_id": "bade60cc7017431c90a334f50576b0f7",
+            "condition_id": "0xba7ce625fa4857e559efcc37cd7673b2eb95d190002e2efca0f4503f6ccdccf5",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "94135975313219259109572675235989667403314195694241134284479455292595189546588",
+            "no_token_id": "97943792500734943198043601713139535263250657127549793360882031359843626422913",
+            "amount_raw": 5000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 5000000,
+            "before_no_raw": 10000000,
+            "collateral_before_raw": 16732566,
+            "elapsed_s": 240.00266468990594,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15270-2bde-7923-aaf7-0fd2cde9ff00",
+            "tx_hash": "0x8ab9fedd2cf098813653d0c9e57c471bef4b3c054a1dcc3ea9a2e7d0a2861ab0",
+            "after_yes_raw": 0,
+            "after_no_raw": 5000000,
+            "collateral_after_raw": 21732566,
+            "released_cost_usdc": "4.85"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-1.02293344000",
+      "drawdown": "1.05000000000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:35",
+      "slug": "btc-updown-5m-1792384500",
+      "session_id": "bfc87b1bbff041e3b78c0c6ebd4392cf",
+      "start_epoch": 1792384500,
+      "end_epoch": 1792384800,
+      "normal_windows": 8,
+      "repair_windows": 3,
+      "actual_fill_records": 5,
+      "buy_cost": "10.900000",
+      "merged_pairs": "10.0",
+      "released_cost": "10.900000",
+      "merge_pnl": "-0.900000",
+      "reported_merge_pnl": -0.9,
+      "residual_yes": "0.00",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-0.900000",
+      "full_pnl_upper": "-0.900000",
+      "full_pnl": "-0.900000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.77468156814575,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+          "our_side": "BUY",
+          "price": 0.49,
+          "size": 0.01,
+          "trade_id": "cda99cba-4b8f-413b-9410-fb092173b4d0",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xa5522ef4f1dcf2c92417cd96f74aa86ac782f621765339e52ec963dcb93564da",
+          "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+          "side": "YES",
+          "first_observed_elapsed": 44.28959012031555,
+          "journal_line": 290,
+          "statuses": [
+            [
+              44.28959012031555,
+              "MATCHED"
+            ],
+            [
+              46.27802085876465,
+              "MINED"
+            ],
+            [
+              49.12968420982361,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+          "our_side": "BUY",
+          "price": 0.49,
+          "size": 4.99,
+          "trade_id": "a5e5dac2-9f52-49e4-8c92-286a2df18bd2",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xa5522ef4f1dcf2c92417cd96f74aa86ac782f621765339e52ec963dcb93564da",
+          "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+          "side": "YES",
+          "first_observed_elapsed": 44.28997564315796,
+          "journal_line": 291,
+          "statuses": [
+            [
+              44.28997564315796,
+              "MATCHED"
+            ],
+            [
+              46.278292655944824,
+              "MINED"
+            ],
+            [
+              52.280022621154785,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "114789791009951740070119625059051625469369627252045514943532094069608395646217",
+          "our_side": "BUY",
+          "price": 0.55,
+          "size": 5.0,
+          "trade_id": "d7f1f32a-59f8-49e9-88d1-e1ae4c727961",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xdff08c151a721e0ab83db8a0273677440f49a63b6d2fc4f167c739c12806a1f6",
+          "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+          "side": "NO",
+          "first_observed_elapsed": 54.29856538772583,
+          "journal_line": 442,
+          "statuses": [
+            [
+              54.29856538772583,
+              "MATCHED"
+            ],
+            [
+              57.12303400039673,
+              "MINED"
+            ],
+            [
+              61.985626220703125,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "114789791009951740070119625059051625469369627252045514943532094069608395646217",
+          "our_side": "BUY",
+          "price": 0.56,
+          "size": 5.0,
+          "trade_id": "225ee182-5337-4458-8bb7-b2a1bea76e78",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xb2daa7bfaca0f20551fd9ab688cce4343725b19ee5569375771a8b5ac2abad57",
+          "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+          "side": "NO",
+          "first_observed_elapsed": 69.1231746673584,
+          "journal_line": 660,
+          "statuses": [
+            [
+              69.1231746673584,
+              "MATCHED"
+            ],
+            [
+              71.24676203727722,
+              "MINED"
+            ],
+            [
+              76.31510853767395,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+          "our_side": "BUY",
+          "price": 0.58,
+          "size": 5.0,
+          "trade_id": "dfbbf23c-24fc-4c46-8553-3ee96662a1e8",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x74128d8b82f184c522cfb01db7aa113005f788533520951651a5735ab4b8684f",
+          "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+          "side": "YES",
+          "first_observed_elapsed": 84.45692896842957,
+          "journal_line": 901,
+          "statuses": [
+            [
+              84.45692896842957,
+              "MATCHED"
+            ],
+            [
+              85.15251207351685,
+              "MINED"
+            ],
+            [
+              90.70982336997986,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:35",
+          "session_id": "bfc87b1bbff041e3b78c0c6ebd4392cf",
+          "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w5",
+          "original_side": "YES",
+          "original_quantity": "5.00",
+          "first_open_fill_elapsed": 44.28959012031555,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192SL",
+          "first_repair_fill_elapsed": 54.29856538772583,
+          "completed_elapsed": 59.28153872489929,
+          "paired_quantity": "5.00",
+          "paired_pnl": "-0.2000000",
+          "residual_yes": "0.00",
+          "residual_no": "0.00",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+              "our_side": "BUY",
+              "price": 0.49,
+              "size": 0.01,
+              "trade_id": "cda99cba-4b8f-413b-9410-fb092173b4d0",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xa5522ef4f1dcf2c92417cd96f74aa86ac782f621765339e52ec963dcb93564da",
+              "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+              "side": "YES",
+              "first_observed_elapsed": 44.28959012031555,
+              "journal_line": 290,
+              "statuses": [
+                [
+                  44.28959012031555,
+                  "MATCHED"
+                ],
+                [
+                  46.27802085876465,
+                  "MINED"
+                ],
+                [
+                  49.12968420982361,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+              "our_side": "BUY",
+              "price": 0.49,
+              "size": 4.99,
+              "trade_id": "a5e5dac2-9f52-49e4-8c92-286a2df18bd2",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xa5522ef4f1dcf2c92417cd96f74aa86ac782f621765339e52ec963dcb93564da",
+              "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+              "side": "YES",
+              "first_observed_elapsed": 44.28997564315796,
+              "journal_line": 291,
+              "statuses": [
+                [
+                  44.28997564315796,
+                  "MATCHED"
+                ],
+                [
+                  46.278292655944824,
+                  "MINED"
+                ],
+                [
+                  52.280022621154785,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "114789791009951740070119625059051625469369627252045514943532094069608395646217",
+              "our_side": "BUY",
+              "price": 0.55,
+              "size": 5.0,
+              "trade_id": "d7f1f32a-59f8-49e9-88d1-e1ae4c727961",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xdff08c151a721e0ab83db8a0273677440f49a63b6d2fc4f167c739c12806a1f6",
+              "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+              "side": "NO",
+              "first_observed_elapsed": 54.29856538772583,
+              "journal_line": 442,
+              "statuses": [
+                [
+                  54.29856538772583,
+                  "MATCHED"
+                ],
+                [
+                  57.12303400039673,
+                  "MINED"
+                ],
+                [
+                  61.985626220703125,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "bfc87b1bbff041e3b78c0c6ebd4392cf:w5",
+            "bfc87b1bbff041e3b78c0c6ebd4392cf:w6"
+          ]
+        },
+        {
+          "market": "12:35",
+          "session_id": "bfc87b1bbff041e3b78c0c6ebd4392cf",
+          "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w9",
+          "original_side": "NO",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 69.1231746673584,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192SL",
+          "first_repair_fill_elapsed": 84.45692896842957,
+          "completed_elapsed": 89.39297366142273,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-0.700000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "114789791009951740070119625059051625469369627252045514943532094069608395646217",
+              "our_side": "BUY",
+              "price": 0.56,
+              "size": 5.0,
+              "trade_id": "225ee182-5337-4458-8bb7-b2a1bea76e78",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xb2daa7bfaca0f20551fd9ab688cce4343725b19ee5569375771a8b5ac2abad57",
+              "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+              "side": "NO",
+              "first_observed_elapsed": 69.1231746673584,
+              "journal_line": 660,
+              "statuses": [
+                [
+                  69.1231746673584,
+                  "MATCHED"
+                ],
+                [
+                  71.24676203727722,
+                  "MINED"
+                ],
+                [
+                  76.31510853767395,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+              "our_side": "BUY",
+              "price": 0.58,
+              "size": 5.0,
+              "trade_id": "dfbbf23c-24fc-4c46-8553-3ee96662a1e8",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x74128d8b82f184c522cfb01db7aa113005f788533520951651a5735ab4b8684f",
+              "market_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+              "side": "YES",
+              "first_observed_elapsed": 84.45692896842957,
+              "journal_line": 901,
+              "statuses": [
+                [
+                  84.45692896842957,
+                  "MATCHED"
+                ],
+                [
+                  85.15251207351685,
+                  "MINED"
+                ],
+                [
+                  90.70982336997986,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "bfc87b1bbff041e3b78c0c6ebd4392cf:w9",
+            "bfc87b1bbff041e3b78c0c6ebd4392cf:w10",
+            "bfc87b1bbff041e3b78c0c6ebd4392cf:w11"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 1959,
+          "elapsed_wall": 255.86548328399658,
+          "payload": {
+            "merge_id": "f746a56f59284af699f69e047413da5e",
+            "condition_id": "0x84dcaf63957ae4e771c266c198a8dbde50aa6e1d95b603ba7be78a4a8da54acd",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "15466194799578289317302108759832990355798733442254351519696958728981955752931",
+            "no_token_id": "114789791009951740070119625059051625469369627252045514943532094069608395646217",
+            "amount_raw": 10000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 10000000,
+            "before_no_raw": 10000000,
+            "collateral_before_raw": 10832566,
+            "elapsed_s": 240.19146402040496,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15274-c334-7b04-a703-312ff5e1f6e1",
+            "tx_hash": "0x624f42910381df533a4a2936ca7655658be244d546398504a8a0dc5647b46a01",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 20832566,
+            "released_cost_usdc": "10.90"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-1.92293344000",
+      "drawdown": "1.95000000000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:40",
+      "slug": "btc-updown-5m-1792384800",
+      "session_id": "579f1d40cf5e48ffb49ebeca4b3a58a6",
+      "start_epoch": 1792384800,
+      "end_epoch": 1792385100,
+      "normal_windows": 1,
+      "repair_windows": 1,
+      "actual_fill_records": 3,
+      "buy_cost": "4.247086",
+      "merged_pairs": "4.994286",
+      "released_cost": "4.1452574800",
+      "merge_pnl": "0.8490285200",
+      "reported_merge_pnl": 0.8490285199999998,
+      "residual_yes": "0.000000",
+      "residual_no": "0.565714",
+      "residual_cost": "0.1018285200",
+      "full_pnl_lower": "0.747200",
+      "full_pnl_upper": "1.312914",
+      "full_pnl": null,
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 301.05868554115295,
+      "blocked_windows": 0,
+      "block_reason_counts": {
+        "TP_VOLATILITY_UNKNOWN": 7,
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": 114
+      },
+      "first_blocks": {
+        "TP_VOLATILITY_UNKNOWN": {
+          "journal_line": 307,
+          "elapsed_wall": 30.976430654525757
+        },
+        "MINIMUM_FORCED_REVERSE_RESIDUAL": {
+          "journal_line": 1939,
+          "elapsed_wall": 47.75346922874451
+        }
+      },
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "72760360179471384872988348862203920801071484401851404864569734557034588083530",
+          "our_side": "BUY",
+          "price": 0.6500000361757069,
+          "size": 2.764286,
+          "trade_id": "d2fedd40-11a0-4edb-b8f3-e88eb9749210",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xd7b37da6d19b47c60d55ca60b32a0411318582075c94df47893a6480aa87f859",
+          "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+          "side": "YES",
+          "first_observed_elapsed": 23.579328060150146,
+          "journal_line": 228,
+          "statuses": [
+            [
+              23.579328060150146,
+              "MATCHED"
+            ],
+            [
+              25.467555284500122,
+              "MINED"
+            ],
+            [
+              30.905402660369873,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "72760360179471384872988348862203920801071484401851404864569734557034588083530",
+          "our_side": "BUY",
+          "price": 0.65,
+          "size": 2.23,
+          "trade_id": "46e89653-dc26-4183-92a2-4b2a0d81fa12",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xd7b37da6d19b47c60d55ca60b32a0411318582075c94df47893a6480aa87f859",
+          "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+          "side": "YES",
+          "first_observed_elapsed": 23.579532861709595,
+          "journal_line": 229,
+          "statuses": [
+            [
+              23.579532861709595,
+              "MATCHED"
+            ],
+            [
+              25.467904090881348,
+              "MINED"
+            ],
+            [
+              30.905747175216675,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "112717423238922037216194316090278936013006297351052515810255727237163027230341",
+          "our_side": "BUY",
+          "price": 0.18,
+          "size": 5.56,
+          "trade_id": "c6ca36bc-e057-4927-8b11-74d14b73c7cd",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x9f6a14e58ade442534bd84a6fbf15143e8e797f2ed21baa71612414aa4b29dda",
+          "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+          "side": "NO",
+          "first_observed_elapsed": 41.61556601524353,
+          "journal_line": 1858,
+          "statuses": [
+            [
+              41.61556601524353,
+              "MATCHED"
+            ],
+            [
+              42.6955144405365,
+              "MINED"
+            ],
+            [
+              46.68337631225586,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:40",
+          "session_id": "579f1d40cf5e48ffb49ebeca4b3a58a6",
+          "opening_window": "579f1d40cf5e48ffb49ebeca4b3a58a6:w1",
+          "original_side": "YES",
+          "original_quantity": "4.994286",
+          "first_open_fill_elapsed": 23.579328060150146,
+          "repair_fill_mode": "TP",
+          "path_to_repair_fill": "HD\u2192TP",
+          "first_repair_fill_elapsed": 41.61556601524353,
+          "completed_elapsed": null,
+          "paired_quantity": "4.994286",
+          "paired_pnl": "0.8490285200",
+          "residual_yes": "0.000000",
+          "residual_no": "0.565714",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "72760360179471384872988348862203920801071484401851404864569734557034588083530",
+              "our_side": "BUY",
+              "price": 0.6500000361757069,
+              "size": 2.764286,
+              "trade_id": "d2fedd40-11a0-4edb-b8f3-e88eb9749210",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xd7b37da6d19b47c60d55ca60b32a0411318582075c94df47893a6480aa87f859",
+              "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+              "side": "YES",
+              "first_observed_elapsed": 23.579328060150146,
+              "journal_line": 228,
+              "statuses": [
+                [
+                  23.579328060150146,
+                  "MATCHED"
+                ],
+                [
+                  25.467555284500122,
+                  "MINED"
+                ],
+                [
+                  30.905402660369873,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "72760360179471384872988348862203920801071484401851404864569734557034588083530",
+              "our_side": "BUY",
+              "price": 0.65,
+              "size": 2.23,
+              "trade_id": "46e89653-dc26-4183-92a2-4b2a0d81fa12",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xd7b37da6d19b47c60d55ca60b32a0411318582075c94df47893a6480aa87f859",
+              "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+              "side": "YES",
+              "first_observed_elapsed": 23.579532861709595,
+              "journal_line": 229,
+              "statuses": [
+                [
+                  23.579532861709595,
+                  "MATCHED"
+                ],
+                [
+                  25.467904090881348,
+                  "MINED"
+                ],
+                [
+                  30.905747175216675,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "112717423238922037216194316090278936013006297351052515810255727237163027230341",
+              "our_side": "BUY",
+              "price": 0.18,
+              "size": 5.56,
+              "trade_id": "c6ca36bc-e057-4927-8b11-74d14b73c7cd",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x9f6a14e58ade442534bd84a6fbf15143e8e797f2ed21baa71612414aa4b29dda",
+              "market_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+              "side": "NO",
+              "first_observed_elapsed": 41.61556601524353,
+              "journal_line": 1858,
+              "statuses": [
+                [
+                  41.61556601524353,
+                  "MATCHED"
+                ],
+                [
+                  42.6955144405365,
+                  "MINED"
+                ],
+                [
+                  46.68337631225586,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "579f1d40cf5e48ffb49ebeca4b3a58a6:w1",
+            "579f1d40cf5e48ffb49ebeca4b3a58a6:w2"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 23493,
+          "elapsed_wall": 256.23171210289,
+          "payload": {
+            "merge_id": "fa5c7bc7a2664a649c1e77932745a1ef",
+            "condition_id": "0xded0af8a2028f9c358d7de0ec0605777d64478bedfafc878dd690630c9efcc26",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "72760360179471384872988348862203920801071484401851404864569734557034588083530",
+            "no_token_id": "112717423238922037216194316090278936013006297351052515810255727237163027230341",
+            "amount_raw": 4994286,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 4994286,
+            "before_no_raw": 5560000,
+            "collateral_before_raw": 16585480,
+            "elapsed_s": 240.9249666831456,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15279-5b14-7ad5-bc18-252be1713c41",
+            "tx_hash": "0xb7118e8d4ddebabf18e36bbc1fc97935295f127f63d856cdcf6ef0cf9016d25c",
+            "after_yes_raw": 0,
+            "after_no_raw": 565714,
+            "collateral_after_raw": 21579766,
+            "released_cost_usdc": "4.145257480000000123773400000"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [
+        {
+          "source": "time",
+          "error_type": "ReadTimeout",
+          "count": 1
+        }
+      ],
+      "cumulative": "-1.07390492000",
+      "drawdown": "1.10097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:45",
+      "slug": "btc-updown-5m-1792385100",
+      "session_id": "71123a66c78447fe962e2deefde545b5",
+      "start_epoch": 1792385100,
+      "end_epoch": 1792385400,
+      "normal_windows": 15,
+      "repair_windows": 3,
+      "actual_fill_records": 2,
+      "buy_cost": "6.100000",
+      "merged_pairs": "5.0",
+      "released_cost": "6.100000",
+      "merge_pnl": "-1.100000",
+      "reported_merge_pnl": -1.1,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-1.100000",
+      "full_pnl_upper": "-1.100000",
+      "full_pnl": "-1.100000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.3199543952942,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "41526665150506593508262370531767316514881410863250620944705364717844380051173",
+          "our_side": "BUY",
+          "price": 0.66,
+          "size": 5.0,
+          "trade_id": "b650d61b-3ab7-47f3-bfdc-d389e1adefa4",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xdb31ba13ce9baec8cb044a08c197ec64c92e2b5bdb6cdae76a7aca3e6d3600b7",
+          "market_id": "0x5de068485d1c132cd26dfe856d9452034b54f9f0e27e59ee648b677b5c886169",
+          "side": "YES",
+          "first_observed_elapsed": 42.01483678817749,
+          "journal_line": 1459,
+          "statuses": [
+            [
+              42.01483678817749,
+              "MATCHED"
+            ],
+            [
+              43.941208600997925,
+              "MINED"
+            ],
+            [
+              49.941972494125366,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "50883050094054667817722927659258535303481192829857394007294532237369978866098",
+          "our_side": "BUY",
+          "price": 0.56,
+          "size": 5.0,
+          "trade_id": "e80bd03e-e796-4b85-99b9-38a8d7f50ae8",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x61ac5724165be92ed879324dd7b0f7275a84ff8ee348b14a3d13d51e1803e442",
+          "market_id": "0x5de068485d1c132cd26dfe856d9452034b54f9f0e27e59ee648b677b5c886169",
+          "side": "NO",
+          "first_observed_elapsed": 61.447381019592285,
+          "journal_line": 1792,
+          "statuses": [
+            [
+              61.447381019592285,
+              "MATCHED"
+            ],
+            [
+              61.927502155303955,
+              "MINED"
+            ],
+            [
+              68.4499454498291,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:45",
+          "session_id": "71123a66c78447fe962e2deefde545b5",
+          "opening_window": "71123a66c78447fe962e2deefde545b5:w4",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 42.01483678817749,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192TP\u2192SL",
+          "first_repair_fill_elapsed": 61.447381019592285,
+          "completed_elapsed": 66.08948111534119,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-1.100000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "41526665150506593508262370531767316514881410863250620944705364717844380051173",
+              "our_side": "BUY",
+              "price": 0.66,
+              "size": 5.0,
+              "trade_id": "b650d61b-3ab7-47f3-bfdc-d389e1adefa4",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xdb31ba13ce9baec8cb044a08c197ec64c92e2b5bdb6cdae76a7aca3e6d3600b7",
+              "market_id": "0x5de068485d1c132cd26dfe856d9452034b54f9f0e27e59ee648b677b5c886169",
+              "side": "YES",
+              "first_observed_elapsed": 42.01483678817749,
+              "journal_line": 1459,
+              "statuses": [
+                [
+                  42.01483678817749,
+                  "MATCHED"
+                ],
+                [
+                  43.941208600997925,
+                  "MINED"
+                ],
+                [
+                  49.941972494125366,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "50883050094054667817722927659258535303481192829857394007294532237369978866098",
+              "our_side": "BUY",
+              "price": 0.56,
+              "size": 5.0,
+              "trade_id": "e80bd03e-e796-4b85-99b9-38a8d7f50ae8",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x61ac5724165be92ed879324dd7b0f7275a84ff8ee348b14a3d13d51e1803e442",
+              "market_id": "0x5de068485d1c132cd26dfe856d9452034b54f9f0e27e59ee648b677b5c886169",
+              "side": "NO",
+              "first_observed_elapsed": 61.447381019592285,
+              "journal_line": 1792,
+              "statuses": [
+                [
+                  61.447381019592285,
+                  "MATCHED"
+                ],
+                [
+                  61.927502155303955,
+                  "MINED"
+                ],
+                [
+                  68.4499454498291,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "71123a66c78447fe962e2deefde545b5:w4",
+            "71123a66c78447fe962e2deefde545b5:w5",
+            "71123a66c78447fe962e2deefde545b5:w6",
+            "71123a66c78447fe962e2deefde545b5:w7"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 4195,
+          "elapsed_wall": 254.0882124900818,
+          "payload": {
+            "merge_id": "a7c5d3a613b24fb7834c84c7b5a1bad6",
+            "condition_id": "0x5de068485d1c132cd26dfe856d9452034b54f9f0e27e59ee648b677b5c886169",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "41526665150506593508262370531767316514881410863250620944705364717844380051173",
+            "no_token_id": "50883050094054667817722927659258535303481192829857394007294532237369978866098",
+            "amount_raw": 5000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 5000000,
+            "before_no_raw": 5000000,
+            "collateral_before_raw": 15479766,
+            "elapsed_s": 240.3230772097595,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a1527d-e6f6-7a94-a1b5-d5324f5ed5ce",
+            "tx_hash": "0x96534e5386b5ecba98924b892de78fa26c4f40a3ce1ce9c25287e3a98c99582f",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 20479766,
+            "released_cost_usdc": "6.10"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [
+        {
+          "source": "time",
+          "error_type": "ReadTimeout",
+          "count": 1
+        }
+      ],
+      "cumulative": "-2.17390492000",
+      "drawdown": "2.20097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:50",
+      "slug": "btc-updown-5m-1792385400",
+      "session_id": "1e3e434c46a94be9b41d20a21b8d4c3b",
+      "start_epoch": 1792385400,
+      "end_epoch": 1792385700,
+      "normal_windows": 11,
+      "repair_windows": 0,
+      "actual_fill_records": 1,
+      "buy_cost": "0.006800",
+      "merged_pairs": "0.0",
+      "released_cost": "0.00000",
+      "merge_pnl": "0.00000",
+      "reported_merge_pnl": 0.0,
+      "residual_yes": "0.0",
+      "residual_no": "0.01",
+      "residual_cost": "0.006800",
+      "full_pnl_lower": "-0.006800",
+      "full_pnl_upper": "0.003200",
+      "full_pnl": null,
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.3907551765442,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "103541726376052768697217245209205332262438307045212053495239741943959361716917",
+          "our_side": "BUY",
+          "price": 0.68,
+          "size": 0.01,
+          "trade_id": "c8ea87f9-fb4c-454a-adfd-a06fee9d10d2",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xa83944bf344164d72bbd2fdc594aa30f9ce72b7a0a01c48e91a4684624b77e94",
+          "market_id": "0xe9a7aec10306c2f057447850f708177b17a097b2c6c7514510924bf901a329c3",
+          "side": "NO",
+          "first_observed_elapsed": 57.346890926361084,
+          "journal_line": 533,
+          "statuses": [
+            [
+              57.346890926361084,
+              "MATCHED"
+            ],
+            [
+              59.165496826171875,
+              "MINED"
+            ],
+            [
+              63.35231256484985,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:50",
+          "session_id": "1e3e434c46a94be9b41d20a21b8d4c3b",
+          "opening_window": "1e3e434c46a94be9b41d20a21b8d4c3b:w9",
+          "original_side": "NO",
+          "original_quantity": "0.01",
+          "first_open_fill_elapsed": 57.346890926361084,
+          "repair_fill_mode": null,
+          "path_to_repair_fill": "DUST_NO_REPAIR",
+          "first_repair_fill_elapsed": null,
+          "completed_elapsed": 63.380046129226685,
+          "paired_quantity": "0",
+          "paired_pnl": "0.0000",
+          "residual_yes": "0",
+          "residual_no": "0.01",
+          "state_at_session_end": null,
+          "actual_fills": [
+            {
+              "token_id": "103541726376052768697217245209205332262438307045212053495239741943959361716917",
+              "our_side": "BUY",
+              "price": 0.68,
+              "size": 0.01,
+              "trade_id": "c8ea87f9-fb4c-454a-adfd-a06fee9d10d2",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xa83944bf344164d72bbd2fdc594aa30f9ce72b7a0a01c48e91a4684624b77e94",
+              "market_id": "0xe9a7aec10306c2f057447850f708177b17a097b2c6c7514510924bf901a329c3",
+              "side": "NO",
+              "first_observed_elapsed": 57.346890926361084,
+              "journal_line": 533,
+              "statuses": [
+                [
+                  57.346890926361084,
+                  "MATCHED"
+                ],
+                [
+                  59.165496826171875,
+                  "MINED"
+                ],
+                [
+                  63.35231256484985,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "1e3e434c46a94be9b41d20a21b8d4c3b:w9"
+          ]
+        }
+      ],
+      "merge_events": [],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-2.17390492000",
+      "drawdown": "2.20097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "12:55",
+      "slug": "btc-updown-5m-1792385700",
+      "session_id": "784dcfa6b2d94ef18a6d5c27a4548d45",
+      "start_epoch": 1792385700,
+      "end_epoch": 1792386000,
+      "normal_windows": 22,
+      "repair_windows": 2,
+      "actual_fill_records": 3,
+      "buy_cost": "4.900000",
+      "merged_pairs": "5.0",
+      "released_cost": "4.900000",
+      "merge_pnl": "0.100000",
+      "reported_merge_pnl": 0.1,
+      "residual_yes": "0.0",
+      "residual_no": "0.00",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "0.100000",
+      "full_pnl_upper": "0.100000",
+      "full_pnl": "0.100000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 301.1140649318695,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "1484163947457769446739770363705959247706008930086759024434474203352018942132",
+          "our_side": "BUY",
+          "price": 0.23,
+          "size": 5.0,
+          "trade_id": "b06a5cb2-5169-4172-9e55-5c33e437e41c",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x4d6ad81fd9b5a4464667c07fcaafd8f7f3b5094abcb7c10e873074ab74cc27ec",
+          "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+          "side": "YES",
+          "first_observed_elapsed": 109.41411876678467,
+          "journal_line": 1354,
+          "statuses": [
+            [
+              109.41411876678467,
+              "MATCHED"
+            ],
+            [
+              111.25381445884705,
+              "MINED"
+            ],
+            [
+              117.22603392601013,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "25483453257042900032689901030670153954491830560831959807462754440523333079617",
+          "our_side": "BUY",
+          "price": 0.75,
+          "size": 4.21,
+          "trade_id": "2e77d0c4-0d6e-43d2-99a8-6624f56b8fc4",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x6c117dc07b658aa9a8df428c6491a6a0912b19f7012642c8bfa1fe4f913e3053",
+          "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+          "side": "NO",
+          "first_observed_elapsed": 136.7226164340973,
+          "journal_line": 2983,
+          "statuses": [
+            [
+              136.7226164340973,
+              "MATCHED"
+            ],
+            [
+              138.4691605567932,
+              "MINED"
+            ],
+            [
+              143.36110019683838,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "25483453257042900032689901030670153954491830560831959807462754440523333079617",
+          "our_side": "BUY",
+          "price": 0.75,
+          "size": 0.79,
+          "trade_id": "984592d4-e9cd-4364-8ad5-3963a9515a33",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x6c117dc07b658aa9a8df428c6491a6a0912b19f7012642c8bfa1fe4f913e3053",
+          "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+          "side": "NO",
+          "first_observed_elapsed": 137.3928575515747,
+          "journal_line": 2992,
+          "statuses": [
+            [
+              137.3928575515747,
+              "MATCHED"
+            ],
+            [
+              139.53221702575684,
+              "MINED"
+            ],
+            [
+              143.36083793640137,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "12:55",
+          "session_id": "784dcfa6b2d94ef18a6d5c27a4548d45",
+          "opening_window": "784dcfa6b2d94ef18a6d5c27a4548d45:w22",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 109.41411876678467,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192TP\u2192SL",
+          "first_repair_fill_elapsed": 136.7226164340973,
+          "completed_elapsed": 143.40842294692993,
+          "paired_quantity": "5.0",
+          "paired_pnl": "0.100000",
+          "residual_yes": "0.0",
+          "residual_no": "0.00",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "1484163947457769446739770363705959247706008930086759024434474203352018942132",
+              "our_side": "BUY",
+              "price": 0.23,
+              "size": 5.0,
+              "trade_id": "b06a5cb2-5169-4172-9e55-5c33e437e41c",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x4d6ad81fd9b5a4464667c07fcaafd8f7f3b5094abcb7c10e873074ab74cc27ec",
+              "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+              "side": "YES",
+              "first_observed_elapsed": 109.41411876678467,
+              "journal_line": 1354,
+              "statuses": [
+                [
+                  109.41411876678467,
+                  "MATCHED"
+                ],
+                [
+                  111.25381445884705,
+                  "MINED"
+                ],
+                [
+                  117.22603392601013,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "25483453257042900032689901030670153954491830560831959807462754440523333079617",
+              "our_side": "BUY",
+              "price": 0.75,
+              "size": 4.21,
+              "trade_id": "2e77d0c4-0d6e-43d2-99a8-6624f56b8fc4",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x6c117dc07b658aa9a8df428c6491a6a0912b19f7012642c8bfa1fe4f913e3053",
+              "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+              "side": "NO",
+              "first_observed_elapsed": 136.7226164340973,
+              "journal_line": 2983,
+              "statuses": [
+                [
+                  136.7226164340973,
+                  "MATCHED"
+                ],
+                [
+                  138.4691605567932,
+                  "MINED"
+                ],
+                [
+                  143.36110019683838,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "25483453257042900032689901030670153954491830560831959807462754440523333079617",
+              "our_side": "BUY",
+              "price": 0.75,
+              "size": 0.79,
+              "trade_id": "984592d4-e9cd-4364-8ad5-3963a9515a33",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x6c117dc07b658aa9a8df428c6491a6a0912b19f7012642c8bfa1fe4f913e3053",
+              "market_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+              "side": "NO",
+              "first_observed_elapsed": 137.3928575515747,
+              "journal_line": 2992,
+              "statuses": [
+                [
+                  137.3928575515747,
+                  "MATCHED"
+                ],
+                [
+                  139.53221702575684,
+                  "MINED"
+                ],
+                [
+                  143.36083793640137,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "784dcfa6b2d94ef18a6d5c27a4548d45:w22",
+            "784dcfa6b2d94ef18a6d5c27a4548d45:w23",
+            "784dcfa6b2d94ef18a6d5c27a4548d45:w24"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 3985,
+          "elapsed_wall": 255.69723272323608,
+          "payload": {
+            "merge_id": "c7310a73bcca4f5195f4c9780031218f",
+            "condition_id": "0x2ae96b3e3d50469448e785d7018352667a53f33b066f76d91b72e52f7cf7ea82",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "1484163947457769446739770363705959247706008930086759024434474203352018942132",
+            "no_token_id": "25483453257042900032689901030670153954491830560831959807462754440523333079617",
+            "amount_raw": 5000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 5000000,
+            "before_no_raw": 5000000,
+            "collateral_before_raw": 15572966,
+            "elapsed_s": 240.68872816301882,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15287-1481-7202-872b-47af47c7b416",
+            "tx_hash": "0xb9ace1bd89e24ddad630dc593688a20c99088123a04484818d056f9e0d3eafb2",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 20572966,
+            "released_cost_usdc": "4.90"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [
+        {
+          "source": "open_orders",
+          "error_type": "ReadTimeout",
+          "count": 1
+        }
+      ],
+      "cumulative": "-2.07390492000",
+      "drawdown": "2.10097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "13:00",
+      "slug": "btc-updown-5m-1792386000",
+      "session_id": "5c7ceb7eb5a147fab276e7717c0048fd",
+      "start_epoch": 1792386000,
+      "end_epoch": 1792386300,
+      "normal_windows": 11,
+      "repair_windows": 0,
+      "actual_fill_records": 0,
+      "buy_cost": "0",
+      "merged_pairs": "0.0",
+      "released_cost": "0",
+      "merge_pnl": "0.0",
+      "reported_merge_pnl": 0.0,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0",
+      "full_pnl_lower": "0.0",
+      "full_pnl_upper": "0.0",
+      "full_pnl": "0.0",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.8019120693207,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [],
+      "episodes": [],
+      "merge_events": [],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-2.07390492000",
+      "drawdown": "2.10097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "13:05",
+      "slug": "btc-updown-5m-1792386300",
+      "session_id": "4e772fcf9ec64522a49f61c83d449c2a",
+      "start_epoch": 1792386300,
+      "end_epoch": 1792386600,
+      "normal_windows": 17,
+      "repair_windows": 4,
+      "actual_fill_records": 2,
+      "buy_cost": "6.950000",
+      "merged_pairs": "5.0",
+      "released_cost": "6.950000",
+      "merge_pnl": "-1.950000",
+      "reported_merge_pnl": -1.95,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-1.950000",
+      "full_pnl_upper": "-1.950000",
+      "full_pnl": "-1.950000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 300.6991925239563,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "31456733000419401028702028753505407497701498599070724884825978404824079178249",
+          "our_side": "BUY",
+          "price": 0.6,
+          "size": 5.0,
+          "trade_id": "5167f1d2-a687-4a51-b60e-7450e3d60e5b",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x128ef3e0313c858480f1c354d94f794e9ce8b7bf1ecf2fc7bb0ab63e274b0e96",
+          "market_id": "0xb494c7f6d00e77f59cc32fddd0cbec4ca6ab2942584e0923b7c5639fede367a7",
+          "side": "NO",
+          "first_observed_elapsed": 61.41768264770508,
+          "journal_line": 570,
+          "statuses": [
+            [
+              61.41768264770508,
+              "MATCHED"
+            ],
+            [
+              63.424004316329956,
+              "MINED"
+            ],
+            [
+              67.41933703422546,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "25698993974130969932401370549341333847427444310084356562350015543096765313088",
+          "our_side": "BUY",
+          "price": 0.79,
+          "size": 5.0,
+          "trade_id": "e1d5fa56-d62f-4c7d-ad3a-869e16cda8d2",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xc23fa99cbbe6ccaf983c46484da80fe0e55abed9591222695f15632100bb15f6",
+          "market_id": "0xb494c7f6d00e77f59cc32fddd0cbec4ca6ab2942584e0923b7c5639fede367a7",
+          "side": "YES",
+          "first_observed_elapsed": 87.01604890823364,
+          "journal_line": 925,
+          "statuses": [
+            [
+              87.01604890823364,
+              "MATCHED"
+            ],
+            [
+              88.63824439048767,
+              "MINED"
+            ],
+            [
+              94.63941478729248,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "13:05",
+          "session_id": "4e772fcf9ec64522a49f61c83d449c2a",
+          "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+          "original_side": "NO",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 61.41768264770508,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192SL",
+          "first_repair_fill_elapsed": 87.01604890823364,
+          "completed_elapsed": 94.67150521278381,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-1.950000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "31456733000419401028702028753505407497701498599070724884825978404824079178249",
+              "our_side": "BUY",
+              "price": 0.6,
+              "size": 5.0,
+              "trade_id": "5167f1d2-a687-4a51-b60e-7450e3d60e5b",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x128ef3e0313c858480f1c354d94f794e9ce8b7bf1ecf2fc7bb0ab63e274b0e96",
+              "market_id": "0xb494c7f6d00e77f59cc32fddd0cbec4ca6ab2942584e0923b7c5639fede367a7",
+              "side": "NO",
+              "first_observed_elapsed": 61.41768264770508,
+              "journal_line": 570,
+              "statuses": [
+                [
+                  61.41768264770508,
+                  "MATCHED"
+                ],
+                [
+                  63.424004316329956,
+                  "MINED"
+                ],
+                [
+                  67.41933703422546,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "25698993974130969932401370549341333847427444310084356562350015543096765313088",
+              "our_side": "BUY",
+              "price": 0.79,
+              "size": 5.0,
+              "trade_id": "e1d5fa56-d62f-4c7d-ad3a-869e16cda8d2",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xc23fa99cbbe6ccaf983c46484da80fe0e55abed9591222695f15632100bb15f6",
+              "market_id": "0xb494c7f6d00e77f59cc32fddd0cbec4ca6ab2942584e0923b7c5639fede367a7",
+              "side": "YES",
+              "first_observed_elapsed": 87.01604890823364,
+              "journal_line": 925,
+              "statuses": [
+                [
+                  87.01604890823364,
+                  "MATCHED"
+                ],
+                [
+                  88.63824439048767,
+                  "MINED"
+                ],
+                [
+                  94.63941478729248,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "4e772fcf9ec64522a49f61c83d449c2a:w10",
+            "4e772fcf9ec64522a49f61c83d449c2a:w11",
+            "4e772fcf9ec64522a49f61c83d449c2a:w12",
+            "4e772fcf9ec64522a49f61c83d449c2a:w13",
+            "4e772fcf9ec64522a49f61c83d449c2a:w14"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 2207,
+          "elapsed_wall": 255.24895453453064,
+          "payload": {
+            "merge_id": "af81fb54d3744720b37cc3ec31062e54",
+            "condition_id": "0xb494c7f6d00e77f59cc32fddd0cbec4ca6ab2942584e0923b7c5639fede367a7",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "25698993974130969932401370549341333847427444310084356562350015543096765313088",
+            "no_token_id": "31456733000419401028702028753505407497701498599070724884825978404824079178249",
+            "amount_raw": 5000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 5000000,
+            "before_no_raw": 5000000,
+            "collateral_before_raw": 13622966,
+            "elapsed_s": 240.45031133387238,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15290-3a5a-70e1-9471-f51fd1458594",
+            "tx_hash": "0x83d902e3702f30066816907baa728ea9e5cf7217b933108dac25103a3cb30a0f",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 18622966,
+            "released_cost_usdc": "6.95"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-4.02390492000",
+      "drawdown": "4.05097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "13:10",
+      "slug": "btc-updown-5m-1792386600",
+      "session_id": "a22554bc79bc4a3982fe13d2699b7715",
+      "start_epoch": 1792386600,
+      "end_epoch": 1792386900,
+      "normal_windows": 2,
+      "repair_windows": 4,
+      "actual_fill_records": 4,
+      "buy_cost": "11.200000",
+      "merged_pairs": "10.0",
+      "released_cost": "11.200000",
+      "merge_pnl": "-1.200000",
+      "reported_merge_pnl": -1.2,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-1.200000",
+      "full_pnl_upper": "-1.200000",
+      "full_pnl": "-1.200000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 301.06808853149414,
+      "blocked_windows": 0,
+      "block_reason_counts": {
+        "TP_VOLATILITY_UNKNOWN": 16
+      },
+      "first_blocks": {
+        "TP_VOLATILITY_UNKNOWN": {
+          "journal_line": 199,
+          "elapsed_wall": 29.56149649620056
+        }
+      },
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "98633524431240157598929130630960429889894946542233733917477518998307939568669",
+          "our_side": "BUY",
+          "price": 0.55,
+          "size": 5.0,
+          "trade_id": "48404608-de33-49be-a2ee-639e6dff93aa",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x2b61b784b14f90fea32362a3f46e289d03374175fb4628668bcd13e0256348c4",
+          "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+          "side": "YES",
+          "first_observed_elapsed": 24.56142568588257,
+          "journal_line": 144,
+          "statuses": [
+            [
+              24.56142568588257,
+              "MATCHED"
+            ],
+            [
+              26.573169946670532,
+              "MINED"
+            ],
+            [
+              31.394642114639282,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "64439770618163875380481547426125812734303247563363824147993554209088160157730",
+          "our_side": "BUY",
+          "price": 0.45,
+          "size": 5.0,
+          "trade_id": "550a8fd5-0b60-412e-bae5-60ecd1c9afb3",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x153259daaf85f9a0a2d89a3d647cd0f73fa36a88e7b8350f3e8cc75dbdadd049",
+          "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+          "side": "NO",
+          "first_observed_elapsed": 40.5660195350647,
+          "journal_line": 2413,
+          "statuses": [
+            [
+              40.5660195350647,
+              "MATCHED"
+            ],
+            [
+              43.3858437538147,
+              "MINED"
+            ],
+            [
+              46.57009744644165,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "98633524431240157598929130630960429889894946542233733917477518998307939568669",
+          "our_side": "BUY",
+          "price": 0.66,
+          "size": 5.0,
+          "trade_id": "f8fe6a3c-e39a-4f90-9fe8-b4ee7e883354",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xb34645636b353e450d308de30aa305a159939c0e8521f7f82e313341f3423836",
+          "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+          "side": "YES",
+          "first_observed_elapsed": 50.578765630722046,
+          "journal_line": 2515,
+          "statuses": [
+            [
+              50.578765630722046,
+              "MATCHED"
+            ],
+            [
+              52.57989764213562,
+              "MINED"
+            ],
+            [
+              55.40774321556091,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "64439770618163875380481547426125812734303247563363824147993554209088160157730",
+          "our_side": "BUY",
+          "price": 0.58,
+          "size": 5.0,
+          "trade_id": "744874ab-2fad-446e-bcc8-fc9b0bed0e0a",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x7743ec0ecd56c559a8b504ccb573a3737ca2af062a947104c920baf6243f4891",
+          "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+          "side": "NO",
+          "first_observed_elapsed": 76.99940133094788,
+          "journal_line": 4316,
+          "statuses": [
+            [
+              76.99940133094788,
+              "MATCHED"
+            ],
+            [
+              76.99946165084839,
+              "MINED"
+            ],
+            [
+              82.00713729858398,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "13:10",
+          "session_id": "a22554bc79bc4a3982fe13d2699b7715",
+          "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w1",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 24.56142568588257,
+          "repair_fill_mode": "TP",
+          "path_to_repair_fill": "HD\u2192TP",
+          "first_repair_fill_elapsed": 40.5660195350647,
+          "completed_elapsed": 46.57828092575073,
+          "paired_quantity": "5.0",
+          "paired_pnl": "0.000000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "TP",
+          "actual_fills": [
+            {
+              "token_id": "98633524431240157598929130630960429889894946542233733917477518998307939568669",
+              "our_side": "BUY",
+              "price": 0.55,
+              "size": 5.0,
+              "trade_id": "48404608-de33-49be-a2ee-639e6dff93aa",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x2b61b784b14f90fea32362a3f46e289d03374175fb4628668bcd13e0256348c4",
+              "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+              "side": "YES",
+              "first_observed_elapsed": 24.56142568588257,
+              "journal_line": 144,
+              "statuses": [
+                [
+                  24.56142568588257,
+                  "MATCHED"
+                ],
+                [
+                  26.573169946670532,
+                  "MINED"
+                ],
+                [
+                  31.394642114639282,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "64439770618163875380481547426125812734303247563363824147993554209088160157730",
+              "our_side": "BUY",
+              "price": 0.45,
+              "size": 5.0,
+              "trade_id": "550a8fd5-0b60-412e-bae5-60ecd1c9afb3",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x153259daaf85f9a0a2d89a3d647cd0f73fa36a88e7b8350f3e8cc75dbdadd049",
+              "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+              "side": "NO",
+              "first_observed_elapsed": 40.5660195350647,
+              "journal_line": 2413,
+              "statuses": [
+                [
+                  40.5660195350647,
+                  "MATCHED"
+                ],
+                [
+                  43.3858437538147,
+                  "MINED"
+                ],
+                [
+                  46.57009744644165,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "a22554bc79bc4a3982fe13d2699b7715:w1",
+            "a22554bc79bc4a3982fe13d2699b7715:w2"
+          ]
+        },
+        {
+          "market": "13:10",
+          "session_id": "a22554bc79bc4a3982fe13d2699b7715",
+          "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w3",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 50.578765630722046,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192SL",
+          "first_repair_fill_elapsed": 76.99940133094788,
+          "completed_elapsed": 82.02759003639221,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-1.200000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "98633524431240157598929130630960429889894946542233733917477518998307939568669",
+              "our_side": "BUY",
+              "price": 0.66,
+              "size": 5.0,
+              "trade_id": "f8fe6a3c-e39a-4f90-9fe8-b4ee7e883354",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xb34645636b353e450d308de30aa305a159939c0e8521f7f82e313341f3423836",
+              "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+              "side": "YES",
+              "first_observed_elapsed": 50.578765630722046,
+              "journal_line": 2515,
+              "statuses": [
+                [
+                  50.578765630722046,
+                  "MATCHED"
+                ],
+                [
+                  52.57989764213562,
+                  "MINED"
+                ],
+                [
+                  55.40774321556091,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "64439770618163875380481547426125812734303247563363824147993554209088160157730",
+              "our_side": "BUY",
+              "price": 0.58,
+              "size": 5.0,
+              "trade_id": "744874ab-2fad-446e-bcc8-fc9b0bed0e0a",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x7743ec0ecd56c559a8b504ccb573a3737ca2af062a947104c920baf6243f4891",
+              "market_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+              "side": "NO",
+              "first_observed_elapsed": 76.99940133094788,
+              "journal_line": 4316,
+              "statuses": [
+                [
+                  76.99940133094788,
+                  "MATCHED"
+                ],
+                [
+                  76.99946165084839,
+                  "MINED"
+                ],
+                [
+                  82.00713729858398,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "a22554bc79bc4a3982fe13d2699b7715:w3",
+            "a22554bc79bc4a3982fe13d2699b7715:w4",
+            "a22554bc79bc4a3982fe13d2699b7715:w5",
+            "a22554bc79bc4a3982fe13d2699b7715:w6"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 5401,
+          "elapsed_wall": 255.66788792610168,
+          "payload": {
+            "merge_id": "f070d96c24f44053b38804e4d16c7f8f",
+            "condition_id": "0xcee6d6f1706833bfa23d211c78c6ec5460ca9d7059c23381e665ee6d4ad379f2",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "98633524431240157598929130630960429889894946542233733917477518998307939568669",
+            "no_token_id": "64439770618163875380481547426125812734303247563363824147993554209088160157730",
+            "amount_raw": 10000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 10000000,
+            "before_no_raw": 10000000,
+            "collateral_before_raw": 7422966,
+            "elapsed_s": 240.87845233408734,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15294-d072-79db-92c3-ea582ffd1e5c",
+            "tx_hash": "0x1d4d15be21f6384bb95752e06901572129a3393b3281bec3b07081e66d819e0e",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 17422966,
+            "released_cost_usdc": "11.20"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [
+        {
+          "source": "trades",
+          "error_type": "ValueError",
+          "count": 1
+        }
+      ],
+      "cumulative": "-5.22390492000",
+      "drawdown": "5.25097148000",
+      "peak": "0.02706656000"
+    },
+    {
+      "market": "13:15",
+      "slug": "btc-updown-5m-1792386900",
+      "session_id": "33e45756eb9642f49e31160c1f224f32",
+      "start_epoch": 1792386900,
+      "end_epoch": 1792387200,
+      "normal_windows": 10,
+      "repair_windows": 3,
+      "actual_fill_records": 4,
+      "buy_cost": "11.050000",
+      "merged_pairs": "10.0",
+      "released_cost": "11.050000",
+      "merge_pnl": "-1.050000",
+      "reported_merge_pnl": -1.05,
+      "residual_yes": "0.0",
+      "residual_no": "0.0",
+      "residual_cost": "0.000000",
+      "full_pnl_lower": "-1.050000",
+      "full_pnl_upper": "-1.050000",
+      "full_pnl": "-1.050000",
+      "execution_status": "COMPLETED",
+      "close_barrier": "SAFE_TO_CONTINUE",
+      "stop_reason": "MARKET_CUTOFF",
+      "stop_elapsed_wall": 301.02556014060974,
+      "blocked_windows": 0,
+      "block_reason_counts": {},
+      "first_blocks": {},
+      "observed_inventory_tolerance": [
+        0.01
+      ],
+      "actual_fills": [
+        {
+          "token_id": "75181059989221659491244684224353730511463791233081276988892876362615218902623",
+          "our_side": "BUY",
+          "price": 0.71,
+          "size": 5.0,
+          "trade_id": "c77b3e6d-4643-4124-9672-8690c94a3508",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0xae0427cc9ce2aeab1861e8b985cd8bfffeb975ac9d27bc9af721e90fd2937755",
+          "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+          "side": "YES",
+          "first_observed_elapsed": 48.9725022315979,
+          "journal_line": 934,
+          "statuses": [
+            [
+              48.9725022315979,
+              "MATCHED"
+            ],
+            [
+              50.94237422943115,
+              "MINED"
+            ],
+            [
+              55.95378041267395,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "16410754882252183139281764041602860980624311949379672228511053422220918643561",
+          "our_side": "BUY",
+          "price": 0.56,
+          "size": 5.0,
+          "trade_id": "3f07898e-1b78-49c7-9198-ce27073a540e",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x7592ce0a22494a0f5da37dffc1491a2cca03430693765f329e50ff61c8902b3e",
+          "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+          "side": "NO",
+          "first_observed_elapsed": 67.97568225860596,
+          "journal_line": 2666,
+          "statuses": [
+            [
+              67.97568225860596,
+              "MATCHED"
+            ],
+            [
+              69.96666693687439,
+              "MINED"
+            ],
+            [
+              74.30174422264099,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "16410754882252183139281764041602860980624311949379672228511053422220918643561",
+          "our_side": "BUY",
+          "price": 0.67,
+          "size": 5.0,
+          "trade_id": "c4dfc23a-2e6c-4a4e-a190-c620b67129ab",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x2bb05e8be8a5095e45c3ad8f1b8d2c97e7fcfcd60c5102023a0f7ecc0f3f1365",
+          "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+          "side": "NO",
+          "first_observed_elapsed": 87.0418131351471,
+          "journal_line": 3180,
+          "statuses": [
+            [
+              87.0418131351471,
+              "MATCHED"
+            ],
+            [
+              88.98199987411499,
+              "MINED"
+            ],
+            [
+              93.01470494270325,
+              "CONFIRMED"
+            ]
+          ]
+        },
+        {
+          "token_id": "75181059989221659491244684224353730511463791233081276988892876362615218902623",
+          "our_side": "BUY",
+          "price": 0.27,
+          "size": 5.0,
+          "trade_id": "1d0975f7-fc75-417f-9936-743b0340a252",
+          "status": "CONFIRMED",
+          "ts": 0.0,
+          "maker_order_id": "0x85a1f122f37a4295e273bd3d76e0d29bb5be4f8a810344f44d156fd1b1b7fb2f",
+          "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+          "side": "YES",
+          "first_observed_elapsed": 97.7878806591034,
+          "journal_line": 3363,
+          "statuses": [
+            [
+              97.7878806591034,
+              "MATCHED"
+            ],
+            [
+              99.7883129119873,
+              "MINED"
+            ],
+            [
+              103.89540648460388,
+              "CONFIRMED"
+            ]
+          ]
+        }
+      ],
+      "episodes": [
+        {
+          "market": "13:15",
+          "session_id": "33e45756eb9642f49e31160c1f224f32",
+          "opening_window": "33e45756eb9642f49e31160c1f224f32:w6",
+          "original_side": "YES",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 48.9725022315979,
+          "repair_fill_mode": "SL",
+          "path_to_repair_fill": "HD\u2192SL",
+          "first_repair_fill_elapsed": 67.97568225860596,
+          "completed_elapsed": 71.8346779346466,
+          "paired_quantity": "5.0",
+          "paired_pnl": "-1.350000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "SL",
+          "actual_fills": [
+            {
+              "token_id": "75181059989221659491244684224353730511463791233081276988892876362615218902623",
+              "our_side": "BUY",
+              "price": 0.71,
+              "size": 5.0,
+              "trade_id": "c77b3e6d-4643-4124-9672-8690c94a3508",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0xae0427cc9ce2aeab1861e8b985cd8bfffeb975ac9d27bc9af721e90fd2937755",
+              "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+              "side": "YES",
+              "first_observed_elapsed": 48.9725022315979,
+              "journal_line": 934,
+              "statuses": [
+                [
+                  48.9725022315979,
+                  "MATCHED"
+                ],
+                [
+                  50.94237422943115,
+                  "MINED"
+                ],
+                [
+                  55.95378041267395,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "16410754882252183139281764041602860980624311949379672228511053422220918643561",
+              "our_side": "BUY",
+              "price": 0.56,
+              "size": 5.0,
+              "trade_id": "3f07898e-1b78-49c7-9198-ce27073a540e",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x7592ce0a22494a0f5da37dffc1491a2cca03430693765f329e50ff61c8902b3e",
+              "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+              "side": "NO",
+              "first_observed_elapsed": 67.97568225860596,
+              "journal_line": 2666,
+              "statuses": [
+                [
+                  67.97568225860596,
+                  "MATCHED"
+                ],
+                [
+                  69.96666693687439,
+                  "MINED"
+                ],
+                [
+                  74.30174422264099,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "33e45756eb9642f49e31160c1f224f32:w6",
+            "33e45756eb9642f49e31160c1f224f32:w7",
+            "33e45756eb9642f49e31160c1f224f32:w8"
+          ]
+        },
+        {
+          "market": "13:15",
+          "session_id": "33e45756eb9642f49e31160c1f224f32",
+          "opening_window": "33e45756eb9642f49e31160c1f224f32:w12",
+          "original_side": "NO",
+          "original_quantity": "5.0",
+          "first_open_fill_elapsed": 87.0418131351471,
+          "repair_fill_mode": "TP",
+          "path_to_repair_fill": "HD\u2192TP",
+          "first_repair_fill_elapsed": 97.7878806591034,
+          "completed_elapsed": 101.95378184318542,
+          "paired_quantity": "5.0",
+          "paired_pnl": "0.300000",
+          "residual_yes": "0.0",
+          "residual_no": "0.0",
+          "state_at_session_end": "TP",
+          "actual_fills": [
+            {
+              "token_id": "16410754882252183139281764041602860980624311949379672228511053422220918643561",
+              "our_side": "BUY",
+              "price": 0.67,
+              "size": 5.0,
+              "trade_id": "c4dfc23a-2e6c-4a4e-a190-c620b67129ab",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x2bb05e8be8a5095e45c3ad8f1b8d2c97e7fcfcd60c5102023a0f7ecc0f3f1365",
+              "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+              "side": "NO",
+              "first_observed_elapsed": 87.0418131351471,
+              "journal_line": 3180,
+              "statuses": [
+                [
+                  87.0418131351471,
+                  "MATCHED"
+                ],
+                [
+                  88.98199987411499,
+                  "MINED"
+                ],
+                [
+                  93.01470494270325,
+                  "CONFIRMED"
+                ]
+              ]
+            },
+            {
+              "token_id": "75181059989221659491244684224353730511463791233081276988892876362615218902623",
+              "our_side": "BUY",
+              "price": 0.27,
+              "size": 5.0,
+              "trade_id": "1d0975f7-fc75-417f-9936-743b0340a252",
+              "status": "CONFIRMED",
+              "ts": 0.0,
+              "maker_order_id": "0x85a1f122f37a4295e273bd3d76e0d29bb5be4f8a810344f44d156fd1b1b7fb2f",
+              "market_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+              "side": "YES",
+              "first_observed_elapsed": 97.7878806591034,
+              "journal_line": 3363,
+              "statuses": [
+                [
+                  97.7878806591034,
+                  "MATCHED"
+                ],
+                [
+                  99.7883129119873,
+                  "MINED"
+                ],
+                [
+                  103.89540648460388,
+                  "CONFIRMED"
+                ]
+              ]
+            }
+          ],
+          "windows": [
+            "33e45756eb9642f49e31160c1f224f32:w12",
+            "33e45756eb9642f49e31160c1f224f32:w13"
+          ]
+        }
+      ],
+      "merge_events": [
+        {
+          "journal_line": 4267,
+          "elapsed_wall": 254.72846388816833,
+          "payload": {
+            "merge_id": "8edb559dba264c6baabeeda512d9eead",
+            "condition_id": "0x82811bfbe4a85793331d8919d7efa2f61828e3b328c5aa4a86dc069d1487a30e",
+            "wallet": "0x2d73e1F6c90662D30e13FED534bf10Bc5BD99D5D",
+            "yes_token_id": "75181059989221659491244684224353730511463791233081276988892876362615218902623",
+            "no_token_id": "16410754882252183139281764041602860980624311949379672228511053422220918643561",
+            "amount_raw": 10000000,
+            "dust_threshold_shares": "0.1",
+            "before_yes_raw": 10000000,
+            "before_no_raw": 10000000,
+            "collateral_before_raw": 6372966,
+            "elapsed_s": 240.2334500742145,
+            "status": "CONFIRMED",
+            "receipt_status": 1,
+            "tx_id": "01a15299-5fea-7836-8075-74ca12619ebe",
+            "tx_hash": "0xf6d9d5fc5ea68880ea1a7c7fd21cc81d5c30bbe690fa779cdf99414def5fe74d",
+            "after_yes_raw": 0,
+            "after_no_raw": 0,
+            "collateral_after_raw": 16372966,
+            "released_cost_usdc": "11.05"
+          }
+        }
+      ],
+      "cache_health": {
+        "failure": null,
+        "observer_fatal_type": null,
+        "dropped_events": 0,
+        "io_drained": true
+      },
+      "cache_source_failures": [],
+      "cumulative": "-6.27390492000",
+      "drawdown": "6.30097148000",
+      "peak": "0.02706656000"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="3" failures="0" skipped="0" tests="3" time="0.924" timestamp="2026-10-19T17:23:25.328399+08:00" hostname="VM-0-17-ubuntu"><testcase classname="" name="tests.test_rdp_sm_path_repair" time="0.000"><error message="collection failure">ImportError while importing test module '/home/ubuntu/poly-maker/tests/test_rdp_sm_path_repair.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_rdp_sm_path_repair.py:21: in &lt;module&gt;
+    from test_rdp_sm_m2_execution import journal_records
+E   ModuleNotFoundError: No module named 'test_rdp_sm_m2_execution'</error></testcase><testcase classname="" name="tests.test_repair_small_exposure" time="0.000"><error message="collection failure">ImportError while importing test module '/home/ubuntu/poly-maker/tests/test_repair_small_exposure.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_repair_small_exposure.py:13: in &lt;module&gt;
+    from test_rdp_sm_m2_execution import journal_records
+E   ModuleNotFoundError: No module named 'test_rdp_sm_m2_execution'</error></testcase><testcase classname="" name="tests.test_repair_queue_followup" time="0.000"><error message="collection failure">ImportError while importing test module '/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+../.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_repair_queue_followup.py:17: in &lt;module&gt;
+    from test_rdp_sm_cached_reads import attach, finish
+E   ModuleNotFoundError: No module named 'test_rdp_sm_cached_reads'</error></testcase></testsuite></testsuites>

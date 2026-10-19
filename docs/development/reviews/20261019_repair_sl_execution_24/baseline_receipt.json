@@ -1,0 +1,109 @@
+{
+  "scope": "Fixed prior 24 markets; all raw journal hashes reverified",
+  "summary": {
+    "source": "/home/ubuntu/poly-maker/docs/development/reviews/20261019_repair_24_markets_1220_1535/summary.json",
+    "sha256": "e7fa1e53ba1a24fbe01db88d00baf793f56ee36df0b4d11f2c921d68a2943b87"
+  },
+  "source_manifest": {
+    "source": "/home/ubuntu/poly-maker/docs/development/reviews/20261019_repair_24_markets_1220_1535/source_manifest.json",
+    "sha256": "821420381c0960b6c7a93b011b4ec77edd7cb9e36d51bda351a9dd4904c03748"
+  },
+  "raw_sources": [
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_d44a1224727047c8999aa1a585a6d93c.jsonl",
+      "sha256": "1e6913dbf39be04e9829a40c192685560f74a695332ed548a5644ae204a6b6c8"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4c87022b5b1d4252b02ab31272f6ef82.jsonl",
+      "sha256": "a7e7f56440a0361aac6d67007210f55ca2261a9cc823419dd47cc07ed715fe79"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_2f15361d56554ca082fa787e82ea3b9d.jsonl",
+      "sha256": "de7867e56bc319ec443c9541d772a0a627163f5e7ecc3e69618c8b33820f9311"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bfc87b1bbff041e3b78c0c6ebd4392cf.jsonl",
+      "sha256": "f4a48befb711253a0ba5c0c2ecd47cf1e04adfc4277dbe34fed4b0bb1907b61b"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_579f1d40cf5e48ffb49ebeca4b3a58a6.jsonl",
+      "sha256": "81f00e8eecbf8ca8b54b8166fa9dac0e7805b492933031bbddcabfcc507bf211"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_71123a66c78447fe962e2deefde545b5.jsonl",
+      "sha256": "a4cca5a75bf97b09e73c87db78420c3e1f4c0cc53c60f78533ae2b4e523ab58c"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_1e3e434c46a94be9b41d20a21b8d4c3b.jsonl",
+      "sha256": "64384ddca1fbf867469a2c743bedf17f836a119253bbda2435ff034e959e94e1"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_784dcfa6b2d94ef18a6d5c27a4548d45.jsonl",
+      "sha256": "733892734ce28d397a2ce2df610f3bc93b59e91d6f2e41a22e9f34a649413115"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5c7ceb7eb5a147fab276e7717c0048fd.jsonl",
+      "sha256": "6c7bfa6a874c5e8895e7e1c6e3f367de026f8bdfb6f1dff5ae97640c9e07677d"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_4e772fcf9ec64522a49f61c83d449c2a.jsonl",
+      "sha256": "ee7cca008c6effa834dad55a66bc3dbfe9eb1d1ce04039ec947c7cec88df2bf3"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a22554bc79bc4a3982fe13d2699b7715.jsonl",
+      "sha256": "261d31f02a3f7a4cc0a19876a5149bb5988270feb52bc37ef890787bf3fd4209"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_33e45756eb9642f49e31160c1f224f32.jsonl",
+      "sha256": "9e51a97ed77bbcfb737daafebcb8dd7681454f172417ca74c3214600e4e43028"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_2693008f1f6044c4848880c61a122347.jsonl",
+      "sha256": "48e0cd17c2c853290efc1b3bbbb0d9f84d3eeb6f4de8199fdb9a740ee0e5ca48"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a94a6a2279f24e7495971b3c5321301a.jsonl",
+      "sha256": "60f5e440de896edc3f651037ab37c52ed5f1ace06d0db739b02b2d9b47323900"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e866262881f24758b52b81c983ee1878.jsonl",
+      "sha256": "18f557cc05239d3538215432957270c9f9cb996b0faffa26cac254de88f4fc54"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e5fa972920f64912a6f91fd263885321.jsonl",
+      "sha256": "5962af8056f3f2cfab2e49a1e1cfc4f927c727b1f9549cf04b6e3838ab2b4b9d"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_46b1f02594a34f3ca3b25f9ea17c485a.jsonl",
+      "sha256": "9ca2f21a2f8428dc22faaf209cd6f69a91a473cd82a1ef66fb5f1dce033b7701"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_f35091eced5341f2b96b34810eb7472c.jsonl",
+      "sha256": "9b64a9eb60253960c73f30ebf5a9c13e7a3dd7e91c322313bc00f2c1e0a8cde9"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_0a4621fb630741c99e334a7fed1bf436.jsonl",
+      "sha256": "7f370eb8316737841b4002ff09f096209c6b462ee200dfe5d582768bbb5ece78"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cd8e93e921f24b8b9f31629fa55b46e7.jsonl",
+      "sha256": "6ffbb6b365ca3113e3ff7bdeb2abedc298bbb6eb4a56705a42eab67bd31c88ea"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_908e3945b31640cdb4d5cd809b9653ae.jsonl",
+      "sha256": "2c2167084d91f8ad882aede917931062a651c87adf94620668e79d73a03fbfcf"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5d985467ded645459f437550f22bcb6d.jsonl",
+      "sha256": "8f6ef4d04e9219abd7e54fb7b69c629d669411b4ffac7adb06eb326465738a1d"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_48661340d6dc458b843b769d1b412195.jsonl",
+      "sha256": "4dcc5d71c4812f8850faee6d864dac6986bde73d46ec83caea80c08c9eeebd29"
+    },
+    {
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_917e65f87a5348e496a9e69e26355f47.jsonl",
+      "sha256": "06243291cf70017893a65efcaf72f551d73593de618deca74616036e6ee06310"
+    }
+  ]
+}

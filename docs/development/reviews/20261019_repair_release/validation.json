@@ -1,0 +1,69 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-18T18:33:04.953145+00:00",
+  "scope": "SIMULATED_VENUE_EXECUTION_ACCEPTANCE_AND_REGRESSION",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "policy": "hd_tp_sl_v1",
+  "full_suite": {
+    "passed": 1999,
+    "skipped": 2,
+    "seconds": 285.503
+  },
+  "final_focused_suite": {
+    "passed": 129,
+    "skipped": 0,
+    "seconds": 53.393
+  },
+  "execution_acceptance_cases": 9,
+  "execution_evidence": [
+    "session_direct.json",
+    "session_cached.json",
+    "session_lost_ack.json",
+    "acceptance_cases.json"
+  ],
+  "full_suite_test_revision_note": "Full suite collected the acceptance tests before the cached-session case and longer TP queue dwell were added; final focused regression ran the final acceptance source, including all 9 release cases. Production code unchanged.",
+  "parameters": {
+    "tp_profit_rate": "0.002",
+    "shock_window_sec": 2.0,
+    "shock_max_age_sec": 3.0,
+    "shock_min_ticks": 2,
+    "shock_z": 1.5,
+    "drawdown_per_share": "0.06"
+  },
+  "historical_price_policy_replay": {
+    "markets": 47,
+    "cases": 704,
+    "differences": 0,
+    "reference": "../20261019_repair_implementation/replay_summary.json",
+    "scope": "PRICE_POLICY_ONLY"
+  },
+  "ready_for_supervised_live_test": true,
+  "automatic_trading_continuation_after_crash": false,
+  "positive_ev_validated": false,
+  "real_venue_orders_sent": 0,
+  "real_maker_fill_validation": "USER_LIVE_TEST_PENDING",
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "config_before_sha256": {
+    "config/config.toml": "31dc2b6acf15ab44bc3aeae71e171835e6c91c5087738bc047c2ed951af2c11d",
+    "livecfg/config.toml": "b4614e2dc32341e7eb81e0026a0a225645f2f3194c8118f982a6fb51548cb6fe"
+  },
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "selected_policy": "hd_tp_sl_v1",
+      "ready_for_live": true,
+      "policy_selected": true,
+      "non_repair_config_unchanged": true
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "selected_policy": "hd_tp_sl_v1",
+      "ready_for_live": true,
+      "policy_selected": true,
+      "non_repair_config_unchanged": true
+    }
+  },
+  "ready_for_live": true,
+  "selected_policy": "hd_tp_sl_v1"
+}

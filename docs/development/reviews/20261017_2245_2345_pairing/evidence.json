@@ -1,0 +1,1136 @@
+{
+  "scope": "2026-10-17 22:45–23:45 Asia/Shanghai; latest 12 logged markets; before new NORMAL capital rule",
+  "definitions": {
+    "unit": "one filled NORMAL order and subsequent opposite REBALANCE fills; FIFO allocation up to entry quantity",
+    "primary": "first local MATCHED observation of opening -> last local MATCHED observation needed to cover all opening shares",
+    "confirmed": "last opening CONFIRMED observation -> last CONFIRMED observation needed for pairing",
+    "signal": "final signal event retained at POST -> full paired CONFIRMED",
+    "caveat": "Local observations, not official match times; all cache timestamps zero in this cohort.",
+    "profit": "FIFO acquisition gross before fees/rebate; differs slightly from average-cost merge accounting for dust."
+  },
+  "counts": {
+    "markets": 12,
+    "markets_with_opening": 10,
+    "normal_posts": 129,
+    "filled_normal_orders": 13,
+    "completed_cycles": 13,
+    "unpaired_cycles": 0,
+    "signal_reversed_closes": 11
+  },
+  "all": {
+    "metrics": {
+      "matched_to_matched_s": {
+        "n": 13,
+        "mean": 53.15322179060716,
+        "median": 26.810370445251465,
+        "p90": 145.1835696697235,
+        "p95": 180.37299013137817,
+        "min": 7.277637243270874,
+        "max": 180.37299013137817
+      },
+      "confirmed_to_confirmed_s": {
+        "n": 13,
+        "mean": 53.09937557807336,
+        "median": 26.849539041519165,
+        "p90": 145.17387747764587,
+        "p95": 177.1770384311676,
+        "min": 7.961165428161621,
+        "max": 177.1770384311676
+      },
+      "signal_to_pair_confirmed_s": {
+        "n": 13,
+        "mean": 61.58718795042772,
+        "median": 34.51777458190918,
+        "p90": 152.5842685699463,
+        "p95": 185.74059629440308,
+        "min": 15.145853519439697,
+        "max": 185.74059629440308
+      },
+      "post_to_pair_confirmed_s": {
+        "n": 13,
+        "mean": 61.58576251910283,
+        "median": 34.51561188697815,
+        "p90": 152.583172082901,
+        "p95": 185.73925733566284,
+        "min": 15.144055843353271,
+        "max": 185.73925733566284
+      },
+      "entry_confirmation_wait_s": {
+        "n": 13,
+        "mean": 6.163560959009024,
+        "median": 6.017527341842651,
+        "p90": 7.14687967300415,
+        "p95": 8.655804634094238,
+        "min": 4.815909385681152,
+        "max": 8.655804634094238
+      },
+      "confirmed_to_first_repair_post_s": {
+        "n": 13,
+        "mean": 14.48935947051415,
+        "median": 1.4883837699890137,
+        "p90": 4.368531227111816,
+        "p95": 170.22051334381104,
+        "min": 0.5049173831939697,
+        "max": 170.22051334381104
+      },
+      "first_repair_post_to_pair_match_s": {
+        "n": 13,
+        "mean": 32.500301361083984,
+        "median": 9.092964172363281,
+        "p90": 81.82552123069763,
+        "p95": 136.2747540473938,
+        "min": 1.4904429912567139,
+        "max": 136.2747540473938
+      },
+      "repair_submissions": {
+        "n": 13,
+        "mean": 6.153846153846154,
+        "median": 2,
+        "p90": 13,
+        "p95": 25,
+        "min": 1,
+        "max": 25
+      }
+    },
+    "signal_vs_duration": {
+      "pearson": 0.2099692650551974,
+      "spearman": 0.13186813186813187,
+      "n": 13
+    },
+    "signal_vs_pair_gross": {
+      "pearson": -0.12915589380004913,
+      "spearman": 0.024793482509275887,
+      "n": 13
+    }
+  },
+  "excluding_known_capital_wait": {
+    "metrics": {
+      "matched_to_matched_s": {
+        "n": 12,
+        "mean": 42.55157442887624,
+        "median": 21.480316281318665,
+        "p90": 87.96248698234558,
+        "p95": 145.1835696697235,
+        "min": 7.277637243270874,
+        "max": 145.1835696697235
+      },
+      "confirmed_to_confirmed_s": {
+        "n": 12,
+        "mean": 42.7595703403155,
+        "median": 21.999735116958618,
+        "p90": 89.14262866973877,
+        "p95": 145.17387747764587,
+        "min": 7.961165428161621,
+        "max": 145.17387747764587
+      },
+      "signal_to_pair_confirmed_s": {
+        "n": 12,
+        "mean": 51.24107058842977,
+        "median": 30.11184787750244,
+        "p90": 96.63192105293274,
+        "p95": 152.5842685699463,
+        "min": 15.145853519439697,
+        "max": 152.5842685699463
+      },
+      "post_to_pair_confirmed_s": {
+        "n": 12,
+        "mean": 51.23963795105616,
+        "median": 30.1101815700531,
+        "p90": 96.63110208511353,
+        "p95": 152.583172082901,
+        "min": 15.144055843353271,
+        "max": 152.583172082901
+      },
+      "entry_confirmation_wait_s": {
+        "n": 12,
+        "mean": 6.081617732842763,
+        "median": 5.993818759918213,
+        "p90": 7.025702476501465,
+        "p95": 8.655804634094238,
+        "min": 4.815909385681152,
+        "max": 8.655804634094238
+      },
+      "confirmed_to_first_repair_post_s": {
+        "n": 12,
+        "mean": 1.5117633144060771,
+        "median": 1.4047200679779053,
+        "p90": 2.8912882804870605,
+        "p95": 4.368531227111816,
+        "min": 0.5049173831939697,
+        "max": 4.368531227111816
+      },
+      "first_repair_post_to_pair_match_s": {
+        "n": 12,
+        "mean": 34.9581933816274,
+        "median": 14.711063623428345,
+        "p90": 81.82552123069763,
+        "p95": 136.2747540473938,
+        "min": 1.4904429912567139,
+        "max": 136.2747540473938
+      },
+      "repair_submissions": {
+        "n": 12,
+        "mean": 6.583333333333333,
+        "median": 3.0,
+        "p90": 13,
+        "p95": 25,
+        "min": 1,
+        "max": 25
+      }
+    },
+    "signal_vs_duration": {
+      "pearson": 0.18759577476663733,
+      "spearman": 0.06293706293706294,
+      "n": 12
+    },
+    "signal_vs_pair_gross": {
+      "pearson": -0.07390343774349047,
+      "spearman": 0.11929897998982567,
+      "n": 12
+    }
+  },
+  "by_signal_strength": [
+    {
+      "lower": 0.3,
+      "upper": 0.6,
+      "n": 4,
+      "duration": {
+        "n": 4,
+        "mean": 35.33246731758118,
+        "median": 20.1819669008255,
+        "p90": 87.96248698234558,
+        "p95": 87.96248698234558,
+        "min": 13.003448486328125,
+        "max": 87.96248698234558
+      }
+    },
+    {
+      "lower": 0.6,
+      "upper": 0.8,
+      "n": 5,
+      "duration": {
+        "n": 5,
+        "mean": 65.49123864173889,
+        "median": 51.1881902217865,
+        "p90": 180.37299013137817,
+        "p95": 180.37299013137817,
+        "min": 10.206380605697632,
+        "max": 180.37299013137817
+      }
+    },
+    {
+      "lower": 0.8,
+      "upper": 1,
+      "n": 4,
+      "duration": {
+        "n": 4,
+        "mean": 55.551455199718475,
+        "median": 34.87230694293976,
+        "p90": 145.1835696697235,
+        "p95": 145.1835696697235,
+        "min": 7.277637243270874,
+        "max": 145.1835696697235
+      }
+    }
+  ],
+  "by_direction": {
+    "YES": {
+      "metrics": {
+        "matched_to_matched_s": {
+          "n": 6,
+          "mean": 57.66876947879791,
+          "median": 34.87230694293976,
+          "p90": 180.37299013137817,
+          "p95": 180.37299013137817,
+          "min": 10.206380605697632,
+          "max": 180.37299013137817
+        },
+        "confirmed_to_confirmed_s": {
+          "n": 6,
+          "mean": 57.01543811957041,
+          "median": 35.81098806858063,
+          "p90": 177.1770384311676,
+          "p95": 177.1770384311676,
+          "min": 10.262356042861938,
+          "max": 177.1770384311676
+        },
+        "signal_to_pair_confirmed_s": {
+          "n": 6,
+          "mean": 65.85653336842854,
+          "median": 44.03386676311493,
+          "p90": 185.74059629440308,
+          "p95": 185.74059629440308,
+          "min": 18.896445989608765,
+          "max": 185.74059629440308
+        },
+        "post_to_pair_confirmed_s": {
+          "n": 6,
+          "mean": 65.85514799753825,
+          "median": 44.03252863883972,
+          "p90": 185.73925733566284,
+          "p95": 185.73925733566284,
+          "min": 18.89485239982605,
+          "max": 185.73925733566284
+        },
+        "entry_confirmation_wait_s": {
+          "n": 6,
+          "mean": 6.613421996434529,
+          "median": 6.789041519165039,
+          "p90": 8.655804634094238,
+          "p95": 8.655804634094238,
+          "min": 5.104098081588745,
+          "max": 8.655804634094238
+        },
+        "confirmed_to_first_repair_post_s": {
+          "n": 6,
+          "mean": 29.210845470428467,
+          "median": 1.132265329360962,
+          "p90": 170.22051334381104,
+          "p95": 170.22051334381104,
+          "min": 0.5049173831939697,
+          "max": 170.22051334381104
+        },
+        "first_repair_post_to_pair_match_s": {
+          "n": 6,
+          "mean": 21.844502011934917,
+          "median": 6.177046418190002,
+          "p90": 64.9458179473877,
+          "p95": 64.9458179473877,
+          "min": 3.0037009716033936,
+          "max": 64.9458179473877
+        },
+        "repair_submissions": {
+          "n": 6,
+          "mean": 4.666666666666667,
+          "median": 1.5,
+          "p90": 13,
+          "p95": 13,
+          "min": 1,
+          "max": 13
+        }
+      },
+      "signal_vs_duration": {
+        "pearson": -0.1278732946826967,
+        "spearman": 0.02857142857142857,
+        "n": 6
+      },
+      "signal_vs_pair_gross": {
+        "pearson": 0.1935257007019397,
+        "spearman": 0.3142857142857143,
+        "n": 6
+      }
+    },
+    "NO": {
+      "metrics": {
+        "matched_to_matched_s": {
+          "n": 7,
+          "mean": 49.282752343586516,
+          "median": 26.810370445251465,
+          "p90": 145.1835696697235,
+          "p95": 145.1835696697235,
+          "min": 7.277637243270874,
+          "max": 145.1835696697235
+        },
+        "confirmed_to_confirmed_s": {
+          "n": 7,
+          "mean": 49.742750542504446,
+          "median": 26.849539041519165,
+          "p90": 145.17387747764587,
+          "p95": 145.17387747764587,
+          "min": 7.961165428161621,
+          "max": 145.17387747764587
+        },
+        "signal_to_pair_confirmed_s": {
+          "n": 7,
+          "mean": 57.92774902071272,
+          "median": 34.51777458190918,
+          "p90": 152.5842685699463,
+          "p95": 152.5842685699463,
+          "min": 15.145853519439697,
+          "max": 152.5842685699463
+        },
+        "post_to_pair_confirmed_s": {
+          "n": 7,
+          "mean": 57.92628925187247,
+          "median": 34.51561188697815,
+          "p90": 152.583172082901,
+          "p95": 152.583172082901,
+          "min": 15.144055843353271,
+          "max": 152.583172082901
+        },
+        "entry_confirmation_wait_s": {
+          "n": 7,
+          "mean": 5.777965784072876,
+          "median": 5.970110177993774,
+          "p90": 6.990848779678345,
+          "p95": 6.990848779678345,
+          "min": 4.815909385681152,
+          "max": 6.990848779678345
+        },
+        "confirmed_to_first_repair_post_s": {
+          "n": 7,
+          "mean": 1.8709428991590227,
+          "median": 1.4883837699890137,
+          "p90": 4.368531227111816,
+          "p95": 4.368531227111816,
+          "min": 0.5110971927642822,
+          "max": 4.368531227111816
+        },
+        "first_repair_post_to_pair_match_s": {
+          "n": 7,
+          "mean": 41.633843660354614,
+          "median": 20.329163074493408,
+          "p90": 136.2747540473938,
+          "p95": 136.2747540473938,
+          "min": 1.4904429912567139,
+          "max": 136.2747540473938
+        },
+        "repair_submissions": {
+          "n": 7,
+          "mean": 7.428571428571429,
+          "median": 4,
+          "p90": 25,
+          "p95": 25,
+          "min": 1,
+          "max": 25
+        }
+      },
+      "signal_vs_duration": {
+        "pearson": 0.37696240465905845,
+        "spearman": 0.07142857142857142,
+        "n": 7
+      },
+      "signal_vs_pair_gross": {
+        "pearson": -0.0553758877545188,
+        "spearman": -0.0900937462695559,
+        "n": 7
+      }
+    }
+  },
+  "correlation_cluster_bootstrap": {
+    "resampling_unit": "market",
+    "clusters": 10,
+    "replicates": 20000,
+    "seed": 20261018,
+    "pearson_95_percentile_interval": [
+      -0.36294964490250703,
+      0.6932990101868141
+    ],
+    "caveat": "Small 10-market sample; interval is approximate and descriptive, not causal."
+  },
+  "reversed_normal_post_to_close_s": {
+    "n": 11,
+    "mean": 0.9165389917960222,
+    "median": 0.864828834310174,
+    "p90": 1.216289971023798,
+    "p95": 1.3293905700556934,
+    "min": 0.545426931232214,
+    "max": 1.3293905700556934
+  },
+  "cycles": [
+    {
+      "market": "22:45",
+      "session_id": "bd475b352b0d43f39a230fd7afd45282",
+      "window": "w7",
+      "side": "NO",
+      "entry_signal": -0.7531016138317089,
+      "signal_strength": 0.7531016138317089,
+      "entry_price": 0.66,
+      "entry_quantity": 5.0,
+      "entry_post": "22:46:05.379",
+      "opening_first_matched": "22:46:06.768",
+      "opening_last_confirmed": "22:46:11.858",
+      "pair_last_matched": "22:46:57.956",
+      "pair_last_confirmed": "22:47:04.899",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 51.1881902217865,
+      "confirmed_to_confirmed_s": 53.04058384895325,
+      "signal_to_pair_confirmed_s": 59.52185893058777,
+      "post_to_pair_confirmed_s": 59.51991271972656,
+      "entry_confirmation_wait_s": 5.090211391448975,
+      "confirmed_to_first_repair_post_s": 1.5874910354614258,
+      "first_repair_post_to_pair_match_s": 44.5104877948761,
+      "repair_submissions": 6,
+      "repair_windows": 6,
+      "stale_close_submissions": 5,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.8918976332060993,
+      "fifo_acquisition_pair_gross": 0.6,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "decision_source_line": 577,
+      "opening_fill_lines": [
+        646
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "e8381363-7977-437b-ab38-4cec84880afc",
+          "order_id": "0xd71868738e6487db7c7c6809b36ccb89f734188de005c361d43bc00b9942ff20",
+          "quantity": 4.98,
+          "price": 0.22,
+          "source_line": 1236
+        },
+        {
+          "trade_id": "558f4e26-3ecf-400a-8ccc-f6b24058a4b2",
+          "order_id": "0xd71868738e6487db7c7c6809b36ccb89f734188de005c361d43bc00b9942ff20",
+          "quantity": 0.01,
+          "price": 0.22,
+          "source_line": 1237
+        },
+        {
+          "trade_id": "51aa609a-5fad-485e-9db0-6dc02d725811",
+          "order_id": "0xd71868738e6487db7c7c6809b36ccb89f734188de005c361d43bc00b9942ff20",
+          "quantity": 0.01,
+          "price": 0.22,
+          "source_line": 1238
+        }
+      ]
+    },
+    {
+      "market": "23:00",
+      "session_id": "86efea18a69b4f89b080bc8209a1370f",
+      "window": "w16",
+      "side": "YES",
+      "entry_signal": 0.6735191354513691,
+      "signal_strength": 0.6735191354513691,
+      "entry_price": 0.24,
+      "entry_quantity": 5.0,
+      "entry_post": "23:01:39.819",
+      "opening_first_matched": "23:01:42.711",
+      "opening_last_confirmed": "23:01:51.367",
+      "pair_last_matched": "23:02:56.838",
+      "pair_last_confirmed": "23:03:03.330",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 74.12714862823486,
+      "confirmed_to_confirmed_s": 71.96267557144165,
+      "signal_to_pair_confirmed_s": 83.51180672645569,
+      "post_to_pair_confirmed_s": 83.51029324531555,
+      "entry_confirmation_wait_s": 8.655804634094238,
+      "confirmed_to_first_repair_post_s": 0.5255260467529297,
+      "first_repair_post_to_pair_match_s": 64.9458179473877,
+      "repair_submissions": 13,
+      "repair_windows": 13,
+      "stale_close_submissions": 6,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 1.3293905700556934,
+      "fifo_acquisition_pair_gross": -0.95,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "decision_source_line": 1481,
+      "opening_fill_lines": [
+        1695
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "a0fbc863-c705-40e9-b5e2-154682edffed",
+          "order_id": "0xb2ebe0b05320e07bcb000907188a141c57cb67020a27401b9ffdc9aa91b077a1",
+          "quantity": 5.0,
+          "price": 0.95,
+          "source_line": 2867
+        }
+      ]
+    },
+    {
+      "market": "23:05",
+      "session_id": "ae7561e3e0154cfe96444e2dc08f6f23",
+      "window": "w11",
+      "side": "YES",
+      "entry_signal": 0.847741710035319,
+      "signal_strength": 0.847741710035319,
+      "entry_price": 0.54,
+      "entry_quantity": 5.0,
+      "entry_post": "23:06:05.652",
+      "opening_first_matched": "23:06:08.436",
+      "opening_last_confirmed": "23:06:13.540",
+      "pair_last_matched": "23:07:02.030",
+      "pair_last_confirmed": "23:07:08.012",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 53.59435176849365,
+      "confirmed_to_confirmed_s": 54.472044944763184,
+      "signal_to_pair_confirmed_s": 62.361812353134155,
+      "post_to_pair_confirmed_s": 62.36030602455139,
+      "entry_confirmation_wait_s": 5.104098081588745,
+      "confirmed_to_first_repair_post_s": 0.7324504852294922,
+      "first_repair_post_to_pair_match_s": 47.757803201675415,
+      "repair_submissions": 10,
+      "repair_windows": 10,
+      "stale_close_submissions": 10,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 1.134284283965826,
+      "fifo_acquisition_pair_gross": -0.8476,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "decision_source_line": 747,
+      "opening_fill_lines": [
+        872
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "b9f17cab-2867-43d2-8e16-a41df7162fa7",
+          "order_id": "0x75f7293af903cf7ac8108b74c50f8abc6e33154b5b86d96fc232bf4c17a4a72f",
+          "quantity": 0.01,
+          "price": 0.51,
+          "source_line": 1314
+        },
+        {
+          "trade_id": "3a3ba49b-2ac5-440a-96d3-f4d7123ad721",
+          "order_id": "0x75f7293af903cf7ac8108b74c50f8abc6e33154b5b86d96fc232bf4c17a4a72f",
+          "quantity": 0.01,
+          "price": 0.51,
+          "source_line": 1265
+        },
+        {
+          "trade_id": "99704fd4-872b-4ed2-9901-7ae7c7c41408",
+          "order_id": "0x5ec065a91864b5fedc1606c81acd2f00985867c390600b3850656a80adb48fc4",
+          "quantity": 4.98,
+          "price": 0.63,
+          "source_line": 2048
+        }
+      ]
+    },
+    {
+      "market": "23:10",
+      "session_id": "7d354af8b75e4dfca27357f2b358e9eb",
+      "window": "w1",
+      "side": "YES",
+      "entry_signal": 0.9300102185080978,
+      "signal_strength": 0.9300102185080978,
+      "entry_price": 0.42,
+      "entry_quantity": 5.0,
+      "entry_post": "23:10:20.963",
+      "opening_first_matched": "23:10:22.966",
+      "opening_last_confirmed": "23:10:29.518",
+      "pair_last_matched": "23:10:39.116",
+      "pair_last_confirmed": "23:10:46.668",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 16.150262117385864,
+      "confirmed_to_confirmed_s": 17.14993119239807,
+      "signal_to_pair_confirmed_s": 25.705921173095703,
+      "post_to_pair_confirmed_s": 25.70475125312805,
+      "entry_confirmation_wait_s": 6.552380561828613,
+      "confirmed_to_first_repair_post_s": 0.5049173831939697,
+      "first_repair_post_to_pair_match_s": 9.092964172363281,
+      "repair_submissions": 2,
+      "repair_windows": 2,
+      "stale_close_submissions": 0,
+      "normal_close_reason": "ORDER_DEADLINE",
+      "normal_post_to_close_s": 2.0014650519005954,
+      "fifo_acquisition_pair_gross": 0.05,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "decision_source_line": 25,
+      "opening_fill_lines": [
+        69
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "95fd7f41-70ce-45a2-bbc6-99fc9c0f71ff",
+          "order_id": "0x52038e485ced7086b40b4156edb7ed1d2987d984ee661fb003e3e3b241d380ca",
+          "quantity": 5.0,
+          "price": 0.57,
+          "source_line": 247
+        }
+      ]
+    },
+    {
+      "market": "23:15",
+      "session_id": "b20decaba25a4eb4ab0e70c121cc0e79",
+      "window": "w1",
+      "side": "NO",
+      "entry_signal": -0.3097502793127397,
+      "signal_strength": 0.3097502793127397,
+      "entry_price": 0.51,
+      "entry_quantity": 5.0,
+      "entry_post": "23:15:29.157",
+      "opening_first_matched": "23:15:30.853",
+      "opening_last_confirmed": "23:15:36.823",
+      "pair_last_matched": "23:15:57.663",
+      "pair_last_confirmed": "23:16:03.672",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 26.810370445251465,
+      "confirmed_to_confirmed_s": 26.849539041519165,
+      "signal_to_pair_confirmed_s": 34.51777458190918,
+      "post_to_pair_confirmed_s": 34.51561188697815,
+      "entry_confirmation_wait_s": 5.970110177993774,
+      "confirmed_to_first_repair_post_s": 0.5110971927642822,
+      "first_repair_post_to_pair_match_s": 20.329163074493408,
+      "repair_submissions": 4,
+      "repair_windows": 4,
+      "stale_close_submissions": 3,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.8282508328557014,
+      "fifo_acquisition_pair_gross": 1.05,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "decision_source_line": 134,
+      "opening_fill_lines": [
+        176
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "bfa5431a-e0a4-4fcd-bc59-86eed15ffd39",
+          "order_id": "0x36109bed93bbb998c41a05094919689075e3ae5f0d63a9353e6a399a1905f60b",
+          "quantity": 5.0,
+          "price": 0.28,
+          "source_line": 467
+        }
+      ]
+    },
+    {
+      "market": "23:20",
+      "session_id": "c3a74171a4604ccd8eadb35f1f306079",
+      "window": "w8",
+      "side": "NO",
+      "entry_signal": -0.4742249749991935,
+      "signal_strength": 0.4742249749991935,
+      "entry_price": 0.91,
+      "entry_quantity": 5.0,
+      "entry_post": "23:21:04.278",
+      "opening_first_matched": "23:21:09.584",
+      "opening_last_confirmed": "23:21:16.575",
+      "pair_last_matched": "23:21:22.587",
+      "pair_last_confirmed": "23:21:28.578",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 13.003448486328125,
+      "confirmed_to_confirmed_s": 12.003829956054688,
+      "signal_to_pair_confirmed_s": 24.302055835723877,
+      "post_to_pair_confirmed_s": 24.30070996284485,
+      "entry_confirmation_wait_s": 6.990848779678345,
+      "confirmed_to_first_repair_post_s": 4.368531227111816,
+      "first_repair_post_to_pair_match_s": 1.6440684795379639,
+      "repair_submissions": 1,
+      "repair_windows": 1,
+      "stale_close_submissions": 1,
+      "normal_close_reason": "ORDER_DEADLINE",
+      "normal_post_to_close_s": 2.0022835950367153,
+      "fifo_acquisition_pair_gross": -1.35,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "decision_source_line": 1399,
+      "opening_fill_lines": [
+        1535
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "05c28733-2237-410e-8e06-d873e242a241",
+          "order_id": "0x8762acb4517b4885d4440b6decc50c2710b8af4655bd3b610a5c9592ac3e526f",
+          "quantity": 5.0,
+          "price": 0.36,
+          "source_line": 1745
+        }
+      ]
+    },
+    {
+      "market": "23:20",
+      "session_id": "c3a74171a4604ccd8eadb35f1f306079",
+      "window": "w13",
+      "side": "YES",
+      "entry_signal": 0.6828404685597526,
+      "signal_strength": 0.6828404685597526,
+      "entry_price": 0.32,
+      "entry_quantity": 5.0,
+      "entry_post": "23:21:49.987",
+      "opening_first_matched": "23:21:51.593",
+      "opening_last_confirmed": "23:21:58.619",
+      "pair_last_matched": "23:22:03.155",
+      "pair_last_confirmed": "23:22:08.882",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 11.56148362159729,
+      "confirmed_to_confirmed_s": 10.262356042861938,
+      "signal_to_pair_confirmed_s": 18.896445989608765,
+      "post_to_pair_confirmed_s": 18.89485239982605,
+      "entry_confirmation_wait_s": 7.025702476501465,
+      "confirmed_to_first_repair_post_s": 1.5320801734924316,
+      "first_repair_post_to_pair_match_s": 3.0037009716033936,
+      "repair_submissions": 1,
+      "repair_windows": 1,
+      "stale_close_submissions": 0,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.9450553660281003,
+      "fifo_acquisition_pair_gross": -0.05,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "decision_source_line": 2018,
+      "opening_fill_lines": [
+        2161
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "5b852bd2-5a7a-42df-a32e-af625ae48c57",
+          "order_id": "0x56f5f42027ead5098ff9fb3cd6b403a7f68f82cd28b2bc137e782c6d5d072bf7",
+          "quantity": 5.0,
+          "price": 0.69,
+          "source_line": 2374
+        }
+      ]
+    },
+    {
+      "market": "23:25",
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30",
+      "window": "w1",
+      "side": "YES",
+      "entry_signal": 0.7334618988768623,
+      "signal_strength": 0.7334618988768623,
+      "entry_price": 0.52,
+      "entry_quantity": 5.0,
+      "entry_post": "23:25:22.864",
+      "opening_first_matched": "23:25:25.521",
+      "opening_last_confirmed": "23:25:30.716",
+      "pair_last_matched": "23:25:35.727",
+      "pair_last_confirmed": "23:25:41.785",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 10.206380605697632,
+      "confirmed_to_confirmed_s": 11.068582534790039,
+      "signal_to_pair_confirmed_s": 18.9226176738739,
+      "post_to_pair_confirmed_s": 18.921427726745605,
+      "entry_confirmation_wait_s": 5.195666551589966,
+      "confirmed_to_first_repair_post_s": 1.7495853900909424,
+      "first_repair_post_to_pair_match_s": 3.2611286640167236,
+      "repair_submissions": 1,
+      "repair_windows": 1,
+      "stale_close_submissions": 0,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.8150957296602428,
+      "fifo_acquisition_pair_gross": -0.75,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "decision_source_line": 167,
+      "opening_fill_lines": [
+        217
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "4812768d-7565-4700-9cac-7f8520f373f0",
+          "order_id": "0xb075df63b9261e7ac3b5d0b23a522aadada0d130fdd585705f05f97e646faa9c",
+          "quantity": 5.0,
+          "price": 0.63,
+          "source_line": 315
+        }
+      ]
+    },
+    {
+      "market": "23:25",
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30",
+      "window": "w3",
+      "side": "NO",
+      "entry_signal": -0.8264931598264932,
+      "signal_strength": 0.8264931598264932,
+      "entry_price": 0.53,
+      "entry_quantity": 5.0,
+      "entry_post": "23:25:42.404",
+      "opening_first_matched": "23:25:44.729",
+      "opening_last_confirmed": "23:25:49.587",
+      "pair_last_matched": "23:25:52.006",
+      "pair_last_confirmed": "23:25:57.548",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 7.277637243270874,
+      "confirmed_to_confirmed_s": 7.961165428161621,
+      "signal_to_pair_confirmed_s": 15.145853519439697,
+      "post_to_pair_confirmed_s": 15.144055843353271,
+      "entry_confirmation_wait_s": 4.8584418296813965,
+      "confirmed_to_first_repair_post_s": 0.9287524223327637,
+      "first_repair_post_to_pair_match_s": 1.4904429912567139,
+      "repair_submissions": 1,
+      "repair_windows": 1,
+      "stale_close_submissions": 1,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 1.216289971023798,
+      "fifo_acquisition_pair_gross": -0.5,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "decision_source_line": 388,
+      "opening_fill_lines": [
+        436
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "348bdf4e-93df-4f37-aed2-4999bb4e775e",
+          "order_id": "0x2e8822532a6272cbad5c2965d708a85aec6c955c157eb28c24d20d807c35e0da",
+          "quantity": 5.0,
+          "price": 0.57,
+          "source_line": 541
+        }
+      ]
+    },
+    {
+      "market": "23:25",
+      "session_id": "cf35a9ebd90f41c1b93cc26ed8418d30",
+      "window": "w7",
+      "side": "YES",
+      "entry_signal": 0.7586509188861793,
+      "signal_strength": 0.7586509188861793,
+      "entry_price": 0.69,
+      "entry_quantity": 5.0,
+      "entry_post": "23:26:18.192",
+      "opening_first_matched": "23:26:19.608",
+      "opening_last_confirmed": "23:26:26.755",
+      "pair_last_matched": "23:29:19.981",
+      "pair_last_confirmed": "23:29:23.932",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 180.37299013137817,
+      "confirmed_to_confirmed_s": 177.1770384311676,
+      "signal_to_pair_confirmed_s": 185.74059629440308,
+      "post_to_pair_confirmed_s": 185.73925733566284,
+      "entry_confirmation_wait_s": 7.14687967300415,
+      "confirmed_to_first_repair_post_s": 170.22051334381104,
+      "first_repair_post_to_pair_match_s": 3.0055971145629883,
+      "repair_submissions": 1,
+      "repair_windows": 1,
+      "stale_close_submissions": 0,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.7129305861890316,
+      "fifo_acquisition_pair_gross": -2.95,
+      "capital_constrained": true,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "decision_source_line": 785,
+      "opening_fill_lines": [
+        875
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "3e2d7bb6-818f-47a7-a5a0-a71c7b7e6231",
+          "order_id": "0xc9e62aabb62fee5c243fb8597b94945836a27507904d1de1fe59cc3219806bf5",
+          "quantity": 5.0,
+          "price": 0.9,
+          "source_line": 3072
+        }
+      ]
+    },
+    {
+      "market": "23:30",
+      "session_id": "b9cd6ef04c354e8a8ec4b2366f5c407f",
+      "window": "w1",
+      "side": "NO",
+      "entry_signal": -0.36071092309081293,
+      "signal_strength": 0.36071092309081293,
+      "entry_price": 0.29,
+      "entry_quantity": 5.0,
+      "entry_post": "23:30:22.034",
+      "opening_first_matched": "23:30:24.707",
+      "opening_last_confirmed": "23:30:29.523",
+      "pair_last_matched": "23:31:52.669",
+      "pair_last_confirmed": "23:31:58.666",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 87.96248698234558,
+      "confirmed_to_confirmed_s": 89.14262866973877,
+      "signal_to_pair_confirmed_s": 96.63192105293274,
+      "post_to_pair_confirmed_s": 96.63110208511353,
+      "entry_confirmation_wait_s": 4.815909385681152,
+      "confirmed_to_first_repair_post_s": 1.3210563659667969,
+      "first_repair_post_to_pair_match_s": 81.82552123069763,
+      "repair_submissions": 13,
+      "repair_windows": 13,
+      "stale_close_submissions": 5,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.864828834310174,
+      "fifo_acquisition_pair_gross": -1.05,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "decision_source_line": 76,
+      "opening_fill_lines": [
+        119
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "4514ccde-4555-401a-be6e-7dc9a709d96f",
+          "order_id": "0x8bea0f306426a7019b7307fd8b6b969d150b0ae2a4669bf670115af0902f4e40",
+          "quantity": 5.0,
+          "price": 0.92,
+          "source_line": 1123
+        }
+      ]
+    },
+    {
+      "market": "23:35",
+      "session_id": "a303f5bdd5e748218cf8c0cc0563628f",
+      "window": "w1",
+      "side": "NO",
+      "entry_signal": -0.5861973703521449,
+      "signal_strength": 0.5861973703521449,
+      "entry_price": 0.74,
+      "entry_quantity": 5.0,
+      "entry_post": "23:35:25.794",
+      "opening_first_matched": "23:35:27.853",
+      "opening_last_confirmed": "23:35:34.556",
+      "pair_last_matched": "23:35:41.407",
+      "pair_last_confirmed": "23:35:48.583",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 13.553563356399536,
+      "confirmed_to_confirmed_s": 14.027629375457764,
+      "signal_to_pair_confirmed_s": 22.790510654449463,
+      "post_to_pair_confirmed_s": 22.78946018218994,
+      "entry_confirmation_wait_s": 6.702711582183838,
+      "confirmed_to_first_repair_post_s": 1.4883837699890137,
+      "first_repair_post_to_pair_match_s": 5.362468004226685,
+      "repair_submissions": 2,
+      "repair_windows": 2,
+      "stale_close_submissions": 2,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.7984781712293625,
+      "fifo_acquisition_pair_gross": 0.05,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "decision_source_line": 70,
+      "opening_fill_lines": [
+        121
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "b6001070-0e06-488b-9327-45c95f98408d",
+          "order_id": "0x42c679e3c329c0f0246383b0610bb3283d2eacd66bedd54c123c34932169e4cb",
+          "quantity": 0.01,
+          "price": 0.25,
+          "source_line": 282
+        },
+        {
+          "trade_id": "638376ff-7e0c-4029-912a-6aa3c9055d6e",
+          "order_id": "0x42c679e3c329c0f0246383b0610bb3283d2eacd66bedd54c123c34932169e4cb",
+          "quantity": 2.0,
+          "price": 0.25,
+          "source_line": 265
+        },
+        {
+          "trade_id": "325c488c-6eb8-448a-96fa-d0b28af07446",
+          "order_id": "0x42c679e3c329c0f0246383b0610bb3283d2eacd66bedd54c123c34932169e4cb",
+          "quantity": 2.99,
+          "price": 0.25,
+          "source_line": 271
+        }
+      ]
+    },
+    {
+      "market": "23:40",
+      "session_id": "fd04bce31a6248cea39a541571f41f37",
+      "window": "w2",
+      "side": "NO",
+      "entry_signal": -0.9692457679695117,
+      "signal_strength": 0.9692457679695117,
+      "entry_price": 0.42,
+      "entry_quantity": 5.0,
+      "entry_post": "23:40:26.625",
+      "opening_first_matched": "23:40:28.017",
+      "opening_last_confirmed": "23:40:34.034",
+      "pair_last_matched": "23:42:53.200",
+      "pair_last_confirmed": "23:42:59.208",
+      "complete": true,
+      "unpaired_normal_quantity": 0.0,
+      "matched_to_matched_s": 145.1835696697235,
+      "confirmed_to_confirmed_s": 145.17387747764587,
+      "signal_to_pair_confirmed_s": 152.5842685699463,
+      "post_to_pair_confirmed_s": 152.583172082901,
+      "entry_confirmation_wait_s": 6.017527341842651,
+      "confirmed_to_first_repair_post_s": 2.8912882804870605,
+      "first_repair_post_to_pair_match_s": 136.2747540473938,
+      "repair_submissions": 25,
+      "repair_windows": 26,
+      "stale_close_submissions": 22,
+      "normal_close_reason": "SIGNAL_REVERSED",
+      "normal_post_to_close_s": 0.545426931232214,
+      "fifo_acquisition_pair_gross": -0.5,
+      "capital_constrained": false,
+      "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "decision_source_line": 89,
+      "opening_fill_lines": [
+        138
+      ],
+      "allocated_repair_fills": [
+        {
+          "trade_id": "5a6ac764-fbc9-4a35-9813-cb9b63763d58",
+          "order_id": "0x3c652bf9205dedae06cbba28ffa9848517b968aa438c6bf4cc5120421cd9b044",
+          "quantity": 0.01,
+          "price": 0.68,
+          "source_line": 2170
+        },
+        {
+          "trade_id": "4303d1ff-e532-4b23-9501-99b85608d268",
+          "order_id": "0x3c652bf9205dedae06cbba28ffa9848517b968aa438c6bf4cc5120421cd9b044",
+          "quantity": 4.99,
+          "price": 0.68,
+          "source_line": 2171
+        }
+      ]
+    }
+  ],
+  "extra_rebalance_inventory": [
+    {
+      "market": "23:05",
+      "side": "NO",
+      "quantity": 0.02,
+      "price": 0.63
+    }
+  ],
+  "sources": [
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "sha256": "a8b24ec224b7dae62850667daa8f667199b804e23a7336681588dfc764d20dad",
+      "bytes": 2966792
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b5d177b153e74e3392b0a9f300650f91.jsonl",
+      "sha256": "2ebaa7d18218d923b15ef89aa6e49b8f7974294dd39ae247b57f397088d3337d",
+      "bytes": 3135984
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_3d2096e512234f5aa2ef9f14ccafe5c6.jsonl",
+      "sha256": "5644db6bd009962a30e187984d8835292246602481e04c1074506a22d10624ea",
+      "bytes": 2919360
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "sha256": "8cad6806082a9228d12c3c500918cf5369c702d7fec2cc793387a90c30a414d3",
+      "bytes": 8592486
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "sha256": "6a1487e412910e688a86d245db9bac94cbbc3e5b9dc49c39f63d4b7d674eeb6f",
+      "bytes": 6826604
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "sha256": "16cc5f0b6f2732e1aecf7766b293a7cd67d8c8d70e2e08b6f5ad6c371e95d83b",
+      "bytes": 7248788
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "sha256": "442a727ff3496ab5bf16e02f7d14f546f69b3f50fdac4bc1c390566baf67a718",
+      "bytes": 3271603
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "sha256": "4d388bd33396bd2294127468e97b28ae624b5a77c584b8f4fddfa28564983586",
+      "bytes": 10147935
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "sha256": "1611c9d1fa350b0cceef2dd88973c70e61cf8610da3c6ec6fbd8dcfa603afa75",
+      "bytes": 5232237
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "sha256": "435a4f3dcd8bfbab4368480a2a344f3238747d01dfafad793114d55da287930f",
+      "bytes": 2962696
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "sha256": "e3666a2efb0e277e20e0b790ba686bfe1858ead8ef84fcac1f02702556d8185c",
+      "bytes": 3367790
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "sha256": "a6c25a5a18849bc0b2c242441a8a23f3d27219afef7bf626511bd9397821bcb0",
+      "bytes": 4951019
+    }
+  ]
+}

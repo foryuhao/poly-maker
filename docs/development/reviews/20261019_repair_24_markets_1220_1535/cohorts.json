@@ -1,0 +1,74 @@
+{
+  "old12": {
+    "markets": 12,
+    "merge_pnl": "-6.27390492000",
+    "mean": "-0.52282541000",
+    "full_pnl": "-5.618766",
+    "mean_full_pnl": "-0.4682305",
+    "first_exit_modes": {
+      "TP": 9,
+      "SL": 5
+    },
+    "repair_fill_modes": {
+      "SL": 10,
+      "TP": 4
+    },
+    "paths": {
+      "HD\u2192TP\u2192SL": 5,
+      "HD\u2192TP": 4,
+      "HD\u2192SL": 5
+    },
+    "full_pnl_bounds": [
+      "-9.952102",
+      "-0.053052"
+    ]
+  },
+  "new12": {
+    "markets": 12,
+    "merge_pnl": "-2.873871729394689831249185384",
+    "mean": "-0.2394893107828908192707654487",
+    "full_pnl": "-4.534400",
+    "mean_full_pnl": "-0.3778666666666666666666666667",
+    "first_exit_modes": {
+      "SL": 9,
+      "TP": 6
+    },
+    "repair_fill_modes": {
+      "SL": 12,
+      "TP": 3
+    },
+    "paths": {
+      "HD\u2192SL": 9,
+      "HD\u2192TP\u2192SL": 3,
+      "HD\u2192TP": 3
+    },
+    "full_pnl_bounds": [
+      "-4.534400",
+      "0.850246"
+    ]
+  },
+  "all24": {
+    "markets": 24,
+    "merge_pnl": "-9.147776649394689831249185384",
+    "mean": "-0.3811573603914454096353827243",
+    "full_pnl": "-10.153166",
+    "mean_full_pnl": "-0.4230485833333333333333333333",
+    "first_exit_modes": {
+      "TP": 15,
+      "SL": 14
+    },
+    "repair_fill_modes": {
+      "SL": 22,
+      "TP": 7
+    },
+    "paths": {
+      "HD\u2192TP\u2192SL": 8,
+      "HD\u2192TP": 7,
+      "HD\u2192SL": 14
+    },
+    "full_pnl_bounds": [
+      "-14.486502",
+      "0.797194"
+    ]
+  }
+}

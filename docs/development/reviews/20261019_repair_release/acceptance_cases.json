@@ -1,0 +1,50 @@
+{
+  "scope": "SIMULATED_VENUE_EXECUTION_ACCEPTANCE",
+  "cases": [
+    {
+      "name": "test_production_session_hd_tp_partial_late_fill_sl_next_loop_cutoffs_merge[False]",
+      "seconds": 6.935,
+      "status": "PASS"
+    },
+    {
+      "name": "test_production_session_hd_tp_partial_late_fill_sl_next_loop_cutoffs_merge[True]",
+      "seconds": 5.089,
+      "status": "PASS"
+    },
+    {
+      "name": "test_cached_execution_production_session_with_live_poll_intervals",
+      "seconds": 18.219,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_t240_cancels_without_quotes_or_sigma_and_never_reposts[0]",
+      "seconds": 0.973,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_t240_cancels_without_quotes_or_sigma_and_never_reposts[2]",
+      "seconds": 1.133,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_failure_keeps_inventory_and_closes_possible_orders[post_only_reject]",
+      "seconds": 0.491,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_failure_keeps_inventory_and_closes_possible_orders[disconnect]",
+      "seconds": 0.571,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_failure_keeps_inventory_and_closes_possible_orders[cancelled_owner]",
+      "seconds": 0.575,
+      "status": "PASS"
+    },
+    {
+      "name": "test_new_sl_crash_after_prepared_before_ack_recovers_cancel_only",
+      "seconds": 0.473,
+      "status": "PASS"
+    }
+  ]
+}

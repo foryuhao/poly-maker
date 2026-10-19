@@ -52,6 +52,24 @@ target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
 
+[rdp_sm.repair]
+policy = "hd_tp_sl_v1"
+delta_limit = "5"
+review_sec = 2.0
+cutoff_sec = 240.0
+
+[rdp_sm.repair.path]
+tp_profit_rate = "0.002"
+shock_window_sec = 2.0
+shock_max_age_sec = 3.0
+shock_min_ticks = 2
+shock_z = 1.5
+drawdown_per_share = "0.06"
+# Execution acceptance for supervised live testing; this is not EV validation.
+calibration_status = "REPLAY_VALIDATED"
+parameter_reference = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
+validation_reference = "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+
 [rdp_sm.obi]
 # Historical field name: individual slow-request threshold; p95 is diagnostic only.
 max_rtt_p95_ms = 500.0

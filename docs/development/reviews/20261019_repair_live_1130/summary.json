@@ -1,0 +1,154 @@
+{
+  "market": "btc-updown-5m-1792380600",
+  "session_id": "098fdf15492242f2b580115e9ffee8fd",
+  "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_098fdf15492242f2b580115e9ffee8fd.jsonl",
+  "source_sha256": "9213c895ffae841e3c8de8d6e8f32635e9d5ac35f8313001a348028e09d0fd67",
+  "cache_source": "/home/ubuntu/poly-maker-data/research_outputs/periodic_sync/098fdf15492242f2b580115e9ffee8fd/snapshots.jsonl",
+  "cache_sha256": "53abd7daf3e94bd23b06fc00f9a50ac4e933a34861134cf040b99991fe99d617",
+  "confirmed_unique_fills": [
+    {
+      "token_id": "42348399348799878393392839307733968591192225912104305917266114866402804264911",
+      "our_side": "BUY",
+      "price": 0.65,
+      "size": 5.0,
+      "trade_id": "307397e5-2dfa-49dd-83d6-77c76e8359f9",
+      "status": "CONFIRMED",
+      "ts": 0.0,
+      "maker_order_id": "0x2ce6cb6294cf6000f8936fc7d26eefc0d78251ccc36969adaaa19a51cef6f1e6",
+      "market_id": "0x9cb36017752866d188d17bfd020131467a4f576fefde9dacc9df2707cefbb071"
+    },
+    {
+      "token_id": "3573861683268669266550693388521934737203364270192159161058928368866555316918",
+      "our_side": "BUY",
+      "price": 0.6400000475687041,
+      "size": 4.204445,
+      "trade_id": "1cd43b17-adb9-4bca-8f55-7a38915dfc40",
+      "status": "CONFIRMED",
+      "ts": 0.0,
+      "maker_order_id": "0xd203647b0579d8501d9375a484aee3e81501de1169bf35c98ad1bc338838e06a",
+      "market_id": "0x9cb36017752866d188d17bfd020131467a4f576fefde9dacc9df2707cefbb071"
+    },
+    {
+      "token_id": "3573861683268669266550693388521934737203364270192159161058928368866555316918",
+      "our_side": "BUY",
+      "price": 0.64,
+      "size": 0.79,
+      "trade_id": "9ed81d8d-a14c-439c-a429-56dc258f3b2d",
+      "status": "CONFIRMED",
+      "ts": 0.0,
+      "maker_order_id": "0xd203647b0579d8501d9375a484aee3e81501de1169bf35c98ad1bc338838e06a",
+      "market_id": "0x9cb36017752866d188d17bfd020131467a4f576fefde9dacc9df2707cefbb071"
+    }
+  ],
+  "after_pairing_account_check_count": 233,
+  "first_check": {
+    "journal_line": 1124,
+    "elapsed_wall": 66.69943690299988,
+    "cache_version": 94,
+    "positions_read_id": "0129625eabbf4f089ad866c9ffec27ec",
+    "inventory": {
+      "YES": {
+        "expected": "4.994445",
+        "actual": "4.9944",
+        "difference": "-0.000045"
+      },
+      "NO": {
+        "expected": "5.0",
+        "actual": "5.0",
+        "difference": "0.0"
+      }
+    }
+  },
+  "last_check": {
+    "journal_line": 2405,
+    "elapsed_wall": 299.898850440979,
+    "cache_version": 444,
+    "positions_read_id": "c081f7d444724cf8b0d946eb29970af7",
+    "inventory": {
+      "YES": {
+        "expected": "4.994445",
+        "actual": "4.9944",
+        "difference": "-0.000045"
+      },
+      "NO": {
+        "expected": "5.0",
+        "actual": "5.0",
+        "difference": "0.0"
+      }
+    }
+  },
+  "all_checks_same_difference": true,
+  "comparison_tolerance_shares": "0.000001 (exclusive)",
+  "result": {
+    "market_id": "0x9cb36017752866d188d17bfd020131467a4f576fefde9dacc9df2707cefbb071",
+    "session_id": "098fdf15492242f2b580115e9ffee8fd",
+    "start_time": 1792380615.7141376,
+    "stop_time": 1792380900.8968515,
+    "stop_reason": "MARKET_CUTOFF",
+    "total_windows": 6,
+    "normal_windows": 3,
+    "rebalance_windows": 3,
+    "repair_windows": 3,
+    "active_cycles": 2,
+    "confirmed_fills": 3,
+    "merged_pairs": 0.0,
+    "recovered_collateral_usdc": 0.0,
+    "blocked_windows": 0,
+    "confirmed_yes": 4.994445,
+    "confirmed_no": 5.0,
+    "delta": -0.005555,
+    "completed_pairs": 4.994445,
+    "residual_shares": 0.005555,
+    "average_yes_cost": 0.6400000400444894,
+    "average_no_cost": 0.65,
+    "realized_merge_pnl": 0.0,
+    "unmerged_pair_pnl_estimate": -1.4483892500000002,
+    "theoretical_pair_pnl": -1.4483892500000002,
+    "final_close_barrier": "SAFE_TO_CONTINUE",
+    "execution_status": "COMPLETED",
+    "live_authority": "NOT_VERIFIED_FOR_LIVE",
+    "skipped_quotes": [],
+    "stop_elapsed_s": 300.0670305257663,
+    "sizing_report": {
+      "final_target_delta": 0.0,
+      "final_actual_delta": -0.005555,
+      "intentional_residual_side": "NONE",
+      "intentional_residual_shares": 0,
+      "unintentional_residual_shares": 0.005555,
+      "intentional_residual_pnl": "UNKNOWN",
+      "unintentional_residual_pnl": "UNKNOWN",
+      "pair_pnl": "UNKNOWN",
+      "trading_pnl_before_rebate": "UNKNOWN",
+      "actual_maker_rebate": "UNKNOWN",
+      "maker_filled_shares": 9.994445,
+      "maker_fill_count": 3,
+      "safe_exit_status": "SAFE_TO_CONTINUE",
+      "final_winning_outcome": "UNKNOWN",
+      "favorite_prediction_correct": "UNKNOWN",
+      "intentional_residual_evidence": {}
+    },
+    "repair_readiness": {
+      "policy": "hd_tp_sl_v1",
+      "selected_policy": "hd_tp_sl_v1",
+      "parameters_complete": true,
+      "ready_for_live": true,
+      "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+      "parameters": {
+        "tp_profit_rate": "0.002",
+        "shock_window_sec": 2.0,
+        "shock_max_age_sec": 3.0,
+        "shock_min_ticks": 2,
+        "shock_z": 1.5,
+        "drawdown_per_share": "0.06",
+        "calibration_status": "REPLAY_VALIDATED",
+        "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      },
+      "calibration_status": "REPLAY_VALIDATED",
+      "reasons": [],
+      "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+    }
+  },
+  "cache_health": null,
+  "trading_code_or_config_modified": false
+}

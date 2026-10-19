@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "tp-sl-profit-stages",
+  "title": "5 轮 TP→SL：峰值、触发与成交",
+  "chart": {
+    "type": "bar",
+    "x": "阶段",
+    "y": "USDC",
+    "yLabel": "USDC",
+    "showXAxisLabel": false
+  },
+  "rows": [
+    {
+      "阶段": "已记录峰值合计",
+      "USDC": 0.8507498
+    },
+    {
+      "阶段": "SL条件点浮盈合计",
+      "USDC": -0.78985004
+    },
+    {
+      "阶段": "最终配对收益",
+      "USDC": -2.17293344
+    }
+  ],
+  "source": {
+    "label": "2026-10-19 12:20–13:20 的固定 12 场执行日志；5 轮 TP→SL。",
+    "files": [
+      {
+        "label": "episodes.csv"
+      },
+      {
+        "label": "price_paths.json"
+      },
+      {
+        "label": "source_manifest.json"
+      }
+    ],
+    "caveats": [
+      "浮盈峰值是首次TP之后、首次补仓成交被本地观察到之前的原始腿mid估值峰值，不能当可成交收益。",
+      "最终收益只计配对部分，三轮反向残仓尚未计入最终结算；Maker价差也可能使配对收益高于mid浮盈峰值。",
+      "峰值、触发估值和配对收益是同一组5轮交易的诊断比较，不是可恢复利润或反事实回测。"
+    ]
+  },
+  "theme": "codex-classic"
+}

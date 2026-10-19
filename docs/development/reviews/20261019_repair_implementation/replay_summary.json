@@ -1,0 +1,32 @@
+{
+  "scope": "PRICE_POLICY_ONLY; NO_ASSUMED_MAKER_FILLS_OR_SESSION_PAYOFF",
+  "parameters": {
+    "tp_profit_rate": "0.002",
+    "shock_window_sec": 2.0,
+    "shock_max_age_sec": 3.0,
+    "shock_min_ticks": 2,
+    "shock_z": 1.5,
+    "drawdown_per_share": "0.06",
+    "calibration_status": "PARAMETERS_CONFIRMED",
+    "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+    "validation_reference": null
+  },
+  "markets": 47,
+  "cases": 704,
+  "research_comparison_differences": 0,
+  "known_case": {
+    "first_tp_decision": 1,
+    "first_sl_decision": 11,
+    "z": 1.6418829792458152
+  },
+  "counts": {
+    "SL_FIRST": 228,
+    "TP_FIRST": 445,
+    "CENSORED_FIRST": 31
+  },
+  "source_sha256": {
+    "path_probe_results.csv": "ef09a8df86b86174dae1c85f61c02e69cbd11f7e3cd40b73c1ed10a723aff9e8",
+    "raw_manifest.json": "c9a581bbdc2332b0e0b366a0b8c9417abe69daf5c06c669907c9aa41c5f02e11"
+  },
+  "ready_for_live": false
+}

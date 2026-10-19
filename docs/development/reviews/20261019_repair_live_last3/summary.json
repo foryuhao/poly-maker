@@ -1,0 +1,423 @@
+[
+  {
+    "session_id": "053c1d23a60c49dca6fc93798c476592",
+    "market": "btc-updown-5m-1792377300",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_053c1d23a60c49dca6fc93798c476592.jsonl",
+    "sha256": "f3f84061338e54f3271f28bbf5f42c2c1a3cf6a7b60b976f1409badf00841864",
+    "time_basis": "Journal wall time minus market start; trade times are local observations.",
+    "actual_fill_cost": "0",
+    "unique_fills": [],
+    "initial_placement_outcomes": {
+      "ACK": 21,
+      "REJECTED": 1
+    },
+    "http_posts": 22,
+    "result": {
+      "market_id": "0x50470ca45f4c9baf89a1de28df6fcdfb27edd7b0a0c67a3352ca6c838937803e",
+      "session_id": "053c1d23a60c49dca6fc93798c476592",
+      "start_time": 1792377315.5787594,
+      "stop_time": 1792377600.8913298,
+      "stop_reason": "MARKET_CUTOFF",
+      "total_windows": 22,
+      "normal_windows": 22,
+      "rebalance_windows": 0,
+      "repair_windows": 0,
+      "active_cycles": 0,
+      "confirmed_fills": 0,
+      "merged_pairs": 0.0,
+      "recovered_collateral_usdc": 0.0,
+      "blocked_windows": 0,
+      "confirmed_yes": 0.0,
+      "confirmed_no": 0.0,
+      "delta": 0.0,
+      "completed_pairs": 0.0,
+      "residual_shares": 0.0,
+      "average_yes_cost": null,
+      "average_no_cost": null,
+      "realized_merge_pnl": 0.0,
+      "unmerged_pair_pnl_estimate": 0.0,
+      "theoretical_pair_pnl": 0.0,
+      "final_close_barrier": "SAFE_TO_CONTINUE",
+      "execution_status": "COMPLETED",
+      "live_authority": "NOT_VERIFIED_FOR_LIVE",
+      "skipped_quotes": [],
+      "stop_elapsed_s": 299.93398883985355,
+      "sizing_report": {
+        "final_target_delta": 0.0,
+        "final_actual_delta": 0.0,
+        "intentional_residual_side": "NONE",
+        "intentional_residual_shares": 0,
+        "unintentional_residual_shares": 0.0,
+        "intentional_residual_pnl": "UNKNOWN",
+        "unintentional_residual_pnl": "UNKNOWN",
+        "pair_pnl": "UNKNOWN",
+        "trading_pnl_before_rebate": "UNKNOWN",
+        "actual_maker_rebate": "UNKNOWN",
+        "maker_filled_shares": 0.0,
+        "maker_fill_count": 0,
+        "safe_exit_status": "SAFE_TO_CONTINUE",
+        "final_winning_outcome": "UNKNOWN",
+        "favorite_prediction_correct": "UNKNOWN",
+        "intentional_residual_evidence": {}
+      },
+      "repair_readiness": {
+        "policy": "hd_tp_sl_v1",
+        "selected_policy": "hd_tp_sl_v1",
+        "parameters_complete": true,
+        "ready_for_live": true,
+        "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+        "parameters": {
+          "tp_profit_rate": "0.002",
+          "shock_window_sec": 2.0,
+          "shock_max_age_sec": 3.0,
+          "shock_min_ticks": 2,
+          "shock_z": 1.5,
+          "drawdown_per_share": "0.06",
+          "calibration_status": "REPLAY_VALIDATED",
+          "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+          "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+        },
+        "calibration_status": "REPLAY_VALIDATED",
+        "reasons": [],
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      }
+    },
+    "cache_health": {
+      "failure": null,
+      "observer_fatal_type": null,
+      "dropped_events": 0,
+      "io_drained": true
+    },
+    "cache_source_failures": []
+  },
+  {
+    "session_id": "5b44b7731b3640519f7b66c81b62f416",
+    "market": "btc-updown-5m-1792377600",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5b44b7731b3640519f7b66c81b62f416.jsonl",
+    "sha256": "6ccd94fc149ed9faa9a904e4e4b559f2f724ba2816b18d87b380d5cf208f17fd",
+    "time_basis": "Journal wall time minus market start; trade times are local observations.",
+    "actual_fill_cost": "10.000",
+    "unique_fills": [
+      {
+        "token_id": "115282835726042079913269813743470782343342562511778070546088442487620521883382",
+        "our_side": "BUY",
+        "price": 0.68,
+        "size": 5.0,
+        "trade_id": "af4f899a-16ce-43be-a718-57cfaef92716",
+        "status": "CONFIRMED",
+        "ts": 0.0,
+        "maker_order_id": "0x2d212c8a6d2ef19ea59f6a9222995dfcc8e27bdc774c00878fa23b98b386a206",
+        "market_id": "0x7a0d56cb9f0e9ab50b825581f6ef1cde2a7ba487820428a554c85fd20abf2fb2",
+        "first_observed_elapsed": 33.307414054870605,
+        "status_history": [
+          [
+            33.307414054870605,
+            "MATCHED"
+          ],
+          [
+            35.296210527420044,
+            "MINED"
+          ],
+          [
+            42.875993490219116,
+            "CONFIRMED"
+          ]
+        ]
+      },
+      {
+        "token_id": "111419248383586386105202336060513808783047681590067744394325874718178646993681",
+        "our_side": "BUY",
+        "price": 0.38,
+        "size": 5.0,
+        "trade_id": "3207d49a-d4ec-41a6-b025-f01a39cad43a",
+        "status": "CONFIRMED",
+        "ts": 0.0,
+        "maker_order_id": "0x93a7bfe000cf3df669cee91f6dcf35e96f8a77d4d5ff6f35eee3aff56eff18b9",
+        "market_id": "0x7a0d56cb9f0e9ab50b825581f6ef1cde2a7ba487820428a554c85fd20abf2fb2",
+        "first_observed_elapsed": 52.87354135513306,
+        "status_history": [
+          [
+            52.87354135513306,
+            "MATCHED"
+          ],
+          [
+            54.89043641090393,
+            "MINED"
+          ],
+          [
+            59.882177114486694,
+            "CONFIRMED"
+          ]
+        ]
+      },
+      {
+        "token_id": "111419248383586386105202336060513808783047681590067744394325874718178646993681",
+        "our_side": "BUY",
+        "price": 0.57,
+        "size": 5.0,
+        "trade_id": "1b36ddb9-51d7-4847-9d16-8d4c15c75cef",
+        "status": "CONFIRMED",
+        "ts": 0.0,
+        "maker_order_id": "0xba24bc2cbce51cb01a1ca57f2851f7dcb8f8feefad5a9d4f530d6bdedf3b4610",
+        "market_id": "0x7a0d56cb9f0e9ab50b825581f6ef1cde2a7ba487820428a554c85fd20abf2fb2",
+        "first_observed_elapsed": 111.93918466567993,
+        "status_history": [
+          [
+            111.93918466567993,
+            "MATCHED"
+          ],
+          [
+            114.96855521202087,
+            "MINED"
+          ],
+          [
+            120.27285289764404,
+            "CONFIRMED"
+          ]
+        ]
+      },
+      {
+        "token_id": "115282835726042079913269813743470782343342562511778070546088442487620521883382",
+        "our_side": "BUY",
+        "price": 0.37,
+        "size": 5.0,
+        "trade_id": "af6f1671-7306-46f5-b598-77e617f4b0f1",
+        "status": "CONFIRMED",
+        "ts": 0.0,
+        "maker_order_id": "0xe17b3ff814bad1d7725523c8aaa87c87acbc54994dea392904079b6854666c97",
+        "market_id": "0x7a0d56cb9f0e9ab50b825581f6ef1cde2a7ba487820428a554c85fd20abf2fb2",
+        "first_observed_elapsed": 124.18467712402344,
+        "status_history": [
+          [
+            124.18467712402344,
+            "MATCHED"
+          ],
+          [
+            125.95917010307312,
+            "MINED"
+          ],
+          [
+            131.53168439865112,
+            "CONFIRMED"
+          ]
+        ]
+      }
+    ],
+    "initial_placement_outcomes": {
+      "ACK": 19,
+      "UNKNOWN": 1
+    },
+    "http_posts": 20,
+    "result": {
+      "market_id": "0x7a0d56cb9f0e9ab50b825581f6ef1cde2a7ba487820428a554c85fd20abf2fb2",
+      "session_id": "5b44b7731b3640519f7b66c81b62f416",
+      "start_time": 1792377615.7342901,
+      "stop_time": 1792377901.0624769,
+      "stop_reason": "MARKET_CUTOFF",
+      "total_windows": 20,
+      "normal_windows": 16,
+      "rebalance_windows": 4,
+      "repair_windows": 4,
+      "active_cycles": 4,
+      "confirmed_fills": 4,
+      "merged_pairs": 10.0,
+      "recovered_collateral_usdc": 10.0,
+      "blocked_windows": 0,
+      "confirmed_yes": 0.0,
+      "confirmed_no": 0.0,
+      "delta": 0.0,
+      "completed_pairs": 10.0,
+      "residual_shares": 0.0,
+      "average_yes_cost": null,
+      "average_no_cost": null,
+      "realized_merge_pnl": 0.0,
+      "unmerged_pair_pnl_estimate": 0.0,
+      "theoretical_pair_pnl": 0.0,
+      "final_close_barrier": "SAFE_TO_CONTINUE",
+      "execution_status": "COMPLETED",
+      "live_authority": "NOT_VERIFIED_FOR_LIVE",
+      "skipped_quotes": [],
+      "stop_elapsed_s": 300.4746286342852,
+      "sizing_report": {
+        "final_target_delta": 0.0,
+        "final_actual_delta": 0.0,
+        "intentional_residual_side": "NONE",
+        "intentional_residual_shares": 0,
+        "unintentional_residual_shares": 0.0,
+        "intentional_residual_pnl": "UNKNOWN",
+        "unintentional_residual_pnl": "UNKNOWN",
+        "pair_pnl": 0.0,
+        "trading_pnl_before_rebate": "UNKNOWN",
+        "actual_maker_rebate": "UNKNOWN",
+        "maker_filled_shares": 20.0,
+        "maker_fill_count": 4,
+        "safe_exit_status": "SAFE_TO_CONTINUE",
+        "final_winning_outcome": "UNKNOWN",
+        "favorite_prediction_correct": "UNKNOWN",
+        "intentional_residual_evidence": {}
+      },
+      "repair_readiness": {
+        "policy": "hd_tp_sl_v1",
+        "selected_policy": "hd_tp_sl_v1",
+        "parameters_complete": true,
+        "ready_for_live": true,
+        "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+        "parameters": {
+          "tp_profit_rate": "0.002",
+          "shock_window_sec": 2.0,
+          "shock_max_age_sec": 3.0,
+          "shock_min_ticks": 2,
+          "shock_z": 1.5,
+          "drawdown_per_share": "0.06",
+          "calibration_status": "REPLAY_VALIDATED",
+          "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+          "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+        },
+        "calibration_status": "REPLAY_VALIDATED",
+        "reasons": [],
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      }
+    },
+    "cache_health": {
+      "failure": null,
+      "observer_fatal_type": null,
+      "dropped_events": 0,
+      "io_drained": true
+    },
+    "cache_source_failures": [
+      {
+        "source": "order",
+        "error_type": "ValueError",
+        "count": 1
+      },
+      {
+        "source": "open_orders",
+        "error_type": "ReadTimeout",
+        "count": 1
+      }
+    ]
+  },
+  {
+    "session_id": "cdfc165b84be4cfcb9154efe427e8129",
+    "market": "btc-updown-5m-1792377900",
+    "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cdfc165b84be4cfcb9154efe427e8129.jsonl",
+    "sha256": "755f56be78420c97d96bee0f5aedc44e55167007ba3756db9084b2a3d8f7730f",
+    "time_basis": "Journal wall time minus market start; trade times are local observations.",
+    "actual_fill_cost": "1.950",
+    "unique_fills": [
+      {
+        "token_id": "88683682472996892611528631386425629178876047022764075758101495556732116340704",
+        "our_side": "BUY",
+        "price": 0.39,
+        "size": 5.0,
+        "trade_id": "38658579-ff90-4356-9778-93bdc8668345",
+        "status": "CONFIRMED",
+        "ts": 0.0,
+        "maker_order_id": "0x61fb09e2bc5a5fd6ac7f9cba588ce65a9e2ca569ae13175e37a722fff2fee4f0",
+        "market_id": "0x80b37e35f130acea87ab8dd1834d4c689e7dec6d07c5787dc7a88dd14880cef6",
+        "first_observed_elapsed": 39.71567940711975,
+        "status_history": [
+          [
+            39.71567940711975,
+            "MATCHED"
+          ],
+          [
+            39.71574115753174,
+            "MINED"
+          ],
+          [
+            45.733248233795166,
+            "CONFIRMED"
+          ]
+        ]
+      }
+    ],
+    "initial_placement_outcomes": {
+      "ACK": 5
+    },
+    "http_posts": 5,
+    "result": {
+      "market_id": "0x80b37e35f130acea87ab8dd1834d4c689e7dec6d07c5787dc7a88dd14880cef6",
+      "session_id": "cdfc165b84be4cfcb9154efe427e8129",
+      "start_time": 1792377915.81262,
+      "stop_time": 1792377951.5629375,
+      "stop_reason": "QUOTE_WOULD_TAKE",
+      "total_windows": 5,
+      "normal_windows": 5,
+      "rebalance_windows": 0,
+      "repair_windows": 0,
+      "active_cycles": 1,
+      "confirmed_fills": 1,
+      "merged_pairs": 0.0,
+      "recovered_collateral_usdc": 0.0,
+      "blocked_windows": 0,
+      "confirmed_yes": 0.0,
+      "confirmed_no": 5.0,
+      "delta": -5.0,
+      "completed_pairs": 0.0,
+      "residual_shares": 5.0,
+      "average_yes_cost": null,
+      "average_no_cost": 0.39,
+      "realized_merge_pnl": 0.0,
+      "unmerged_pair_pnl_estimate": 0.0,
+      "theoretical_pair_pnl": 0.0,
+      "final_close_barrier": "SAFE_TO_CONTINUE",
+      "execution_status": "BLOCKED",
+      "live_authority": "NOT_VERIFIED_FOR_LIVE",
+      "skipped_quotes": [],
+      "stop_elapsed_s": 50.990854115225375,
+      "sizing_report": {
+        "final_target_delta": 0.0,
+        "final_actual_delta": -5.0,
+        "intentional_residual_side": "NONE",
+        "intentional_residual_shares": 0,
+        "unintentional_residual_shares": 5.0,
+        "intentional_residual_pnl": "UNKNOWN",
+        "unintentional_residual_pnl": "UNKNOWN",
+        "pair_pnl": "UNKNOWN",
+        "trading_pnl_before_rebate": "UNKNOWN",
+        "actual_maker_rebate": "UNKNOWN",
+        "maker_filled_shares": 5.0,
+        "maker_fill_count": 1,
+        "safe_exit_status": "SAFE_TO_CONTINUE",
+        "final_winning_outcome": "UNKNOWN",
+        "favorite_prediction_correct": "UNKNOWN",
+        "intentional_residual_evidence": {}
+      },
+      "repair_readiness": {
+        "policy": "hd_tp_sl_v1",
+        "selected_policy": "hd_tp_sl_v1",
+        "parameters_complete": true,
+        "ready_for_live": true,
+        "scope": "PARAMETERS_AND_DECLARED_REPLAY_VALIDATION",
+        "parameters": {
+          "tp_profit_rate": "0.002",
+          "shock_window_sec": 2.0,
+          "shock_max_age_sec": 3.0,
+          "shock_min_ticks": 2,
+          "shock_z": 1.5,
+          "drawdown_per_share": "0.06",
+          "calibration_status": "REPLAY_VALIDATED",
+          "parameter_reference": "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md",
+          "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+        },
+        "calibration_status": "REPLAY_VALIDATED",
+        "reasons": [],
+        "validation_reference": "docs/development/reviews/20261019_repair_queue_followup/validation.json"
+      }
+    },
+    "cache_health": {
+      "failure": null,
+      "observer_fatal_type": null,
+      "dropped_events": 0,
+      "io_drained": true
+    },
+    "cache_source_failures": [
+      {
+        "source": "trades",
+        "error_type": "ValueError",
+        "count": 1
+      }
+    ]
+  }
+]

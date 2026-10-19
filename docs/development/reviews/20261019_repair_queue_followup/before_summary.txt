@@ -1,0 +1,91 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_______ test_position_proven_confirmation_preserves_same_tp_queue[REST] ________
+/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:83: in test_position_proven_confirmation_preserves_same_tp_queue
+    assert observations["queue_status"] == "LIVE"
+E   AssertionError: assert 'CANCELED' == 'LIVE'
+E     
+E     - LIVE
+E     + CANCELED
+----------------------------- Captured stdout call -----------------------------
+2026-10-19 03:42:38 [info     ] order_reconcile_started        order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] fill                           pos=5.0 price=0.3 side=BUY size=5.0 token=1
+2026-10-19 03:42:38 [info     ] owned_maker_fill_applied       order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_fill_recovered order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_complete       order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:38 [info     ] order_match_checksum           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=CANCELED tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=MINED trade_id=opening
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=MINED trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_started        order_id=0x12d9891d21370b385a9eccc55d72b7c4635e0ad87f0244e2f0d22a81bf2f3ebc
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=MINED trade_id=opening
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_complete       order_id=0x12d9891d21370b385a9eccc55d72b7c4635e0ad87f0244e2f0d22a81bf2f3ebc tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_started        order_id=0x12d9891d21370b385a9eccc55d72b7c4635e0ad87f0244e2f0d22a81bf2f3ebc
+2026-10-19 03:42:38 [info     ] order_reconcile_complete       order_id=0x12d9891d21370b385a9eccc55d72b7c4635e0ad87f0244e2f0d22a81bf2f3ebc tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:42:38 [info     ] order_match_checksum           order_id=0x12d9891d21370b385a9eccc55d72b7c4635e0ad87f0244e2f0d22a81bf2f3ebc status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:42:38 [info     ] order_reconcile_started        order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283
+2026-10-19 03:42:38 [info     ] owned_maker_fill_seen          order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:38 [info     ] trade_status_updated           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:38 [info     ] order_reconcile_complete       order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:38 [info     ] order_match_checksum           order_id=0x3f0c2170a20217c45ac81bf4786d1a8b750f252fb76f45014db8b814b74d6283 status=CANCELED tracked_qty=5.0 venue_qty=5.0
+________ test_position_proven_confirmation_preserves_same_tp_queue[WS] _________
+/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:83: in test_position_proven_confirmation_preserves_same_tp_queue
+    assert observations["queue_status"] == "LIVE"
+E   AssertionError: assert 'CANCELED' == 'LIVE'
+E     
+E     - LIVE
+E     + CANCELED
+----------------------------- Captured stdout call -----------------------------
+2026-10-19 03:42:39 [info     ] order_reconcile_started        order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] fill                           pos=5.0 price=0.3 side=BUY size=5.0 token=1
+2026-10-19 03:42:39 [info     ] owned_maker_fill_applied       order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MATCHED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] order_reconcile_fill_recovered order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] order_reconcile_complete       order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:39 [info     ] order_match_checksum           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CANCELED tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=MINED trade_id=opening
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=MINED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=MINED trade_id=opening
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=WS status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:39 [info     ] order_reconcile_started        order_id=0x26ba5d2f2568877345413ac4225bbdae2e4a44750e7b842ad760e6a20a8ffd38
+2026-10-19 03:42:39 [info     ] order_reconcile_complete       order_id=0x26ba5d2f2568877345413ac4225bbdae2e4a44750e7b842ad760e6a20a8ffd38 tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:42:39 [info     ] order_match_checksum           order_id=0x26ba5d2f2568877345413ac4225bbdae2e4a44750e7b842ad760e6a20a8ffd38 status=CANCELED tracked_qty=0.0 venue_qty=0.0
+2026-10-19 03:42:39 [info     ] order_reconcile_started        order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029
+2026-10-19 03:42:39 [info     ] owned_maker_fill_seen          order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 price=0.3 qty=5.0 side=BUY source=REST status=CONFIRMED token=1 trade_id=opening
+2026-10-19 03:42:39 [info     ] trade_status_updated           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CONFIRMED trade_id=opening
+2026-10-19 03:42:39 [info     ] order_reconcile_complete       order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 tracked_qty=5.0 venue_qty=5.0
+2026-10-19 03:42:39 [info     ] order_match_checksum           order_id=0xa818d280ae53f31d4b84cfd7667cb3bd10e0c9c6284a3cdbfb7915ac8b6c6029 status=CANCELED tracked_qty=5.0 venue_qty=5.0
+____ test_identity_bound_canceled_post_allows_fresh_account_without_timeout ____
+/home/ubuntu/poly-maker/tests/test_repair_queue_followup.py:149: in test_identity_bound_canceled_post_allows_fresh_account_without_timeout
+    assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+E   AssertionError: SYNC_CACHE_NOT_READY
+E   assert 'BLOCKED' == 'SAFE_TO_CONTINUE'
+E     
+E     - SAFE_TO_CONTINUE
+E     + BLOCKED
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345
+  /home/ubuntu/poly-maker/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_repair_queue_followup.py::test_position_proven_confirmation_preserves_same_tp_queue[REST]
+FAILED tests/test_repair_queue_followup.py::test_position_proven_confirmation_preserves_same_tp_queue[WS]
+FAILED tests/test_repair_queue_followup.py::test_identity_bound_canceled_post_allows_fresh_account_without_timeout
+3 failed, 9 deselected, 1 warning in 8.17s

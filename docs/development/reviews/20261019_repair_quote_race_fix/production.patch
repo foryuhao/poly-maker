@@ -1,0 +1,37 @@
+--- before/rdp_sm_path_repair.py
++++ after/rdp_sm_path_repair.py
+@@ -9,6 +9,7 @@
+ 
+ from polymaker.domain import Side, TradeState
+ from polymaker.execution.filltruth import reconcile_owned_order
++from polymaker.rdp_sm import _Issue
+ from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, maker_buy_size
+ from polymaker.rdp_sm_repair import RepairController
+ from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
+@@ -342,7 +343,25 @@
+             await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+             return None
+         await self.executor.journal.flush()
+-        slot = await self.lifecycle.prepare(self, yes, no, window_id)
++        try:
++            slot = await self.lifecycle.prepare(self, yes, no, window_id)
++        except _Issue as exc:
++            if str(exc) != "QUOTE_WOULD_TAKE":
++                raise
++            # Preparation rereads the book after the decision's WAL flush.
++            # No POST has started here: discard only this stale candidate and
++            # recompute promptly, keeping the episode and its latched mode.
++            self.executor.record("sm_repair_quote_invalidated", {
++                "window_id": window_id, "policy": "hd_tp_sl_v1",
++                "reason": str(exc), "mode": self.plan["mode"],
++                "side": self.plan["side"], "price": self.plan["price"],
++                "quantity": self.plan["quantity"], "post_started": False,
++                "retry": "RECOMPUTE_ON_NEXT_REVIEW",
++            })
++            self.plan = None
++            self.next_review = -math.inf
++            self.lifecycle.cached_slot = None
++            return None
+         return await self.lifecycle.activate(self, slot) if slot else None
+ 
+     def candidates(self, snapshot, yes, no, window_id):

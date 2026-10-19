@@ -1,0 +1,982 @@
+{
+  "status": "SOURCE_AUDIT_NOT_PARAMETER_CALIBRATION",
+  "timezone": "Asia/Shanghai",
+  "scope": "Frozen 12-market 2026-10-17 cohort plus local journals joined to all 47 existing shadow sessions",
+  "local_catalog_sessions": 94,
+  "catalog_errors": [
+    {
+      "file": "rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c1838b60f21b425394854e28fe85414b.jsonl",
+      "error": "StopIteration"
+    }
+  ],
+  "shadow": {
+    "sessions": 47,
+    "local_journal_matches": 19,
+    "fixed_normal_cohort_matches": 0,
+    "snapshot_rows": 14100,
+    "expected_slots": 14100,
+    "valid_probability_rows": 10054,
+    "missed_rows": 541,
+    "reported_dropped_events": 0,
+    "reported_writer_errors": 0,
+    "undrained_writers": 0
+  },
+  "cohorts": {
+    "fixed_normal_20261017": {
+      "sessions": 12,
+      "market_start_min": "2026-10-17T22:45:00+08:00",
+      "market_start_max": "2026-10-17T23:40:00+08:00",
+      "orders": 213,
+      "orders_by_phase": {
+        "NORMAL": 132,
+        "REBALANCE": 81
+      },
+      "placement_outcomes": {
+        "ACK": 190,
+        "UNKNOWN": 11,
+        "REJECTED": 8,
+        "ABORTED": 4
+      },
+      "placement_results_including_no_id": 213,
+      "placement_results_by_outcome": {
+        "ACK": 190,
+        "UNKNOWN": 11,
+        "REJECTED": 8,
+        "ABORTED": 4
+      },
+      "submitted_placement_results": 209,
+      "submitted_repair_placement_results": 80,
+      "repair_submitted_with_cancel_request": 70,
+      "repair_submitted_without_cancel_observation": 10,
+      "rejected_placements_without_id": 0,
+      "no_id_rejections_with_mixed_batch_response": 0,
+      "confirmed_fills": 33,
+      "confirmed_repair_fills": 20,
+      "repair_order_sizes": [
+        5.0
+      ],
+      "repair_orders_with_confirmed_fill": 14,
+      "repair_cancel_request_age_s": {
+        "n": 70,
+        "min": 0.23109674453735352,
+        "median": 1.0393271446228027,
+        "p90": 3.003621816635132,
+        "max": 3.007023334503174
+      },
+      "repair_cancel_after_20s_count": 0,
+      "repair_orders_without_cancel_observation": 11,
+      "repair_orders_with_decision_book": 81,
+      "repair_match_observed_age_s": {
+        "n": 14,
+        "min": 1.1087639331817627,
+        "median": 2.095864415168762,
+        "p90": 3.0064613819122314,
+        "max": 3.2611286640167236
+      },
+      "positive_exchange_match_time_fills": 0,
+      "fills_observed_after_cancel_request": 28,
+      "fills_with_valid_asof_snapshot_within_1_5s": 0,
+      "client_request_duration_s": {
+        "POST": {
+          "n": 209,
+          "min": 0.19338115910068154,
+          "median": 0.23772518895566463,
+          "p90": 0.5933952243067324,
+          "max": 1.534934276714921
+        },
+        "DELETE": {
+          "n": 1080,
+          "min": 0.19007441541180015,
+          "median": 0.22182507161051035,
+          "p90": 0.3631419721059501,
+          "max": 2.315667847171426
+        }
+      },
+      "cancel_ack_duration_s": {
+        "n": 200,
+        "min": 0.19897026661783457,
+        "median": 0.23894969606772065,
+        "p90": 0.5354298842139542,
+        "max": 2.3153301449492574
+      },
+      "terminal_accounting": {
+        "markets_with_recorded_winner": 0,
+        "all_buy_cost_pnl_floor_usdc": -7.210200000000001,
+        "residual_shares": 0.019999999999999574,
+        "actual_pnl_outcome_bounds_usdc": [
+          -7.210200000000001,
+          -7.190200000000002
+        ],
+        "repair_increment_outcome_bounds_usdc": [
+          -28.2602,
+          16.7598
+        ],
+        "max_normal_cost_per_market_usdc": 8.7
+      }
+    },
+    "older_shadow_joined": {
+      "sessions": 19,
+      "market_start_min": "2026-10-15T15:45:00+08:00",
+      "market_start_max": "2026-10-15T23:05:00+08:00",
+      "orders": 172,
+      "orders_by_phase": {
+        "NORMAL": 106,
+        "REBALANCE": 66
+      },
+      "placement_outcomes": {
+        "ACK": 172
+      },
+      "placement_results_including_no_id": 208,
+      "placement_results_by_outcome": {
+        "ACK": 172,
+        "REJECTED": 36
+      },
+      "submitted_placement_results": 208,
+      "submitted_repair_placement_results": 86,
+      "repair_submitted_with_cancel_request": 66,
+      "repair_submitted_without_cancel_observation": 0,
+      "rejected_placements_without_id": 36,
+      "no_id_rejections_with_mixed_batch_response": 16,
+      "confirmed_fills": 100,
+      "confirmed_repair_fills": 35,
+      "repair_order_sizes": [
+        6.0,
+        7.0,
+        7.15,
+        8.0,
+        9.0,
+        9.1
+      ],
+      "repair_orders_with_confirmed_fill": 28,
+      "repair_cancel_request_age_s": {
+        "n": 66,
+        "min": 3.001310348510742,
+        "median": 3.0022681951522827,
+        "p90": 3.003265857696533,
+        "max": 3.004101037979126
+      },
+      "repair_cancel_after_20s_count": 0,
+      "repair_orders_without_cancel_observation": 0,
+      "repair_orders_with_decision_book": 0,
+      "repair_match_observed_age_s": {
+        "n": 28,
+        "min": 3.6052820682525635,
+        "median": 4.891624808311462,
+        "p90": 7.440801620483398,
+        "max": 10.183231115341187
+      },
+      "positive_exchange_match_time_fills": 0,
+      "fills_observed_after_cancel_request": 100,
+      "fills_with_valid_asof_snapshot_within_1_5s": 100,
+      "client_request_duration_s": {
+        "POST": {
+          "n": 0
+        },
+        "DELETE": {
+          "n": 0
+        }
+      },
+      "cancel_ack_duration_s": {
+        "n": 219,
+        "min": 0.19518111506476998,
+        "median": 0.22711700573563576,
+        "p90": 0.3904828508384526,
+        "max": 2.2183251986280084
+      },
+      "terminal_accounting": {
+        "markets_with_recorded_winner": 0,
+        "all_buy_cost_pnl_floor_usdc": -37.857499000000004,
+        "residual_shares": 33.967339,
+        "actual_pnl_outcome_bounds_usdc": [
+          -37.857499000000004,
+          -3.8901599999999994
+        ],
+        "repair_increment_outcome_bounds_usdc": [
+          -71.145408,
+          36.088391
+        ],
+        "max_normal_cost_per_market_usdc": 16.730000000000004
+      }
+    }
+  },
+  "trade_event_timestamps": {
+    "events": 387,
+    "positive_native_ts": 0
+  },
+  "official_trade_timestamps": {
+    "observations": 18820,
+    "positive_match_time": 0,
+    "positive_timestamp": 0
+  },
+  "trade_identity_status_sets": {
+    "CONFIRMED|MATCHED|MINED": 121,
+    "CONFIRMED|MATCHED": 12
+  },
+  "duplicate_status_observations": 0,
+  "issues": [],
+  "sources": [
+    {
+      "path": "/home/ubuntu/poly-maker/docs/development/reviews/20261017_2245_2345/analysis.json",
+      "sha256": "82b91ac0a2bf34e8e8ff1aaa9336b41659623899f68773e9a8fc6259045c17ac",
+      "bytes": 390478,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791953700/b7d7bcee3fa34644b0d683e7ea7d2243/market_summary.json",
+      "sha256": "65d1df1a2a92c61e250df1a8c0c670d0cc803ea84a478b25e69fb844ef6c4831",
+      "bytes": 6713,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791953700/b7d7bcee3fa34644b0d683e7ea7d2243/market_snapshots.jsonl",
+      "sha256": "49f98f7f507f7aab4752ea167d4759fa582f56e484aa53fabd4f31d2d482a34c",
+      "bytes": 631753,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979200/bbdeaf0f36884cbca7cd324e8605d31a/market_summary.json",
+      "sha256": "b3bb08cc66ff320111e722a146da75ffd68e84fa266533b549fb166290881804",
+      "bytes": 6852,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979200/bbdeaf0f36884cbca7cd324e8605d31a/market_snapshots.jsonl",
+      "sha256": "6f25fa3349ba7b7c8e2494eb049053907859eff64a90ae6eb0c89361e92aff62",
+      "bytes": 648711,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979500/ef54151c6fd24301bf92b337e8dba5ee/market_summary.json",
+      "sha256": "3d48afa9032362d1bd34baeb8aedcefa5d50ffb9d2101a60a44c3358185a9965",
+      "bytes": 6831,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979500/ef54151c6fd24301bf92b337e8dba5ee/market_snapshots.jsonl",
+      "sha256": "9719d270a791ed53347c81925dad0613c86c5a81b63ec6d532f72e1531b04732",
+      "bytes": 644037,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979800/0cee886478f34d81a56e97db405a0cac/market_summary.json",
+      "sha256": "b2b79fcbb9f3033ce8b42cc4ab19a36acc5c2f367460c095836bce7f9a0c6a07",
+      "bytes": 6876,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791979800/0cee886478f34d81a56e97db405a0cac/market_snapshots.jsonl",
+      "sha256": "11b25e2b7f00adc5761b18320062b4584b8934261d5f8da9e8a8e3023ff20ea3",
+      "bytes": 649289,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981000/9b3921df606d4eb09fe28aaa6f952310/market_summary.json",
+      "sha256": "3a76f5829c56e14b98261d28041b29dc892a8e242a11cddc3bb2c86993956e0c",
+      "bytes": 6800,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981000/9b3921df606d4eb09fe28aaa6f952310/market_snapshots.jsonl",
+      "sha256": "31b5cd57defb7400c422ccc2aeeb632a709a49596354ec1fbac89c8bcef79243",
+      "bytes": 650501,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981300/66602e5d47eb4812af20aee78c0f7e2d/market_summary.json",
+      "sha256": "37e369318aee194209e9f8658a28f861e0d9c9c4f09b6af93cef39c47580bcf4",
+      "bytes": 6818,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981300/66602e5d47eb4812af20aee78c0f7e2d/market_snapshots.jsonl",
+      "sha256": "5e8db437a0e5a1af35952bfbcfe395ce72173934dd5f9e413e835b6da33065c0",
+      "bytes": 647879,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981600/c9e8b806b4f54b1e9340f595fb1e4f48/market_summary.json",
+      "sha256": "62783d77ccd33eab4e9b5d00fac8898a6072d6ae37fa3ef279c1183eca3db5fb",
+      "bytes": 6846,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981600/c9e8b806b4f54b1e9340f595fb1e4f48/market_snapshots.jsonl",
+      "sha256": "8ab0686b2f59f485a10189d2d50a5f1f18bf00a1524059c435b6643a8e82d0ac",
+      "bytes": 646005,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981900/72c41dba66874d099441648925a69fb2/market_summary.json",
+      "sha256": "3698b9b2bb0afa125d2e5c230de8c7f0fa86bc4a33df303325c52305b9689e61",
+      "bytes": 6825,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791981900/72c41dba66874d099441648925a69fb2/market_snapshots.jsonl",
+      "sha256": "e6ad07055bab497a466ac9ef60404e21071638906ef16a62c6b9c6b7f4028310",
+      "bytes": 645373,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983100/34368e9544db4667996713e4eb1147db/market_summary.json",
+      "sha256": "cb1f09ac3d4c27a5b756871b5502b4a3da14ad331c720e18918029923b0bae71",
+      "bytes": 6815,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983100/34368e9544db4667996713e4eb1147db/market_snapshots.jsonl",
+      "sha256": "acd881a876b25cf2bfefffc9b69dd50ef4cab4287d2442a3a9e2bea745127182",
+      "bytes": 646815,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983400/ed0a732a659f4173b746de0cd08be559/market_summary.json",
+      "sha256": "e3c178c9f9b92a32e2a1f6856627d73e24bf55027fead3b86a376ba5ee233a0a",
+      "bytes": 6847,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983400/ed0a732a659f4173b746de0cd08be559/market_snapshots.jsonl",
+      "sha256": "13936f99bd81c9c34fed7b800861dd18cb82f62ada4d5e9cafe4ca0306f4a485",
+      "bytes": 646298,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983700/ef854b2343f149f6951b63556df6b1dc/market_summary.json",
+      "sha256": "abc18dcde789f17e44c0c457d235295ca6305910d21699dba312e3af128508d3",
+      "bytes": 6843,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791983700/ef854b2343f149f6951b63556df6b1dc/market_snapshots.jsonl",
+      "sha256": "d6712f086c7fc12dd5b4cfbd94a728eea4f54a3b4f94ab1bf3500bdf4790a741",
+      "bytes": 645024,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984000/03d749aa244149e18b1d2efa7ad3cd6e/market_summary.json",
+      "sha256": "0bae1364ed8e7e8790cd9e0330dfd9c4734f9a9db0af83b2ee46aed3df34f57e",
+      "bytes": 6828,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984000/03d749aa244149e18b1d2efa7ad3cd6e/market_snapshots.jsonl",
+      "sha256": "98bb6355a07b9140135a1088dd6c3586ab5fe1f1d9e2af1b0c0c1a825b8aacf5",
+      "bytes": 644950,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984300/2f0cae81eca049b48718702ef183ebbc/market_summary.json",
+      "sha256": "5ac491523df2a66173744d01e736ecd17823be9b21f661d46a73e216ec0abf49",
+      "bytes": 6803,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984300/2f0cae81eca049b48718702ef183ebbc/market_snapshots.jsonl",
+      "sha256": "39a9c9a9f0e165d5a492553e7d41ece45b0e10b65bd028d890f214e369c86330",
+      "bytes": 640102,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984600/ead6ac986477411abb4880bb5360fb31/market_summary.json",
+      "sha256": "93a9e9a673198d891caaa083437a833095d2d1787d18162a0c09fd152c07d41d",
+      "bytes": 6860,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984600/ead6ac986477411abb4880bb5360fb31/market_snapshots.jsonl",
+      "sha256": "d1775cd762d591f6102577aca0e265729bb7bba3f67d2942f4d585ad438f939a",
+      "bytes": 647473,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984900/29cb2a98d67d40b2b47b3a6fde021698/market_summary.json",
+      "sha256": "e754dbb7bb5eaa8e7af1496f4f9286062bcf6e56da7fbb19f1fb186222f1e281",
+      "bytes": 6826,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791984900/29cb2a98d67d40b2b47b3a6fde021698/market_snapshots.jsonl",
+      "sha256": "431057954de66b077e603a93f2abb724b538cf8fdd8ea8d463f09ead1273a1ac",
+      "bytes": 646046,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985200/b849e1b9393a45f392dbf35d5a24ebe9/market_summary.json",
+      "sha256": "daf1f5024605428d2e5f1161f88fea1aa1e151a24433bfe9639b08ddb211eb9e",
+      "bytes": 6831,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985200/b849e1b9393a45f392dbf35d5a24ebe9/market_snapshots.jsonl",
+      "sha256": "aa96e101c559adfd403f5d01c3af3edf0e5e9629cceb8ff2dbffea89029311f0",
+      "bytes": 648401,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985500/00780f95bc5d4c0d9cb82768e91e9be3/market_summary.json",
+      "sha256": "49717689a726c3e613a01c8e52a7940624965ff0d3c61c6d690c165104d40e83",
+      "bytes": 6841,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1791985500/00780f95bc5d4c0d9cb82768e91e9be3/market_snapshots.jsonl",
+      "sha256": "971e693ed31e358520c7cbd1a38026755ea62b309b781717767e47a84204f481",
+      "bytes": 646244,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002600/32f3345e80374ff68e4e657e5d0c0784/market_summary.json",
+      "sha256": "f4722fef27e00becbbed594b311c38e773c713bd865d952e202f5957edd1dee8",
+      "bytes": 6802,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002600/32f3345e80374ff68e4e657e5d0c0784/market_snapshots.jsonl",
+      "sha256": "cd64f2a5bc974576f22b00210036fb0f8ae91aba5d973240afc04de231f04868",
+      "bytes": 647868,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002900/e160e78c52c643edb8aa1fba90f540b7/market_summary.json",
+      "sha256": "7f33986a98abd5a7cda57b450bc2c45bbf85978098412eee8f02e4842fbb1db7",
+      "bytes": 6810,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792002900/e160e78c52c643edb8aa1fba90f540b7/market_snapshots.jsonl",
+      "sha256": "2c6f9c617ffcbde67bcc41a220e1b0cac286e43d433db904eaedc05121a2f63a",
+      "bytes": 645065,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003200/e15d00730765426193c5783ce6b73b2c/market_summary.json",
+      "sha256": "6daa2e7a7d1fc61560a2b0f84b8cd097c23f69190839fe9ab7dc9fa46122cc49",
+      "bytes": 6832,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003200/e15d00730765426193c5783ce6b73b2c/market_snapshots.jsonl",
+      "sha256": "161d4c3d7ecd21b958adf938031536cab5759f7de5ebb003ffb4937e0f19e4ae",
+      "bytes": 648783,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003500/d702c1a96e364461954413487618c31f/market_summary.json",
+      "sha256": "b037ce16795063b39f64a6f7387570891d2f4941cd2a0206b2562698feb8a3f6",
+      "bytes": 6866,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003500/d702c1a96e364461954413487618c31f/market_snapshots.jsonl",
+      "sha256": "0ae7b133c21c706471911184ea7668c486813dd7e49864d68fcd1454b68644ce",
+      "bytes": 644783,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003800/b7a53cdece91447e9416c82d997952ed/market_summary.json",
+      "sha256": "ea90377962745234275565d0e31d194c6e1f24b3ea9acd1f64bd50dcb55f4314",
+      "bytes": 6801,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792003800/b7a53cdece91447e9416c82d997952ed/market_snapshots.jsonl",
+      "sha256": "7eec80636b0a0c03b5ff6dc31adc1383d9b39d0ae017c2d0c7be69cb9df93ede",
+      "bytes": 646581,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040100/f3f9fc5f2a514a0f8db73fd6fe0a3243/market_summary.json",
+      "sha256": "2548e5f4248616b02427edfddac1a3a9f6dae071a38a9751f98e83f7a80cfd70",
+      "bytes": 6810,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040100/f3f9fc5f2a514a0f8db73fd6fe0a3243/market_snapshots.jsonl",
+      "sha256": "8d0d2945ef7bfa09d448714d8fac5e3fcef28304e612f9e0d0ff7a975d7e1489",
+      "bytes": 651673,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040400/b6a70ee59337459f82ba4d07425c5639/market_summary.json",
+      "sha256": "2ad8fb538ddc6c166f72f66da590bdb9d8defbc1c3d58d2889d40ec3848b07e4",
+      "bytes": 6855,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040400/b6a70ee59337459f82ba4d07425c5639/market_snapshots.jsonl",
+      "sha256": "ab9a68c0584b151cd17b92b58fe91719825961c6cd7926d58bf73f77d8117c19",
+      "bytes": 647001,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040700/f5795d67eb3a490aaec1ca10f037ad2c/market_summary.json",
+      "sha256": "61df71567e20c99d4af4d4140124336961076525ce3817586e8c23ae1e5fac3d",
+      "bytes": 6801,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792040700/f5795d67eb3a490aaec1ca10f037ad2c/market_snapshots.jsonl",
+      "sha256": "30a899434d7e41a1ea7efdfd8f841ce70d4005b08b1c3869f808d5a6c3af50e2",
+      "bytes": 647974,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792041000/fe6344cb039d47ca938ae24a61231d4c/market_summary.json",
+      "sha256": "b085ccf0160842fc499042efe6a75bbc0eb73eb40d06ac9aaf87e5bb8f2c676b",
+      "bytes": 6783,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792041000/fe6344cb039d47ca938ae24a61231d4c/market_snapshots.jsonl",
+      "sha256": "d7b9c276dfb85b7bd82ee08c0ce002867cfb630672b23d73fd51287633ef4553",
+      "bytes": 636334,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792049100/355a02c81f5045a1bb9d3ca1cf773dd4/market_summary.json",
+      "sha256": "cf3f60d05d7b18ea803b18a2b3bb2dcd48393be73ba82b3fb805058662bc4c73",
+      "bytes": 6805,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792049100/355a02c81f5045a1bb9d3ca1cf773dd4/market_snapshots.jsonl",
+      "sha256": "e458fca26a6f937ac952fc98cece0a8f0aa9ff561a720e07a606fbd64f4baa12",
+      "bytes": 647490,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050300/70caa0692f864f25b6fee16f45f7f08b/market_summary.json",
+      "sha256": "5891e485961706913a1c99141c55b39b41049c65b36c6196f11bdd27713189c6",
+      "bytes": 6827,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050300/70caa0692f864f25b6fee16f45f7f08b/market_snapshots.jsonl",
+      "sha256": "b7bf19fae3e4e419c60a507cd85ff45a4782273c6377448edaf406bdfb1663fd",
+      "bytes": 637810,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050600/390040f368ed47d0a7a0c6e8088a43f0/market_summary.json",
+      "sha256": "7513724e599c940db2f790ac43ed04a9b90815ee13872bd7e7d1a245fcb2ddde",
+      "bytes": 6843,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050600/390040f368ed47d0a7a0c6e8088a43f0/market_snapshots.jsonl",
+      "sha256": "72fd83c1520c06b095daadc9311f14884627f65f436b2c679a1956cdfe1d21ce",
+      "bytes": 644594,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050900/370fb10428e34d08ad87630b9bb35414/market_summary.json",
+      "sha256": "82526505a0471b3572b827ab9c0914d3bea6e5e952c9ca08cffa0ba3097f2eea",
+      "bytes": 6851,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792050900/370fb10428e34d08ad87630b9bb35414/market_snapshots.jsonl",
+      "sha256": "11c38948d0697b529c1a6e639718f6c26fd44814ce7d67084f11954badc86f55",
+      "bytes": 645800,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052100/bdef06569d6c4e20baa7c7e851efbfaf/market_summary.json",
+      "sha256": "e03072ac00df382e0612216e825da92c217759a468b8a88ab032d36100c79243",
+      "bytes": 6802,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052100/bdef06569d6c4e20baa7c7e851efbfaf/market_snapshots.jsonl",
+      "sha256": "56661b21d15405c6ceef1b5a8da03d54127b491a0814e8003480c57bde24fe9b",
+      "bytes": 641802,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052400/33e0e741d5424ac6b2a9d7430211e26a/market_summary.json",
+      "sha256": "deb4344df92822d58b2eadbcb967ebb0bf3ad60b756ef1a5820cf7e929e04f10",
+      "bytes": 6832,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052400/33e0e741d5424ac6b2a9d7430211e26a/market_snapshots.jsonl",
+      "sha256": "470840c520854ed7ef58ff8f918e317e9c598decbad8b281dca84b85cbc84c8b",
+      "bytes": 645259,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052700/729ad3f5ca19490fa6451383aa4c0504/market_summary.json",
+      "sha256": "7c71ad4f7f7d08cc00a8de470c2077631baa72cadf4b892ba8282acd32a7cb6b",
+      "bytes": 6847,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792052700/729ad3f5ca19490fa6451383aa4c0504/market_snapshots.jsonl",
+      "sha256": "d690f8e1e9fe4eea9768c68f272ae276c701cb63a0177e69899544e9d5cc12cf",
+      "bytes": 645460,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053000/c87617919e66455380c356ec36b9a28d/market_summary.json",
+      "sha256": "91d49bdb54ea554e549c9387e5457938c724a53a0f244e387b588d1837fe728a",
+      "bytes": 6826,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053000/c87617919e66455380c356ec36b9a28d/market_snapshots.jsonl",
+      "sha256": "668b480bec74524aaf570c03f8c6a28111cfcd91ff09512dd369170d9907887b",
+      "bytes": 646486,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053300/ff8fe999dc2644fe8f6b350e4a93eec8/market_summary.json",
+      "sha256": "212719446ba165501784c95e78fb4176b86b4bad529080247718e0160d112651",
+      "bytes": 6806,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792053300/ff8fe999dc2644fe8f6b350e4a93eec8/market_snapshots.jsonl",
+      "sha256": "4f9c27d3a52bd1eaf19492195abc2aaddb742c4248d5b010f3b6f3fade9f8973",
+      "bytes": 645070,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069500/a56b041ae5f84a969f2a52fa831d419f/market_summary.json",
+      "sha256": "15069fec9251d54b1782747d1b094faec91c0817476b764341f659c24e91a800",
+      "bytes": 6850,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069500/a56b041ae5f84a969f2a52fa831d419f/market_snapshots.jsonl",
+      "sha256": "aaa04e4772d6bb95cbe01cb91ab5f9dbe32a54e2411bb12a36e3e7e9764afe35",
+      "bytes": 646662,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069800/66646dc31a574770ac705be6ca1d6571/market_summary.json",
+      "sha256": "399d7c1c47ebf775eeeacc721ca945e9f84e601e8bd3fe9c836e08af85f7c4ab",
+      "bytes": 6847,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792069800/66646dc31a574770ac705be6ca1d6571/market_snapshots.jsonl",
+      "sha256": "dcc0252c1931c40b3ce8a892a2935e2125483085f0a60a27c59d8f3f0aab54f8",
+      "bytes": 642666,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070100/be178901c560411d87991a1a812bfc62/market_summary.json",
+      "sha256": "e2cceda73ee8bf1d2b5b468389eee9dc84cfca0d2c43d99c4fb3a852eefdba87",
+      "bytes": 6808,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070100/be178901c560411d87991a1a812bfc62/market_snapshots.jsonl",
+      "sha256": "3174fa53447130f0b8f5e6062e43375950f90c89848397b78fea67f73468090b",
+      "bytes": 646870,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070400/496a53eef848481680af4f5891c3048a/market_summary.json",
+      "sha256": "a39c7fe4cc91476bf4334f27437513fc73226ca9e69b09fb44c894658182595a",
+      "bytes": 6818,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792070400/496a53eef848481680af4f5891c3048a/market_snapshots.jsonl",
+      "sha256": "cdf1df7cdaca5cb9256471a6edd6e05aa932865839bffd09652a3f30e03bfdd9",
+      "bytes": 649564,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072500/fee8b393c40b447fbf31de46d0745816/market_summary.json",
+      "sha256": "308e100bc0e177cf9693e65502f8584abc71725472cf3f7528f6c464517ca455",
+      "bytes": 6857,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072500/fee8b393c40b447fbf31de46d0745816/market_snapshots.jsonl",
+      "sha256": "a0de99b70f8e73c4967be313df6f1fbc33c3a94270171fbda76beceb1864bed0",
+      "bytes": 648059,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072800/829c56cdd1c043fc97227e713b228ffb/market_summary.json",
+      "sha256": "abe82987fd8683a6fae85b48090687a6d8275973151760c5d7f22697273087cd",
+      "bytes": 6859,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792072800/829c56cdd1c043fc97227e713b228ffb/market_snapshots.jsonl",
+      "sha256": "132c98434cd2b0af65f893e737c29921ce7ab76ae6d086b436b7f4df8c00e94c",
+      "bytes": 645597,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073100/ebc4437ab8414ee4a53ea7f489153bb2/market_summary.json",
+      "sha256": "cff2ad9e7d9dcc9aa2ccc469068cdb3abf3288dc78cee9c298ec94a97a94ca4c",
+      "bytes": 6850,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073100/ebc4437ab8414ee4a53ea7f489153bb2/market_snapshots.jsonl",
+      "sha256": "8a69cf0f67f187c743c0584d4fddb677d4058062d62ac0bd194d57e327470f83",
+      "bytes": 646684,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073400/0446508fd1a1458093f90a6930ee8a8f/market_summary.json",
+      "sha256": "619f6b4f36a07cf3c6a8ab053a56418b63acca411e9ede559b3c769be467dd1a",
+      "bytes": 6807,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073400/0446508fd1a1458093f90a6930ee8a8f/market_snapshots.jsonl",
+      "sha256": "48d20166636103bcb47c511b21ed285d41a350c01f952789d752199738ec997b",
+      "bytes": 644382,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073700/7af724cc9ce947bf8796d8478c622c1a/market_summary.json",
+      "sha256": "c95eca137f5e0b9e2bde53a1f896cd0b12f3e47ddf51c2c5417b55ba7640def1",
+      "bytes": 6827,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792073700/7af724cc9ce947bf8796d8478c622c1a/market_snapshots.jsonl",
+      "sha256": "05c7dd931333e239d7cf185870c751fc09b378f500064d6ec53ac2d5112423fc",
+      "bytes": 647380,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076100/b15bc5b4c0b6445082401eff91fab320/market_summary.json",
+      "sha256": "734b1791c07c21e8474c70360699cc18e10a2067bf35bb3706e679d265ecdd8e",
+      "bytes": 6826,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076100/b15bc5b4c0b6445082401eff91fab320/market_snapshots.jsonl",
+      "sha256": "c623d9e2309c9d5fec6428bab6daedefd983b99126d2c8eb42169b9278279f94",
+      "bytes": 646354,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076400/78f7cdad1e7e4e3f9674f6f152ba8c43/market_summary.json",
+      "sha256": "d7cea8d6028b6a2412a718cc724453b2dfefe8f2be67b036e3a0b65ec368116b",
+      "bytes": 6838,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076400/78f7cdad1e7e4e3f9674f6f152ba8c43/market_snapshots.jsonl",
+      "sha256": "562bc251ac9dea2cdc33235b53f0cebf50134ad0176b5471ebdce90c447eabc9",
+      "bytes": 646481,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076700/b9229a014fb54f98ab99717c4e7e3f84/market_summary.json",
+      "sha256": "da771a7ce4b604d8461e469921233d5337d6f9039b4d0d9757e48d95d1da70c6",
+      "bytes": 6822,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/research_outputs/rdp_risk_shadow/btc-updown-5m-1792076700/b9229a014fb54f98ab99717c4e7e3f84/market_snapshots.jsonl",
+      "sha256": "94e1a540f53f166c559a239c266f162583d2bbe48e0413106a2ef2304e412b07",
+      "bytes": 643925,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_0113e055ef4f49ee817f820fa16cf094.jsonl",
+      "sha256": "7aca4ef9d1a95ca764416a6ed27853b67a3786373ea1a454454f0b69982437c6",
+      "bytes": 1477836,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_10630d662da5457aa277d57c0e05439d.jsonl",
+      "sha256": "1bacaf8626600a41eff22d3739d17a326ee1bab714e7c70940047f7a4329f95b",
+      "bytes": 1532426,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_13bae4d1778d4565b87c1915278ba656.jsonl",
+      "sha256": "2ddc8f7c4f28ead189581709fdfc2933c96c9c9902fd5f63daa85e43b4df2a9e",
+      "bytes": 1764401,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_19c359db67e841898fa7d1ee54d85633.jsonl",
+      "sha256": "01086660e3ce073f85d84cfe46f48fe2df2d7d11c6122fe79ec35a6d8d4eb540",
+      "bytes": 1560621,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_3d2096e512234f5aa2ef9f14ccafe5c6.jsonl",
+      "sha256": "5644db6bd009962a30e187984d8835292246602481e04c1074506a22d10624ea",
+      "bytes": 2919360,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_568d97aff33845b696568f0fb9abce38.jsonl",
+      "sha256": "cac1e37188bfebf45ebe58969fafedbb13429cfacd4475ca09ccf7a7bea5e716",
+      "bytes": 1421247,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_5c6289deba634b659c8c7124bb12d607.jsonl",
+      "sha256": "7eef6920f2a97a774206f9134b86c42245a5fb23cd4a339623554172089e92fb",
+      "bytes": 1794484,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_62161b3c081243eab5abca5d16e3adc0.jsonl",
+      "sha256": "7f7bddd255df1023576e4c9bc508715a30b12967fa295a09c22aaffd6655556d",
+      "bytes": 2568908,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_69ba2594f06f4bff951ac8503d0366f1.jsonl",
+      "sha256": "2deb278d8f284522ad93b482c854846050912d865158c64d257761b25e7f5001",
+      "bytes": 1348247,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_751b28525c3848ada756331b87f082f0.jsonl",
+      "sha256": "70d097759020a61eae304444375d8d6923f7740e8372c81dc8f0a2b5842cc197",
+      "bytes": 400534,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_7d354af8b75e4dfca27357f2b358e9eb.jsonl",
+      "sha256": "16cc5f0b6f2732e1aecf7766b293a7cd67d8c8d70e2e08b6f5ad6c371e95d83b",
+      "bytes": 7248788,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_86efea18a69b4f89b080bc8209a1370f.jsonl",
+      "sha256": "8cad6806082a9228d12c3c500918cf5369c702d7fec2cc793387a90c30a414d3",
+      "bytes": 8592486,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_87c0fc5ada4b4fecbc62b81a77ba7a35.jsonl",
+      "sha256": "da4cd1c725b7f4f7cdc6f3933b09c2790f10f7d01b080efc602eb40d8a656762",
+      "bytes": 1567577,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_9a815f1cc7b541619ba55a2afbef8512.jsonl",
+      "sha256": "0f23eb78dca3c05ab1486d3361f5ff3d4a83a33712282814094afc8320895dca",
+      "bytes": 2893659,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a303f5bdd5e748218cf8c0cc0563628f.jsonl",
+      "sha256": "e3666a2efb0e277e20e0b790ba686bfe1858ead8ef84fcac1f02702556d8185c",
+      "bytes": 3367790,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a6296284d3034393ad6741920a43cba5.jsonl",
+      "sha256": "9d59057bf5e150ddc233ac81fb56567635e4743df950890604134a4a5ff5c821",
+      "bytes": 2319779,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_a704dbf74aac40b78a77a8d578c378b2.jsonl",
+      "sha256": "329202f3487d8bb62376a565398c5faa2359ab1dab2bad1007c42374f520de31",
+      "bytes": 3513420,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ad8d1cf321ab48e69cfd5439d10bed54.jsonl",
+      "sha256": "19f2840d764bcffd4dd5f6d12a245d857ca2910f5eadbc24684c16d250be9e22",
+      "bytes": 1646873,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_ae7561e3e0154cfe96444e2dc08f6f23.jsonl",
+      "sha256": "6a1487e412910e688a86d245db9bac94cbbc3e5b9dc49c39f63d4b7d674eeb6f",
+      "bytes": 6826604,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b20decaba25a4eb4ab0e70c121cc0e79.jsonl",
+      "sha256": "442a727ff3496ab5bf16e02f7d14f546f69b3f50fdac4bc1c390566baf67a718",
+      "bytes": 3271603,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b4ee8e91a1344fcc9b79fe3be547a6e8.jsonl",
+      "sha256": "f1790cd1f33440d818d2652d79f5b35f03ca6d209cfd508ff1e578c771ab0467",
+      "bytes": 1956908,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b5d177b153e74e3392b0a9f300650f91.jsonl",
+      "sha256": "2ebaa7d18218d923b15ef89aa6e49b8f7974294dd39ae247b57f397088d3337d",
+      "bytes": 3135984,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_b9cd6ef04c354e8a8ec4b2366f5c407f.jsonl",
+      "sha256": "435a4f3dcd8bfbab4368480a2a344f3238747d01dfafad793114d55da287930f",
+      "bytes": 2962696,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_bd475b352b0d43f39a230fd7afd45282.jsonl",
+      "sha256": "a8b24ec224b7dae62850667daa8f667199b804e23a7336681588dfc764d20dad",
+      "bytes": 2966792,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c3a74171a4604ccd8eadb35f1f306079.jsonl",
+      "sha256": "4d388bd33396bd2294127468e97b28ae624b5a77c584b8f4fddfa28564983586",
+      "bytes": 10147935,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_c61688a846204e5b9a8f5717ee48f85c.jsonl",
+      "sha256": "e385dca0accfe64c123af09fa66654d7f48dadaed0d645e02373d0c6800c50cd",
+      "bytes": 1997901,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_cf35a9ebd90f41c1b93cc26ed8418d30.jsonl",
+      "sha256": "1611c9d1fa350b0cceef2dd88973c70e61cf8610da3c6ec6fbd8dcfa603afa75",
+      "bytes": 5232237,
+      "prior_hash_checked": true
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_dde15549109a465a967d89a17957e9e4.jsonl",
+      "sha256": "50f62ba73837cb2a547352e84154868e5df606e1d08723df5e53dc30bcfc30c7",
+      "bytes": 2922143,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_e9e2b8fa77214c10a1ba0b17d617c581.jsonl",
+      "sha256": "937aec6fcb7fd2818b88944729877a35c98b641c48872818eb8403b769c9f728",
+      "bytes": 36874,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fa870f51759b462995f20f18d8f2be42.jsonl",
+      "sha256": "2af8c69020136fee62430d6e5275282bd73681e7f4c4b5eae1bb562896f366bc",
+      "bytes": 2126720,
+      "prior_hash_checked": false
+    },
+    {
+      "path": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_fd04bce31a6248cea39a541571f41f37.jsonl",
+      "sha256": "a6c25a5a18849bc0b2c242441a8a23f3d27219afef7bf626511bd9397821bcb0",
+      "bytes": 4951019,
+      "prior_hash_checked": true
+    }
+  ],
+  "limitations": [
+    "No market_events depth/queue reconstruction in this audit.",
+    "As-of snapshot is a local observation proxy, never exchange fill-time fair value.",
+    "Cancel request age is neither accepted queue age nor physical cancel effectiveness.",
+    "No long-rest counterfactual fill labels, causal policy comparison, fitted model or profitability claim.",
+    "Older strategy/size/schema differs; do not pool into fixed-NORMAL EV."
+  ]
+}

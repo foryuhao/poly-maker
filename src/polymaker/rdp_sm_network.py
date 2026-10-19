@@ -155,7 +155,7 @@ class NetworkHealth:
                         for completed, fast in rows)
                 and now - rows[-1][0] <= self.cfg.network_sample_max_age_sec)
 
-    def _snapshot(self, now, signal_age_ms):
+    def _snapshot(self, now, signal_age_ms, owner=None):
         groups, p95 = [], 0.0
         for method, rows in self.samples.items():
             recent = [r for r in rows if 0 <= now - r.completed <= self.cfg.network_window_sec]
@@ -170,7 +170,7 @@ class NetworkHealth:
             self.close_active = False
             self._transition("PROBE", "NETWORK_PROBE_READY", now)
         reason = "HEALTHY" if self.state == "NORMAL" else "NETWORK_PROBE_READY"
-        if self.active_batch is not None:
+        if self.active_batch is not None and self.active_batch != owner:
             reason = "NETWORK_BATCH_IN_FLIGHT"
         elif self.state == "PAUSED":
             reason = "NETWORK_PAUSED" if now < self.pause_until else "NETWORK_RECOVERING"
@@ -195,6 +195,11 @@ class NetworkHealth:
     def snapshot(self, signal_age_ms=0):
         with self.lock:
             return self._snapshot(self.monotonic(), signal_age_ms)
+
+    def continuation(self, batch_id):
+        """SL requests may share their own batch, never bypass its circuit."""
+        with self.lock:
+            return self._snapshot(self.monotonic(), 0, owner=batch_id)
 
     def begin_batch(self, batch_id):
         """Reserve exactly one real batch, atomically with the final circuit check."""

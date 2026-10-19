@@ -1,0 +1,1309 @@
+{
+  "episodes": [
+    {
+      "market": "12:20",
+      "opening_window": "d44a1224727047c8999aa1a585a6d93c:w2",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 41.180607080459595,
+      "trigger_wall_elapsed_projection": 41.495837688446045,
+      "first_sl_buy_wall_elapsed": 44.24452590942383,
+      "signal_backlog_sec": 2.748688220977783,
+      "first_sl_state_wall_elapsed": 41.49944567680359,
+      "historical_point_to_detection_strategy_sec": 0.0038156509399414062,
+      "sl_detection_to_first_buy_wall_sec": 2.7450802326202393,
+      "trigger_yes_probability": 0.735,
+      "decision_yes_probability": 0.715,
+      "opening_close_wall_elapsed": 34.50938701629639,
+      "first_repair_fill_wall_elapsed": 47.4112331867218,
+      "first_sl_buy_to_fill_sec": 3.1667072772979736,
+      "state_line": 1202,
+      "buy_line": 1235
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 44.89654588699341,
+      "trigger_wall_elapsed_projection": 45.30702781677246,
+      "first_sl_buy_wall_elapsed": 47.631264209747314,
+      "signal_backlog_sec": 2.3242363929748535,
+      "first_sl_state_wall_elapsed": 45.29348707199097,
+      "historical_point_to_detection_strategy_sec": 0.000990152359008789,
+      "sl_detection_to_first_buy_wall_sec": 2.3377771377563477,
+      "trigger_yes_probability": 0.325,
+      "decision_yes_probability": 0.355,
+      "opening_close_wall_elapsed": 33.605934143066406,
+      "first_repair_fill_wall_elapsed": 61.620563983917236,
+      "first_sl_buy_to_fill_sec": 13.989299774169922,
+      "state_line": 941,
+      "buy_line": 977
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w13",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 109.98086309432983,
+      "trigger_wall_elapsed_projection": 110.45514416694641,
+      "first_sl_buy_wall_elapsed": 113.53952026367188,
+      "signal_backlog_sec": 3.084376096725464,
+      "first_sl_state_wall_elapsed": 110.46367573738098,
+      "historical_point_to_detection_strategy_sec": 0.006013154983520508,
+      "sl_detection_to_first_buy_wall_sec": 3.0758445262908936,
+      "trigger_yes_probability": 0.215,
+      "decision_yes_probability": 0.135,
+      "opening_close_wall_elapsed": 100.68660974502563,
+      "first_repair_fill_wall_elapsed": 114.66082406044006,
+      "first_sl_buy_to_fill_sec": 1.1213037967681885,
+      "state_line": 1906,
+      "buy_line": 1956
+    },
+    {
+      "market": "12:35",
+      "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w5",
+      "reason": "ADVERSE_SHOCK",
+      "trigger_strategy_elapsed": 49.82535243034363,
+      "trigger_wall_elapsed_projection": 49.927303075790405,
+      "first_sl_buy_wall_elapsed": 53.36941194534302,
+      "signal_backlog_sec": 3.4421088695526123,
+      "first_sl_state_wall_elapsed": 53.369346380233765,
+      "historical_point_to_detection_strategy_sec": 3.4421088695526123,
+      "sl_detection_to_first_buy_wall_sec": 6.556510925292969e-05,
+      "trigger_yes_probability": 0.375,
+      "decision_yes_probability": 0.435,
+      "opening_close_wall_elapsed": 52.295318841934204,
+      "first_repair_fill_wall_elapsed": 54.29856538772583,
+      "first_sl_buy_to_fill_sec": 0.9291534423828125,
+      "state_line": 425,
+      "buy_line": 426
+    },
+    {
+      "market": "12:35",
+      "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w9",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 76.80189633369446,
+      "trigger_wall_elapsed_projection": 76.93477869033813,
+      "first_sl_buy_wall_elapsed": 77.40638303756714,
+      "signal_backlog_sec": 0.4716043472290039,
+      "first_sl_state_wall_elapsed": 77.40629172325134,
+      "historical_point_to_detection_strategy_sec": 0.4716043472290039,
+      "sl_detection_to_first_buy_wall_sec": 9.131431579589844e-05,
+      "trigger_yes_probability": 0.525,
+      "decision_yes_probability": 0.545,
+      "opening_close_wall_elapsed": 76.33649802207947,
+      "first_repair_fill_wall_elapsed": 84.45692896842957,
+      "first_sl_buy_to_fill_sec": 7.050545930862427,
+      "state_line": 810,
+      "buy_line": 811
+    },
+    {
+      "market": "12:45",
+      "opening_window": "71123a66c78447fe962e2deefde545b5:w4",
+      "reason": "ADVERSE_SHOCK",
+      "trigger_strategy_elapsed": 49.98368430137634,
+      "trigger_wall_elapsed_projection": 50.894949436187744,
+      "first_sl_buy_wall_elapsed": 54.152162075042725,
+      "signal_backlog_sec": 3.2572126388549805,
+      "first_sl_state_wall_elapsed": 50.891178607940674,
+      "historical_point_to_detection_strategy_sec": 0.0014081001281738281,
+      "sl_detection_to_first_buy_wall_sec": 3.260983467102051,
+      "trigger_yes_probability": 0.615,
+      "decision_yes_probability": 0.645,
+      "opening_close_wall_elapsed": 48.073280811309814,
+      "first_repair_fill_wall_elapsed": 61.447381019592285,
+      "first_sl_buy_to_fill_sec": 7.2952189445495605,
+      "state_line": 1666,
+      "buy_line": 1705
+    },
+    {
+      "market": "12:55",
+      "opening_window": "784dcfa6b2d94ef18a6d5c27a4548d45:w22",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 130.6906898021698,
+      "trigger_wall_elapsed_projection": 130.93995904922485,
+      "first_sl_buy_wall_elapsed": 133.30843663215637,
+      "signal_backlog_sec": 2.3684775829315186,
+      "first_sl_state_wall_elapsed": 130.93703699111938,
+      "historical_point_to_detection_strategy_sec": 0.004075050354003906,
+      "sl_detection_to_first_buy_wall_sec": 2.3713996410369873,
+      "trigger_yes_probability": 0.255,
+      "decision_yes_probability": 0.245,
+      "opening_close_wall_elapsed": 113.37216639518738,
+      "first_repair_fill_wall_elapsed": 136.7226164340973,
+      "first_sl_buy_to_fill_sec": 3.414179801940918,
+      "state_line": 2903,
+      "buy_line": 2956
+    },
+    {
+      "market": "13:05",
+      "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+      "reason": "ADVERSE_SHOCK",
+      "trigger_strategy_elapsed": 64.10631394386292,
+      "trigger_wall_elapsed_projection": 64.53623127937317,
+      "first_sl_buy_wall_elapsed": 72.5148675441742,
+      "signal_backlog_sec": 7.978636264801025,
+      "first_sl_state_wall_elapsed": 72.51478791236877,
+      "historical_point_to_detection_strategy_sec": 7.978636264801025,
+      "sl_detection_to_first_buy_wall_sec": 7.963180541992188e-05,
+      "trigger_yes_probability": 0.44,
+      "decision_yes_probability": 0.595,
+      "opening_close_wall_elapsed": 67.44078302383423,
+      "first_repair_fill_wall_elapsed": 87.01604890823364,
+      "first_sl_buy_to_fill_sec": 14.501181364059448,
+      "state_line": 720,
+      "buy_line": 721
+    },
+    {
+      "market": "13:10",
+      "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w3",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 60.49569821357727,
+      "trigger_wall_elapsed_projection": 60.89939880371094,
+      "first_sl_buy_wall_elapsed": 60.92400026321411,
+      "signal_backlog_sec": 0.024601459503173828,
+      "first_sl_state_wall_elapsed": 60.923941135406494,
+      "historical_point_to_detection_strategy_sec": 0.024601459503173828,
+      "sl_detection_to_first_buy_wall_sec": 5.91278076171875e-05,
+      "trigger_yes_probability": 0.465,
+      "decision_yes_probability": 0.455,
+      "opening_close_wall_elapsed": 53.523921489715576,
+      "first_repair_fill_wall_elapsed": 76.99940133094788,
+      "first_sl_buy_to_fill_sec": 16.075401067733765,
+      "state_line": 4156,
+      "buy_line": 4157
+    },
+    {
+      "market": "13:15",
+      "opening_window": "33e45756eb9642f49e31160c1f224f32:w6",
+      "reason": "CUMULATIVE_DRAWDOWN",
+      "trigger_strategy_elapsed": 61.285852670669556,
+      "trigger_wall_elapsed_projection": 62.05036497116089,
+      "first_sl_buy_wall_elapsed": 62.0575168132782,
+      "signal_backlog_sec": 0.00715184211730957,
+      "first_sl_state_wall_elapsed": 62.057451486587524,
+      "historical_point_to_detection_strategy_sec": 0.00715184211730957,
+      "sl_detection_to_first_buy_wall_sec": 6.532669067382812e-05,
+      "trigger_yes_probability": 0.525,
+      "decision_yes_probability": 0.525,
+      "opening_close_wall_elapsed": 53.801151275634766,
+      "first_repair_fill_wall_elapsed": 67.97568225860596,
+      "first_sl_buy_to_fill_sec": 5.918165445327759,
+      "state_line": 2586,
+      "buy_line": 2587
+    }
+  ],
+  "windows": [
+    {
+      "market": "12:20",
+      "opening_window": "d44a1224727047c8999aa1a585a6d93c:w2",
+      "window": "d44a1224727047c8999aa1a585a6d93c:w4",
+      "price": 0.71,
+      "post_wall_elapsed": 44.25879430770874,
+      "post_ack_wall_elapsed": 44.477715253829956,
+      "post_http_sec": 0.21889501623809338,
+      "close_requested_wall_elapsed": 47.415456771850586,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 2.93774151802063,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 53.516711950302124,
+      "close_to_safe_sec": 6.101255178451538,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 47.4112331867218,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "7a1257ad853b4f17b38a0f3358535c9c",
+          "started_monotonic": 2894945.288908662,
+          "completed_monotonic": 2894945.488295299
+        },
+        "open_orders": {
+          "read_id": "a57b9481010d406ca6191096ed500bf8",
+          "started_monotonic": 2894945.28933854,
+          "completed_monotonic": 2894945.473839375
+        },
+        "trades": {
+          "read_id": "bf71243aabb347908891f48de2466d8b",
+          "started_monotonic": 2894945.289708491,
+          "completed_monotonic": 2894945.485237968
+        },
+        "capital": {
+          "read_id": "e3a0de6ed3d748b0989d06bef2519c3b",
+          "started_monotonic": 2894944.185980857,
+          "completed_monotonic": 2894944.38241625
+        },
+        "positions": {
+          "read_id": "8e6bbc0d26974515a4d4df0645a2bf76",
+          "started_monotonic": 2894944.18660333,
+          "completed_monotonic": 2894944.465749075
+        }
+      },
+      "last_write_monotonic": 2894936.640190164,
+      "lines": {
+        "post": 1242,
+        "close": 1267,
+        "safe": 1335
+      }
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+      "window": "4c87022b5b1d4252b02ab31272f6ef82:w4",
+      "price": 0.35,
+      "post_wall_elapsed": 47.64600586891174,
+      "post_ack_wall_elapsed": 47.880492210388184,
+      "post_http_sec": 0.23446230124682188,
+      "close_requested_wall_elapsed": 48.60347771644592,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.7229855060577393,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 48.832767963409424,
+      "last_delete_completed_wall_elapsed": 49.77018880844116,
+      "barrier_safe_wall_elapsed": 51.40003538131714,
+      "close_to_safe_sec": 2.796557664871216,
+      "next_post_wall_elapsed": 51.4431848526001,
+      "close_to_next_post_sec": 2.839707136154175,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "17509a7e8f8b4feb878e4fd9d419fce3",
+          "started_monotonic": 2895242.369037309,
+          "completed_monotonic": 2895242.557395323
+        },
+        "open_orders": {
+          "read_id": "63ce07a209e84aab838e57a899eacdaa",
+          "started_monotonic": 2895242.369592405,
+          "completed_monotonic": 2895242.565989983
+        },
+        "trades": {
+          "read_id": "b14ec7e665814cbda32a485a7925efcc",
+          "started_monotonic": 2895242.370219951,
+          "completed_monotonic": 2895242.577915836
+        },
+        "capital": {
+          "read_id": "6bd0ece64aed42e2a297468a0b612de0",
+          "started_monotonic": 2895243.359154697,
+          "completed_monotonic": 2895243.559904143
+        },
+        "positions": {
+          "read_id": "c74de036c8d5407a985bf365b02bcc75",
+          "started_monotonic": 2895243.359698663,
+          "completed_monotonic": 2895243.536244384
+        }
+      },
+      "last_write_monotonic": 2895241.932748485,
+      "lines": {
+        "post": 981,
+        "close": 992,
+        "safe": 1011
+      }
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+      "window": "4c87022b5b1d4252b02ab31272f6ef82:w5",
+      "price": 0.34,
+      "post_wall_elapsed": 51.4431836605072,
+      "post_ack_wall_elapsed": 51.6615469455719,
+      "post_http_sec": 0.21833519684150815,
+      "close_requested_wall_elapsed": 52.614422082901,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.9528751373291016,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 52.82751131057739,
+      "last_delete_completed_wall_elapsed": 54.06301999092102,
+      "barrier_safe_wall_elapsed": 55.388495683670044,
+      "close_to_safe_sec": 2.774073600769043,
+      "next_post_wall_elapsed": 55.434162616729736,
+      "close_to_next_post_sec": 2.8197405338287354,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "bfcad9a7715f40eab0993a96432ad2ea",
+          "started_monotonic": 2895246.372825363,
+          "completed_monotonic": 2895246.576614548
+        },
+        "open_orders": {
+          "read_id": "3a86859d14c040a79e36112f8a232746",
+          "started_monotonic": 2895246.373703543,
+          "completed_monotonic": 2895246.573138629
+        },
+        "trades": {
+          "read_id": "499eb53f7d634bd4a664cc1f397bce77",
+          "started_monotonic": 2895246.374143232,
+          "completed_monotonic": 2895246.569335428
+        },
+        "capital": {
+          "read_id": "946ce30235574ca8a230bccad8057599",
+          "started_monotonic": 2895247.361031466,
+          "completed_monotonic": 2895247.547961583
+        },
+        "positions": {
+          "read_id": "7368ce4a0ca04aea88e7d924e3169ae9",
+          "started_monotonic": 2895247.361639642,
+          "completed_monotonic": 2895247.537798731
+        }
+      },
+      "last_write_monotonic": 2895246.225550393,
+      "lines": {
+        "post": 1030,
+        "close": 1041,
+        "safe": 1062
+      }
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+      "window": "4c87022b5b1d4252b02ab31272f6ef82:w6",
+      "price": 0.34,
+      "post_wall_elapsed": 55.43416213989258,
+      "post_ack_wall_elapsed": 55.65580916404724,
+      "post_http_sec": 0.22162235109135509,
+      "close_requested_wall_elapsed": 56.62686467170715,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.9710555076599121,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 56.843578815460205,
+      "last_delete_completed_wall_elapsed": 57.77160382270813,
+      "barrier_safe_wall_elapsed": 59.45742750167847,
+      "close_to_safe_sec": 2.8305628299713135,
+      "next_post_wall_elapsed": 59.50453543663025,
+      "close_to_next_post_sec": 2.8776707649230957,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "532555720f38446b8150515a043c077b",
+          "started_monotonic": 2895251.377962621,
+          "completed_monotonic": 2895251.582269103
+        },
+        "open_orders": {
+          "read_id": "13b6278ba2f44132941789ee0a8cd7a3",
+          "started_monotonic": 2895251.37839414,
+          "completed_monotonic": 2895251.572542011
+        },
+        "trades": {
+          "read_id": "29082a1f96574750be3a005187f77704",
+          "started_monotonic": 2895251.378766471,
+          "completed_monotonic": 2895251.57898383
+        },
+        "capital": {
+          "read_id": "ec3d4e035c3f4e1d8fc776bb0e8600ad",
+          "started_monotonic": 2895251.363598736,
+          "completed_monotonic": 2895251.554135501
+        },
+        "positions": {
+          "read_id": "7b6f672cd5554e2396c10c064b899f4e",
+          "started_monotonic": 2895251.364171093,
+          "completed_monotonic": 2895251.61666188
+        }
+      },
+      "last_write_monotonic": 2895249.934124528,
+      "lines": {
+        "post": 1081,
+        "close": 1092,
+        "safe": 1113
+      }
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w2",
+      "window": "4c87022b5b1d4252b02ab31272f6ef82:w7",
+      "price": 0.35,
+      "post_wall_elapsed": 59.50453495979309,
+      "post_ack_wall_elapsed": 59.72325420379639,
+      "post_http_sec": 0.21868912689387798,
+      "close_requested_wall_elapsed": 61.62305521965027,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 1.8998010158538818,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 67.66395998001099,
+      "close_to_safe_sec": 6.040904760360718,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 61.620563983917236,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "88c8e224579245f898ce32862456fbcf",
+          "started_monotonic": 2895259.385218717,
+          "completed_monotonic": 2895259.634317233
+        },
+        "open_orders": {
+          "read_id": "26902d30aa3346d4b26518f0437f7550",
+          "started_monotonic": 2895259.385737184,
+          "completed_monotonic": 2895259.578303222
+        },
+        "trades": {
+          "read_id": "053135fb405d43c7a7d9e8e4e74ed34a",
+          "started_monotonic": 2895259.386307422,
+          "completed_monotonic": 2895259.600785688
+        },
+        "capital": {
+          "read_id": "2a742eab377d4805906a14bd01ec890c",
+          "started_monotonic": 2895259.367839323,
+          "completed_monotonic": 2895259.555870697
+        },
+        "positions": {
+          "read_id": "980c5da151b8486187004dc41e37c9fa",
+          "started_monotonic": 2895259.368899058,
+          "completed_monotonic": 2895259.548282405
+        }
+      },
+      "last_write_monotonic": 2895251.885994062,
+      "lines": {
+        "post": 1132,
+        "close": 1146,
+        "safe": 1238
+      }
+    },
+    {
+      "market": "12:25",
+      "opening_window": "4c87022b5b1d4252b02ab31272f6ef82:w13",
+      "window": "4c87022b5b1d4252b02ab31272f6ef82:w16",
+      "price": 0.86,
+      "post_wall_elapsed": 113.55163908004761,
+      "post_ack_wall_elapsed": 113.75666737556458,
+      "post_http_sec": 0.20498889684677124,
+      "close_requested_wall_elapsed": 114.66331124305725,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 0.9066438674926758,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 121.69290900230408,
+      "close_to_safe_sec": 7.029597759246826,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 114.66082406044006,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "b6fb4405937145a0b600f36c69c29e57",
+          "started_monotonic": 2895313.437766807,
+          "completed_monotonic": 2895313.638473684
+        },
+        "open_orders": {
+          "read_id": "eda6b92793a5495493b4668a547be928",
+          "started_monotonic": 2895313.437782686,
+          "completed_monotonic": 2895313.647922203
+        },
+        "trades": {
+          "read_id": "9185f520bd9944fd85c92fec7ef80c62",
+          "started_monotonic": 2895313.438815632,
+          "completed_monotonic": 2895313.651993127
+        },
+        "capital": {
+          "read_id": "cd1c4b33b56e4ffeb1e4a09ba3c5f601",
+          "started_monotonic": 2895313.405213808,
+          "completed_monotonic": 2895313.594442864
+        },
+        "positions": {
+          "read_id": "1ce267346c554cdb95e216b23b9ba219",
+          "started_monotonic": 2895313.405880701,
+          "completed_monotonic": 2895313.577281254
+        }
+      },
+      "last_write_monotonic": 2895305.919323068,
+      "lines": {
+        "post": 1960,
+        "close": 1969,
+        "safe": 2169
+      }
+    },
+    {
+      "market": "12:35",
+      "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w5",
+      "window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w6",
+      "price": 0.55,
+      "post_wall_elapsed": 53.39565992355347,
+      "post_ack_wall_elapsed": 53.67483425140381,
+      "post_http_sec": 0.2791487374342978,
+      "close_requested_wall_elapsed": 54.299978494644165,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 0.6251442432403564,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 59.26820993423462,
+      "close_to_safe_sec": 4.968231439590454,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 54.29856538772583,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "94503e9506b240fb87d7fbc063ca2fe5",
+          "started_monotonic": 2895851.067184735,
+          "completed_monotonic": 2895851.275145587
+        },
+        "trades": {
+          "read_id": "6bc8342dd97943d9b404f05ac4a6191a",
+          "started_monotonic": 2895851.068657571,
+          "completed_monotonic": 2895851.269969789
+        },
+        "open_orders": {
+          "read_id": "afac61e6cfdd4bdc8be53a9583e87b76",
+          "started_monotonic": 2895851.067531697,
+          "completed_monotonic": 2895851.267943145
+        },
+        "capital": {
+          "read_id": "ad4d096a48a446bfa2514b8699db9ee7",
+          "started_monotonic": 2895851.052820753,
+          "completed_monotonic": 2895851.245572602
+        },
+        "positions": {
+          "read_id": "b49694d8b5944166a6a03873e18fd582",
+          "started_monotonic": 2895851.05377734,
+          "completed_monotonic": 2895851.425724897
+        }
+      },
+      "last_write_monotonic": 2895845.837643479,
+      "lines": {
+        "post": 435,
+        "close": 444,
+        "safe": 502
+      }
+    },
+    {
+      "market": "12:35",
+      "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w9",
+      "window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w10",
+      "price": 0.54,
+      "post_wall_elapsed": 77.4249050617218,
+      "post_ack_wall_elapsed": 77.6687822341919,
+      "post_http_sec": 0.24385074712336063,
+      "close_requested_wall_elapsed": 78.32357168197632,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.6547894477844238,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 78.54487204551697,
+      "last_delete_completed_wall_elapsed": 79.47827577590942,
+      "barrier_safe_wall_elapsed": 81.1589002609253,
+      "close_to_safe_sec": 2.8353285789489746,
+      "next_post_wall_elapsed": 81.21002578735352,
+      "close_to_next_post_sec": 2.8864541053771973,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "60427dc69d7849aa90c41f3fdc388bc4",
+          "started_monotonic": 2895873.084256497,
+          "completed_monotonic": 2895873.307088779
+        },
+        "trades": {
+          "read_id": "c5922088837c49ee81799edd9db4925e",
+          "started_monotonic": 2895873.08460028,
+          "completed_monotonic": 2895873.277029416
+        },
+        "open_orders": {
+          "read_id": "77fc0db683e84c18b179a3db843d2794",
+          "started_monotonic": 2895873.084271327,
+          "completed_monotonic": 2895873.284363064
+        },
+        "capital": {
+          "read_id": "7b56b2c012004191831ab112519252be",
+          "started_monotonic": 2895873.066829177,
+          "completed_monotonic": 2895873.258067431
+        },
+        "positions": {
+          "read_id": "fbfebbca1c014673ba99db1156cfbadb",
+          "started_monotonic": 2895873.067564729,
+          "completed_monotonic": 2895873.315729735
+        }
+      },
+      "last_write_monotonic": 2895871.640791099,
+      "lines": {
+        "post": 815,
+        "close": 826,
+        "safe": 851
+      }
+    },
+    {
+      "market": "12:35",
+      "opening_window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w9",
+      "window": "bfc87b1bbff041e3b78c0c6ebd4392cf:w11",
+      "price": 0.58,
+      "post_wall_elapsed": 81.21002507209778,
+      "post_ack_wall_elapsed": 81.42745208740234,
+      "post_http_sec": 0.21740103978663683,
+      "close_requested_wall_elapsed": 84.46132612228394,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 3.033874034881592,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 89.36225485801697,
+      "close_to_safe_sec": 4.900928735733032,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 84.45692896842957,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "dfa2acd9bb7d4c5493c0a6a3617efe00",
+          "started_monotonic": 2895881.092693957,
+          "completed_monotonic": 2895881.295551839
+        },
+        "trades": {
+          "read_id": "9b9fe8762b164a1e9f00a46bd99fbaa2",
+          "started_monotonic": 2895881.09388751,
+          "completed_monotonic": 2895881.287489029
+        },
+        "open_orders": {
+          "read_id": "1afcdcb60e724941ae64c73ff7942fa0",
+          "started_monotonic": 2895881.093358901,
+          "completed_monotonic": 2895881.286651648
+        },
+        "capital": {
+          "read_id": "555635c8f99441a9b1aaee568b54b400",
+          "started_monotonic": 2895881.07220171,
+          "completed_monotonic": 2895881.260896793
+        },
+        "positions": {
+          "read_id": "279724646f5d45caa8e01f5ef14448ab",
+          "started_monotonic": 2895881.072788545,
+          "completed_monotonic": 2895881.504684043
+        }
+      },
+      "last_write_monotonic": 2895873.58993947,
+      "lines": {
+        "post": 870,
+        "close": 902,
+        "safe": 1021
+      }
+    },
+    {
+      "market": "12:45",
+      "opening_window": "71123a66c78447fe962e2deefde545b5:w4",
+      "window": "71123a66c78447fe962e2deefde545b5:w6",
+      "price": 0.35,
+      "post_wall_elapsed": 54.16428756713867,
+      "post_ack_wall_elapsed": 54.389416217803955,
+      "post_http_sec": 0.22510356083512306,
+      "close_requested_wall_elapsed": 55.112006187438965,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.7225899696350098,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 55.355106592178345,
+      "last_delete_completed_wall_elapsed": 56.29913520812988,
+      "barrier_safe_wall_elapsed": 57.95042872428894,
+      "close_to_safe_sec": 2.8384225368499756,
+      "next_post_wall_elapsed": 58.0019633769989,
+      "close_to_next_post_sec": 2.8899571895599365,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "ff7eac90379047d7aafe46e064483c96",
+          "started_monotonic": 2896449.883893854,
+          "completed_monotonic": 2896450.076584666
+        },
+        "open_orders": {
+          "read_id": "1a501f742ef54499bc9af8d72fd92278",
+          "started_monotonic": 2896449.884278106,
+          "completed_monotonic": 2896450.074789458
+        },
+        "trades": {
+          "read_id": "3956cb569d814698832c375262eb0079",
+          "started_monotonic": 2896449.884848813,
+          "completed_monotonic": 2896450.076108567
+        },
+        "capital": {
+          "read_id": "43e35ebc8d74481994124279911b05c7",
+          "started_monotonic": 2896449.862862818,
+          "completed_monotonic": 2896450.051063985
+        },
+        "positions": {
+          "read_id": "eb7e80a7bbb8423db1aacb42c40d13d7",
+          "started_monotonic": 2896449.863428165,
+          "completed_monotonic": 2896450.109213601
+        }
+      },
+      "last_write_monotonic": 2896448.461649068,
+      "lines": {
+        "post": 1709,
+        "close": 1719,
+        "safe": 1740
+      }
+    },
+    {
+      "market": "12:45",
+      "opening_window": "71123a66c78447fe962e2deefde545b5:w4",
+      "window": "71123a66c78447fe962e2deefde545b5:w7",
+      "price": 0.56,
+      "post_wall_elapsed": 58.001962184906006,
+      "post_ack_wall_elapsed": 58.236868143081665,
+      "post_http_sec": 0.23487959196791053,
+      "close_requested_wall_elapsed": 61.45148491859436,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 3.2146167755126953,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 66.07474684715271,
+      "close_to_safe_sec": 4.62326192855835,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 61.447381019592285,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "01093ccc748549bb978bebbd3dd2a229",
+          "started_monotonic": 2896457.890550937,
+          "completed_monotonic": 2896458.08611368
+        },
+        "open_orders": {
+          "read_id": "78268223024c4c03aa50e58dae8afb36",
+          "started_monotonic": 2896457.890920517,
+          "completed_monotonic": 2896458.073088285
+        },
+        "trades": {
+          "read_id": "c95597d67588450f8a38d5cc30028051",
+          "started_monotonic": 2896457.891611712,
+          "completed_monotonic": 2896458.087062828
+        },
+        "capital": {
+          "read_id": "07139487c0a34bbdaa2301dd7a3b8edd",
+          "started_monotonic": 2896457.867172175,
+          "completed_monotonic": 2896458.050930605
+        },
+        "positions": {
+          "read_id": "b43b84f7cedc49ce87a57d4896159f60",
+          "started_monotonic": 2896457.867873278,
+          "completed_monotonic": 2896458.232149126
+        }
+      },
+      "last_write_monotonic": 2896450.399759178,
+      "lines": {
+        "post": 1760,
+        "close": 1793,
+        "safe": 1867
+      }
+    },
+    {
+      "market": "12:55",
+      "opening_window": "784dcfa6b2d94ef18a6d5c27a4548d45:w22",
+      "window": "784dcfa6b2d94ef18a6d5c27a4548d45:w24",
+      "price": 0.75,
+      "post_wall_elapsed": 133.3212320804596,
+      "post_ack_wall_elapsed": 133.51665782928467,
+      "post_http_sec": 0.1953854220919311,
+      "close_requested_wall_elapsed": 137.44549655914307,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 3.9288387298583984,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 143.37054562568665,
+      "close_to_safe_sec": 5.925049066543579,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 136.7226164340973,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "0a226bdecd524a829a3cb3b22f753833",
+          "started_monotonic": 2897135.218307395,
+          "completed_monotonic": 2897135.415457626
+        },
+        "trades": {
+          "read_id": "8390976694cd4187a8af47f82b3f1511",
+          "started_monotonic": 2897135.219476717,
+          "completed_monotonic": 2897135.403541716
+        },
+        "open_orders": {
+          "read_id": "10207707eb1d438b8d810c213464d9e5",
+          "started_monotonic": 2897135.218727414,
+          "completed_monotonic": 2897135.419798163
+        },
+        "capital": {
+          "read_id": "2652aaa7ced942a68f3706afd427f616",
+          "started_monotonic": 2897135.180691181,
+          "completed_monotonic": 2897135.368048063
+        },
+        "positions": {
+          "read_id": "e59d74941fee4fa6ab66066d4e40a9e5",
+          "started_monotonic": 2897135.180711872,
+          "completed_monotonic": 2897135.521637141
+        }
+      },
+      "last_write_monotonic": 2897125.679329243,
+      "lines": {
+        "post": 2960,
+        "close": 2994,
+        "safe": 3232
+      }
+    },
+    {
+      "market": "13:05",
+      "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+      "window": "4e772fcf9ec64522a49f61c83d449c2a:w11",
+      "price": 0.59,
+      "post_wall_elapsed": 72.53439855575562,
+      "post_ack_wall_elapsed": 72.77401113510132,
+      "post_http_sec": 0.23958740290254354,
+      "close_requested_wall_elapsed": 73.62358403205872,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.8495728969573975,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 73.8571834564209,
+      "last_delete_completed_wall_elapsed": 74.77235245704651,
+      "barrier_safe_wall_elapsed": 75.61601758003235,
+      "close_to_safe_sec": 1.9924335479736328,
+      "next_post_wall_elapsed": 75.66800546646118,
+      "close_to_next_post_sec": 2.044421434402466,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "8c6e59645a5b42f3a6cba3a156774311",
+          "started_monotonic": 2897667.38973136,
+          "completed_monotonic": 2897667.587856894
+        },
+        "open_orders": {
+          "read_id": "976b16403bc448e9b6e1fd0d57cdff05",
+          "started_monotonic": 2897667.390638958,
+          "completed_monotonic": 2897667.580319592
+        },
+        "trades": {
+          "read_id": "eeec30baeb2349d6a699637f52f2c63a",
+          "started_monotonic": 2897667.391114137,
+          "completed_monotonic": 2897667.573756938
+        },
+        "capital": {
+          "read_id": "9b6e9a2cd66540f4a85a45c5f2b5460f",
+          "started_monotonic": 2897667.359331458,
+          "completed_monotonic": 2897667.547921179
+        },
+        "positions": {
+          "read_id": "39a8236c6a8140df8968a915a1a3a12a",
+          "started_monotonic": 2897667.359874226,
+          "completed_monotonic": 2897667.587125111
+        }
+      },
+      "last_write_monotonic": 2897666.934887765,
+      "lines": {
+        "post": 725,
+        "close": 738,
+        "safe": 763
+      }
+    },
+    {
+      "market": "13:05",
+      "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+      "window": "4e772fcf9ec64522a49f61c83d449c2a:w12",
+      "price": 0.63,
+      "post_wall_elapsed": 75.66800427436829,
+      "post_ack_wall_elapsed": 75.87673711776733,
+      "post_http_sec": 0.208703245036304,
+      "close_requested_wall_elapsed": 76.61410546302795,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.7373683452606201,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 76.83540463447571,
+      "last_delete_completed_wall_elapsed": 77.76077651977539,
+      "barrier_safe_wall_elapsed": 79.45388960838318,
+      "close_to_safe_sec": 2.8397841453552246,
+      "next_post_wall_elapsed": 79.50859212875366,
+      "close_to_next_post_sec": 2.894486665725708,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "f7ae87a8475548e1b2890ada7a40d6c0",
+          "started_monotonic": 2897671.392692545,
+          "completed_monotonic": 2897671.587813181
+        },
+        "open_orders": {
+          "read_id": "3c0db7eb82ff492e99331401ad828879",
+          "started_monotonic": 2897671.392712264,
+          "completed_monotonic": 2897671.580449874
+        },
+        "trades": {
+          "read_id": "3483b3f6f868407dbf92aee3f31e5a29",
+          "started_monotonic": 2897671.392720834,
+          "completed_monotonic": 2897671.577092604
+        },
+        "capital": {
+          "read_id": "82b7d6b1c3e84a239504ab37badc5e62",
+          "started_monotonic": 2897671.361788657,
+          "completed_monotonic": 2897671.545718695
+        },
+        "positions": {
+          "read_id": "fc96d907edd84ae786bbda95f9d9ed39",
+          "started_monotonic": 2897671.36250564,
+          "completed_monotonic": 2897671.610426336
+        }
+      },
+      "last_write_monotonic": 2897669.923294235,
+      "lines": {
+        "post": 779,
+        "close": 789,
+        "safe": 816
+      }
+    },
+    {
+      "market": "13:05",
+      "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+      "window": "4e772fcf9ec64522a49f61c83d449c2a:w13",
+      "price": 0.76,
+      "post_wall_elapsed": 79.50859069824219,
+      "post_ack_wall_elapsed": 79.72740960121155,
+      "post_http_sec": 0.21879013488069177,
+      "close_requested_wall_elapsed": 80.93199586868286,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 1.2045862674713135,
+      "delete_requests": 3,
+      "first_delete_completed_wall_elapsed": 81.14219307899475,
+      "last_delete_completed_wall_elapsed": 81.59802222251892,
+      "barrier_safe_wall_elapsed": 83.55072355270386,
+      "close_to_safe_sec": 2.618727684020996,
+      "next_post_wall_elapsed": 83.6050636768341,
+      "close_to_next_post_sec": 2.673067808151245,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "b432d412f3464faeb9e431882a895434",
+          "started_monotonic": 2897675.395396335,
+          "completed_monotonic": 2897675.589404477
+        },
+        "open_orders": {
+          "read_id": "42ed4bc8c3fd4f7181ad47172d197c77",
+          "started_monotonic": 2897675.395957742,
+          "completed_monotonic": 2897675.590432574
+        },
+        "trades": {
+          "read_id": "dfe1191971444381bf619dd5341eb6be",
+          "started_monotonic": 2897675.396570908,
+          "completed_monotonic": 2897675.583911398
+        },
+        "capital": {
+          "read_id": "b2b906e12eac4bce9c72484182ca11ae",
+          "started_monotonic": 2897675.365928462,
+          "completed_monotonic": 2897675.558374221
+        },
+        "positions": {
+          "read_id": "bf05530b83024017a15442953fc3f406",
+          "started_monotonic": 2897675.366648715,
+          "completed_monotonic": 2897675.708092171
+        }
+      },
+      "last_write_monotonic": 2897673.760935978,
+      "lines": {
+        "post": 835,
+        "close": 847,
+        "safe": 873
+      }
+    },
+    {
+      "market": "13:05",
+      "opening_window": "4e772fcf9ec64522a49f61c83d449c2a:w10",
+      "window": "4e772fcf9ec64522a49f61c83d449c2a:w14",
+      "price": 0.79,
+      "post_wall_elapsed": 83.60506439208984,
+      "post_ack_wall_elapsed": 83.81830501556396,
+      "post_http_sec": 0.213214797899127,
+      "close_requested_wall_elapsed": 87.02080416679382,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 3.2024991512298584,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 94.64620566368103,
+      "close_to_safe_sec": 7.625401496887207,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 87.01604890823364,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "612946dae5c04a28a299bc23ee640613",
+          "started_monotonic": 2897686.40443672,
+          "completed_monotonic": 2897686.589702818
+        },
+        "open_orders": {
+          "read_id": "22bec9a2e3ba4650833db1e2c2fc1bf0",
+          "started_monotonic": 2897686.4048445,
+          "completed_monotonic": 2897686.58834376
+        },
+        "trades": {
+          "read_id": "6e947764ea8d4d88aed929d417cb288b",
+          "started_monotonic": 2897686.40607886,
+          "completed_monotonic": 2897686.602898306
+        },
+        "capital": {
+          "read_id": "342cbbfaa9bf4b81852f72a61f1886c1",
+          "started_monotonic": 2897685.372861035,
+          "completed_monotonic": 2897685.554498039
+        },
+        "positions": {
+          "read_id": "eff55b9c88ec4d81b3d61d4b669b47b1",
+          "started_monotonic": 2897685.37345499,
+          "completed_monotonic": 2897685.599652801
+        }
+      },
+      "last_write_monotonic": 2897675.980967967,
+      "lines": {
+        "post": 893,
+        "close": 926,
+        "safe": 1136
+      }
+    },
+    {
+      "market": "13:10",
+      "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w3",
+      "window": "a22554bc79bc4a3982fe13d2699b7715:w4",
+      "price": 0.54,
+      "post_wall_elapsed": 60.95149326324463,
+      "post_ack_wall_elapsed": 61.4958610534668,
+      "post_http_sec": 0.5443417010828853,
+      "close_requested_wall_elapsed": 62.62414574623108,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 1.1282846927642822,
+      "delete_requests": 3,
+      "first_delete_completed_wall_elapsed": 63.127236127853394,
+      "last_delete_completed_wall_elapsed": 63.59606623649597,
+      "barrier_safe_wall_elapsed": 65.53798937797546,
+      "close_to_safe_sec": 2.9138436317443848,
+      "next_post_wall_elapsed": 65.58286571502686,
+      "close_to_next_post_sec": 2.9587199687957764,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "63bf168528614228ac425d42c2d8db57",
+          "started_monotonic": 2897957.376552846,
+          "completed_monotonic": 2897957.573547024
+        },
+        "capital": {
+          "read_id": "73710aaa1ad84083a3c1c792677e8d4e",
+          "started_monotonic": 2897957.353049072,
+          "completed_monotonic": 2897957.531514876
+        },
+        "open_orders": {
+          "read_id": "41084d10397e4c17bb7c1f72b6c88f2a",
+          "started_monotonic": 2897957.376566116,
+          "completed_monotonic": 2897957.571264607
+        },
+        "trades": {
+          "read_id": "3a03817b86694c52acc5a74fdbcaf8a4",
+          "started_monotonic": 2897957.377084854,
+          "completed_monotonic": 2897957.56732439
+        },
+        "positions": {
+          "read_id": "c70963c61bfa42538551aa35c48c3dce",
+          "started_monotonic": 2897957.353606099,
+          "completed_monotonic": 2897957.697389238
+        }
+      },
+      "last_write_monotonic": 2897955.758569846,
+      "lines": {
+        "post": 4169,
+        "close": 4181,
+        "safe": 4200
+      }
+    },
+    {
+      "market": "13:10",
+      "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w3",
+      "window": "a22554bc79bc4a3982fe13d2699b7715:w5",
+      "price": 0.57,
+      "post_wall_elapsed": 65.58286499977112,
+      "post_ack_wall_elapsed": 65.79772281646729,
+      "post_http_sec": 0.21483266400173306,
+      "close_requested_wall_elapsed": 68.50830030441284,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 2.7105774879455566,
+      "delete_requests": 4,
+      "first_delete_completed_wall_elapsed": 68.71065521240234,
+      "last_delete_completed_wall_elapsed": 69.62805843353271,
+      "barrier_safe_wall_elapsed": 71.64380621910095,
+      "close_to_safe_sec": 3.1355059146881104,
+      "next_post_wall_elapsed": 71.70063996315002,
+      "close_to_next_post_sec": 3.1923396587371826,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "f7da0f20e40b4297910d01e8af012be6",
+          "started_monotonic": 2897963.382816507,
+          "completed_monotonic": 2897963.568774914
+        },
+        "capital": {
+          "read_id": "17c08f6436dc4a909346110da17fc3c4",
+          "started_monotonic": 2897963.357429267,
+          "completed_monotonic": 2897963.53638219
+        },
+        "open_orders": {
+          "read_id": "9a5f6c32bf37454fb830ec069794ac6f",
+          "started_monotonic": 2897963.382830598,
+          "completed_monotonic": 2897963.568136969
+        },
+        "trades": {
+          "read_id": "299e31a7b1e542159eb0c5cf6198d1e6",
+          "started_monotonic": 2897963.383742845,
+          "completed_monotonic": 2897963.569147606
+        },
+        "positions": {
+          "read_id": "500bdad230124fb7865f6b8ab682a93c",
+          "started_monotonic": 2897963.357936506,
+          "completed_monotonic": 2897963.802334128
+        }
+      },
+      "last_write_monotonic": 2897961.790573779,
+      "lines": {
+        "post": 4219,
+        "close": 4241,
+        "safe": 4262
+      }
+    },
+    {
+      "market": "13:10",
+      "opening_window": "a22554bc79bc4a3982fe13d2699b7715:w3",
+      "window": "a22554bc79bc4a3982fe13d2699b7715:w6",
+      "price": 0.58,
+      "post_wall_elapsed": 71.7006402015686,
+      "post_ack_wall_elapsed": 71.90420794487,
+      "post_http_sec": 0.20354089234024286,
+      "close_requested_wall_elapsed": 77.00117826461792,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 5.096970319747925,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 82.0159740447998,
+      "close_to_safe_sec": 5.014795780181885,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 76.99940133094788,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "109e19c7e54e4a4e8fe47c3369093667",
+          "started_monotonic": 2897973.780186777,
+          "completed_monotonic": 2897973.97146166
+        },
+        "capital": {
+          "read_id": "83328708b6c54e9d9102a946380f686b",
+          "started_monotonic": 2897973.362309193,
+          "completed_monotonic": 2897973.543689949
+        },
+        "open_orders": {
+          "read_id": "650f68dd2961489885e27549dd8e04c0",
+          "started_monotonic": 2897973.780587917,
+          "completed_monotonic": 2897973.969273122
+        },
+        "trades": {
+          "read_id": "7ba7be22dde5415d8224c59617ae1a93",
+          "started_monotonic": 2897973.78089397,
+          "completed_monotonic": 2897973.973474333
+        },
+        "positions": {
+          "read_id": "cd08307882fc4e6b864dea5e1963cc26",
+          "started_monotonic": 2897973.36286114,
+          "completed_monotonic": 2897973.580978371
+        }
+      },
+      "last_write_monotonic": 2897964.066970637,
+      "lines": {
+        "post": 4282,
+        "close": 4319,
+        "safe": 4392
+      }
+    },
+    {
+      "market": "13:15",
+      "opening_window": "33e45756eb9642f49e31160c1f224f32:w6",
+      "window": "33e45756eb9642f49e31160c1f224f32:w7",
+      "price": 0.51,
+      "post_wall_elapsed": 62.15992569923401,
+      "post_ack_wall_elapsed": 63.14661264419556,
+      "post_http_sec": 0.9866623668931425,
+      "close_requested_wall_elapsed": 63.980714082717896,
+      "close_reason": "REPAIR_SL_REPRICE",
+      "ack_to_close_sec": 0.8341014385223389,
+      "delete_requests": 3,
+      "first_delete_completed_wall_elapsed": 64.51079988479614,
+      "last_delete_completed_wall_elapsed": 64.9646737575531,
+      "barrier_safe_wall_elapsed": 65.96667695045471,
+      "close_to_safe_sec": 1.9859628677368164,
+      "next_post_wall_elapsed": 66.01318407058716,
+      "close_to_next_post_sec": 2.0324699878692627,
+      "matched_wall_elapsed": null,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "8c8af164af8f4fa48d17892f7dc15e2a",
+          "started_monotonic": 2898257.722552419,
+          "completed_monotonic": 2898257.925753075
+        },
+        "trades": {
+          "read_id": "9a68c684ac1f45c0bec2bcb4e064bda6",
+          "started_monotonic": 2898257.723288163,
+          "completed_monotonic": 2898257.91192906
+        },
+        "open_orders": {
+          "read_id": "78c113ed18a54cc2914e5eb4848eb262",
+          "started_monotonic": 2898257.723278543,
+          "completed_monotonic": 2898257.915248462
+        },
+        "capital": {
+          "read_id": "32fff0c8d03a4bdeaa5734ddde818296",
+          "started_monotonic": 2898257.703152966,
+          "completed_monotonic": 2898257.909201844
+        },
+        "positions": {
+          "read_id": "83950ad4993041e8bc38d9884899373a",
+          "started_monotonic": 2898257.703704304,
+          "completed_monotonic": 2898257.960083336
+        }
+      },
+      "last_write_monotonic": 2898257.127135421,
+      "lines": {
+        "post": 2603,
+        "close": 2617,
+        "safe": 2638
+      }
+    },
+    {
+      "market": "13:15",
+      "opening_window": "33e45756eb9642f49e31160c1f224f32:w6",
+      "window": "33e45756eb9642f49e31160c1f224f32:w8",
+      "price": 0.56,
+      "post_wall_elapsed": 66.01318264007568,
+      "post_ack_wall_elapsed": 66.20751428604126,
+      "post_http_sec": 0.19430770492181182,
+      "close_requested_wall_elapsed": 67.97772002220154,
+      "close_reason": "REPAIR_FILLED",
+      "ack_to_close_sec": 1.7702057361602783,
+      "delete_requests": 0,
+      "first_delete_completed_wall_elapsed": null,
+      "last_delete_completed_wall_elapsed": null,
+      "barrier_safe_wall_elapsed": 71.81466555595398,
+      "close_to_safe_sec": 3.8369455337524414,
+      "next_post_wall_elapsed": null,
+      "close_to_next_post_sec": null,
+      "matched_wall_elapsed": 67.97568225860596,
+      "close_cache_sources": {
+        "time": {
+          "read_id": "ce543f09afe64fc18da8fd0ab4f35d72",
+          "started_monotonic": 2898263.727613043,
+          "completed_monotonic": 2898263.932241235
+        },
+        "trades": {
+          "read_id": "730f4ebeb1894c1796442fbf1117eb92",
+          "started_monotonic": 2898263.728870433,
+          "completed_monotonic": 2898263.913185123
+        },
+        "open_orders": {
+          "read_id": "8d56c7274fd1403fa41ccd058b09de19",
+          "started_monotonic": 2898263.728460262,
+          "completed_monotonic": 2898263.919516843
+        },
+        "capital": {
+          "read_id": "bc5d65bca0ca4b318d86cb9baef95d4f",
+          "started_monotonic": 2898263.708250979,
+          "completed_monotonic": 2898263.951706446
+        },
+        "positions": {
+          "read_id": "d38eefa67ee842b9b304edc6e73d4647",
+          "started_monotonic": 2898263.709143078,
+          "completed_monotonic": 2898263.971536239
+        }
+      },
+      "last_write_monotonic": 2898258.369999414,
+      "lines": {
+        "post": 2654,
+        "close": 2668,
+        "safe": 2730
+      }
+    }
+  ]
+}

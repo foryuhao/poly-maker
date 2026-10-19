@@ -168,6 +168,9 @@ async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, 
         assert all(socket.closed for socket in sockets)
         assert loop.executor.reads.feed.task.done()
         assert loop.normal_controller is not loop.rebalance_controller
+        from polymaker.rdp_sm_path_repair import PathRepairController
+
+        assert isinstance(loop.rebalance_controller, PathRepairController) == (cfg.rdp_sm.repair.policy == "hd_tp_sl_v1")
         assert bool(injected) is disconnect_preflight
     finally:
         if companion is not None:

@@ -159,9 +159,65 @@ class RDPSyncObserveConfig(BaseModel):
         return self
 
 
+class RDPRepairPathConfig(BaseModel):
+    """User-confirmed 2026-10-19 starting values, not execution/EV validation."""
+
+    model_config = ConfigDict(extra="forbid")
+    tp_profit_rate: Decimal | None = Field(default=Decimal("0.002"), gt=0, allow_inf_nan=False)
+    shock_window_sec: float | None = Field(default=2., gt=0, le=30, allow_inf_nan=False)
+    shock_max_age_sec: float = Field(default=3., gt=0, le=30, allow_inf_nan=False)
+    shock_min_ticks: int = Field(default=2, ge=1, strict=True)
+    shock_z: float | None = Field(default=1.5, gt=0, allow_inf_nan=False)
+    drawdown_per_share: Decimal | None = Field(default=Decimal("0.06"), gt=0, allow_inf_nan=False)
+    calibration_status: Literal["UNCALIBRATED", "PARAMETERS_CONFIRMED", "REPLAY_VALIDATED"] = "PARAMETERS_CONFIRMED"
+    parameter_reference: str = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
+    validation_reference: str | None = None
+
+    @model_validator(mode="after")
+    def _shock_age(self):
+        if self.shock_window_sec is not None and self.shock_max_age_sec < self.shock_window_sec:
+            raise ValueError("shock_max_age_sec must be >= shock_window_sec")
+        return self
+
+
+class RDPRepairConfig(BaseModel):
+    """Versioned REPAIR model inputs. Defaults are research, not fitted estimates."""
+
+    model_config = ConfigDict(extra="forbid")
+    policy: Literal["ev_legacy", "hd_tp_sl_v1"] = "ev_legacy"
+    path: RDPRepairPathConfig = Field(default_factory=RDPRepairPathConfig)
+    model_version: Literal["bounded_martingale_v1", "review_lease_v2"] = "review_lease_v2"
+    parameter_status: Literal["UNCALIBRATED"] = "UNCALIBRATED"
+    delta_limit: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    review_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    cutoff_sec: float = Field(default=240.0, gt=0, le=240, allow_inf_nan=False)
+    liquidity_rate: float = Field(default=2.0, ge=0, allow_inf_nan=False)
+    queue_scale_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    depth_decay: float = Field(default=50.0, ge=0, allow_inf_nan=False)
+    submit_delay_sec: float = Field(default=.2, ge=0, allow_inf_nan=False)
+    cancel_delay_sec: float = Field(default=.2, ge=0, allow_inf_nan=False)
+    fill_chunk: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    cross_fill_shares: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    cross_fill_probability: float = Field(default=1.0, ge=0, le=1, allow_inf_nan=False)
+    grid_step: float = Field(default=.005, ge=.001, le=.05, allow_inf_nan=False)
+    continuation_grid_step: float = Field(default=.02, ge=.005, le=.05, allow_inf_nan=False)
+    time_step_sec: float = Field(default=.1, ge=.05, le=1, allow_inf_nan=False)
+    solve_timeout_sec: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    horizon_sec: tuple[float, ...] = (2, 5, 10, 20, 40, 80, 120, 140)
+
+    @model_validator(mode="after")
+    def _limits(self):
+        if self.delta_limit != Decimal("5") or self.cutoff_sec != 240:
+            raise ValueError("REPAIR v1 requires session Delta limit 5 and cutoff T240")
+        if not self.horizon_sec or any(not 0 < h <= 240 for h in self.horizon_sec):
+            raise ValueError("repair horizons must be finite positive seconds <=240")
+        return self
+
+
 class RDPSMConfig(BaseModel):
     normal_entry_mode: Literal["legacy", "obi_v1"] = "legacy"
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
+    repair: RDPRepairConfig = Field(default_factory=RDPRepairConfig)
     sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
     base_size: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
@@ -175,6 +231,8 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
+        if self.repair.policy == "hd_tp_sl_v1" and self.normal_entry_mode != "obi_v1":
+            raise ValueError("hd_tp_sl_v1 requires normal_entry_mode=obi_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")
         if self.max_order_size < self.base_size:

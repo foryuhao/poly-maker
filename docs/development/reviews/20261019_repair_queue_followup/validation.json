@@ -1,0 +1,98 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-18T19:55:07.031518+00:00",
+  "scope": "POSITION_PROVEN_CONFIRMATION_QUEUE_AND_CANCELED_SUBMISSION_CACHE_FIX",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "policy": "hd_tp_sl_v1",
+  "source_session": "ac8db770a1be45ab912b3a9a576d0f36",
+  "market": "btc-updown-5m-1792351500",
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_execution.py",
+    "src/polymaker/rdp_sm_lifecycle.py"
+  ],
+  "fixes": [
+    "Preserve existing position-proven economics for an exact MATCHED/MINED to CONFIRMED upgrade; invalidate session close revision and require fresh final close/admission.",
+    "Suspend repetitive cancellation only for the existing strict identity-bound canceled POST response without observed contradictions; preserve UNKNOWN and full risk reservation until fresh complete proof.",
+    "Keep the pending-proof watcher passive and re-enable DELETE if late conflicting order/fill facts arrive."
+  ],
+  "strategy_parameter_changes": false,
+  "admission_or_close_evidence_requirements_relaxed": false,
+  "cache_freshness_or_polling_or_timeout_changes": false,
+  "pre_fix_reproduction": {
+    "passed": 0,
+    "failed": 3,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 8.171
+  },
+  "initial_targeted_suite": {
+    "passed": 12,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 13.196
+  },
+  "final_focused_suite": {
+    "passed": 54,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 42.861
+  },
+  "final_full_suite": {
+    "passed": 2020,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2,
+    "seconds": 327.641
+  },
+  "canceled_post_simulated_latency": {
+    "before": {
+      "post_response_to_close_sec": 4.915078436024487,
+      "deletes_after_post_response": 13.0
+    },
+    "first_fix": {
+      "post_response_to_close_sec": 1.108789901714772,
+      "deletes_after_post_response": 1.0
+    },
+    "final_focused": {
+      "post_response_to_close_sec": 1.099379398394376,
+      "deletes_after_post_response": 1.0
+    },
+    "final_full": {
+      "post_response_to_close_sec": 1.1055208477191627,
+      "deletes_after_post_response": 1.0
+    }
+  },
+  "new_regression_scenarios": 13,
+  "superseded_full_run_accepted": false,
+  "superseded_run_note": "Stopped after discovering the need to keep watching for a late LIVE order while canceled-submission proof is pending. Its interrupted test results are not validation evidence. Final code passed the new regression and a fresh complete suite.",
+  "previous_validation": "../20261019_repair_rejection_latency/validation.json",
+  "source_evidence": "../20261019_repair_live_0325/summary.json",
+  "configuration_before_metadata_update": {
+    "config/config.toml": "3bc1be170cc6a84b0b5ecfc115d8f17135f343cf89a866b4224eda27b20b0298",
+    "livecfg/config.toml": "ff1e72fb0eb34e08f01c46ca9ff48d3653cb6b7f2c13ec24998bdc5a384a35d2"
+  },
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "ready_for_supervised_live_test": true,
+  "ready_for_live": true,
+  "actual_live_latency_after_fix_validated": false,
+  "positive_ev_validated": false,
+  "automatic_trading_continuation_after_crash": false,
+  "real_orders_sent_during_fix": 0,
+  "deferred_issue_unchanged": "RP-001",
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    }
+  },
+  "configuration_change": "validation_reference only; all trading parameters preserved"
+}

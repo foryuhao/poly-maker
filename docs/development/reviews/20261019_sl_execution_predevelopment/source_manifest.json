@@ -1,0 +1,101 @@
+{
+  "review_date": "2026-10-19",
+  "scope": "SL execution and required handoff/accounting only; no production edits in this review",
+  "baseline_command": "PYTHONPATH=src:tests .venv/bin/python -m pytest tests/test_repair_policy.py tests/test_rdp_sm_path_repair.py tests/test_repair_small_exposure.py tests/test_repair_queue_followup.py tests/test_rdp_sm_network.py -q --junitxml=docs/development/reviews/20261019_sl_execution_predevelopment/baseline.xml",
+  "baseline_result": {
+    "tests": 97,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "local_packages": {
+    "pytest": "9.1.1",
+    "py-clob-client-v2": "1.0.2"
+  },
+  "files": [
+    {
+      "path": "src/polymaker/rdp_sm.py",
+      "sha256": "38c30ecc950762b2d7e741cedc98e0a8916f5ad488938ba98ccaa4ecb96ee65a"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_entry.py",
+      "sha256": "4e056c5ac38ae06918ae2d8c8a01e862b614fb7d7bd203cc5987408bc5648765"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_execution.py",
+      "sha256": "2f43bb7b5561f64da358ff8a8588ea21db10230d505e891840e90d84ec7decda"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_lifecycle.py",
+      "sha256": "f6a3935b6b06d069b345f607abcf40603b8de6fcf794d70ad7889ffacd0ac215"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_loop.py",
+      "sha256": "30787be221ae9a258b3526e085160ef45d8ad76e764eab1680c08837521f716d"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_cached_reads.py",
+      "sha256": "9ed78c2b1877fe28883342a245074cdc0b569f7df247d2f2951f3d29d2ba4a3f"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_network.py",
+      "sha256": "225874f4ed4f5a5e75ae6b4ac27bb8d153c1113f7de551fc878330fac6e18263"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_path_repair.py",
+      "sha256": "c893ff6d243f4f24a95f02be1bfd2fd9226e05bdec5f71233dfd878aecaab2f4"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_repair.py",
+      "sha256": "75c52e670a751a6b63029bc2dfabde5de1605ec13f195dee5d83fb4c26269d9c"
+    },
+    {
+      "path": "src/polymaker/repair_policy.py",
+      "sha256": "5b21299b627e7e9cdf367c1d370c8263650af694f95d2d73361e7ef59bf4d285"
+    },
+    {
+      "path": "src/polymaker/execution/gateway.py",
+      "sha256": "22fca5c9c202b566044a0194ad9ae0567d2330284f2fc2e90c71b1b710a2d686"
+    },
+    {
+      "path": "src/polymaker/rdp_sm_writer.py",
+      "sha256": "9cad9cf16cebb1df3fa9f48a1ef9d194e9004320865fb8b15ace5f3eb0edd32b"
+    },
+    {
+      "path": "src/polymaker/config.py",
+      "sha256": "17993c2f3507a75dc164a4b625985f62c4e26f7e675b404bed74be4065b21815"
+    },
+    {
+      "path": "config/config.toml",
+      "sha256": "37baf7345f8b30feb252f4cd9365652ec058298e174e97ccada9a84f7eb2a423"
+    },
+    {
+      "path": "livecfg/config.toml",
+      "sha256": "2d38808c1551f343f943d3aec5059b420c8ebeae83b7f2c1e2b2556937baf6f1"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "6bc74b4fb7fdd160614e1edde6997e205aa8a52f1824d5ac29c69a658694147c"
+    },
+    {
+      "path": "tests/test_repair_policy.py",
+      "sha256": "c53075f58e18640dfcdf24f754b379252b5baff93b5a0763d673f3d307f865a0"
+    },
+    {
+      "path": "tests/test_rdp_sm_path_repair.py",
+      "sha256": "1de41b5d1f1ec9bd6cf2566d1f7c33804d500ce243805802f5d7bf4de7b3f4cc"
+    },
+    {
+      "path": "tests/test_repair_small_exposure.py",
+      "sha256": "6c350e528c29827cff1b83992898088e746ea6d92ef41dc1a50fa8c411329256"
+    },
+    {
+      "path": "tests/test_repair_queue_followup.py",
+      "sha256": "59612ce169444d4c58912ba3dc185da41fef3eb9388defd2884c28005ca42dd3"
+    },
+    {
+      "path": "tests/test_rdp_sm_network.py",
+      "sha256": "09a6c704a8a7172c4bb7898c76573a1c07da274dac5c1b4faa90ed85d1f16996"
+    }
+  ]
+}

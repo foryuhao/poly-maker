@@ -1,0 +1,555 @@
+{
+  "source": "/home/ubuntu/poly-maker-data/journal/rdp_sm_0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d_f42def203ba8435497ed8ae9c90331f6.jsonl",
+  "source_sha256": "76be541cd051d9dc5afa7a87899bb58b0e7d16349f5f32a8a3db2044f0cdb8da",
+  "time_basis": "Monotonic POST/DELETE boundaries; placement diagnostics can follow an awaited DELETE.",
+  "rejected_windows": [
+    {
+      "window_id": "f42def203ba8435497ed8ae9c90331f6:w9",
+      "expected_order_id": "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+      "quote": {
+        "market_id": "0xc5a5cfd1e749259d4f712404cdee90e5baf8d928d4321291c20743d809cf755c",
+        "token_id": "20044335380647100711678511608383068941985845107774707610042598596905656726098",
+        "outcome": "YES",
+        "side": "BUY",
+        "price": 0.8,
+        "size": 5.0,
+        "window_id": "f42def203ba8435497ed8ae9c90331f6:w9"
+      },
+      "raw_response": [
+        {
+          "errorMsg": "invalid post-only order: order crosses book",
+          "orderID": "",
+          "takingAmount": "",
+          "makingAmount": "",
+          "status": "",
+          "success": true
+        }
+      ],
+      "post_request_sec": 0.5429797619581223,
+      "post_response_to_blocked_return_sec": 10.39260086696595,
+      "post_response_to_next_post_sec": 12.44709023181349,
+      "blocked_return_to_next_post_sec": 2.054489364847541,
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "delete_count": 24,
+      "delete_sdk_mean_sec": 0.21130296811073399,
+      "all_cancels_not_found": true,
+      "cancels": [
+        {
+          "sdk_started": 2861081.1385137,
+          "ack": 2861081.35407958,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861081.142878068,
+          "ack": 2861081.355726701,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861081.606585762,
+          "ack": 2861081.805778114,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861082.056665394,
+          "ack": 2861082.270574852,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861082.522337391,
+          "ack": 2861082.751574619,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861083.003382368,
+          "ack": 2861083.20901487,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861083.460369929,
+          "ack": 2861083.670165384,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861083.921581861,
+          "ack": 2861084.131530051,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861084.383268182,
+          "ack": 2861084.616174893,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861084.867603411,
+          "ack": 2861085.082395088,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861085.333830445,
+          "ack": 2861085.547103489,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861085.799762226,
+          "ack": 2861086.0069974,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861086.25871793,
+          "ack": 2861086.464731304,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861086.71622304,
+          "ack": 2861086.930200145,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861087.181558574,
+          "ack": 2861087.400284488,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861087.652130205,
+          "ack": 2861087.863057833,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861088.114581338,
+          "ack": 2861088.311817437,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861088.562818205,
+          "ack": 2861088.766719838,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861089.018131916,
+          "ack": 2861089.231710421,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861089.482514423,
+          "ack": 2861089.696509999,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861089.948215959,
+          "ack": 2861090.152789376,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861090.404429339,
+          "ack": 2861090.63053874,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861090.881370021,
+          "ack": 2861091.083993523,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861091.335421261,
+          "ack": 2861091.530694037,
+          "not_canceled": [
+            [
+              "0xada92c59e372627b1ad6b9a74cfb145e9cf6a824e229ff8addf5ec7521e740e7",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "window_id": "f42def203ba8435497ed8ae9c90331f6:w10",
+      "expected_order_id": "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+      "quote": {
+        "market_id": "0xc5a5cfd1e749259d4f712404cdee90e5baf8d928d4321291c20743d809cf755c",
+        "token_id": "20044335380647100711678511608383068941985845107774707610042598596905656726098",
+        "outcome": "YES",
+        "side": "BUY",
+        "price": 0.81,
+        "size": 5.0,
+        "window_id": "f42def203ba8435497ed8ae9c90331f6:w10"
+      },
+      "raw_response": [
+        {
+          "errorMsg": "invalid post-only order: order crosses book",
+          "orderID": "",
+          "takingAmount": "",
+          "makingAmount": "",
+          "status": "",
+          "success": true
+        }
+      ],
+      "post_request_sec": 0.21669694315642118,
+      "post_response_to_blocked_return_sec": 10.308218349702656,
+      "post_response_to_next_post_sec": 12.363396858796477,
+      "blocked_return_to_next_post_sec": 2.055178509093821,
+      "close_barrier": "BLOCKED",
+      "block_reason": "SYNC_CACHE_NOT_READY",
+      "delete_count": 24,
+      "delete_sdk_mean_sec": 0.20757223172889402,
+      "all_cancels_not_found": true,
+      "cancels": [
+        {
+          "sdk_started": 2861093.803421587,
+          "ack": 2861094.01076288,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861093.802275574,
+          "ack": 2861094.011224579,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861094.262310164,
+          "ack": 2861094.49295382,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861094.744191831,
+          "ack": 2861094.946360895,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861095.198188503,
+          "ack": 2861095.40483864,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861095.656121482,
+          "ack": 2861095.866898294,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861096.118401849,
+          "ack": 2861096.325032237,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861096.576232659,
+          "ack": 2861096.782061188,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861097.033741539,
+          "ack": 2861097.240351678,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861097.491839403,
+          "ack": 2861097.683969993,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861097.936465735,
+          "ack": 2861098.144486971,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861098.395762172,
+          "ack": 2861098.605132056,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861098.856518064,
+          "ack": 2861099.053308664,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861099.304613215,
+          "ack": 2861099.515797577,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861099.766940061,
+          "ack": 2861099.976844843,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861100.227772842,
+          "ack": 2861100.434717753,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861100.686225379,
+          "ack": 2861100.884663639,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861101.135814123,
+          "ack": 2861101.375394318,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861101.62657643,
+          "ack": 2861101.838587822,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861102.091103463,
+          "ack": 2861102.299587919,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861102.552340286,
+          "ack": 2861102.755584104,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861103.006494774,
+          "ack": 2861103.195604364,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861103.447291835,
+          "ack": 2861103.645499642,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        },
+        {
+          "sdk_started": 2861103.89686126,
+          "ack": 2861104.109573916,
+          "not_canceled": [
+            [
+              "0xed43325bad85d36fbf8812d162d8e0016032494e359e7db31410af42ad2cf8c0",
+              "order can't be found - already canceled or matched"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

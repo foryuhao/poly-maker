@@ -89,6 +89,11 @@ class StateStore:
         row = self._conn.execute("SELECT * FROM owned_orders WHERE order_id=?", (order_id,)).fetchone()
         return dict(row) if row else None
 
+    def retire_unaccepted_order(self, order_id: str, source: str) -> None:
+        """Remove a provisional identity after its caller proved nonacceptance."""
+        self._conn.execute("DELETE FROM owned_orders WHERE order_id=? AND source=?", (order_id, source))
+        self._conn.commit()
+
     def owned_orders(self) -> list[dict[str, object]]:
         return [dict(r) for r in self._conn.execute("SELECT * FROM owned_orders")]
 

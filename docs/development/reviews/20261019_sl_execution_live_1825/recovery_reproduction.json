@@ -1,0 +1,587 @@
+{
+  "scope": "Offline simulated clock; no I/O",
+  "8_4_second_probe_interval": [
+    {
+      "elapsed": 8.4,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          11,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 16.8,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          12,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 25.200000000000003,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          13,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 33.6,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 42.0,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 50.400000000000006,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 58.800000000000004,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 67.2,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 75.60000000000001,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 84.0,
+      "allowed": false,
+      "reason": "NETWORK_RECOVERING",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          4,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    }
+  ],
+  "half_second_probe_interval": [
+    {
+      "elapsed": 0.5,
+      "allowed": false,
+      "reason": "NETWORK_PAUSED",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          11,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 1.0,
+      "allowed": false,
+      "reason": "NETWORK_PAUSED",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          12,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 1.5,
+      "allowed": false,
+      "reason": "NETWORK_PAUSED",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          13,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PAUSED",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 2.0,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          14,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 2.5,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          15,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 3.0,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          16,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 3.5,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          17,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 4.0,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          18,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 4.5,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          19,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    },
+    {
+      "elapsed": 5.0,
+      "allowed": true,
+      "reason": "NETWORK_PROBE_READY",
+      "p95_ms": 200.0,
+      "samples": [
+        [
+          "GET",
+          20,
+          200.0,
+          0.0
+        ]
+      ],
+      "write_proxy": true,
+      "state": "PROBE",
+      "pause_until": 2.0,
+      "active_batch": null,
+      "close_active": false,
+      "write_evidence": {
+        "POST": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        },
+        "DELETE": {
+          "status": "UNKNOWN",
+          "observed_monotonic": null
+        }
+      }
+    }
+  ]
+}

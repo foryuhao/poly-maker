@@ -1,7 +1,8 @@
-"""Shared order primitives for the independent NORMAL/REBALANCE controllers.
+"""Shared order primitives for NORMAL/REPAIR and the legacy controller.
 
-Preparation may wait for disk and SDK reads. Activation consumes a new socket
-event and uses the original signatures without waiting for a diagnostic writer.
+Preparation may wait for disk and SDK reads. NORMAL activation consumes a new
+socket event; the path REPAIR uses the latest valid book immediately. Both keep
+original event timestamps and signatures, without waiting for diagnostics.
 """
 
 import asyncio
@@ -16,9 +17,17 @@ from py_clob_client_v2.order_builder.builder import ROUNDING_CONFIG
 
 from polymaker.domain import Quote, Side
 from polymaker.rdp_sm import _require
-from polymaker.rdp_sm_execution import CAPITAL_LIMIT, Placement, WindowResult
+from polymaker.rdp_sm_execution import (
+    Placement,
+    WindowResult,
+    _canceled_submission_response,
+)
 from polymaker.rdp_sm_quotes import QuoteUnavailable
 from polymaker.rdp_sm_signal import evaluate
+
+
+async def _drain_task(task):
+    return await asyncio.shield(task)
 
 
 @dataclass(frozen=True)
@@ -110,13 +119,21 @@ class BatchLifecycle:
         meta = self.executor.meta
         repair = (
             (meta.no.token_id if yes > no else meta.yes.token_id)
-            if controller.phase == "REBALANCE"
+            if controller.phase in {"REBALANCE", "REPAIR"}
             else None
         )
-        return self.feed.snapshot(repair_token=repair)
+        return self.feed.snapshot(repair_token=repair, repair=controller.phase == "REPAIR")
 
     async def prepare(self, controller, yes, no, window_id):
         e = self.executor
+        _require(not e.attempts or e.safe_to_continue, "PREVIOUS_WINDOW_UNRESOLVED")
+        if e.inventory_mismatch is not None:
+            self.wait("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", self.snapshot(controller, yes, no))
+            return None
+        e.update_repair_episode()
+        if controller.phase == "NORMAL" and e.repair_episode is not None:
+            self.wait("REPAIR_EPISODE_OWNS_SESSION", self.snapshot(controller, yes, no))
+            return None
         _require(not self.busy, "BATCH_ALREADY_ACTIVE")
         _require(window_id not in e.used_windows, "WINDOW_ID_ALREADY_USED")
         _require(not e.attempts or e.safe_to_continue, "PREVIOUS_WINDOW_UNRESOLVED")
@@ -173,7 +190,11 @@ class BatchLifecycle:
         client = e.gateway._client
         ticks = {}
         for token in self.feed.books:
-            client._ClobClient__tick_sizes.pop(token, None)
+            cached_tick = client._ClobClient__tick_sizes.get(token)
+            current_tick = self.feed.books[token].tick
+            if (not getattr(controller, "immediate_activation", False)
+                    or cached_tick is None or Decimal(str(cached_tick)) != current_tick):
+                client._ClobClient__tick_sizes.pop(token, None)
             ticks[token] = float(await e.gateway._io(client.get_tick_size, token))
         try:
             self.feed.verify_ticks(ticks)
@@ -186,6 +207,8 @@ class BatchLifecycle:
         )
         candidates = []
         for direction, (quotes, sizing) in plans.items():
+            if any(not e.delta_candidate_allowed(yes-no, q.outcome, Decimal(str(q.size))) for q in quotes):
+                continue
             for q in quotes:
                 e._validate(q, window_id, snapshot.books(), e.meta)
                 _require(f"{ticks[q.token_id]:g}" in ROUNDING_CONFIG, "SDK_TICK_UNSUPPORTED")
@@ -201,7 +224,7 @@ class BatchLifecycle:
                 sum((Decimal(str(q.size)) * Decimal("1.00") for q in quotes), Decimal(0))
                 if controller.phase == "NORMAL" else commitment
             )
-            if capital_required + e.committed() > CAPITAL_LIMIT or commitment > Decimal(
+            if capital_required + e.committed() > e.capital_limit or commitment > Decimal(
                 str(self.account["basic_spendable_budget_usd"])
             ):
                 continue
@@ -292,6 +315,7 @@ class BatchLifecycle:
             (e.fatal or "FATAL_EXECUTION_STATE", e.fatal is None),
             ("ASYNC_JOURNAL_NOT_READY", e.journal.ready),
             ("CAPITAL_EVIDENCE_CHANGED_BEFORE_SUBMIT", e.revision == revision),
+            ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", e.inventory_mismatch is None),
             ("ACCOUNT_PAGINATION_UNRESOLVED", e.gateway._client.pagination_failure is None),
             ("ACCOUNT_EVIDENCE_STALE", e.monotonic() - e.time_anchor <= e.cfg.risk.ws_stale_halt_s),
             ("MARKET_SUBMISSION_CUTOFF", 15 <= elapsed < controller.cutoff),
@@ -319,6 +343,8 @@ class BatchLifecycle:
             ),
             (health.reason, health.allowed),
             ("FINAL_QUOTES_OR_DIRECTION_CHANGED", controller.matches(intent, current)),
+            ("SESSION_DELTA_LIMIT", all(e.delta_candidate_allowed(intent.yes-intent.no,
+                 q.outcome, Decimal(str(q.size))) for q in intent.quotes)),
         ]
         self.guard_reason = next((reason for reason, valid in checks if not valid), None)
         return self.guard_reason is None
@@ -330,13 +356,13 @@ class BatchLifecycle:
         # The candidate was persisted before this event. Never retime an old
         # socket event to hide preparation or writer latency.
         sequence = self.feed.sequence
-        await self.feed.wait_after(sequence, 0.5)
+        if slot.phase != "REPAIR" or not getattr(controller, "immediate_activation", False):
+            await self.feed.wait_after(sequence, 0.5)
         snapshot = self.snapshot(controller, slot.yes, slot.no)
         direction, signal = controller.select(snapshot)
         if (
-            snapshot.sequence <= slot.snapshot.sequence
-            or snapshot.sequence <= sequence
-            or not snapshot.valid
+            (slot.phase == "NORMAL" and (snapshot.sequence <= slot.snapshot.sequence
+                                        or snapshot.sequence <= sequence)) or not snapshot.valid
         ):
             self.metrics["not_ready"] += 1
             self.wait(snapshot.reason or "NO_NEW_BOOK_EVENT", snapshot)
@@ -359,7 +385,7 @@ class BatchLifecycle:
             slot.no,
             slot.revision,
             candidate.quotes,
-            controller.deadline(snapshot) if slot.phase == "NORMAL" else None,
+            controller.deadline(snapshot) if slot.phase in {"NORMAL", "REPAIR"} else None,
             claim,
             slot.prepared_at,
             slot.persisted_at,
@@ -386,7 +412,9 @@ class BatchLifecycle:
                 self.busy = True
                 activated = True
                 self.metrics["hit"] += 1
-                return await self._send(controller, intent, candidate, signal)
+            # busy still serializes NORMAL/TP entry. Network lifetimes must not
+            # hold the ledger lock needed by an SL execution handoff.
+            return await self._send(controller, intent, candidate, signal)
         finally:
             if activated:
                 self.busy = False
@@ -421,8 +449,27 @@ class BatchLifecycle:
             not close_requested.is_set() and self.guard(controller, intent, revision, deadline)
         )
         post_start = [None]
+        active_review = [None]
+        next_review = [0.]
+        last_review_price_sequence = [-1]
         final_evidence = [None]
         close_evidence = [None]
+        sl_handoff = [None]
+        sl_actor = [None]
+
+        async def drain_review():
+            task = active_review[0]
+            if task is None:
+                return
+
+            async def drain():
+                try:
+                    await asyncio.shield(task)
+                except Exception as exc:
+                    e.record("sm_repair_wait", {"reason": "REVIEW_"+type(exc).__name__})
+
+            await e._await_owned(drain(), propagate_cancel=False)
+            active_review[0] = None
 
         def request_close(reason, **evidence):
             if not close_requested.is_set():
@@ -435,6 +482,15 @@ class BatchLifecycle:
                 # A diagnostic failure must never prevent cancellation.
                 with suppress(Exception):
                     e.record("sm_obi_close_requested", close_evidence[0])
+                if (reason == "REPAIR_MODE_SL_CANCEL_OLD_STATE"
+                        and hasattr(controller, "execute_sl")):
+                    from polymaker.rdp_sm_sl import SLExecution
+
+                    actor = SLExecution(controller, intent.window_id, inherited=batch,
+                        parent_done=post_done,
+                        reads_ready=lambda: active_review[0] is None or active_review[0].done())
+                    sl_actor[0] = actor
+                    sl_handoff[0] = asyncio.create_task(actor.run(), name="tp-to-sl")
 
         def on_post_start():
             final_evidence[0] = self.final_evidence
@@ -442,19 +498,45 @@ class BatchLifecycle:
             if intent.claim:
                 self.feed.episodes.consume(intent.claim)
             post_start[0] = e.monotonic()
+            elapsed = e.official_time+post_start[0]-e.time_anchor-int(e.slug.rsplit("-", 1)[1])
+            for oid in prospective:
+                e.order_post_elapsed[oid] = elapsed
+            if intent.phase == "NORMAL":
+                e.begin_repair_episode(intent.window_id, intent.quotes)
+            elif intent.phase == "REPAIR" and e.repair_episode is not None:
+                e.repair_episode["submissions"] += 1
+                e.repair_episode.setdefault("windows", [e.repair_episode["opening_window"]]).append(intent.window_id)
             self.metrics["posted"] += 1
             if deadline[0] is None:
                 deadline[0] = post_start[0] + e.cfg.rdp_sm.obi.rebalance_order_ttl_sec
 
         client.on_post_start = on_post_start
 
+        def possible_cancel_ids():
+            # Before POST drains, every submitted signed ID may still be
+            # accepted. Afterwards only a positively classified rejection (or
+            # an unsubmitted leg) is excluded; generic UNKNOWN still needs cancellation.
+            if not post_done.is_set():
+                return list(prospective) if any(a.post_started for a in batch) else []
+            # The exact signed-ID "Already canceled" POST response also
+            # permits draining cancellation so its proof can get fresh pages.
+            # It stays UNKNOWN/reserved until the existing full close verifies
+            # no conflicting order/fill evidence. Generic UNKNOWN never skips.
+            return [a.expected_order_id for a in batch
+                    if a.post_started and a.outcome not in {"REJECTED", "ABORTED"}
+                    and not (_canceled_submission_response(a)
+                             and not e._canceled_submission_observed(a.order_id))]
+
         async def cancel_possible():
+            ids = possible_cancel_ids()
+            if not ids:
+                return
             began = e.monotonic()
-            raw = await e.gateway.cancel_detailed(prospective)
+            raw = await e.gateway.cancel_detailed(ids)
             e.record(
                 "sm_cancel_ack",
                 {
-                    "ids": list(prospective),
+                    "ids": ids,
                     "result": asdict(raw),
                     "delete_requested": began,
                     "delete_sdk_started": raw.sdk_started_monotonic,
@@ -491,8 +573,13 @@ class BatchLifecycle:
                     and current.signal_event > intent.snapshot.signal_event
                     and 0 <= signal_age_ms <= e.cfg.rdp_sm.obi.max_signal_age_ms
                 )
+                boundary_reason = (controller.boundary_close_reason(intent, elapsed)
+                                   if hasattr(controller, "boundary_close_reason") else None)
                 reason = next((name for name, failed in (
+                    (boundary_reason, boundary_reason is not None),
                     ("ORDER_DEADLINE", deadline[0] is not None and now >= deadline[0]),
+                    ("SESSION_ECONOMICS_CHANGED", any(oid not in prospective and oid not in e.proofs
+                                                      for oid in e.known)),
                     (current.reason or "WS_INVALID", invalid),
                     ("NETWORK_EXECUTION_FAILURE", health.close_active),
                     ("ASYNC_JOURNAL_NOT_READY", not e.journal.ready),
@@ -512,9 +599,38 @@ class BatchLifecycle:
                     request_close(
                         reason, snapshot_id=current.snapshot_id, health=asdict(health), **evidence
                     )
+                if intent.phase == "REPAIR" and post_done.is_set() and not close_requested.is_set():
+                    review = active_review[0]
+                    if review is not None and review.done():
+                        try:
+                            outcome = review.result()
+                        except Exception as exc:
+                            outcome = "REPAIR_REVIEW_"+type(exc).__name__
+                        active_review[0] = None
+                        if outcome:
+                            request_close(outcome)
+                    price_sequence = (self.feed.repair_price_points[-1].sequence
+                                      if self.feed.repair_price_points else -1)
+                    price_event = (getattr(controller, "immediate_activation", False)
+                                   and price_sequence != last_review_price_sequence[0])
+                    if active_review[0] is None and (now >= next_review[0] or price_event) and not close_requested.is_set():
+                        next_review[0] = now+e.cfg.rdp_sm.repair.review_sec
+                        last_review_price_sequence[0] = price_sequence
+                        active_review[0] = asyncio.create_task(controller.review_active(intent, deadline))
                 if close_requested.is_set() and any(a.post_started for a in batch):
-                    if (e.shared_reads is not None and post_done.is_set()
-                            and e.shared_reads.terminal_observed(prospective)):
+                    if sl_handoff[0] is not None:
+                        return  # The SL actor owns per-ID cancellation now.
+                    ids = possible_cancel_ids()
+                    if not ids or (e.shared_reads is not None and post_done.is_set()
+                                   and e.shared_reads.terminal_observed(ids)):
+                        if not verification_done.is_set() and any(
+                            a.outcome == "UNKNOWN" and _canceled_submission_response(a)
+                            and not e._canceled_submission_observed(a.order_id) for a in batch
+                        ):
+                            # No redundant writes while full proof is pending;
+                            # a late contradictory cache/WS fact re-enables DELETE.
+                            await asyncio.sleep(.005)
+                            continue
                         return  # The final close still verifies fills and reserves.
                     await cancel_possible()
                     if verification_done.is_set():
@@ -572,10 +688,16 @@ class BatchLifecycle:
                     e.fatal = "SIGNED_ORDER_ID_MISMATCH"
                 elif outcome == "ACK":
                     e.store.upsert_order(order)
+                    if intent.phase == "REPAIR":
+                        e.repair_order_started[oid] = post_returned
+                        e.record("sm_repair_queue_origin", {"order_id": oid,
+                            "accepted_monotonic_proxy": post_returned, "source": "LOCAL_ACK_PROXY"})
+                        if hasattr(controller, "on_order_accepted"):
+                            controller.on_order_accepted(intent)
             if not all(a.outcome == "ACK" for a in batch):
                 request_close("PLACEMENT_NOT_ACKNOWLEDGED", outcomes=[a.outcome for a in batch])
             post_done.set()
-            if close_requested.is_set() and batch[0].post_started:
+            if close_requested.is_set() and batch[0].post_started and sl_handoff[0] is None:
                 await cancel_possible()
             # Diagnostics only follow the operation and complete ID registration.
             anchor_book = max((intent.snapshot.yes, intent.snapshot.no), key=lambda b: b.received_mono)
@@ -689,17 +811,29 @@ class BatchLifecycle:
                     await asyncio.sleep(0.005)
 
             await e._await_owned(await_close_request(), propagate_cancel=False)
+            await drain_review()
+            if sl_handoff[0] is not None:
+                await e._await_owned(_drain_task(sl_handoff[0]), propagate_cancel=False)
             safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
             if not safe and e.pending_confirmations:
                 await e._await_owned(e._wait_for_confirmation(), propagate_cancel=False)
             verification_done.set()
             await e.journal.flush()
+            e.update_repair_episode()
+            if sl_handoff[0] is not None and e.safe_to_continue:
+                from polymaker.rdp_sm_sl_ledger import install_reverse_episode
+
+                install_reverse_episode(e)
         finally:
+            if sl_handoff[0] is not None and not sl_handoff[0].done():
+                sl_actor[0].closed = True
+                await e._await_owned(_drain_task(sl_handoff[0]), propagate_cancel=False)
             client.on_post_start = None
             client.attempt, client.batch_attempts = None, None
             if not close_requested.is_set():
                 request_close("EXECUTION_CLEANUP")
             post_done.set()
+            await drain_review()
             verification_done.set()
             if not watcher.done():
 
@@ -719,12 +853,16 @@ class BatchLifecycle:
         result.fill_deadline_monotonic = deadline[0]
         result.close_monotonic = e.monotonic()
         result.end_time = time.time()
-        result.placement_results = [asdict(a) for a in batch]
+        reported = batch + (sl_actor[0].created if sl_actor[0] is not None else [])
+        if sl_actor[0] is not None and sl_actor[0].last_plan is not None:
+            e.record("sm_strategy_window", sl_actor[0].last_plan)
+        result.requested_quotes = [a.quote for a in reported]
+        result.placement_results = [asdict(a) for a in reported]
         result.known_order_ids = sorted(e.known)
-        result.confirmed_fills = [asdict(f) for f in e.confirmed()]
+        result.confirmed_fills = [asdict(f) for f in e.economic_fills()]
         result.yes_inventory, result.no_inventory = (
             float(
-                sum((Decimal(str(f.size)) for f in e.confirmed() if f.token_id == t), Decimal(0))
+                sum((Decimal(str(f.size)) for f in e.economic_fills() if f.token_id == t), Decimal(0))
                 - e.merged_pairs
             )
             for t in (e.meta.yes.token_id, e.meta.no.token_id)
@@ -743,7 +881,7 @@ class BatchLifecycle:
                     "FIXED_DEADLINE; fresh valid opposite signal cancels; "
                     "NONE or WS_BOOK_STALE keeps active order; no reprice or automatic flip"
                     if intent.phase == "NORMAL"
-                    else "FIXED_DEADLINE; REBALANCE independent of OBI"
+                    else "MODEL_ABSOLUTE_DEADLINE; REPAIR independent of OBI"
                 ),
                 **self.feed.changes_since(intent.snapshot.signal_event),
             },

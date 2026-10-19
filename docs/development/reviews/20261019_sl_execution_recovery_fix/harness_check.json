@@ -1,0 +1,6 @@
+{
+  "partial_diagnostic_tail_ignored": true,
+  "complete_corrupt_record_rejected": true,
+  "wrong_prepared_hash_rejected": true,
+  "scope": "Mock venue harness only; production WAL unchanged; no network I/O"
+}

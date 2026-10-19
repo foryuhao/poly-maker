@@ -1,0 +1,87 @@
+{
+  "status": "PASS",
+  "recorded_at_utc": "2026-10-18T19:21:23.070113+00:00",
+  "scope": "EXPLICIT_REJECTION_CANCELLATION_LOOP_FIX_AND_REGRESSION",
+  "release_scope": "SUPERVISED_SINGLE_MARKET_LIVE_TEST",
+  "policy": "hd_tp_sl_v1",
+  "live_session": "f42def203ba8435497ed8ae9c90331f6",
+  "market": "btc-updown-5m-1792349700",
+  "root_cause": "A positively REJECTED signed ID remained in the cancellation watcher. Repeated DELETEs continually advanced last_write, preventing a complete post-write fresh cache until the 10s acquire timeout.",
+  "fix": "Keep all prospective signed IDs before POST drains. Afterwards exclude only REJECTED/ABORTED legs from both owner and watcher cancellation; preserve full account and close evidence checks.",
+  "changed_production_modules": [
+    "src/polymaker/rdp_sm_lifecycle.py"
+  ],
+  "strategy_parameter_changes": false,
+  "admission_or_proof_requirements_relaxed": false,
+  "polling_or_timeout_changes": false,
+  "pre_fix_reproduction": {
+    "passed": 2,
+    "failed": 1,
+    "skipped": 0,
+    "seconds": 8.648
+  },
+  "simulated_latency_metrics": {
+    "before": {
+      "post_response_to_close_sec": 5.186416835989803,
+      "rejected_id_delete_count": 13.0
+    },
+    "first_fix": {
+      "post_response_to_close_sec": 0.7842054478824139,
+      "rejected_id_delete_count": 0.0
+    },
+    "final_source_full_suite": {
+      "post_response_to_close_sec": 0.789304873906076,
+      "rejected_id_delete_count": 0.0
+    }
+  },
+  "focused_suite": {
+    "passed": 145,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 110.681
+  },
+  "full_suite": {
+    "passed": 2007,
+    "failed": 0,
+    "skipped": 2,
+    "seconds": 315.119
+  },
+  "focused_revision_note": "Focused process used the first fix variant. Final source conservatively preserves every prospective signed ID while POST remains in flight; verified by the final full suite.",
+  "new_regression_scenarios": [
+    "Native post-only rejection with 1s/2s cache cadence and 0.2s request delays; safe close then actual SL retry and pairing",
+    "Lost ACK remains cancellable",
+    "Ambiguous reply remains cancellable",
+    "Mixed batch first-leg rejection",
+    "Mixed batch second-leg rejection"
+  ],
+  "previous_validation": "../20261019_repair_first_live/validation.json",
+  "live_latency_evidence": "live_latency.json",
+  "source_change": "lifecycle_change.patch",
+  "parameters_reference": "../../REPAIR_PARAMETER_PROPOSAL_20261019.md",
+  "configuration_before_metadata_update": {
+    "config/config.toml": "b50fd47fd51aadb7272faa416cdb25292b78cc0d162a24256cab6908412b17b7",
+    "livecfg/config.toml": "3692fca37bfcd86dd49e2a392ebe3fc3916b353c0fba7ef8a0093ae77ad42267"
+  },
+  "lint": "PASS",
+  "git_diff_check": "PASS",
+  "ready_for_supervised_live_test": true,
+  "ready_for_live": true,
+  "actual_live_latency_after_fix_validated": false,
+  "positive_ev_validated": false,
+  "automatic_trading_continuation_after_crash": false,
+  "real_orders_sent_during_fix": 0,
+  "deferred_issue_unchanged": "RP-001",
+  "readiness_checks": {
+    "config": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    },
+    "livecfg": {
+      "exit_code": 0,
+      "ready_for_live": true,
+      "policy_selected": true
+    }
+  },
+  "configuration_change": "validation_reference only; all trading parameters preserved"
+}
