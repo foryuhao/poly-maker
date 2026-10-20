@@ -1,8 +1,9 @@
-"""Signal-driven SL execution. Only this path permits replacement overlap.
+"""Signal-driven SL coordination and reusable owned order I/O primitives.
 
 The coordinator serializes local reservation/target changes; POST, DELETE and
 targeted reads have independent tasks. It never runs the session close barrier
-while a replacement is active. NORMAL and resting TP retain their lifecycle.
+while a replacement is active. TP reuses its I/O with a separate fixed-price
+coordinator; only the SL run loop permits replacement overlap.
 """
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ ZERO = Decimal(0)
 
 
 class SLExecution:
+    mode = "SL"
+
     def __init__(self, controller, window_id, *, inherited=(), parent_done=None, reads_ready=None):
         self.controller = controller
         self.e = controller.executor
@@ -48,8 +51,8 @@ class SLExecution:
         self.post_started = {}
         self.signal_times = {}
         self.proof_after = {}
-        self.rejected_target = (getattr(controller, "sl_rejected_target", None)
-            if self.e.monotonic() < getattr(controller, "sl_retry_after", 0) else None)
+        self.rejected_target = (getattr(controller, self.mode.lower()+"_rejected_target", None)
+            if self.e.monotonic() < getattr(controller, self.mode.lower()+"_retry_after", 0) else None)
         self.latest = None
         self.last_plan = None
         self.guard_failures = {}
@@ -75,6 +78,12 @@ class SLExecution:
     def elapsed(self):
         return self.controller.elapsed()
 
+    def record(self, event, payload):
+        self.e.record(f"sm_{self.mode.lower()}_{event}", payload)
+
+    def on_accepted(self, attempt):
+        """Mode-specific acceptance policy; shared I/O never changes SL pricing."""
+
     @staticmethod
     def consistent(snapshot):
         total = (snapshot.yes.best_bid+snapshot.yes.best_ask
@@ -99,7 +108,7 @@ class SLExecution:
         a.order_id = oid
         if self.e.processor.owned_record(oid) is None:
             self.e.processor.register_order(oid, self.e.meta.condition_id, a.quote.token_id,
-                Side.BUY, a.quote.size, a.quote.price, "rdp_sm_sl", quiet=True)
+                Side.BUY, a.quote.size, a.quote.price, "rdp_sm_"+self.mode.lower(), quiet=True)
 
     def unresolved(self, a):
         if a.outcome in {"REJECTED", "ABORTED"}:
@@ -111,7 +120,7 @@ class SLExecution:
     def wait(self, reason, goal=None):
         key = (reason, goal[:3] if goal is not None else None)
         if key != self.last_wait:
-            self.e.record("sm_sl_wait", {"reason": reason, "window_id": self.window_id,
+            self.record("wait", {"reason": reason, "window_id": self.window_id,
                                           "target": ({"side": goal[0], "price": str(goal[1]),
                                                       "quantity": str(goal[2]),
                                                       "generation": goal[3].generation}
@@ -221,12 +230,14 @@ class SLExecution:
         e = self.e
         outcome, price, qty, snapshot = goal
         began = e.monotonic()
+        prepared_at = persisted_at = None
         registered = False
         try:
             ticks = {snapshot.yes.token_id: float(snapshot.yes.tick),
                      snapshot.no.token_id: float(snapshot.no.tick)}
             signed = await e.gateway.prepare([Quote(a.quote.token_id, Side.BUY,
                                                     float(price), float(qty))], e.meta, ticks)
+            prepared_at = e.monotonic()
             a.expected_order_id = signed.order_ids[0]
             if (a.expected_order_id in self.lifecycle.prepared_ids
                     or a.expected_order_id in e.gateway._client.known_ids):
@@ -240,9 +251,10 @@ class SLExecution:
                 "candidates": [{"direction": outcome, "order_ids": signed.order_ids,
                     "quotes": [asdict(a.quote)], "body_hash": signed.body_hash}],
                 "risk_upper_bound": str(a.maximum), "status": "POSSIBLY_SENT; NOT_AN_ACK"}}, time.time())
+            persisted_at = e.monotonic()
             e.gateway._client.known_ids.add(a.expected_order_id)
             e.processor.register_order(a.expected_order_id, e.meta.condition_id, a.quote.token_id,
-                Side.BUY, float(qty), float(price), "rdp_sm_sl", quiet=True)
+                Side.BUY, float(qty), float(price), "rdp_sm_"+self.mode.lower(), quiet=True)
             registered = True
 
             def guard():
@@ -272,7 +284,7 @@ class SLExecution:
             try:
                 raw = await e.gateway.send_prepared(signed, submit_guard=guard, operation_context=context)
             except Exception as exc:
-                self.e.record("sm_sl_post_error", {"order_id": a.expected_order_id,
+                self.record("post_error", {"order_id": a.expected_order_id,
                                                    "error": type(exc).__name__})
             finally:
                 if write is not None:
@@ -285,6 +297,7 @@ class SLExecution:
                     a.outcome, e.fatal = "UNKNOWN", "SIGNED_ORDER_ID_MISMATCH"
                 else:
                     e.store.upsert_order(order)
+                    self.on_accepted(a)
             elif a.outcome == "REJECTED":
                 if any(f.maker_order_id == a.expected_order_id for f in e.processor.fill_records.values()):
                     a.outcome, e.fatal = "UNKNOWN", "REJECTED_ORDER_FILL_CONTRADICTION"
@@ -295,10 +308,12 @@ class SLExecution:
                 self.cancel_wanted.add(a.attempt_id)
                 self.rejected_target = (outcome, price, qty)
             self.e.record("sm_placement_result", asdict(a))
-            self.e.record("sm_sl_command", {"event": "POST_RETURNED", "window_id": a.quote.window_id,
-                "order_id": a.expected_order_id, "outcome": a.outcome, "mode": "SL",
+            self.record("command", {"event": "POST_RETURNED", "window_id": a.quote.window_id,
+                "order_id": a.expected_order_id, "outcome": a.outcome, "mode": self.mode,
                 "side": outcome, "price": str(price), "quantity": str(qty),
                 "signal_observed_monotonic": self.signal_times.get(a.attempt_id, began),
+                "dispatch_monotonic": began, "prepared_monotonic": prepared_at,
+                "persisted_monotonic": persisted_at,
                 "post_started_monotonic": self.post_started.get(a.attempt_id),
                 "post_started": a.post_started,
                 "aborted_reason": self.guard_failures.get(a.attempt_id),
@@ -307,14 +322,14 @@ class SLExecution:
             a.outcome = "UNKNOWN" if a.post_started else "ABORTED"
             self.cancel_wanted.add(a.attempt_id)
             self.rejected_target = (outcome, price, qty)
-            self.e.record("sm_sl_post_error", {"attempt_id": a.attempt_id, "error": type(exc).__name__})
+            self.record("post_error", {"attempt_id": a.attempt_id, "error": type(exc).__name__})
         finally:
             if registered and a.outcome in {"REJECTED", "ABORTED"} and a.expected_order_id:
-                e.processor.retire_unaccepted_order(a.expected_order_id, source="rdp_sm_sl")
+                e.processor.retire_unaccepted_order(a.expected_order_id, source="rdp_sm_"+self.mode.lower())
             self.post_returned[a.attempt_id] = e.monotonic()
             if self.rejected_target is not None:
-                self.controller.sl_rejected_target = self.rejected_target
-                self.controller.sl_retry_after = e.monotonic()+self.controller.cfg.review_sec
+                setattr(self.controller, self.mode.lower()+"_rejected_target", self.rejected_target)
+                setattr(self.controller, self.mode.lower()+"_retry_after", e.monotonic()+self.controller.cfg.review_sec)
             self.last_progress = e.monotonic()
             # A cancellation before POST drained never covers a late acceptance.
             if a.attempt_id in self.cancel_wanted:
@@ -329,7 +344,7 @@ class SLExecution:
                 self.cancel_ack[a.attempt_id] = self.e.monotonic()
             self.e.record("sm_cancel_ack", {"ids": [oid], "result": asdict(ack),
                 "delete_requested": began, "delete_sdk_started": ack.sdk_started_monotonic,
-                "delete_ack": ack.ack_monotonic, "scope": "SL_ORDER"})
+                "delete_ack": ack.ack_monotonic, "scope": self.mode+"_ORDER"})
         finally:
             self.cancel_after[a.attempt_id] = self.e.monotonic()
 
@@ -349,7 +364,7 @@ class SLExecution:
             if (self.post_done(a) and _canceled_submission_response(a)
                     and not self.e._canceled_submission_observed(self.oid(a))):
                 continue  # Keep full risk while awaiting strict rejection proof.
-            self.cancels[aid] = asyncio.create_task(self.cancel(a), name="sl-cancel")
+            self.cancels[aid] = asyncio.create_task(self.cancel(a), name=self.mode.lower()+"-cancel")
 
     async def poll(self):
         """Targeted reads run independently of the operation coordinator."""
@@ -382,7 +397,7 @@ class SLExecution:
                     await e.reads.refresh_feed_ticks()
                 await asyncio.sleep(.05)
             except Exception as exc:
-                self.wait("SL_PROOF_"+type(exc).__name__)
+                self.wait(self.mode+"_PROOF_"+type(exc).__name__)
                 await asyncio.sleep(.1)
 
     def observe_order(self, a, row, trades, read_started):
@@ -394,14 +409,14 @@ class SLExecution:
                 and ev.token_id == a.quote.token_id and ev.side is Side.BUY
                 and Decimal(str(ev.original_size)) == Decimal(str(a.quote.size))
                 and Decimal(str(ev.price)) == Decimal(str(a.quote.price))):
-            e.fatal = "SL_ORDER_IDENTITY_CONFLICT"
+            e.fatal = self.mode+"_ORDER_IDENTITY_CONFLICT"
             e.processor.quarantine_order(oid, e.fatal, notify=False)
             return
         previous = e.sl_terminal_quantities.get(oid)
         if previous is not None and (not _terminal(ev, e.matched_remaining_tolerance_shares)
                 or Decimal(str(ev.size_matched)) != previous):
             e.sl_terminal_quantities.pop(oid, None)
-            e.fatal = "SL_TERMINAL_EVIDENCE_CONTRADICTION"
+            e.fatal = self.mode+"_TERMINAL_EVIDENCE_CONTRADICTION"
             return
         legs = {}
         for raw in trades:
@@ -433,7 +448,7 @@ class SLExecution:
             e.sl_terminal_quantities[oid] = qty
             self.proof_after[oid] = read_started
             self.last_progress = e.monotonic()
-            e.record("sm_sl_order_release", {"order_id": oid, "matched_quantity": str(qty),
+            self.record("order_release", {"order_id": oid, "matched_quantity": str(qty),
                 "unfilled_released": str(Decimal(str(a.quote.size))-qty),
                 "source": "OWNED_TERMINAL_AND_COMPLETE_TRADE_SET", **self.evidence()})
 

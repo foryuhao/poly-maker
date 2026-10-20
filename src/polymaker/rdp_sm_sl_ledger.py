@@ -82,8 +82,10 @@ def fifo_residual(fills, stamps, yes_token):
     """Return the unpaired actual fill lots, retaining their identity and time."""
     queues = {True: deque(), False: deque()}
     ordered = sorted(fills, key=lambda f: (
-        stamps.get((f.trade_id, f.maker_order_id), {}).get("elapsed", float("inf")),
-        stamps.get((f.trade_id, f.maker_order_id), {}).get("observed_elapsed", float("inf")),
+        stamps.get((f.trade_id, f.maker_order_id), {}).get("fill_monotonic",
+            stamps.get((f.trade_id, f.maker_order_id), {}).get("elapsed", float("inf"))),
+        stamps.get((f.trade_id, f.maker_order_id), {}).get("observed_monotonic",
+            stamps.get((f.trade_id, f.maker_order_id), {}).get("observed_elapsed", float("inf"))),
         f.trade_id, f.maker_order_id))
     for fill in ordered:
         yes = fill.token_id == yes_token
@@ -104,7 +106,7 @@ def fifo_residual(fills, stamps, yes_token):
 
 
 def install_reverse_episode(executor):
-    """SL-created reverse inventory starts an ordinary HD policy, never NORMAL."""
+    """TP/SL-created reverse inventory starts an ordinary HD policy, never NORMAL."""
     ep = executor.repair_episode
     if ep is None:
         return False
@@ -122,7 +124,7 @@ def install_reverse_episode(executor):
     if qty != abs(y-n) or not lots:
         raise ValueError("REVERSE_INVENTORY_LOTS_UNPROVEN")
     times = [executor.fill_observed_at[(f.trade_id, f.maker_order_id)] for f in lots]
-    first = min(times, key=lambda t: t["elapsed"])
+    first = min(times, key=lambda t: t.get("fill_monotonic", t["elapsed"]))
     leg = ep.get("direction_leg", 0)+1
     chain = ep.get("chain_id", ep["opening_window"])
     executor.repair_episode = {
@@ -137,6 +139,9 @@ def install_reverse_episode(executor):
         "source_lots": lots, "first_fill_elapsed": first["elapsed"],
         "first_fill_time_source": first["source"], "windows": [], "submissions": 0,
     }
+    if "fill_monotonic" in first:
+        executor.repair_episode["first_fill_monotonic"] = first["fill_monotonic"]
+        executor.repair_episode["opening_monotonic"] = first["fill_monotonic"]
     executor.record("sm_repair_reverse", {
         "chain_id": chain, "direction_leg": leg, "mode": "HD", "side": side,
         "original_qty": str(qty), "cost_basis": "FIFO", "first_fill_elapsed": first["elapsed"],

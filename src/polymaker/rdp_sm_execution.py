@@ -57,6 +57,7 @@ from polymaker.rdp_sm import (
     run_preflight,
 )
 from polymaker.rdp_sm_recovery import pause_reason, reason_code, retry_read
+from polymaker.rdp_sm_volatility import sigma_specification
 from polymaker.state.store import StateStore
 from polymaker.state.tracker import (
     OrderEvent,
@@ -722,18 +723,24 @@ class _SMProcessor(UserEventProcessor):
         )
         if key not in e.fill_observed_at:
             start = int(e.slug.rsplit("-", 1)[1])
-            now = e.official_time + e.monotonic() - e.time_anchor
+            observed_mono = e.monotonic()
+            offset = e.official_time-e.time_anchor-start
+            now = start+offset+observed_mono
             native = float(ev.ts or 0)
             if native > 1e12:
                 native /= 1000
             lower_bound = e.order_post_elapsed.get(ev.maker_order_id)
-            valid_native = (lower_bound is not None and start+lower_bound <= native <= now + .5)
+            # A future venue stamp cannot anchor a causal price/holding path.
+            valid_native = (lower_bound is not None and start+lower_bound <= native <= now)
             e.fill_observed_at[key] = {
                 "elapsed": (native if valid_native else now)-start,
                 "observed_elapsed": now-start,
+                "observed_monotonic": observed_mono,
+                "fill_monotonic": native-start-offset if valid_native else observed_mono,
                 "source": "VENUE_TRADE_TIME" if valid_native else "LOCAL_FIRST_TRADE_OBSERVATION",
             }
         if ev.status is TradeState.CONFIRMED:
+            e.fill_observed_at[key].setdefault("economic_observed_monotonic", e.monotonic())
             e.fill_observed_at[key].setdefault(
                 "economic_observed_elapsed", e.official_time+e.monotonic()-e.time_anchor
                 - int(e.slug.rsplit("-", 1)[1]))
@@ -946,6 +953,16 @@ class SMWindowExecutor:
                             "normal_entry_mode": "obi_v1",
                             "normal_order_policy": "SIGNAL_SIDE_ONLY",
                             "normal_active_order_policy": "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL",
+                            "normal_sigma_required": True,
+                            "probability_sigma": sigma_specification(),
+                            "tp_execution_policy": "INDEPENDENT_FIXED_PRICE_TP_WITH_SL_HANDOFF",
+                            "runtime_source_sha256": {
+                                name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                                for name in ("rdp_sm_execution.py", "rdp_sm_normal.py", "rdp_sm_quotes.py",
+                                    "rdp_sm_volatility.py", "rdp_sm_repair.py", "rdp_sm_path_repair.py",
+                                    "rdp_sm_tp.py", "rdp_sm_sl.py", "rdp_sm_sl_ledger.py",
+                                    "rdp_sm_lifecycle.py", "rdp_sm_loop.py", "rdp_sm_marketdata.py",
+                                    "repair_policy.py")},
                             "config_dir": str(cfg.config_dir),
                             "obi": cfg.rdp_sm.obi.model_dump(mode="json"),
                             "repair": cfg.rdp_sm.repair.model_dump(mode="json"),
@@ -1106,7 +1123,10 @@ class SMWindowExecutor:
     def begin_repair_episode(self, window_id, quotes):
         if self.repair_episode is not None:
             raise ValueError("REPAIR_EPISODE_ALREADY_OWNS_SESSION")
-        self.repair_episode = {"opening_window": window_id, "side": quotes[0].outcome,
+        dual = len(quotes) == 2 and {q.outcome for q in quotes} == {"YES", "NO"}
+        self.repair_episode = {"opening_window": window_id,
+                               "side": None if dual else quotes[0].outcome,
+                               "dual_normal": dual,
                                "opening_monotonic": self.monotonic(),
                                "path_clock_offset": self.official_time-self.time_anchor
                                - int(self.slug.rsplit("-", 1)[1]),
@@ -1117,6 +1137,39 @@ class SMWindowExecutor:
     def update_repair_episode(self):
         ep = self.repair_episode
         if ep is None:
+            return
+        if ep.get("dual_normal") and "source_lots" not in ep:
+            # Both original BUYs can still fill until the full NORMAL barrier.
+            # Neither quote order nor the OBI signal establishes inventory side.
+            if not self.safe_to_continue:
+                return
+            from polymaker.rdp_sm_sl_ledger import fifo_residual
+
+            y, n = self.economic_inventory()
+            if not inventory_delta(y, n):
+                self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE",
+                    **ep, "actual_delta": str(y-n)})
+                self.repair_episode = None
+                return
+            lots = fifo_residual(self.economic_fills(), self.fill_observed_at, self.meta.yes.token_id)
+            qty = sum((Decimal(str(f.size)) for f in lots), Decimal(0))
+            if not lots or qty != abs(y-n):
+                raise ValueError("NORMAL_RESIDUAL_LOTS_UNPROVEN")
+            times = [self.fill_observed_at[(f.trade_id, f.maker_order_id)] for f in lots]
+            first = min(times, key=lambda t: t.get("fill_monotonic",
+                self.time_anchor+t["elapsed"]+int(self.slug.rsplit("-", 1)[1])-self.official_time))
+            ep.update(side="YES" if y > n else "NO", source_lots=lots,
+                      original_qty=str(qty), original_cost=str(sum(
+                          (Decimal(str(f.size))*Decimal(str(f.price)) for f in lots), Decimal(0))),
+                      first_fill_elapsed=first["elapsed"], first_fill_time_source=first["source"],
+                      direction_leg=0, chain_id=ep["opening_window"],
+                      chain_windows=list(ep["windows"]), windows=[])
+            if "fill_monotonic" in first:
+                ep["first_fill_monotonic"] = first["fill_monotonic"]
+                ep["opening_monotonic"] = first["fill_monotonic"]
+            self.record("sm_repair_episode", {"event": "NORMAL_RESIDUAL_ESTABLISHED",
+                **{k: v for k, v in ep.items() if k != "source_lots"},
+                "cost_basis": "FIFO", "source_lots": [asdict(f) for f in lots]})
             return
         if "source_lots" in ep:
             # FIFO reverse legs already carry actual acquisition quantity/time.
@@ -1134,8 +1187,11 @@ class SMWindowExecutor:
         times = [self.fill_observed_at[(f.trade_id, f.maker_order_id)] for f in original
                  if (f.trade_id, f.maker_order_id) in self.fill_observed_at]
         if times:
-            first = min(times, key=lambda t: t["elapsed"])
+            first = min(times, key=lambda t: t.get("fill_monotonic",
+                self.time_anchor+t["elapsed"]+int(self.slug.rsplit("-", 1)[1])-self.official_time))
             ep["first_fill_elapsed"], ep["first_fill_time_source"] = first["elapsed"], first["source"]
+            if "fill_monotonic" in first:
+                ep["first_fill_monotonic"] = first["fill_monotonic"]
         ep["original_cost"] = str(sum((Decimal(str(f.price))*Decimal(str(f.size))
                                        for f in original), Decimal(0)))
         if ep["original_qty"] != str(qty):
@@ -1711,6 +1767,7 @@ class SMWindowExecutor:
             self.position_reconciled, self.position_excluded = selected, excluded
             for key in selected:
                 if key in self.fill_observed_at:
+                    self.fill_observed_at[key].setdefault("economic_observed_monotonic", self.monotonic())
                     self.fill_observed_at[key].setdefault(
                         "economic_observed_elapsed", self.official_time+self.monotonic()
                         - self.time_anchor-int(self.slug.rsplit("-", 1)[1]))

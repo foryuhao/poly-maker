@@ -184,7 +184,7 @@ class BatchLifecycle:
             self.wait(str(exc), snapshot)
             return None
         if not plans:
-            self.wait("NO_LEGAL_CANDIDATE", snapshot)
+            self.wait(getattr(controller, "quote_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
             return None
         # Warm SDK constraints in preparation, and require agreement with the WS.
         client = e.gateway._client
@@ -820,10 +820,8 @@ class BatchLifecycle:
             verification_done.set()
             await e.journal.flush()
             e.update_repair_episode()
-            if sl_handoff[0] is not None and e.safe_to_continue:
-                from polymaker.rdp_sm_sl_ledger import install_reverse_episode
-
-                install_reverse_episode(e)
+            if hasattr(controller, "reconcile_episode"):
+                controller.reconcile_episode()
         finally:
             if sl_handoff[0] is not None and not sl_handoff[0].done():
                 sl_actor[0].closed = True

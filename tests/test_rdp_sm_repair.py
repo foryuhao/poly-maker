@@ -36,9 +36,15 @@ def reflect_positions(venue, *, include_pending=True):
 
 
 async def open_yes(setup, size=5, status="CONFIRMED", actual=True, window="opening"):
-    v, e, _, _, normal, _, _, pump, _ = setup
+    v, e, feed, _, normal, _, _, pump, _ = setup
     pump.update(bid=".30", yes_ask=".32", no_bid=".68", no_ask=".70")
     await asyncio.sleep(.02)
+    now, wall = feed.monotonic(), feed.wall()
+    with feed.lock:
+        feed.probability_points.extendleft(reversed([
+            (int(wall)-age, now-age, .51, feed.generation)
+            for age in range(11, 0, -1)
+        ]))
 
     def filled(venue):
         for oid, row in venue.rows.items():

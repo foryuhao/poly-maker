@@ -1,6 +1,7 @@
 """HD/TP/SL adapter for the existing owned post-only execution lifecycle."""
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 from dataclasses import asdict
@@ -10,7 +11,6 @@ from types import SimpleNamespace
 
 from polymaker.domain import Side, TradeState
 from polymaker.execution.filltruth import reconcile_owned_order
-from polymaker.rdp_sm import _Issue
 from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, maker_buy_size
 from polymaker.rdp_sm_repair import RepairController
 from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
@@ -32,6 +32,8 @@ class PathRepairController(RepairController):
         self._state_log_key = None
         self._state_log_mono = -math.inf
         self._small_exposure_key = None
+        self._blocked_logs = {}
+        self._time_boundaries = set()
 
     def elapsed(self, monotonic=None):
         e = self.executor
@@ -43,7 +45,11 @@ class PathRepairController(RepairController):
         if ep is None:
             return None
         if self.episode_id != ep["opening_window"]:
+            self.flush_blocked("EPISODE_CHANGED")
             self.episode_id = ep["opening_window"]
+            ep.setdefault("policy_clock_offset", ep.get("path_clock_offset",
+                self.executor.official_time-self.executor.time_anchor
+                -int(self.executor.slug.rsplit("-", 1)[1])))
             saved = ep.get("policy_state")
             self.policy = (RepairPolicy.restore(self.cfg.path, saved) if saved
                            else RepairPolicy(self.cfg.path))
@@ -53,6 +59,33 @@ class PathRepairController(RepairController):
             self._state_log_key = None
             self._state_log_mono = -math.inf
         return self.policy
+
+    def reconcile_episode(self):
+        """Only a completed ownership barrier permits a TP/SL direction handoff."""
+        from polymaker.rdp_sm_sl_ledger import install_reverse_episode
+
+        with self._policy_lock:
+            if self.executor.safe_to_continue and install_reverse_episode(self.executor):
+                self.plan = None
+                self.lifecycle.cached_slot = None
+                self.next_review = -math.inf
+                self._policy()
+                self._persist()
+                return True
+        return False
+
+    def _fill_time(self, fill, field="elapsed"):
+        stamp = self.executor.fill_observed_at.get((fill.trade_id, fill.maker_order_id), {})
+        key = {"elapsed": "fill_monotonic", "observed_elapsed": "observed_monotonic",
+               "economic_observed_elapsed": "economic_observed_monotonic"}[field]
+        if key in stamp:
+            return stamp[key]+self.executor.repair_episode["policy_clock_offset"]
+        return stamp.get(field, math.inf)
+
+    def _first_fill_time(self):
+        ep = self.executor.repair_episode
+        return (ep["first_fill_monotonic"]+ep["policy_clock_offset"]
+                if "first_fill_monotonic" in ep else ep["first_fill_elapsed"])
 
     def _persist(self):
         ep = self.executor.repair_episode
@@ -66,13 +99,17 @@ class PathRepairController(RepairController):
                    latest.episode_delta if latest else None,
                    latest.inventory_path_valid if latest else None)
             now = self.executor.monotonic()
+            if self.policy.mode == "TP":
+                ep.setdefault("tp_signal_observed_monotonic", now)
             if key == self._state_log_key and 0 <= now-self._state_log_mono < 1:
                 return
             self._state_log_key, self._state_log_mono = key, now
             self.executor.record("sm_repair_policy_state", {
                 "opening_window": ep["opening_window"], "policy": "hd_tp_sl_v1",
                 "first_fill_time_source": ep.get("first_fill_time_source"),
-                "first_fill_elapsed": ep.get("first_fill_elapsed"),
+                "first_fill_elapsed": self._first_fill_time() if "first_fill_elapsed" in ep else None,
+                "path_clock_basis": "EPISODE_MONOTONIC",
+                "policy_clock_offset": ep["policy_clock_offset"],
                 "original_qty": ep["original_qty"],
                 "last_path_sequence": self.last_path_sequence,
                 "parameters": self.cfg.path.model_dump(mode="json"),
@@ -84,15 +121,14 @@ class PathRepairController(RepairController):
         ids = {a.order_id for a in e.attempts if a.order_id and a.quote.window_id in windows}
         fills = e.economic_fills()
         if elapsed is not None:
-            fills = [f for f in fills if e.fill_observed_at.get(
-                (f.trade_id, f.maker_order_id), {"elapsed": math.inf})["elapsed"] <= elapsed]
+            fills = [f for f in fills if self._fill_time(f) <= elapsed]
         yes = sum((Decimal(str(f.size)) for f in fills
                    if f.token_id == e.meta.yes.token_id), Decimal(0))
         no = sum((Decimal(str(f.size)) for f in fills
                   if f.token_id == e.meta.no.token_id), Decimal(0))
         own = [f for f in fills if f.maker_order_id in ids]
         own += [f for f in ep.get("source_lots", []) if elapsed is None or
-                e.fill_observed_at[(f.trade_id, f.maker_order_id)]["elapsed"] <= elapsed]
+                self._fill_time(f) <= elapsed]
         own_y = sum((Decimal(str(f.size)) for f in own
                      if f.token_id == e.meta.yes.token_id), Decimal(0))
         own_n = sum((Decimal(str(f.size)) for f in own
@@ -121,14 +157,10 @@ class PathRepairController(RepairController):
         return fills, pending
 
     def _sigma_at(self, point):
-        with self.lifecycle.feed.lock:
-            points = [p for p in self.lifecycle.feed.probability_points
-                      if p[3] == point.generation and p[0] < math.floor(point.wall)
-                      and point.monotonic-30 <= p[1] <= point.monotonic]
-        pairs = [(a, b) for a, b in zip(points, points[1:], strict=False) if 0 < b[1]-a[1] <= 5]
-        duration = sum(b[1]-a[1] for a, b in pairs)
-        return (math.sqrt(sum((b[2]-a[2])**2 for a, b in pairs)/duration)
-                if len(pairs) >= 10 and duration >= 20 else None)
+        from polymaker.rdp_sm_volatility import estimate_sigma
+
+        return estimate_sigma(self.lifecycle.feed, monotonic=point.monotonic,
+                              wall=point.wall, generation=point.generation).sigma
 
     def observe(self, snapshot, *, project=False):
         with self._policy_lock:
@@ -144,13 +176,20 @@ class PathRepairController(RepairController):
         if project:
             policy = RepairPolicy.restore(self.cfg.path, policy.payload())
         q0 = float(ep["original_qty"])
-        now = self.elapsed()
         now_mono = self.executor.monotonic()
         offset = self.executor.official_time-self.executor.time_anchor-int(self.executor.slug.rsplit("-", 1)[1])
+        # Price moves and holding times use ONE immutable monotonic mapping.
+        # Official clock corrections only control session submission boundaries.
+        path_offset = ep["policy_clock_offset"]
+        def elapsed_at(t):
+            return path_offset+t
+        now = elapsed_at(now_mono)
+        session_now = offset+now_mono
+        first_fill = self._first_fill_time()
         clock_changed = abs(offset-ep.get("path_clock_offset", offset)) > 2
         if clock_changed:
             policy.break_path("OFFICIAL_CLOCK_CORRECTION")
-        cursor = policy.points[-1].elapsed if policy.points else ep["first_fill_elapsed"]
+        cursor = policy.points[-1].elapsed if policy.points else first_fill
         signature = dict(self.fill_signature)
         fills, pending = self._episode_fills()
         timeline = []
@@ -160,14 +199,16 @@ class PathRepairController(RepairController):
             value = (str(fill.size), str(fill.price))
             if tuple(signature.get(key, ())) == value:
                 continue
-            signature[key] = value
             stamp = self.executor.fill_observed_at.get((fill.trade_id, fill.maker_order_id), {})
-            native = stamp.get("elapsed") if stamp.get("source") == "VENUE_TRADE_TIME" else None
+            native = self._fill_time(fill) if stamp.get("source") == "VENUE_TRADE_TIME" else None
             uncertain = native is None or native < cursor
-            at = (max(cursor, stamp.get("economic_observed_elapsed",
-                      stamp.get("observed_elapsed", now))) if uncertain else native)
+            known_at = self._fill_time(fill, "economic_observed_elapsed")
+            if not math.isfinite(known_at):
+                known_at = self._fill_time(fill, "observed_elapsed")
+            at = max(cursor, known_at if math.isfinite(known_at) else now) if uncertain else native
             # First observation is an anchor, not a synthetic opening-price move.
             if at <= now:
+                signature[key] = value
                 timeline.append((at, 0, "FILL", uncertain))
                 if uncertain:
                     uncertain_until = max(uncertain_until or at, at)
@@ -183,38 +224,38 @@ class PathRepairController(RepairController):
                       if p.sequence > self.last_path_sequence
                       and p.monotonic >= ep.get("opening_monotonic", -math.inf)
                       and (not clock_changed or p.monotonic >= now_mono)
-                      and self.elapsed(p.monotonic) <= now
+                      and p.monotonic <= now_mono
                       and p.sequence <= snapshot.sequence]
         if (not policy.points and not clock_changed and self.last_path_sequence < 0
                 and not policy.path_breaks):
             # A quiet quote can predate the fill. Use its actual as-of mark,
             # never the opening cost, to retain the FIRST post-fill price move.
-            before = [s for s in history if self.elapsed(s.monotonic) <= ep["first_fill_elapsed"]
+            before = [s for s in history if elapsed_at(s.monotonic) <= first_fill
                       and s.sequence <= snapshot.sequence]
             anchor = before[-1] if before else None
-            after = next((s for s in history if self.elapsed(s.monotonic) > ep["first_fill_elapsed"]
+            after = next((s for s in history if elapsed_at(s.monotonic) > first_fill
                           and s.sequence <= snapshot.sequence), None)
             end_generation = after.generation if after else snapshot.generation
             end_segment = after.path_segment if after else segment
             if anchor and anchor.generation == end_generation and anchor.path_segment == end_segment:
-                timeline.append((ep["first_fill_elapsed"], -1, "ANCHOR", anchor))
+                timeline.append((first_fill, -1, "ANCHOR", anchor))
             else:
                 policy.break_path("FIRST_FILL_MARK_UNKNOWN")
         if (policy.points and history and self.last_path_sequence >= 0
                 and self.last_path_sequence < history[0].sequence
-                and self.elapsed(history[0].monotonic) > cursor):
+                and elapsed_at(history[0].monotonic) > cursor):
             policy.break_path("PRICE_HISTORY_OVERWRITTEN")
-        timeline.extend((self.elapsed(s.monotonic), s.sequence, "PRICE", s) for s in points)
+        timeline.extend((elapsed_at(s.monotonic), s.sequence, "PRICE", s) for s in points)
         logged = []
         # Discarded pre-fill / old-clock prices are consumed too. Otherwise a
         # quiet book spins the price-event scheduler, or replays discarded data
         # on the next observation after the clock-offset marker is updated.
         last_sequence = max([self.last_path_sequence]+[s.sequence for s in history
-            if s.sequence <= snapshot.sequence and self.elapsed(s.monotonic) <= now])
+            if s.sequence <= snapshot.sequence and s.monotonic <= now_mono])
         for elapsed, sequence, kind, sample in sorted(timeline, key=lambda row: (row[0], row[1])):
             if kind == "PRICE":
                 last_sequence = max(last_sequence, sequence)
-            if elapsed < ep["first_fill_elapsed"] or (policy.points and elapsed < policy.points[-1].elapsed):
+            if elapsed < first_fill or (policy.points and elapsed < policy.points[-1].elapsed):
                 continue
             valid = not pending and (uncertain_until is None or elapsed >= uncertain_until)
             if kind == "FILL":
@@ -223,7 +264,7 @@ class PathRepairController(RepairController):
                 previous = policy.points[-1]
                 if sample:
                     policy.break_inventory("FILL_TIME_OR_AVAILABILITY_UNKNOWN")
-                mono = self.executor.time_anchor+int(self.executor.slug.rsplit("-", 1)[1])+elapsed-self.executor.official_time
+                mono = elapsed-path_offset
                 stamp = SimpleNamespace(generation=previous.generation, monotonic=mono,
                                         wall=self.lifecycle.feed.wall()-(now-elapsed))
                 point = self._point(previous.p, elapsed, self._sigma_at(stamp), previous.generation,
@@ -232,14 +273,14 @@ class PathRepairController(RepairController):
             else:
                 sigma_point = sample
                 if kind == "ANCHOR":
-                    mono = self.executor.time_anchor+int(self.executor.slug.rsplit("-", 1)[1])+elapsed-self.executor.official_time
+                    mono = elapsed-path_offset
                     sigma_point = SimpleNamespace(generation=sample.generation, monotonic=mono,
                         wall=self.lifecycle.feed.wall()-(now-elapsed))
                 point = self._point(sample.p, elapsed, self._sigma_at(sigma_point), sample.generation,
                                     historical=True, tick=sample.yes_tick if ep["side"] == "YES" else sample.no_tick,
                                     path_segment=sample.path_segment, inventory_path_valid=valid)
             policy.decide(point, original_side=ep["side"], original_qty=q0,
-                          first_fill_elapsed=ep["first_fill_elapsed"])
+                          first_fill_elapsed=first_fill, session_elapsed=session_now)
             logged.append({**asdict(point), "kind": kind, "sequence": sequence})
         if logged and not project:
             self.executor.record("sm_repair_market_path", {"opening_window": self.episode_id,
@@ -252,8 +293,10 @@ class PathRepairController(RepairController):
                             tick=book.tick, path_segment=segment, inventory_path_valid=not pending)
         features = policy.observe(point, original_side=ep["side"], original_qty=q0)
         decision = policy.decide(point, original_side=ep["side"], original_qty=q0,
-                                 first_fill_elapsed=ep["first_fill_elapsed"], features=features)
-        decision["next_review_at"] = min(point.elapsed+self.cfg.review_sec,
+                                 first_fill_elapsed=first_fill, features=features,
+                                 session_elapsed=session_now)
+        decision["session_elapsed"] = session_now
+        decision["next_review_at"] = min(session_now+self.cfg.review_sec,
                                          240. if policy.mode == "SL" else 180.)
         decision["wake_on"] = ["PRICE_EVENT", "EXECUTION_FACT", "TIME_BOUNDARY"]
         # Only a bounded causal window is needed for future short-shock tests;
@@ -272,17 +315,71 @@ class PathRepairController(RepairController):
     def _blocked(self, reason, decision=None, *, discard_plan=True):
         if discard_plan:
             self.plan = None
+        key = (self.episode_id, self.policy.mode if self.policy else None, reason)
+        now = self.executor.monotonic()
+        state = self._blocked_logs.setdefault(key, {
+            "count": 0, "emitted": 0, "last_log": -math.inf, "first_monotonic": now})
+        state["count"] += 1
+        state["last_monotonic"] = now
+        if now-state["last_log"] < self.cfg.review_sec:
+            return
         self.executor.record("sm_repair_execution_blocked", {
             "policy": "hd_tp_sl_v1", "mode": self.policy.mode if self.policy else None,
-            "reason": reason, "decision": decision, "readiness": repair_readiness(self.cfg)})
+            "reason": reason, "decision": decision, "readiness": repair_readiness(self.cfg),
+            "occurrences": state["count"],
+            "suppressed_since_previous": state["count"]-state["emitted"]-1})
+        state["last_log"], state["emitted"] = now, state["count"]
+
+    def flush_blocked(self, outcome):
+        for (episode, mode, reason), state in self._blocked_logs.items():
+            self.executor.record("sm_repair_block_summary", {
+                "opening_window": episode, "mode": mode, "reason": reason,
+                "occurrences": state["count"], "outcome": outcome,
+                "first_monotonic": state["first_monotonic"],
+                "last_monotonic": state["last_monotonic"]})
+        self._blocked_logs.clear()
+
+    async def wait_blocked(self, snapshot):
+        """Depth-only frames do not retry an unchanged, infeasible target.
+
+        Prices, generations, economic facts and session time boundaries still
+        wake immediately; a bounded periodic retry refreshes account evidence.
+        """
+        e, feed = self.executor, self.lifecycle.feed
+        until = e.monotonic()+self.cfg.review_sec
+        revision = e.revision
+        fingerprint = self.fingerprint(snapshot)
+        segment = feed.repair_path_segment
+        mode = self.policy.mode if self.policy else None
+        episode = e.repair_episode
+        while e.monotonic() < until:
+            elapsed = self.elapsed()
+            boundary = 180 if elapsed < 180 else 240
+            remaining = min(until-e.monotonic(), boundary-elapsed)
+            if remaining <= 0 or elapsed >= 240:
+                return
+            sequence = feed.sequence
+            current = self.lifecycle.snapshot(self, *e.economic_inventory())
+            if (not current.valid or self.fingerprint(current) != fingerprint
+                    or feed.repair_path_segment != segment or e.revision != revision
+                    or e.repair_episode is not episode
+                    or (self.policy.mode if self.policy else None) != mode):
+                return
+            await feed.wait_after(sequence, min(.1, remaining))
+
+    async def watch_time_boundaries(self):
+        """Signal intent advances even while REST, WS or network admission waits."""
+        while True:
+            self.boundary_close_reason(None, self.elapsed())
+            await asyncio.sleep(.05)
 
     def _make_plan(self, snapshot, decision, point):
         e, ep = self.executor, self.executor.repair_episode
-        if point.elapsed >= 240 or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE:
+        if decision.get("session_elapsed", point.elapsed) >= 240 or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE:
             return None
         side = "NO" if point.delta > 0 else "YES"
         if side == ep["side"] and abs(point.delta) <= float(self.cfg.delta_limit):
-            raise ValueError("MINIMUM_FORCED_REVERSE_RESIDUAL")
+            raise ValueError("REPAIR_DIRECTION_HANDOFF_UNPROVEN")
         book = snapshot.yes if side == "YES" else snapshot.no
         price = self.policy.price(bid=book.best_bid, ask=book.best_ask,
                                   tick=book.tick, sigma=point.sigma)
@@ -312,7 +409,7 @@ class PathRepairController(RepairController):
         return {**decision, "policy": "hd_tp_sl_v1", "action": "BUY", "side": side,
                 "price": float(price), "quantity": float(qty), "tick": str(book.tick),
                 "cancel_at": 180. if self.policy.mode == "TP" else 240.,
-                "next_review_at": min(point.elapsed+self.cfg.review_sec,
+                "next_review_at": min(decision.get("session_elapsed", point.elapsed)+self.cfg.review_sec,
                                       180. if self.policy.mode == "TP" else 240.),
                 "switch_conditions": ["PATH_SL", "T180"] if self.policy.mode == "TP" else ["PAIRED", "T240"],
                 "candidates": [], "parameter_status": self.cfg.path.calibration_status}
@@ -322,6 +419,7 @@ class PathRepairController(RepairController):
             self.plan = None
             return None
         e, feed = self.executor, self.lifecycle.feed
+        self.reconcile_episode()
         y, n = e.economic_inventory()
         if abs(y-n) <= MIN_REPAIR_EXPOSURE:
             self.plan = None
@@ -359,46 +457,36 @@ class PathRepairController(RepairController):
             self.plan = self._make_plan(snapshot, decision, point)
         except ValueError as exc:
             self._blocked(str(exc), self.last_decision)
-            await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+            await self.wait_blocked(snapshot)
             return None
+        self.flush_blocked("PLAN_AVAILABLE" if self.plan else "HOLD")
         self.executor.record("sm_repair_decision", self.plan or {
             **decision, "action": "HOLD", "policy": "hd_tp_sl_v1"})
         if not self.plan:
-            await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+            # A price-invalid target cannot become viable from depth-size-only
+            # frames. Wait for a material price/fact change or the bounded
+            # review deadline instead of re-running the same plan every tick.
+            await self.wait_blocked(snapshot)
             return None
         if self.policy.mode == "SL":
             return await self.execute_sl(window_id)
-        await self.executor.journal.flush()
-        try:
-            slot = await self.lifecycle.prepare(self, yes, no, window_id)
-        except _Issue as exc:
-            if str(exc) != "QUOTE_WOULD_TAKE":
-                raise
-            # Preparation rereads the book after the decision's WAL flush.
-            # No POST has started here: discard only this stale candidate and
-            # recompute promptly, keeping the episode and its latched mode.
-            self.executor.record("sm_repair_quote_invalidated", {
-                "window_id": window_id, "policy": "hd_tp_sl_v1",
-                "reason": str(exc), "mode": self.plan["mode"],
-                "side": self.plan["side"], "price": self.plan["price"],
-                "quantity": self.plan["quantity"], "post_started": False,
-                "retry": "RECOMPUTE_ON_NEXT_REVIEW",
-            })
-            self.plan = None
-            self.next_review = -math.inf
-            self.lifecycle.cached_slot = None
-            return None
-        return await self.lifecycle.activate(self, slot) if slot else None
+        return await self.execute_tp(window_id)
 
     async def execute_sl(self, window_id):
+        return await self._execute_actor(window_id, "SL")
+
+    async def execute_tp(self, window_id):
+        return await self._execute_actor(window_id, "TP")
+
+    async def _execute_actor(self, window_id, mode):
         from polymaker.rdp_sm_execution import WindowResult
         from polymaker.rdp_sm_sl import SLExecution
-        from polymaker.rdp_sm_sl_ledger import install_reverse_episode
+        from polymaker.rdp_sm_tp import TPExecution
 
         e = self.executor
         initial_delta = e.economic_inventory()[0]-e.economic_inventory()[1]
         initial_plan = self.plan
-        actor = SLExecution(self, window_id)
+        actor = (SLExecution if mode == "SL" else TPExecution)(self, window_id)
         created = await e._await_owned(actor.run(), propagate_cancel=False)
         if not created:
             return None
@@ -408,7 +496,7 @@ class PathRepairController(RepairController):
             safe = e.safe_to_continue
         e.update_repair_episode()
         if safe:
-            install_reverse_episode(e)
+            self.reconcile_episode()
         self.plan = None
         result = WindowResult(e.session_id, window_id, e.meta.condition_id, actor.started_wall,
             end_time=time.time(), requested_quotes=[a.quote for a in created],
@@ -422,8 +510,8 @@ class PathRepairController(RepairController):
         e.reads.network.complete_batch(actor.group, safe=safe)
         e.record("sm_window_result", result.to_dict())
         await e.journal.flush()
-        return result, {"repair_plan": initial_plan, "mode": "SL",
-            "order_policy": "SIGNAL_DRIVEN_SL", "signed_target_delta": "0",
+        return result, {"repair_plan": initial_plan, "mode": mode,
+            "order_policy": "SIGNAL_DRIVEN_"+mode, "signed_target_delta": "0",
             "target_sizing_applied": False, "favorite_data_validity": "NOT_USED",
             "actual_delta_before": str(initial_delta)}
 
@@ -478,7 +566,24 @@ class PathRepairController(RepairController):
     def boundary_close_reason(self, intent, elapsed):
         """Independent wall-time transition, including sigma warmup/unknown POST."""
         with self._policy_lock:
-            if 180 <= elapsed < 240 and self._policy() is not None and self.policy.mode != "SL":
+            ep = self.executor.repair_episode
+            if ep is None or Decimal(ep["original_qty"]) <= 0:
+                return None
+            delta = self.executor.economic_inventory()[0]-self.executor.economic_inventory()[1]
+            boundary = 240 if elapsed >= 240 else 180 if elapsed >= 180 else None
+            key = (ep["opening_window"], boundary)
+            if boundary is not None and key not in self._time_boundaries:
+                self._time_boundaries.add(key)
+                self.executor.record("sm_repair_time_boundary", {
+                    "opening_window": ep["opening_window"], "boundary": boundary,
+                    "elapsed_s": elapsed, "actual_delta": str(delta),
+                    "action": "STOP_NEW_REPAIR" if boundary == 240 else
+                        "SMALL_EXPOSURE_NO_REPAIR" if abs(delta) <= MIN_REPAIR_EXPOSURE else "FORCE_SL"})
+            if elapsed >= 240:
+                self.flush_blocked("CUTOFF")
+                return "MARKET_SUBMISSION_CUTOFF"
+            if (elapsed >= 180 and abs(delta) > MIN_REPAIR_EXPOSURE
+                    and self._policy() is not None and self.policy.mode != "SL"):
                 self.policy.force_sl(elapsed)
                 self._persist()
             if (self.policy is not None and self.policy.mode == "SL"

@@ -160,11 +160,12 @@ class RepairPolicy:
                 "path_breaks": list(self.path_breaks)}
 
     def decide(self, point: PathPoint, *, original_side: str, original_qty: float,
-               first_fill_elapsed: float, delta_limit=5., features=None):
+               first_fill_elapsed: float, delta_limit=5., features=None, session_elapsed=None):
         features = features if features is not None else self.observe(
             point, original_side=original_side, original_qty=original_qty)
         previous = self.mode
-        if point.elapsed >= 240:
+        boundary_elapsed = point.elapsed if session_elapsed is None else session_elapsed
+        if boundary_elapsed >= 240:
             reason = "CUTOFF"
         elif abs(point.delta) < float(DUST):
             reason = "PAIRED"
@@ -172,7 +173,7 @@ class RepairPolicy:
             reason = self.last_reason
         elif abs(point.delta) > delta_limit:
             self.mode, reason = "SL", "SESSION_DELTA_LIMIT"
-        elif point.elapsed >= 180:
+        elif boundary_elapsed >= 180:
             self.mode, reason = "SL", "TIME_FORCE_SL"
         elif features["shock_triggered"]:
             self.mode, reason = "SL", "ADVERSE_SHOCK"

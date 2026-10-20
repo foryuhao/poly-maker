@@ -205,7 +205,8 @@ class CachedExecutionReads:
 
         This never starts a foreground GET or waits for capital/positions. The
         ordinary companion supplies complete pages and requested order details.
-        NORMAL/TP's _ready/admission rules remain unchanged.
+        Fixed TP and SL actors share this observation path. NORMAL still uses
+        its full _ready/admission scope, and actor admission remains local.
         """
         snap = self.service.latest()
         if snap.status in {"FAILED", "STOPPED"} or self.companion.failure:

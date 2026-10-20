@@ -442,8 +442,8 @@ class SMTradingLoop:
         """Single writer coordinator; controllers share only order primitives."""
         from polymaker.rdp_sm_lifecycle import BatchLifecycle
         from polymaker.rdp_sm_normal import NormalController
-        from polymaker.rdp_sm_repair import RepairController
         from polymaker.rdp_sm_path_repair import PathRepairController
+        from polymaker.rdp_sm_repair import RepairController
 
         executor = self.executor
         lifecycle = BatchLifecycle(executor)
@@ -477,8 +477,13 @@ class SMTradingLoop:
 
         warmer = (None if executor.shared_reads is not None else
                   asyncio.create_task(warm_network(), name="rdp-network-warmup"))
+        boundaries = (asyncio.create_task(rebalance.watch_time_boundaries(),
+                                          name="rdp-repair-time-boundaries")
+                      if isinstance(rebalance, PathRepairController) else None)
         try:
             while True:
+                if boundaries is not None and boundaries.done():
+                    boundaries.result()
                 executor.drain_network_events()
                 if not self.production:
                     await self._offline_boundary()
@@ -528,6 +533,8 @@ class SMTradingLoop:
                     )
                 yes, no = self._inventory(result)
                 executor.update_repair_episode()
+                if isinstance(rebalance, PathRepairController):
+                    rebalance.reconcile_episode()
                 if await self._merge(result, elapsed):
                     continue
                 if executor.merge_pending or executor.fatal:
@@ -596,12 +603,21 @@ class SMTradingLoop:
             )
             self._inventory(result)
         finally:
+            boundary_results = []
+            if boundaries is not None:
+                boundaries.cancel()
+                boundary_results = await asyncio.gather(boundaries, return_exceptions=True)
+                rebalance.flush_blocked("SESSION_END")
             executor.record("sm_obi_metrics", dict(lifecycle.metrics))
             executor.record("sm_ws_diagnostics", feed.diagnostics())
             if warmer is not None:
                 warmer.cancel()
                 await asyncio.gather(warmer, return_exceptions=True)
             executor.drain_network_events()
+            # Surface a failed timer only after all session tasks are drained.
+            for error in boundary_results:
+                if isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError):
+                    raise error
 
     async def _wait_for_inventory(self, result):
         """No BUY or Merge while Data API inventory is unexplained; retry until T=300."""

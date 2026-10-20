@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 from contextlib import suppress
 from dataclasses import asdict
 from decimal import Decimal
@@ -35,18 +34,11 @@ class RepairController:
                                         for b in (snapshot.yes, snapshot.no)))
 
     def sigma(self):
+        from polymaker.rdp_sm_volatility import estimate_sigma
+
         feed = self.lifecycle.feed
-        now = self.executor.monotonic()
-        # Current unfinished real second is excluded. Cache reads add no samples.
-        wall_bucket = math.floor(feed.wall())
-        with feed.lock:
-            pts = [p for p in feed.probability_points if p[0] < wall_bucket and now-30 <= p[1] <= now]
-        pairs = [(a, b) for a, b in zip(pts, pts[1:], strict=False)
-                 if a[3] == b[3] and 0 < b[1]-a[1] <= 5]
-        duration = sum(b[1]-a[1] for a, b in pairs)
-        if len(pairs) < 10 or duration < 20:
-            return None
-        return math.sqrt(sum((b[2]-a[2])**2 for a, b in pairs)/duration)
+        return estimate_sigma(feed, monotonic=self.executor.monotonic(),
+                              wall=feed.wall(), generation=feed.generation).sigma
 
     def state(self, snapshot, *, active=None):
         e = self.executor

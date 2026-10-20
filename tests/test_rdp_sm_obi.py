@@ -229,7 +229,7 @@ def test_only_signal_side_uses_its_bid_and_original_skew(direction, price, size)
     evidence = {}
     qs = normal_quotes(
         feed.meta, feed.snapshot(), Decimal(2), Decimal(0), "w", RDPSMConfig(), direction,
-        evidence=evidence,
+        sigma=0.01, evidence=evidence,
     )
     assert [(q.outcome, q.price, q.size) for q in qs] == [(direction, price, size)]
     opposite = "no" if direction == "YES" else "yes"
@@ -245,10 +245,10 @@ def test_opposite_minimum_notional_cannot_veto_legal_signal_order():
         yes=replace(snapshot.yes, bids=((Decimal('.87'), 80),), asks=((Decimal('.88'), 20),)),
         no=replace(snapshot.no, bids=((Decimal('.12'), 20),), asks=((Decimal('.13'), 80),)),
     )
-    quotes = normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'YES')
+    quotes = normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'YES', sigma=0.01)
     assert [(q.outcome, q.price, q.size) for q in quotes] == [('YES', .87, 5)]
     with pytest.raises(QuoteUnavailable, match='NORMAL_LEG_NOTIONAL_BELOW_MINIMUM'):
-        normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'NO')
+        normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'NO', sigma=0.01)
 
 
 @pytest.mark.parametrize('direction', ['YES', 'NO'])
@@ -264,7 +264,8 @@ def test_favorite_sizing_with_nonzero_target_does_not_reintroduce_opposite_leg(d
     quotes = normal_quotes(
         feed.meta, snapshot, Decimal(0), Decimal(0), 'w',
         RDPSMConfig(base_size=Decimal(7), target_delta=Decimal(1)), direction,
-        now=snapshot.yes.source_time, official_time=snapshot.yes.source_time, evidence=evidence,
+        sigma=0.01, now=snapshot.yes.source_time,
+        official_time=snapshot.yes.source_time, evidence=evidence,
     )
     assert evidence['favorite_side'] == 'YES'
     assert len(quotes) == 1 and quotes[0].outcome == direction

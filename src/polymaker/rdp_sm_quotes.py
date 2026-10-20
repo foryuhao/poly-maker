@@ -15,6 +15,7 @@ from polymaker.rdp_sm_sizing import (
     resolve_favorite_target,
     validate_market_sizing,
 )
+from polymaker.rdp_sm_volatility import WINDOW_SECONDS
 
 
 class QuoteUnavailable(ValueError):
@@ -35,6 +36,7 @@ def make_quotes(
     official_time=None,
     official_time_read_duration_s=0,
     signal_side=None,
+    normal_sigma=None,
 ):
     cfg = sizing if sizing is not None else RDPSMConfig()
     validate_market_sizing(cfg, Decimal(str(meta.min_order_size)))
@@ -80,10 +82,15 @@ def make_quotes(
         if signal_side is not None:
             if signal_side not in sizes:
                 raise QuoteUnavailable("OBI_SIGNAL_MISSING")
+            sigma = Decimal(str(normal_sigma)) if normal_sigma is not None else None
+            if sigma is None or not sigma.is_finite() or sigma < 0:
+                raise QuoteUnavailable("NORMAL_VOLATILITY_UNKNOWN")
             # Select before pricing/validation: the unused opposite leg must
             # neither create exposure nor veto a legal signal-side order.
             sizes = {signal_side: sizes[signal_side]}
-            details.update(order_policy="SIGNAL_SIDE_ONLY", normal_signal_side=signal_side)
+            details.update(order_policy="SIGNAL_SIDE_ONLY",
+                           normal_signal_side=signal_side, normal_sigma=str(sigma),
+                           sigma_window_seconds=WINDOW_SECONDS)
     else:
         sizes = {"NO" if delta > 0 else "YES": abs(delta)}
     quotes = []
@@ -91,7 +98,7 @@ def make_quotes(
         token = meta.yes.token_id if outcome == "YES" else meta.no.token_id
         book = books[token]
         tick, bid, ask = (Decimal(str(book[k])) for k in ("tick", "best_bid", "best_ask"))
-        price = (bid if signal_side == outcome else bid - tick) if state == "NORMAL" else bid
+        price = (bid if signal_side == outcome else bid-tick) if state == "NORMAL" else bid
         if (
             not all(n.is_finite() for n in (tick, bid, ask, price, size))
             or tick <= 0

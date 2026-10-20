@@ -25,6 +25,8 @@ from polymaker.rdp_sm_sync_reads import ObservedMarket, ObserverReader
 
 log = logging.getLogger("polymaker.sync_observe")
 REFERENCE_KINDS = frozenset({
+    "sm_tp_signal", "sm_tp_command", "sm_tp_handoff", "sm_tp_wait",
+    "sm_tp_order_release", "sm_tp_post_error", "sm_sigma_readiness",
     "sm_session", "sm_strategy_window", "sm_obi_final_decision", "sm_obi_close_requested",
     "sm_cancel_ack", "sm_close_barrier", "sm_trade", "sm_window_result", "sm_run_result",
     "sm_placement_intent", "sm_placement_ack", "sm_placement_unknown", "sm_placement_result",
