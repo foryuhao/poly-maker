@@ -115,7 +115,7 @@ def rdp_sm_run(
 def rdp_sm_repair_check(
     config_dir: str = typer.Option("config", help="existing config directory"),
 ) -> None:
-    """Read local HD/TP/SL configuration; no exchange or order access."""
+    """Read the selected local exit configuration; no exchange or order access."""
     import json
 
     from polymaker.repair_policy import repair_readiness
@@ -123,7 +123,7 @@ def rdp_sm_repair_check(
     cfg = Config.load(config_dir)
     result = repair_readiness(cfg.rdp_sm.repair)
     result["policy_selected"] = (cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
-                                 and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1")
+                                 and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"})
     typer.echo(json.dumps(result, allow_nan=False))
     raise typer.Exit(0 if result["ready_for_live"] and result["policy_selected"] else 2)
 

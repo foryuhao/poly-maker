@@ -42,10 +42,27 @@ max_sec = 20.0
 loss_sec_per_dollar = 100.0
 
 [rdp_sm.repair]
+# Switch to opposite_ba_v1 to use the independent BA exit settings below.
 policy = "hd_tp_sl_v1"
 delta_limit = "5"
 review_sec = 2.0
 cutoff_sec = 240.0
+
+[rdp_sm.repair.opposite_ba]
+min_sell_shares = "5"
+min_depletion_shares = "5"
+min_refill_shares = "5"
+observation_sec = 0.75
+signal_lifetime_sec = 3.0
+max_sell_age_ms = 500.0
+max_book_age_ms = 200.0
+max_pair_skew_ms = 200.0
+max_entry_age_ms = 1000.0
+
+[rdp_sm.repair.opposite_ba.network]
+post_budget_floor_ms = 750.0
+min_live_budget_ms = 500.0
+max_cancel_rtt_ms = 750.0
 
 [rdp_sm.repair.abandon_high_entry]
 enabled = true

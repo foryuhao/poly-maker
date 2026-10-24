@@ -256,8 +256,9 @@ class RDPRepairConfig(BaseModel):
     """Versioned REPAIR model inputs. Defaults are research, not fitted estimates."""
 
     model_config = ConfigDict(extra="forbid")
-    policy: Literal["ev_legacy", "hd_tp_sl_v1"] = "ev_legacy"
+    policy: Literal["ev_legacy", "hd_tp_sl_v1", "opposite_ba_v1"] = "ev_legacy"
     path: RDPRepairPathConfig = Field(default_factory=RDPRepairPathConfig)
+    opposite_ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
     abandon_high_entry: RDPRepairAbandonConfig = Field(default_factory=RDPRepairAbandonConfig)
     unknown_recovery: RDPUnknownRecoveryConfig = Field(default_factory=RDPUnknownRecoveryConfig)
     inventory_lag: RDPInventoryLagConfig = Field(default_factory=RDPInventoryLagConfig)
@@ -282,7 +283,7 @@ class RDPRepairConfig(BaseModel):
 
     @model_validator(mode="after")
     def _limits(self):
-        if self.policy != "hd_tp_sl_v1" and not (self.path.tp_enabled and self.path.sl_enabled):
+        if self.policy == "ev_legacy" and not (self.path.tp_enabled and self.path.sl_enabled):
             raise ValueError("TP/SL switches require repair.policy=hd_tp_sl_v1")
         if self.delta_limit != Decimal("5") or self.cutoff_sec != 240:
             raise ValueError("REPAIR v1 requires session Delta limit 5 and cutoff T240")
@@ -317,8 +318,8 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
-        if self.repair.policy == "hd_tp_sl_v1" and self.normal_entry_mode not in {"obi_v1", "ba_v1"}:
-            raise ValueError("hd_tp_sl_v1 requires normal_entry_mode=obi_v1 or ba_v1")
+        if self.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} and self.normal_entry_mode not in {"obi_v1", "ba_v1"}:
+            raise ValueError(f"{self.repair.policy} requires normal_entry_mode=obi_v1 or ba_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")
         if self.max_order_size < self.base_size:

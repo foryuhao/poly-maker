@@ -124,7 +124,7 @@ class RepairPricePoint:
 
 
 class SessionFeed:
-    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None):
+    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
         self.proxy = proxy
         self.lock = RLock()
@@ -141,6 +141,11 @@ class SessionFeed:
             from polymaker.rdp_sm_ba import BidAbsorption
 
             self.ba = BidAbsorption(self, ba_cfg)
+        self.opposite_ba = None
+        if opposite_ba_cfg is not None:
+            from polymaker.rdp_sm_ba import BidAbsorption
+
+            self.opposite_ba = BidAbsorption(self, opposite_ba_cfg)
         self.changed = asyncio.Event()
         self.stop_event = asyncio.Event()
         self.ws = None
@@ -206,6 +211,7 @@ class SessionFeed:
                 "notices": dict(self.notices),
                 "last_notice": self.last_notice,
                 **({"ba": self.ba.diagnostics()} if self.ba is not None else {}),
+                **({"opposite_ba": self.opposite_ba.diagnostics()} if self.opposite_ba is not None else {}),
             }
 
     def _track_signal(self, signal, event_mono):
@@ -248,10 +254,13 @@ class SessionFeed:
                 "history_overwritten": max(0, self.signal_change_count - len(self.signal_changes)),
             }
 
+    def ba_detectors(self):
+        return tuple(detector for detector in (self.ba, self.opposite_ba) if detector is not None)
+
     def connect(self):
         with self.lock:
-            if self.ba is not None:
-                self.ba.reset()
+            for detector in self.ba_detectors():
+                detector.reset()
             self.generation += 1
             self.normal_signals.clear()
             self._normal_signal_event = None
@@ -272,8 +281,8 @@ class SessionFeed:
 
     def invalidate(self, reason):
         with self.lock:
-            if self.ba is not None:
-                self.ba.invalidate(reason)
+            for detector in self.ba_detectors():
+                detector.invalidate(reason)
             self.connected = False
             self.repair_path_valid = False
             self.reason = reason
@@ -292,13 +301,14 @@ class SessionFeed:
                 self.books[token] = replace(b, tick=tick)
                 self.tick_verified[token] = tick
 
-    def snapshot(self, *, repair_token=None, repair=False):
+    def snapshot(self, *, repair_token=None, repair=False, ba_cfg=None):
         now = self.monotonic()
         with self.lock:
             yes, no = (self.books[t] for t in (self.meta.yes.token_id, self.meta.no.token_id))
             reason = self.reason if not self.connected else ""
             if any(b.snapshot_generation != self.generation for b in (yes, no)):
                 reason = reason or "WS_REBUILD_REQUIRED"
+            signal_cfg = ba_cfg or (self.ba.cfg if self.ba is not None else None)
             needed = (self.books[repair_token],) if repair_token and not repair else (yes, no)
             for b in needed:
                 if not b.bids or not b.asks:
@@ -308,7 +318,7 @@ class SessionFeed:
                 if ((b.reported_bid is not None and b.reported_bid != (b.best_bid or Decimal(0)))
                         or (b.reported_ask is not None and b.reported_ask != (b.best_ask or Decimal(1)))):
                     reason = reason or "WS_TOP_PENDING"
-                book_age = (self.ba.cfg.max_book_age_ms if self.ba is not None
+                book_age = (signal_cfg.max_book_age_ms if signal_cfg is not None
                             and not repair_token else self.cfg.max_book_age_ms)
                 if not repair and not 0 <= (now - b.received_mono) * 1000 <= book_age:
                     reason = reason or "WS_BOOK_STALE"
@@ -318,8 +328,8 @@ class SessionFeed:
                            not 0 <= now-self.last_transport_receipt <= 2*WS_HEARTBEAT_SEC):
                 reason = reason or "WS_TRANSPORT_STALE"
             if not repair and not repair_token:
-                if self.ba is not None:
-                    pair_skew = self.ba.cfg.max_pair_skew_ms
+                if signal_cfg is not None:
+                    pair_skew = signal_cfg.max_pair_skew_ms
                     source_skew_ms = abs(number(yes.source_time)-number(no.source_time))*1000
                 else:
                     pair_skew = self.cfg.max_pair_skew_ms
@@ -418,16 +428,16 @@ class SessionFeed:
                             raise ValueError("WS_TOKEN_IDENTITY")
                         b = updated[token]
                         if kind == "last_trade_price":
-                            if self.ba is not None:
-                                self.ba.trade(row, b, received_mono, received_wall)
+                            for detector in self.ba_detectors():
+                                detector.trade(row, b, received_mono, received_wall)
                             continue
                         if kind == "best_bid_ask":
-                            if self.ba is not None:
-                                self.ba.top(row, b, received_mono, received_wall)
+                            for detector in self.ba_detectors():
+                                detector.top(row, b, received_mono, received_wall)
                             continue
                         if kind == "tick_size_change":
-                            if self.ba is not None:
-                                self.ba.invalidate("BA_TICK_CHANGED", token)
+                            for detector in self.ba_detectors():
+                                detector.invalidate("BA_TICK_CHANGED", token)
                             tick = number(ch["new_tick_size"])
                             if tick == b.tick:
                                 continue  # Repeated venue notification is idempotent.
@@ -440,8 +450,8 @@ class SessionFeed:
                         if stamp <= 0 or int(stamp) > int(received_wall) + 2:
                             raise ValueError("WS_SOURCE_CLOCK_INVALID")
                         if int(b.source_time - stamp) > 0:
-                            if self.ba is not None:
-                                self.ba.invalidate("BA_EVENT_OUT_OF_ORDER", token)
+                            for detector in self.ba_detectors():
+                                detector.invalidate("BA_EVENT_OUT_OF_ORDER", token)
                             self.notice("WS_OLD_SOURCE_IGNORED", token_id=token,
                                         incoming_timestamp=stamp, previous_timestamp=b.source_time)
                             continue  # Old seconds do not overwrite newer depth or force reconnect.
@@ -497,8 +507,8 @@ class SessionFeed:
                             reported_ask=reported_ask,
                         )
                         touched.add(token)
-                        if self.ba is not None:
-                            self.ba.depth(row, b, updated[token], received_mono, received_wall)
+                        for detector in self.ba_detectors():
+                            detector.depth(row, b, updated[token], received_mono, received_wall)
                 # Explicit venue BBO bounds supersede cached contradictory depth.
                 # Do this after every change in the frame; never invent top quantities.
                 for token in touched:
@@ -536,7 +546,7 @@ class SessionFeed:
                         self.probability_points[-1] = point
                     else:
                         self.probability_points.append(point)
-                if touched or tick_changed or self.ba is not None:
+                if touched or tick_changed or self.ba_detectors():
                     self.sequence += 1
                     self.tick_revision += tick_changed
                     if depth_changed:

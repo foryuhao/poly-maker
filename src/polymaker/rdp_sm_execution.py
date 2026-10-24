@@ -604,7 +604,9 @@ class _ExecutionReads(_Reads):
 
         if self.feed is None:
             self.feed = SessionFeed(meta, self.cfg.rdp_sm.obi, proxy=self.cfg.proxy,
-                ba_cfg=self.cfg.rdp_sm.ba if self.cfg.rdp_sm.normal_entry_mode == "ba_v1" else None)
+                ba_cfg=self.cfg.rdp_sm.ba if self.cfg.rdp_sm.normal_entry_mode == "ba_v1" else None,
+                opposite_ba_cfg=(self.cfg.rdp_sm.repair.opposite_ba
+                    if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1" else None))
             try:
                 await self.refresh_feed_ticks()
             except BaseException:
@@ -985,7 +987,8 @@ class SMWindowExecutor:
                                                            else "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL"),
                             "normal_sigma_required": cfg.rdp_sm.normal_entry_mode == "obi_v1",
                             "probability_sigma": sigma_specification(),
-                            "tp_execution_policy": "INDEPENDENT_FIXED_PRICE_TP_WITH_SL_HANDOFF",
+                            "tp_execution_policy": (None if cfg.rdp_sm.repair.policy == "opposite_ba_v1"
+                                                    else "INDEPENDENT_FIXED_PRICE_TP_WITH_SL_HANDOFF"),
                             "runtime_source_sha256": {
                                 name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                                 for name in ("rdp_sm.py", "rdp_sm_execution.py", "rdp_sm_normal.py", "rdp_sm_quotes.py",
@@ -994,13 +997,14 @@ class SMWindowExecutor:
                                     "rdp_sm_lifecycle.py", "rdp_sm_loop.py", "rdp_sm_marketdata.py",
                                     "rdp_sm_unknown_recovery.py", "rdp_sm_inventory_lag.py",
                                     "rdp_sm_cached_reads.py", "rdp_sm_network.py", "rdp_sm_sync.py",
-                                    "repair_policy.py", "rdp_sm_ba.py", "rdp_sm_signal.py", "config.py")},
+                                    "repair_policy.py", "rdp_sm_ba.py", "rdp_sm_opposite_ba.py", "rdp_sm_signal.py", "config.py")},
                             "config_dir": str(cfg.config_dir),
                             "obi": cfg.rdp_sm.obi.model_dump(mode="json"),
                             **({"ba": cfg.rdp_sm.ba.model_dump(mode="json")} if cfg.rdp_sm.normal_entry_mode == "ba_v1" else {}),
                             "repair": cfg.rdp_sm.repair.model_dump(mode="json"),
                             "cooldown": cfg.rdp_sm.cooldown.model_dump(mode="json"),
-                            "repair_exit_threshold_shares": str(MIN_REPAIR_EXPOSURE),
+                            "repair_exit_threshold_shares": ("0" if cfg.rdp_sm.repair.policy == "opposite_ba_v1"
+                                                             else str(MIN_REPAIR_EXPOSURE)),
                         }
                         if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                         else {}
@@ -1196,6 +1200,8 @@ class SMWindowExecutor:
     def _check_repair_abandonment(self):
         from polymaker.rdp_sm_abandon import REASON, eligible
 
+        if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1":
+            return False  # Price-based abandonment belongs to the price policy only.
         if self.repair_abandonment is not None:
             return True
         ep, cfg = self.repair_episode, self.cfg.rdp_sm.repair.abandon_high_entry
@@ -1247,18 +1253,29 @@ class SMWindowExecutor:
             self.repair_abandonment = result
             self.record("sm_repair_abandoned", dict(result))
 
+    def repair_inventory_complete(self):
+        y, n = self.economic_inventory()
+        return y == n if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1" else not repair_required(y, n)
+
     def _complete_repair_episode(self):
         _require(self.safe_to_continue and self.inventory_mismatch is None,
                  "COOLDOWN_CLOSE_BARRIER_REQUIRED")
         y, n = self.economic_inventory()
-        _require(not repair_required(y, n), "REPAIR_RESIDUAL_ABOVE_EXIT_THRESHOLD")
+        _require(self.repair_inventory_complete(), "REPAIR_RESIDUAL_ABOVE_EXIT_THRESHOLD")
         result = self.cooldown.complete(self._cooldown_pair_snapshot(),
                                         self.meta.yes.token_id, self.monotonic())
         ep = self.repair_episode
-        self.record("sm_repair_episode", {"event": "COMPLETE_WITH_RESIDUAL_TOLERANCE",
+        opposite_ba = self.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
+        if opposite_ba and self.reads.feed is not None:
+            # NORMAL must wait for a NEW entry BA after this round, rather than
+            # reuse an opportunity observed while the position was still owned.
+            with self.reads.feed.lock:
+                for detector in self.reads.feed.ba_detectors():
+                    detector.invalidate("BA_EXIT_ROUND_COMPLETED")
+        self.record("sm_repair_episode", {"event": "COMPLETE_PAIRED" if opposite_ba else "COMPLETE_WITH_RESIDUAL_TOLERANCE",
             "opening_window": ep["opening_window"], "direction_leg": ep.get("direction_leg", 0),
             "actual_delta": str(y-n), "residual_shares": str(abs(y-n)),
-            "threshold_shares": str(MIN_REPAIR_EXPOSURE), "inventory_flat": y == n,
+            "threshold_shares": "0" if opposite_ba else str(MIN_REPAIR_EXPOSURE), "inventory_flat": y == n,
             "residual_retained_in_ledger": True})
         self.record("sm_cooldown", result)
         self.repair_episode = None
@@ -1315,7 +1332,7 @@ class SMWindowExecutor:
         if ep is None:
             return
         if (self.safe_to_continue and self.inventory_mismatch is None
-                and not repair_required(*self.economic_inventory())):
+                and self.repair_inventory_complete()):
             self._complete_repair_episode()
             return
         if ep.get("dual_normal") and "source_lots" not in ep:

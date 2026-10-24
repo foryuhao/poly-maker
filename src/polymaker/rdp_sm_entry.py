@@ -168,7 +168,7 @@ class AccountRiskPolicy:
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):
     """One market per invocation; optionally own a read-only sync companion."""
-    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
+    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
         from polymaker.repair_policy import repair_readiness
 
         readiness = repair_readiness(cfg.rdp_sm.repair)

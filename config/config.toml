@@ -73,10 +73,28 @@ max_sec = 0.0
 loss_sec_per_dollar = 100.0
 
 [rdp_sm.repair]
-policy = "hd_tp_sl_v1"
+# Exit policy: opposite_ba_v1 or hd_tp_sl_v1 (its full parameters remain below).
+policy = "opposite_ba_v1"
 delta_limit = "5"
 review_sec = 2.0
 cutoff_sec = 240.0
+
+[rdp_sm.repair.opposite_ba]
+# Independent exit BA detector; no holding timeout, TP, SL or T180 transition.
+min_sell_shares = "5"
+min_depletion_shares = "5"
+min_refill_shares = "5"
+observation_sec = 0.75
+signal_lifetime_sec = 3.0
+max_sell_age_ms = 500.0
+max_book_age_ms = 200.0
+max_pair_skew_ms = 200.0
+max_entry_age_ms = 1000.0
+
+[rdp_sm.repair.opposite_ba.network]
+post_budget_floor_ms = 750.0
+min_live_budget_ms = 500.0
+max_cancel_rtt_ms = 750.0
 
 [rdp_sm.repair.inventory_lag]
 # 持仓接口滞后时的受限 REPAIR 容错；成交、订单及资金必须已完整核对。

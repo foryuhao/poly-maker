@@ -449,6 +449,7 @@ class SMTradingLoop:
         """Single writer coordinator; controllers share only order primitives."""
         from polymaker.rdp_sm_lifecycle import BatchLifecycle
         from polymaker.rdp_sm_normal import BANormalController, NormalController
+        from polymaker.rdp_sm_opposite_ba import OppositeBAController
         from polymaker.rdp_sm_path_repair import PathRepairController
         from polymaker.rdp_sm_repair import RepairController
 
@@ -459,8 +460,10 @@ class SMTradingLoop:
                   else NormalController(executor, lifecycle))
         rebalance = (PathRepairController(executor, lifecycle)
                      if self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1"
+                     else OppositeBAController(executor, lifecycle)
+                     if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
                      else RepairController(executor, lifecycle))
-        if isinstance(rebalance, PathRepairController):
+        if isinstance(rebalance, (PathRepairController, OppositeBAController)):
             from polymaker.repair_policy import repair_readiness
 
             result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)
@@ -742,7 +745,7 @@ class SMTradingLoop:
         fill_window_sec=3.0,
     ) -> RunResult:
         result = RunResult(None, self.session_id)
-        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and self.cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
             from polymaker.repair_policy import repair_readiness
 
             result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)

@@ -48,6 +48,34 @@ Everything else is TOML under [`config/`](config/):
 - `strategy.toml` — named parameter profiles (`political-longdated`, `political-hot`)
 - `markets.toml` — the trade list (populated via the CLI below)
 
+### RDP opposite BA exit
+
+`config/config.toml` selects `rdp_sm.repair.policy = "opposite_ba_v1"`.
+`livecfg/config.toml` retains `hd_tp_sl_v1`; both files contain settings for both
+policies. Select one policy when starting a new session; no hot reload applies.
+All existing HD/TP/SL parameters are preserved for switching back.
+
+With `opposite_ba_v1`, net YES waits for a new NO BA, and net NO waits for a new
+YES BA. The exit detector uses `[rdp_sm.repair.opposite_ba]` and its `.network`
+section, independently of NORMAL's `[rdp_sm.ba]`. Both consume the same ordered
+market stream using the existing SELL → Bid depletion → same-price refill logic.
+Only an unconsumed, currently valid opposite BA whose first SELL is at or after
+the opening fill can submit a BUY at that BA's anchor Bid. The BA deadline starts
+at its first SELL and is never extended by preparation, submission or retries.
+
+Partial fills remain owned by REPAIR. Invalid/expired BA orders are cancelled
+and reconciled before another independent opposite BA can submit. Quantity is
+rounded down to the legal grid and never enlarged past the residual to meet a
+minimum order. Untradeable residuals remain in inventory and block NORMAL.
+Only exact net pairing plus the existing order/fill/account close barrier ends
+the round; existing cooldown and NORMAL time/admission rules then apply.
+
+There is no holding timeout, TP/SL price signal, sigma requirement, T180 forced
+exit, or high-entry-price abandonment. The existing T240 market submission
+cutoff remains: cancel/reconcile old orders, retain any residual for settlement.
+No opposite BA means no exit order. Maker submission does not guarantee a fill.
+See [the implementation contract](docs/development/OPPOSITE_BA_EXIT_V1.md).
+
 ### RDP TP / SL comparison switches
 
 The `hd_tp_sl_v1` policy has independent exit switches in both

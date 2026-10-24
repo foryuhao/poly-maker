@@ -97,25 +97,34 @@ class BatchLifecycle:
     def episodes(self, controller):
         return getattr(controller, "episodes", self.feed.episodes)
 
+    def uses_ba(self, controller):
+        return (self.ba_mode and controller.phase == "NORMAL") or getattr(controller, "ba_signal", False)
+
     def drain_ba(self):
         if self.ba_mode:
             for event in self.feed.ba.drain():
                 self.executor.record("sm_ba_episode", event)
+        if getattr(self.feed, "opposite_ba", None) is not None:
+            for event in self.feed.opposite_ba.drain():
+                self.executor.record("sm_opposite_ba_episode", event)
 
     def wait(self, reason, snapshot, health=None, *, ba_admission=None):
         self.drain_ba()
         diagnostics = self.feed.diagnostics()
-        key = (reason, snapshot.generation, diagnostics["failure_count"])
+        opposite_exit = (self.executor.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
+                         and self.executor.repair_episode is not None)
+        detector = self.feed.opposite_ba if opposite_exit else self.feed.ba if self.ba_mode else None
+        key = (reason, snapshot.generation, diagnostics["failure_count"], opposite_exit)
         if key == self.wait_reason:
             return
         self.wait_reason = key
         self.executor.record(
-            "sm_ba_wait" if self.ba_mode else "sm_obi_wait",
+            "sm_opposite_ba_wait" if opposite_exit else "sm_ba_wait" if self.ba_mode else "sm_obi_wait",
             {
                 "reason": reason,
                 "snapshot_id": snapshot.snapshot_id,
                 "phase_inventory": self.executor.inventory_observation,
-                "signal": asdict(self.feed.ba.evaluate(snapshot) if self.ba_mode
+                "signal": asdict(detector.evaluate(snapshot) if detector is not None
                                  else evaluate(snapshot, self.executor.cfg.rdp_sm.obi.threshold)),
                 "ws_diagnostics": diagnostics,
                 "health": asdict(health) if health else None,
@@ -133,9 +142,9 @@ class BatchLifecycle:
             "max_age": (e.cfg.rdp_sm.ba if normal and self.ba_mode else e.cfg.rdp_sm.obi).max_book_age_ms / 1000,
         }
 
-    def ba_entry_evidence(self, snapshot, t0, deadline, health):
+    def ba_entry_evidence(self, snapshot, t0, deadline, health, cfg=None):
         e = self.executor
-        admission = entry_admission(e.cfg.rdp_sm.ba, t0=t0, deadline=deadline,
+        admission = entry_admission(cfg or e.cfg.rdp_sm.ba, t0=t0, deadline=deadline,
                                     writes=e.reads.network.recent_writes())
         now, wall = admission.observed_monotonic, self.feed.wall()
         return {**asdict(admission), "snapshot_id": snapshot.snapshot_id,
@@ -149,6 +158,8 @@ class BatchLifecycle:
                                                   -Decimal(str(snapshot.no.source_time)))*1000)}
 
     def snapshot(self, controller, yes, no):
+        if getattr(controller, "ba_signal", False):
+            return self.feed.snapshot(ba_cfg=controller.ba_config)
         meta = self.executor.meta
         repair = (
             (meta.no.token_id if yes > no else meta.yes.token_id)
@@ -201,21 +212,28 @@ class BatchLifecycle:
         if not health.allowed:
             self.wait(health.reason, snapshot, health)
             return None
-        if self.ba_mode and controller.phase == "NORMAL" and direction:
+        if self.uses_ba(controller) and direction:
             with self.feed.lock:
-                ep = self.feed.ba.selected
+                ep = self.episodes(controller).selected
                 timing = (ep.signal_start_mono, ep.order_deadline) if ep else None
             if timing is None:
                 self.wait("BA_EPISODE_CHANGED", snapshot, health)
                 return None
             t0, deadline = timing
-            admission = self.ba_entry_evidence(snapshot, t0, deadline, health)
+            # Exit opportunity and market cutoffs never extend the BA lease.
+            if getattr(controller, "ba_signal", False):
+                deadline = min(deadline, controller.deadline(snapshot))
+            admission = self.ba_entry_evidence(snapshot, t0, deadline, health,
+                                               getattr(controller, "ba_config", None))
             if admission["reason"]:
                 self.wait(admission["reason"], snapshot, health, ba_admission=admission)
                 return None
         if signal and direction:
-            self.first_eligible.setdefault(self.episodes(controller).episode_id,
-                                           signal.event_mono if self.ba_mode else snapshot.signal_event)
+            episode_key = self.episodes(controller).episode_id
+            if getattr(controller, "ba_signal", False):
+                episode_key = ("opposite_ba_v1", episode_key)
+            self.first_eligible.setdefault(episode_key,
+                                           signal.event_mono if self.uses_ba(controller) else snapshot.signal_event)
         cached = self.cached_slot
         if (
             cached
@@ -380,15 +398,17 @@ class BatchLifecycle:
         now = e.monotonic()
         current = self.snapshot(controller, intent.yes, intent.no)
         elapsed = e.official_time + now - e.time_anchor - int(e.slug.rsplit("-", 1)[1])
-        signal_start = (intent.episode_start if self.ba_mode and intent.phase == "NORMAL"
+        ba_signal = self.uses_ba(controller)
+        signal_start = (intent.episode_start if ba_signal
                         else intent.snapshot.signal_event)
         age = (now - signal_start) * 1000
-        ba_normal = self.ba_mode and intent.phase == "NORMAL"
+        ba_normal = ba_signal
         # BA has its own T0/SELL/book ages. Transport health must not apply
         # OBI's 100ms signal clock to a 750ms BA observation sequence.
         health = e.network_health(age if intent.phase == "NORMAL" and not ba_normal else 0)
         self.final_evidence = (current, health)
-        self.ba_admission = (self.ba_entry_evidence(current, signal_start, deadline[0], health)
+        self.ba_admission = (self.ba_entry_evidence(current, signal_start, deadline[0], health,
+                                                  getattr(controller, "ba_config", None))
                              if ba_normal else None)
         checks = [
             ("REPAIR_REQUIRED", intent.phase != "NORMAL" or not repair_required(intent.yes, intent.no)),
@@ -417,8 +437,8 @@ class BatchLifecycle:
             (
                 "SIGNAL_STALE_OR_EPISODE_CHANGED",
                 (
-                    intent.phase != "NORMAL"
-                    or (self.ba_mode or 0 <= age <= cfg.max_signal_age_ms)
+                    (intent.phase != "NORMAL" and not ba_signal)
+                    or (ba_signal or 0 <= age <= cfg.max_signal_age_ms)
                     and self.episodes(controller).current(intent.claim)
                 ),
             ),
@@ -589,7 +609,7 @@ class BatchLifecycle:
 
         def on_post_start():
             _require(not e.check_repair_abandonment(), "HIGH_ENTRY_REPAIR_ABANDONED")
-            if self.ba_mode and intent.phase == "NORMAL":
+            if self.uses_ba(controller):
                 allowed = self.guard(controller, intent, revision, deadline)
                 ba_admission_evidence[0] = self.ba_admission
                 _require(allowed,
@@ -688,7 +708,7 @@ class BatchLifecycle:
                 boundary_reason = (controller.boundary_close_reason(intent, elapsed)
                                    if hasattr(controller, "boundary_close_reason") else None)
                 ba_reason = (controller.active_close_reason(intent, current)
-                             if normal and self.ba_mode else None)
+                             if self.uses_ba(controller) else None)
                 ba_filled = (normal and self.ba_mode and any(
                     f.maker_order_id in prospective for f in e.economic_fills()))
                 reason = next((name for name, failed in (
@@ -848,7 +868,8 @@ class BatchLifecycle:
                     - int(e.slug.rsplit("-", 1)[1]),
                     "quotes": [asdict(q) for q in intent.quotes],
                     "sizing": candidate.sizing,
-                    "decision_source": ("BA_EXECUTION_WS" if self.ba_mode else
+                    "decision_source": ("OPPOSITE_BA_EXECUTION_WS" if getattr(controller, "ba_signal", False) else
+                                        "BA_EXECUTION_WS" if self.ba_mode else
                                         "OBI_EXECUTION_WS; observer slots are comparison only"),
                     "execution_snapshot_id": final_evidence[0][0].snapshot_id
                     if final_evidence[0]
@@ -858,9 +879,11 @@ class BatchLifecycle:
                 event_wall=post_wall,
             )
             e.record(
+                "sm_opposite_ba_final_decision" if getattr(controller, "ba_signal", False) else
                 "sm_ba_final_decision" if self.ba_mode else "sm_obi_final_decision",
                 {
-                    "mode": e.cfg.rdp_sm.normal_entry_mode,
+                    "mode": ("opposite_ba_v1" if getattr(controller, "ba_signal", False)
+                             else e.cfg.rdp_sm.normal_entry_mode),
                     "intent": {
                         "phase": intent.phase,
                         "window_id": intent.window_id,
@@ -878,7 +901,7 @@ class BatchLifecycle:
                         "signal": asdict(signal) if signal else None,
                         "normal_signal_confirmation": normal_confirmation[0],
                         **({"ba_admission": ba_admission_evidence[0]}
-                           if self.ba_mode and intent.phase == "NORMAL" else {}),
+                           if self.uses_ba(controller) else {}),
                         "claim": intent.claim,
                         "quotes": [asdict(q) for q in intent.quotes],
                         "offset_ticks": {
@@ -902,7 +925,9 @@ class BatchLifecycle:
                         "persisted_at": intent.persisted_at,
                         "frozen_at": intent.frozen_at,
                         "episode_start": intent.episode_start,
-                        "first_eligible_event": self.first_eligible.get(intent.claim[0])
+                        "first_eligible_event": self.first_eligible.get(
+                            ("opposite_ba_v1", intent.claim[0]) if getattr(controller, "ba_signal", False)
+                            else intent.claim[0])
                         if intent.claim
                         else None,
                         "signal_event": intent.snapshot.signal_event,
@@ -944,7 +969,7 @@ class BatchLifecycle:
             e.update_repair_episode()
             if self.ba_mode:
                 e.record_ba_fills()
-                self.drain_ba()
+            self.drain_ba()
             if hasattr(controller, "reconcile_episode"):
                 controller.reconcile_episode()
         finally:
@@ -971,8 +996,8 @@ class BatchLifecycle:
             client.network_batch_id = None
             e.drain_network_events()
         result.t0_monotonic = (
-            (intent.episode_start if self.ba_mode else intent.snapshot.signal_event)
-            if intent.phase == "NORMAL" else post_start[0]
+            intent.episode_start if self.uses_ba(controller) else
+            intent.snapshot.signal_event if intent.phase == "NORMAL" else post_start[0]
         )
         result.fill_deadline_monotonic = deadline[0]
         result.close_monotonic = e.monotonic()
@@ -998,6 +1023,7 @@ class BatchLifecycle:
             e.reason or e.fatal or (self.guard_reason if not batch[0].post_started else None)
         )
         e.record(
+            "sm_opposite_ba_signal_changes" if getattr(controller, "ba_signal", False) else
             "sm_ba_signal_changes" if self.ba_mode else "sm_obi_signal_changes",
             {
                 "window_id": intent.window_id,
@@ -1007,9 +1033,13 @@ class BatchLifecycle:
                     if intent.phase == "NORMAL" and not self.ba_mode
                     else "BA_FIXED_T0_DEADLINE; cancel on anchor/data invalidation or actual fill"
                     if intent.phase == "NORMAL"
+                    else "OPPOSITE_BA_FIXED_T0_DEADLINE; cancel on anchor/data invalidation"
+                    if getattr(controller, "ba_signal", False)
                     else "MODEL_ABSOLUTE_DEADLINE; REPAIR independent of OBI"
                 ),
-                **({"normal_entry_mode": "ba_v1", "episode_id": intent.claim[0] if intent.claim else None}
+                **({"repair_policy": "opposite_ba_v1", "episode_id": intent.claim[0] if intent.claim else None}
+                   if getattr(controller, "ba_signal", False) else
+                   {"normal_entry_mode": "ba_v1", "episode_id": intent.claim[0] if intent.claim else None}
                    if self.ba_mode else self.feed.changes_since(intent.snapshot.signal_event)),
             },
         )

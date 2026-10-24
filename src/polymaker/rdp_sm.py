@@ -38,7 +38,7 @@ TEST_CAPITAL_LIMIT_USDC = 15.0
 def session_capital_limit(cfg):
     """The path strategy's confirmed session budget; legacy tools retain 15."""
     return (20.0 if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
-            and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1" else TEST_CAPITAL_LIMIT_USDC)
+            and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} else TEST_CAPITAL_LIMIT_USDC)
 
 
 TRADING_START_S = 15
