@@ -34,6 +34,10 @@ async def attach(setup, tmp_path, *, hook=None):
             result = hook(request)
             if result is not None:
                 return result
+        if request.url.path == '/time':
+            # Match the already advancing fake socket clock, including the
+            # late confirmation band consumed from periodic account evidence.
+            return httpx.Response(200, json=e.reads.feed.wall(), request=request)
         return v.response(request)
 
     companion = SyncCompanion(cfg, e.session_id, reader_factory=lambda emit, stop:

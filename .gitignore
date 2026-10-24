@@ -486,7 +486,8 @@ research_audits/
 
 research_outputs/
 
-# Preserved local data links
+# Project-local runtime directories and backups
+/backups/
 /research_data
 /research_outputs
 /research_audits

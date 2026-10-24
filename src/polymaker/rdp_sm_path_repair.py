@@ -11,11 +11,10 @@ from types import SimpleNamespace
 
 from polymaker.domain import Side, TradeState
 from polymaker.execution.filltruth import reconcile_owned_order
+from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
 from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, maker_buy_size
 from polymaker.rdp_sm_repair import RepairController
 from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
-
-MIN_REPAIR_EXPOSURE = Decimal("2.5")
 
 
 class PathRepairController(RepairController):
@@ -64,6 +63,8 @@ class PathRepairController(RepairController):
         """Only a completed ownership barrier permits a TP/SL direction handoff."""
         from polymaker.rdp_sm_sl_ledger import install_reverse_episode
 
+        if self.executor.check_repair_abandonment():
+            return False
         with self._policy_lock:
             if self.executor.safe_to_continue and install_reverse_episode(self.executor):
                 self.plan = None
@@ -297,7 +298,7 @@ class PathRepairController(RepairController):
                                  session_elapsed=session_now)
         decision["session_elapsed"] = session_now
         decision["next_review_at"] = min(session_now+self.cfg.review_sec,
-                                         240. if policy.mode == "SL" else 180.)
+                                         240. if policy.mode == "SL" or session_now >= 180 else 180.)
         decision["wake_on"] = ["PRICE_EVENT", "EXECUTION_FACT", "TIME_BOUNDARY"]
         # Only a bounded causal window is needed for future short-shock tests;
         # the cumulative price peak is separately preserved across the episode.
@@ -375,7 +376,9 @@ class PathRepairController(RepairController):
 
     def _make_plan(self, snapshot, decision, point):
         e, ep = self.executor, self.executor.repair_episode
-        if decision.get("session_elapsed", point.elapsed) >= 240 or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE:
+        if (not self.cfg.path.exit_enabled(self.policy.mode)
+                or decision.get("session_elapsed", point.elapsed) >= 240
+                or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE):
             return None
         side = "NO" if point.delta > 0 else "YES"
         if side == ep["side"] and abs(point.delta) <= float(self.cfg.delta_limit):
@@ -415,29 +418,38 @@ class PathRepairController(RepairController):
                 "candidates": [], "parameter_status": self.cfg.path.calibration_status}
 
     async def repair(self, yes, no, window_id):
+        if self.executor.cooldown.active:
+            await self.executor.sleep(.1)
+            return None
         if self.elapsed() >= 240:
             self.plan = None
             return None
         e, feed = self.executor, self.lifecycle.feed
+        e.update_repair_episode()
+        if e.check_repair_abandonment():
+            return None
         self.reconcile_episode()
         y, n = e.economic_inventory()
         if abs(y-n) <= MIN_REPAIR_EXPOSURE:
             self.plan = None
             key = (e.repair_episode["opening_window"] if e.repair_episode else None, y-n)
-            if key != self._small_exposure_key:
+            if e.repair_episode is not None and key != self._small_exposure_key:
                 e.record("sm_repair_small_exposure", {
                     "reason": "EXPOSURE_AT_OR_BELOW_REPAIR_MINIMUM",
                     "actual_delta": str(y-n), "threshold_shares": str(MIN_REPAIR_EXPOSURE),
-                    "action": "WAIT_WITH_RESIDUAL", "inventory_flat": y == n,
+                    "action": "WAIT_CLOSE_BARRIER", "inventory_flat": y == n,
                 })
                 self._small_exposure_key = key
-            await feed.wait_after(feed.sequence, .1)
+            # A socket event does not prove order/fill closure. Bound repeated
+            # account checks while waiting for the existing close barrier.
+            await e.sleep(.1)
             return None
         self._small_exposure_key = None
         if self.elapsed() >= 180:
             self.boundary_close_reason(None, self.elapsed())
         price_sequence = feed.repair_price_points[-1].sequence if feed.repair_price_points else -1
-        force_due = self.elapsed() >= 180 and (self.policy is None or self.policy.mode != "SL")
+        force_due = (self.cfg.path.sl_enabled and self.elapsed() >= 180
+                     and (self.policy is None or self.policy.mode != "SL"))
         if (not force_due and e.monotonic() < self.next_review
                 and self.last_review_revision == e.revision
                 and price_sequence == self.last_path_sequence):
@@ -484,6 +496,14 @@ class PathRepairController(RepairController):
         from polymaker.rdp_sm_tp import TPExecution
 
         e = self.executor
+        if e.check_repair_abandonment():
+            return None
+        if e.cooldown.active:
+            return None
+        if not self.cfg.path.exit_enabled(mode):
+            self.plan = None
+            self._blocked(mode+"_DISABLED")
+            return None
         initial_delta = e.economic_inventory()[0]-e.economic_inventory()[1]
         initial_plan = self.plan
         actor = (SLExecution if mode == "SL" else TPExecution)(self, window_id)
@@ -516,7 +536,7 @@ class PathRepairController(RepairController):
             "actual_delta_before": str(initial_delta)}
 
     def candidates(self, snapshot, yes, no, window_id):
-        if not self.plan:
+        if not self.plan or not self.cfg.path.exit_enabled(self.plan["mode"]):
             return {}
         plan = self.plan
         token = self.executor.meta.yes.token_id if plan["side"] == "YES" else self.executor.meta.no.token_id
@@ -529,6 +549,8 @@ class PathRepairController(RepairController):
 
     def matches(self, intent, snapshot):
         if not self.plan or not snapshot.valid or not self.policy:
+            return False
+        if not self.cfg.path.exit_enabled(self.plan["mode"]):
             return False
         elapsed = self.elapsed()
         if elapsed >= self.plan["cancel_at"] or self.policy.mode != self.plan["mode"]:
@@ -565,10 +587,17 @@ class PathRepairController(RepairController):
 
     def boundary_close_reason(self, intent, elapsed):
         """Independent wall-time transition, including sigma warmup/unknown POST."""
+        if self.executor.check_repair_abandonment():
+            return "HIGH_ENTRY_REPAIR_ABANDONED"
         with self._policy_lock:
             ep = self.executor.repair_episode
             if ep is None or Decimal(ep["original_qty"]) <= 0:
                 return None
+            policy = self.policy if self.episode_id == ep["opening_window"] else None
+            if policy is not None and policy.apply_switches():
+                self._persist()
+            if self.plan is not None and not self.cfg.path.exit_enabled(self.plan["mode"]):
+                return self.plan["mode"]+"_DISABLED"
             delta = self.executor.economic_inventory()[0]-self.executor.economic_inventory()[1]
             boundary = 240 if elapsed >= 240 else 180 if elapsed >= 180 else None
             key = (ep["opening_window"], boundary)
@@ -578,14 +607,24 @@ class PathRepairController(RepairController):
                     "opening_window": ep["opening_window"], "boundary": boundary,
                     "elapsed_s": elapsed, "actual_delta": str(delta),
                     "action": "STOP_NEW_REPAIR" if boundary == 240 else
-                        "SMALL_EXPOSURE_NO_REPAIR" if abs(delta) <= MIN_REPAIR_EXPOSURE else "FORCE_SL"})
+                        "SMALL_EXPOSURE_NO_REPAIR" if abs(delta) <= MIN_REPAIR_EXPOSURE else
+                        "HOLD_SL_DISABLED" if not self.cfg.path.sl_enabled else "FORCE_SL",
+                    "tp_enabled": self.cfg.path.tp_enabled, "sl_enabled": self.cfg.path.sl_enabled})
             if elapsed >= 240:
                 self.flush_blocked("CUTOFF")
                 return "MARKET_SUBMISSION_CUTOFF"
-            if (elapsed >= 180 and abs(delta) > MIN_REPAIR_EXPOSURE
-                    and self._policy() is not None and self.policy.mode != "SL"):
-                self.policy.force_sl(elapsed)
-                self._persist()
+            if elapsed >= 180:
+                if self.cfg.path.sl_enabled and abs(delta) > MIN_REPAIR_EXPOSURE:
+                    policy = self._policy()
+                    if policy is not None and policy.mode != "SL":
+                        policy.force_sl(elapsed)
+                        self._persist()
+                elif not self.cfg.path.sl_enabled:
+                    if policy is not None and policy.mode == "TP":
+                        policy.force_hold(elapsed, "SL_DISABLED_AFTER_T180")
+                        self._persist()
+                    if self.plan is not None and self.plan["mode"] == "TP":
+                        return "TP_SUBMISSION_CUTOFF"
             if (self.policy is not None and self.policy.mode == "SL"
                     and self.plan is not None and self.plan["mode"] != "SL"):
                 return "REPAIR_MODE_SL_CANCEL_OLD_STATE"
@@ -603,6 +642,8 @@ class PathRepairController(RepairController):
 
     async def review_active(self, intent, deadline):
         e = self.executor
+        if self.plan is not None and not self.cfg.path.exit_enabled(self.plan["mode"]):
+            return self.plan["mode"]+"_DISABLED"
         # TP risk intent is evaluated before REST reconciliation. A transition
         # to SL hands off directly; only the final handoff uses full close.
         y, n = e.economic_inventory()

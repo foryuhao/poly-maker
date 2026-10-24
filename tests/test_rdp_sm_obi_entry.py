@@ -20,9 +20,16 @@ from test_rdp_sm_obi_execution import env as env
 @pytest.mark.parametrize("disconnect_preflight,cancel_before_order", [(False, False), (True, False), (False, True)])
 @pytest.mark.parametrize("prior_unresolved", [False, True])
 @pytest.mark.parametrize("cached", [False, True])
-async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, monkeypatch, disconnect_preflight, cancel_before_order, prior_unresolved, cached):
+async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, monkeypatch, disconnect_preflight, cancel_before_order, prior_unresolved, cached, mode="obi_v1"):
     v, cfg = env
-    cfg.rdp_sm.normal_entry_mode = "obi_v1"
+    cfg.rdp_sm.normal_entry_mode = mode
+    if mode == "ba_v1":
+        cfg.rdp_sm.ba.observation_sec = .05
+        cfg.rdp_sm.ba.signal_lifetime_sec = .12
+        cfg.rdp_sm.ba.max_sell_age_ms = 50
+        cfg.rdp_sm.ba.max_entry_age_ms = 80
+        cfg.rdp_sm.ba.network.post_budget_floor_ms = 10
+        cfg.rdp_sm.ba.network.min_live_budget_ms = 10
     cfg.rdp_sm.obi.network_min_samples = cfg.rdp_sm.obi.network_recovery_samples = 1
     cfg.rdp_sm.obi.signal_horizon_sec = 0.12
     cfg.rdp_sm.obi.max_signal_age_ms = 50
@@ -48,6 +55,12 @@ async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, 
     async def observe_open(cls, *args, **kwargs):
         e = await real_open(*args, **kwargs)
         v.executor = e
+        if mode == "obi_v1":
+            feed = e.reads.feed
+            now, wall = feed.monotonic(), feed.wall()
+            feed.probability_points.extendleft(reversed([
+                (int(wall)-age, now-age, .51, feed.generation) for age in range(11, 0, -1)
+            ]))
         wire_ref.append(Wire(v, e))
         if cancel_before_order:
             asyncio.get_running_loop().call_soon(asyncio.current_task().cancel)
@@ -81,6 +94,19 @@ async def test_new_mode_entire_entry_has_no_rest_book_and_owns_ws_teardown(env, 
             await asyncio.sleep(0.005)
             self.counter += 1
             n = self.counter % 2
+            if mode == "ba_v1":
+                from test_rdp_sm_ba import depth, trade
+
+                stamp = str((v.time + time.monotonic() - anchor) * 1000)
+                rows = [{"event_type": "book", "market": CID, "asset_id": t,
+                    "timestamp": stamp,
+                    "bids": [{"price": ".50" if t == "1" else ".49", "size": "80"}],
+                    "asks": [{"price": ".52" if t == "1" else ".51", "size": "20"}]}
+                    for t in ("1", "2")]
+                if feeds and feeds[-1].books["1"].best_bid is not None:
+                    feed = feeds[-1]
+                    rows.extend([trade(feed), depth(feed, 75), depth(feed, 80)])
+                return json.dumps(rows)
             return json.dumps(
                 [
                     {

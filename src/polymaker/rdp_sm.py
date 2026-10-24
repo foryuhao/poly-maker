@@ -37,13 +37,14 @@ TEST_CAPITAL_LIMIT_USDC = 15.0
 
 def session_capital_limit(cfg):
     """The path strategy's confirmed session budget; legacy tools retain 15."""
-    return (20.0 if cfg.rdp_sm.normal_entry_mode == "obi_v1"
+    return (20.0 if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
             and cfg.rdp_sm.repair.policy == "hd_tp_sl_v1" else TEST_CAPITAL_LIMIT_USDC)
 
 
 TRADING_START_S = 15
 NORMAL_END_S = 120
 DUST_SHARES = Decimal("0.1")
+MIN_REPAIR_EXPOSURE = Decimal("2.5")
 TRADING_END_S = PERIOD_S
 OFFICIAL_HOSTS = {
     "clob_host": "https://clob.polymarket.com",
@@ -60,6 +61,11 @@ def decision_quantity(quantity: Decimal | float) -> Decimal:
 
 def inventory_delta(yes: Decimal, no: Decimal) -> Decimal:
     return decision_quantity(decision_quantity(yes) - decision_quantity(no))
+
+
+def repair_required(yes: Decimal | float, no: Decimal | float) -> bool:
+    """REPAIR uses exact session net inventory; keep small residuals in the ledger."""
+    return abs(Decimal(str(yes))-Decimal(str(no))) > MIN_REPAIR_EXPOSURE
 
 
 def inventory_trading_state(delta: Decimal | float) -> str:
@@ -461,7 +467,7 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
 async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None) -> PreflightResult:
     """Read one selected market/account once; never submit, cancel or persist."""
     result = PreflightResult(test_capital_limit_usdc=session_capital_limit(cfg))
-    if _reads is None and cfg.rdp_sm.normal_entry_mode == "obi_v1":
+    if _reads is None and cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
         from polymaker.rdp_sm_execution import _ExecutionReads
 
         reads = _ExecutionReads(cfg)
@@ -484,12 +490,12 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         meta, start = _market(raw, slug)
         stage = "account_identity"
         await reads.connect_account()
-        if cfg.rdp_sm.normal_entry_mode == "obi_v1":
+        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
             from polymaker.rdp_sm_fence import recover_fence
 
             await recover_fence(reads, meta)
         stage = "books"
-        obi = cfg.rdp_sm.normal_entry_mode == "obi_v1"
+        obi = cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
         if obi:
             ws_books = await reads.ws_readiness(meta)
         else:

@@ -14,6 +14,7 @@ from test_rdp_sm_obi_execution import env as env
 async def fill_two_pairs(setup, *, replay_2325=False):
     v, e, _, lifecycle, normal = setup[:5]
     state = setup[7]
+    e.cfg.rdp_sm.cooldown.max_sec = 0  # Isolate capital; cooldown has dedicated regressions.
     filled = set()
 
     def fill_on_cancel(venue):
@@ -43,7 +44,7 @@ async def fill_two_pairs(setup, *, replay_2325=False):
         state.update(direction='YES' if index < 2 else 'NO', bid=yes_bid, no_bid=no_bid,
                      yes_ask=str(Decimal(yes_bid) + Decimal('.01')),
                      no_ask=str(Decimal(no_bid) + Decimal('.01')))
-        await asyncio.sleep(.025)
+        await asyncio.sleep(.04)  # Three distinct late-band confirmation events.
         yes = sum((Decimal(str(f.size)) for f in e.confirmed() if f.token_id == '1'), Decimal(0))
         no = sum((Decimal(str(f.size)) for f in e.confirmed() if f.token_id == '2'), Decimal(0))
         lifecycle.account = (await e._snapshot(include_books=False))[3]

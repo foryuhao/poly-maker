@@ -1,0 +1,11 @@
+[Unit]
+Description=Clean PolyMaker trading logs older than 24 hours every 5 minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00
+AccuracySec=10s
+Persistent=true
+Unit=poly-maker-log-retention.service
+
+[Install]
+WantedBy=timers.target

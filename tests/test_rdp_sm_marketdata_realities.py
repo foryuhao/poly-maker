@@ -155,7 +155,7 @@ def test_dust_does_not_skew_next_orders_but_exact_threshold_does(dust, size, sig
     yes, no = (Decimal(dust), Decimal(0)) if sign == 1 else (Decimal(0), Decimal(dust))
     evidence = {}
     state, quotes = make_quotes(feed.meta, feed.snapshot().books(), yes, no, 'dust',
-                               RDPSMConfig(), evidence=evidence, signal_side=direction)
+                               RDPSMConfig(), evidence=evidence, signal_side=direction, normal_sigma=0)
     assert state == 'NORMAL'
     reducing_side = 'NO' if sign == 1 else 'YES'
     assert [(q.outcome, q.size) for q in quotes] == [(direction, size if direction == reducing_side else 5)]
@@ -166,7 +166,7 @@ def test_dust_does_not_skew_next_orders_but_exact_threshold_does(dust, size, sig
 def test_dust_gap_between_large_positions_does_not_skew_next_orders(direction):
     feed, _, _ = feed_fixture()
     _, quotes = make_quotes(feed.meta, feed.snapshot().books(), Decimal('5.09'), Decimal(5),
-                            'dust-gap', RDPSMConfig(), signal_side=direction)
+                            'dust-gap', RDPSMConfig(), signal_side=direction, normal_sigma=0)
     assert [(q.outcome, q.size) for q in quotes] == [(direction, 5)]
 
 

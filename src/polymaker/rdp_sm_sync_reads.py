@@ -299,7 +299,12 @@ class ObserverReader:
         return rows
 
     def order(self, order_id, market=None):
-        row = self.order_row(self.client.get_order(order_id))
+        raw = self.client.get_order(order_id)
+        if raw is None:
+            # A successful HTTP read with no order is unresolved, never proof
+            # that an earlier POST was rejected or could not have filled.
+            raise ValueError("SYNC_ORDER_NOT_FOUND")
+        row = self.order_row(raw)
         if row["order_id"] != order_id:
             raise ValueError("SYNC_ORDER_ID_MISMATCH")
         if market is not None and (row["market_id"] != market.condition_id

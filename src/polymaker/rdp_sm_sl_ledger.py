@@ -1,7 +1,7 @@
 """SL execution quantities and reservations; economic truth stays in the SM.
 
-All amounts use Decimal. A canceled order can release only its proven unfilled
-remainder. MATCHED offsets the execution target but stays possible exposure.
+All amounts use Decimal. Terminal proofs and stable UNKNOWN recovery can release
+unfilled reservations. MATCHED stays possible exposure until economically proved.
 """
 from __future__ import annotations
 
@@ -10,9 +10,10 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from polymaker.domain import TradeState
+from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
 
 ZERO = Decimal(0)
-SMALL = Decimal("2.5")
+SMALL = MIN_REPAIR_EXPOSURE
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,7 @@ class Exposure:
         return None
 
 
-def exposure(executor):
+def exposure(executor, *, retain_unknown_reservations=False):
     actual_fills = executor.economic_fills()
     proved = {(f.trade_id, f.maker_order_id) for f in actual_fills}
     y, n = executor.economic_inventory()
@@ -63,12 +64,17 @@ def exposure(executor):
     pending = {"YES": ZERO, "NO": ZERO}
     reserved = ZERO
     releases = getattr(executor, "sl_terminal_quantities", {})
+    recovery = getattr(executor, "unknown_repair_recovery", None)
+    # Recovery validates its account facts against the unreleased ledger, so
+    # checking a release cannot recursively authorize itself.
+    unknown_releases = (recovery.released_order_ids()
+                        if recovery is not None and not retain_unknown_reservations else set())
     for a in executor.attempts:
         if a.outcome in {"ABORTED", "REJECTED"}:
             continue
         oid = a.order_id or a.expected_order_id
         filled = sum((Decimal(str(f.size)) for f in actual_fills if f.maker_order_id == oid), ZERO)
-        if oid in executor.proofs and oid in executor.terminal:
+        if oid in unknown_releases or oid in executor.proofs and oid in executor.terminal:
             possible = ZERO
         else:
             ceiling = releases.get(oid, Decimal(str(a.quote.size)))
@@ -78,9 +84,10 @@ def exposure(executor):
     return Exposure(y-n, execution, pending["YES"], pending["NO"], spent, reserved)
 
 
-def fifo_residual(fills, stamps, yes_token):
-    """Return the unpaired actual fill lots, retaining their identity and time."""
+def _fifo(fills, stamps, yes_token):
+    """Shared FIFO allocation for residual inventory and completed pair costs."""
     queues = {True: deque(), False: deque()}
+    paired = {}
     ordered = sorted(fills, key=lambda f: (
         stamps.get((f.trade_id, f.maker_order_id), {}).get("fill_monotonic",
             stamps.get((f.trade_id, f.maker_order_id), {}).get("elapsed", float("inf"))),
@@ -94,6 +101,9 @@ def fifo_residual(fills, stamps, yes_token):
         while qty > 0 and opposite:
             old, remaining = opposite[0]
             used = min(qty, remaining)
+            for leg in (old, fill):
+                key = (leg.trade_id, leg.maker_order_id)
+                paired[key] = paired.get(key, ZERO)+used
             qty -= used
             remaining -= used
             if remaining:
@@ -102,6 +112,17 @@ def fifo_residual(fills, stamps, yes_token):
                 opposite.popleft()
         if qty:
             queues[yes].append((fill, qty))
+    return queues, paired
+
+
+def fifo_paired_quantities(fills, stamps, yes_token):
+    """Actual paired quantity per fill identity, excluding every residual share."""
+    return _fifo(fills, stamps, yes_token)[1]
+
+
+def fifo_residual(fills, stamps, yes_token):
+    """Return the unpaired actual fill lots, retaining their identity and time."""
+    queues, _ = _fifo(fills, stamps, yes_token)
     return [replace(fill, size=float(qty)) for q in queues.values() for fill, qty in q]
 
 
@@ -129,6 +150,7 @@ def install_reverse_episode(executor):
     chain = ep.get("chain_id", ep["opening_window"])
     executor.repair_episode = {
         "opening_window": f"{chain}:direction:{leg}", "chain_id": chain,
+        "normal_entry_side": ep.get("normal_entry_side", ep["side"]),
         "chain_windows": list(chain_windows), "direction_leg": leg, "side": side,
         "opening_monotonic": min(executor.order_post_elapsed.get(f.maker_order_id, first["elapsed"])
                                  for f in lots)+executor.time_anchor

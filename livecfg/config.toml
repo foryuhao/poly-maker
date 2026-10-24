@@ -37,13 +37,25 @@ base_size = "5"
 target_delta = "1"
 matched_remaining_tolerance_shares = 0.1
 
+[rdp_sm.cooldown]
+max_sec = 20.0
+loss_sec_per_dollar = 100.0
+
 [rdp_sm.repair]
 policy = "hd_tp_sl_v1"
 delta_limit = "5"
 review_sec = 2.0
 cutoff_sec = 240.0
 
+[rdp_sm.repair.abandon_high_entry]
+enabled = true
+min_elapsed_sec = 120.0
+entry_price_threshold = "0.80"
+
 [rdp_sm.repair.path]
+# Independent exit controls; both false holds residual Delta without repair.
+tp_enabled = true
+sl_enabled = true
 tp_profit_rate = "0.002"
 shock_window_sec = 2.0
 shock_max_age_sec = 3.0
@@ -56,6 +68,9 @@ parameter_reference = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
 validation_reference = "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
 
 [rdp_sm.obi]
+# Consecutive same-direction depth signals, counted separately in [0,60) and [60,120).
+normal_confirmations_before_60 = 2
+normal_confirmations_from_60 = 3
 # Historical field name: individual slow-request threshold; p95 is diagnostic only.
 max_rtt_p95_ms = 500.0
 network_recent_window_sec = 5.0

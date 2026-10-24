@@ -106,6 +106,8 @@ class ExecutionConfig(BaseModel):
 class RDPObiConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     threshold: Decimal = Field(default=Decimal("0.30"), gt=0, le=1, allow_inf_nan=False)
+    normal_confirmations_before_60: int = Field(default=2, ge=1, strict=True)
+    normal_confirmations_from_60: int = Field(default=3, ge=1, strict=True)
     signal_horizon_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
     rebalance_order_ttl_sec: float = Field(default=3.0, gt=0, allow_inf_nan=False)
     max_book_age_ms: float = Field(default=100.0, gt=0, allow_inf_nan=False)
@@ -144,6 +146,40 @@ class RDPObiConfig(BaseModel):
         return self
 
 
+class RDPBANetworkConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    post_budget_floor_ms: float = Field(default=750., gt=0, allow_inf_nan=False)
+    min_live_budget_ms: float = Field(default=500., gt=0, allow_inf_nan=False)
+    max_cancel_rtt_ms: float = Field(default=750., gt=0, allow_inf_nan=False)
+
+
+class RDPBAConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    min_sell_shares: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    min_depletion_shares: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    min_refill_shares: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    observation_sec: float = Field(default=.75, gt=0, allow_inf_nan=False)
+    signal_lifetime_sec: float = Field(default=2., gt=0, allow_inf_nan=False)
+    max_sell_age_ms: float = Field(default=500., gt=0, allow_inf_nan=False)
+    max_book_age_ms: float = Field(default=100., gt=0, allow_inf_nan=False)
+    max_pair_skew_ms: float = Field(default=200., gt=0, allow_inf_nan=False)
+    max_entry_age_ms: float = Field(default=1000., gt=0, allow_inf_nan=False)
+    network: RDPBANetworkConfig = Field(default_factory=RDPBANetworkConfig)
+
+    @model_validator(mode="after")
+    def _deadlines(self):
+        if self.observation_sec >= self.signal_lifetime_sec:
+            raise ValueError("BA observation must end before order deadline")
+        if self.max_sell_age_ms >= self.signal_lifetime_sec * 1000:
+            raise ValueError("BA sell age must be shorter than signal lifetime")
+        if not self.observation_sec*1000 < self.max_entry_age_ms < self.signal_lifetime_sec*1000:
+            raise ValueError("BA observation < entry age < signal lifetime is required")
+        if (self.network.post_budget_floor_ms+self.network.min_live_budget_ms
+                >= self.signal_lifetime_sec*1000):
+            raise ValueError("BA execution budget must fit inside signal lifetime")
+        return self
+
+
 class RDPSyncObserveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
@@ -163,6 +199,8 @@ class RDPRepairPathConfig(BaseModel):
     """User-confirmed 2026-10-19 starting values, not execution/EV validation."""
 
     model_config = ConfigDict(extra="forbid")
+    tp_enabled: bool = Field(default=True, strict=True)
+    sl_enabled: bool = Field(default=True, strict=True)
     tp_profit_rate: Decimal | None = Field(default=Decimal("0.002"), gt=0, allow_inf_nan=False)
     shock_window_sec: float | None = Field(default=2., gt=0, le=30, allow_inf_nan=False)
     shock_max_age_sec: float = Field(default=3., gt=0, le=30, allow_inf_nan=False)
@@ -173,10 +211,44 @@ class RDPRepairPathConfig(BaseModel):
     parameter_reference: str = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
     validation_reference: str | None = None
 
+    def exit_enabled(self, mode: str) -> bool:
+        return self.tp_enabled if mode == "TP" else self.sl_enabled if mode == "SL" else False
+
     @model_validator(mode="after")
     def _shock_age(self):
         if self.shock_window_sec is not None and self.shock_max_age_sec < self.shock_window_sec:
             raise ValueError("shock_max_age_sec must be >= shock_window_sec")
+        return self
+
+
+class RDPRepairAbandonConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=True, strict=True)
+    min_elapsed_sec: float = Field(default=120.0, ge=0, le=300, allow_inf_nan=False)
+    entry_price_threshold: Decimal = Field(default=Decimal("0.80"), gt=0, le=1, allow_inf_nan=False)
+
+
+class RDPUnknownRecoveryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    confirmation_rounds: int = Field(default=3, ge=2, le=20)
+
+
+class RDPInventoryLagConfig(BaseModel):
+    """Opt-in, one-order REPAIR permission; never a NORMAL or close proof."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, strict=True)
+    exclusive_market_writer: bool = Field(default=False, strict=True)
+    grace_sec: float = Field(default=2.0, gt=0, le=5, allow_inf_nan=False)
+    max_unreported_shares: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _exclusive_writer(self):
+        if self.enabled and not self.exclusive_market_writer:
+            raise ValueError("inventory_lag requires exclusive_market_writer")
         return self
 
 
@@ -186,6 +258,9 @@ class RDPRepairConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     policy: Literal["ev_legacy", "hd_tp_sl_v1"] = "ev_legacy"
     path: RDPRepairPathConfig = Field(default_factory=RDPRepairPathConfig)
+    abandon_high_entry: RDPRepairAbandonConfig = Field(default_factory=RDPRepairAbandonConfig)
+    unknown_recovery: RDPUnknownRecoveryConfig = Field(default_factory=RDPUnknownRecoveryConfig)
+    inventory_lag: RDPInventoryLagConfig = Field(default_factory=RDPInventoryLagConfig)
     model_version: Literal["bounded_martingale_v1", "review_lease_v2"] = "review_lease_v2"
     parameter_status: Literal["UNCALIBRATED"] = "UNCALIBRATED"
     delta_limit: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
@@ -207,6 +282,8 @@ class RDPRepairConfig(BaseModel):
 
     @model_validator(mode="after")
     def _limits(self):
+        if self.policy != "hd_tp_sl_v1" and not (self.path.tp_enabled and self.path.sl_enabled):
+            raise ValueError("TP/SL switches require repair.policy=hd_tp_sl_v1")
         if self.delta_limit != Decimal("5") or self.cutoff_sec != 240:
             raise ValueError("REPAIR v1 requires session Delta limit 5 and cutoff T240")
         if not self.horizon_sec or any(not 0 < h <= 240 for h in self.horizon_sec):
@@ -214,10 +291,19 @@ class RDPRepairConfig(BaseModel):
         return self
 
 
+class RDPCooldownConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_sec: float = Field(default=20.0, ge=0, allow_inf_nan=False)
+    loss_sec_per_dollar: float = Field(default=100.0, ge=0, allow_inf_nan=False)
+
+
 class RDPSMConfig(BaseModel):
-    normal_entry_mode: Literal["legacy", "obi_v1"] = "legacy"
+    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1"] = "legacy"
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
+    ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
     repair: RDPRepairConfig = Field(default_factory=RDPRepairConfig)
+    cooldown: RDPCooldownConfig = Field(default_factory=RDPCooldownConfig)
     sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
     base_size: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
@@ -231,8 +317,8 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
-        if self.repair.policy == "hd_tp_sl_v1" and self.normal_entry_mode != "obi_v1":
-            raise ValueError("hd_tp_sl_v1 requires normal_entry_mode=obi_v1")
+        if self.repair.policy == "hd_tp_sl_v1" and self.normal_entry_mode not in {"obi_v1", "ba_v1"}:
+            raise ValueError("hd_tp_sl_v1 requires normal_entry_mode=obi_v1 or ba_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")
         if self.max_order_size < self.base_size:

@@ -4,7 +4,7 @@ import math
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import Lock
 
 
@@ -31,6 +31,22 @@ class RequestSample:
     outcome: str
 
 
+@dataclass(frozen=True)
+class WriteLatency:
+    status: str
+    operations: int
+    max_ms: float | None
+    latest_completed: float | None
+
+
+@dataclass(frozen=True)
+class RecentWrites:
+    observed_monotonic: float
+    window_sec: float
+    post: WriteLatency
+    delete: WriteLatency
+
+
 class NetworkHealth:
     def __init__(self, cfg, monotonic=time.monotonic):
         self.cfg, self.monotonic = cfg, monotonic
@@ -46,6 +62,7 @@ class NetworkHealth:
         self.batch_writes = {}
         self.write_evidence = {}
         self.close_active = False
+        self.failure_revision = 0
 
     def _event(self, kind, payload, now):
         self.events.append((kind, {**payload, "event_monotonic": now}, time.time()))
@@ -56,6 +73,31 @@ class NetworkHealth:
             self.events.clear()
             return result
 
+    def recent_writes(self):
+        """Immutable latency evidence only; never grants admission or recovery.
+
+        HTTP replies include business rejections, not just accepted orders.
+        Failed/unfinished transports provide no completed response latency.
+        One operation (including cancel-batch retries) contributes its maximum.
+        """
+        with self.lock:
+            now, window = self.monotonic(), self.cfg.network_recent_window_sec
+
+            def summarize(method):
+                operations, latest = {}, None
+                for row in self.samples[method]:
+                    if (not 0 <= now-row.completed <= window
+                            or row.outcome not in {"SUCCESS", "HTTP_REJECTION",
+                                "AUTHENTICATION_ERROR", "SERVER_ERROR", "RATE_LIMITED"}):
+                        continue
+                    operations[row.operation_id] = max(
+                        operations.get(row.operation_id, 0.), row.duration_ms)
+                    latest = max(latest, row.completed) if latest is not None else row.completed
+                return WriteLatency("OBSERVED" if operations else "UNKNOWN", len(operations),
+                                    max(operations.values()) if operations else None, latest)
+
+            return RecentWrites(now, window, summarize("POST"), summarize("DELETE"))
+
     def _transition(self, state, reason, now, **evidence):
         previous, self.state = self.state, state
         self._event("sm_network_transition", {
@@ -65,6 +107,7 @@ class NetworkHealth:
         }, now)
 
     def _pause(self, reason, now, *, close_active=False, **evidence):
+        self.failure_revision += 1
         self.close_active |= close_active
         # Recovery must use probes completed after the fault, not warmup history.
         self.probes.clear()
@@ -200,6 +243,23 @@ class NetworkHealth:
         """SL requests may share their own batch, never bypass its circuit."""
         with self.lock:
             return self._snapshot(self.monotonic(), 0, owner=batch_id)
+
+    def repair_probe(self, batch_id):
+        """Transport readiness only; the repair evidence gate must also permit.
+
+        No state/batch/close latch is cleared. NORMAL and other owners still
+        see the original circuit, including the unresolved batch.
+        """
+        with self.lock:
+            now = self.monotonic()
+            health = self._snapshot(now, 0, owner=batch_id)
+            samples = sum(0 <= now-r.completed <= self.cfg.network_window_sec
+                          for r in self.samples["GET"])
+            if (batch_id == self.active_batch and now >= self.pause_until
+                    and self._probe_ready(now) and samples >= self.cfg.network_min_samples):
+                return replace(health, allowed=True, close_active=False,
+                               reason="RESTRICTED_REPAIR_PROBE_READY")
+            return health
 
     def begin_batch(self, batch_id):
         """Reserve exactly one real batch, atomically with the final circuit check."""

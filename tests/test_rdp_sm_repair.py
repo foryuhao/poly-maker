@@ -218,8 +218,8 @@ async def test_session_delta_counts_dust_and_does_not_reset_per_episode(env, mon
         assert not e.delta_candidate_allowed(Decimal("5.02"), "YES", Decimal(5))
         assert not e.delta_candidate_allowed(Decimal("5.02"), "NO", Decimal("10.03"))
         await open_yes(setup, size=2)
-        assert e.repair_episode["original_qty"] == "2.0"
-        # No second opening while this episode still owns the residual.
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        # Same-side entry still cannot bypass the existing session Delta cap.
         assert await normal.enter(Decimal(2), Decimal(0), "duplicate") is None
         assert e.committed() == Decimal(".6")
     finally:

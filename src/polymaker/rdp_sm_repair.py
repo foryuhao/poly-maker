@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from polymaker.domain import Side, TradeState
 from polymaker.execution.filltruth import reconcile_owned_order
-from polymaker.rdp_sm import inventory_delta
+from polymaker.rdp_sm import repair_required
 from polymaker.rdp_sm_execution import WindowQuote
 from polymaker.rdp_sm_quotes import QuoteUnavailable
 from polymaker.repair_model import RepairOrder, RepairPlanner, RepairState
@@ -116,6 +116,12 @@ class RepairController:
                 self.executor.delta_candidate_allowed(intent.yes-intent.no, q.outcome, Decimal(str(q.size))))
 
     async def repair(self, yes, no, window_id):
+        self.executor.update_repair_episode()
+        if self.executor.check_repair_abandonment():
+            return None
+        if self.executor.cooldown.active or not repair_required(*self.executor.economic_inventory()):
+            await self.executor.sleep(.1)
+            return None
         if (self.executor.monotonic() < self.next_review
                 and self.last_review_revision == self.executor.revision):
             await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence,
@@ -169,8 +175,8 @@ class RepairController:
             if abs(possible) < Decimal(".1"):
                 return "REPAIR_POSSIBLY_PAIRED"
             return None  # preserve the existing lease; no new/extended plan
-        if not inventory_delta(y, n):
-            return "REPAIR_PAIRED"
+        if not repair_required(y, n):
+            return "REPAIR_SMALL_EXPOSURE"
         snapshot = self.lifecycle.snapshot(self, y, n)
         if not snapshot.valid:
             return snapshot.reason

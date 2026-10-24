@@ -1,7 +1,7 @@
 """One shared execution view of the periodic market/account cache.
 
-The executor owns writes and risk. Consumers never refresh the server; pending
-proof IDs are passive work for the service's ordinary heartbeat. A scope pins
+The executor owns writes and risk. Repair proof requests advance bounded shared
+read-only rounds; consumers never perform foreground state GETs. A scope pins
 one immutable frame for all existing account and FillTruth checks.
 """
 from __future__ import annotations
@@ -47,11 +47,13 @@ class CachedExecutionReads:
         self.companion = companion
         self.active = None
         self.last_version = 0
+        self.last_acquired = None
         self.last_write = 0.0
         self.order_writes = {}
         self.post_returns = {}
         self.inflight = {}
         self.observed_reads = set()
+        self.detail_waits = {}
         self.admission_data = None
         self.timeout_s = executor.cfg.risk.ws_stale_halt_s
         self.raw_market = copy.deepcopy(executor.reads.market_raw)
@@ -81,6 +83,48 @@ class CachedExecutionReads:
             self.order_writes[oid] = now
             if kind == "POST":
                 self.post_returns[oid] = now
+        if set(ids) & getattr(self.e, "sl_order_ids", set()):
+            self.refresh_repair(account=True)
+
+    def refresh_repair(self, *, account=False):
+        """Scheduling only: every original admission/proof check still applies."""
+        e = self.e
+        if (e.repair_episode is None or e.repair_abandonment is not None
+                or e.cooldown.active):
+            return False
+        return self.service.request_repair_refresh(
+            ("orders", "account") if account else ("orders",))
+
+    async def wait_account_update(self, timeout):
+        """Wake on relevant account/order proof progress, never book-only ticks."""
+        def signature(snap):
+            return tuple((r.name, r.read_id) for r in snap.attempts
+                         if r.name in {"positions", "capital", "trades", "open_orders"}
+                         or r.name.startswith("order:") and r.name[6:] in getattr(self.e, "known", ()))
+        baseline = signature(self.last_acquired or self.service.latest())
+        deadline = time.monotonic() + timeout
+        while True:
+            snap = self.service.latest()
+            if (signature(snap) != baseline or snap.status in {"FAILED", "STOPPED"}
+                    or self.companion.failure):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            await self.service.wait_after_async(snap.version, remaining)
+
+    def confirmed_inventory_changed(self):
+        """Advance collection scheduling, never fill truth or trading authority."""
+        e = self.e
+        if e.repair_abandonment is not None or e.cooldown.active:
+            return
+        y, n = e.economic_inventory()
+        if e.repair_episode is None and y == n:
+            return
+        if self.service.request_repair_refresh(("orders", "account")):
+            e.record("sm_account_refresh", {"reason": "CONFIRMED_INVENTORY_CHANGED",
+                "economic_revision": e.economic_revision,
+                "observed_monotonic": e.last_economic_change_monotonic})
 
     async def cancel(self, ids):
         token = self.begin_write("DELETE", ids)
@@ -236,6 +280,7 @@ class CachedExecutionReads:
                         and row["order_id"] not in self.e.gateway._client.known_ids):
                     self.e.fatal = "EXTERNAL_TARGET_ORDER"
         requirements = {}
+        needs_refresh = False
         trades = good.get("trades")
         for a in list(owner.orders):
             if not a.post_started or not owner.post_done(a) or a.outcome in {"REJECTED", "ABORTED"}:
@@ -251,15 +296,20 @@ class CachedExecutionReads:
             if (read is None or latest.get(read.name) != read or not read.complete
                     or read.started_monotonic < boundary):
                 requirements[oid] = boundary
+                needs_refresh = needs_refresh or owner.unresolved(a)
                 continue
             if (trades is None or latest.get("trades") != trades or not trades.complete
                     or trades.started_monotonic < boundary
                     or time.monotonic()-trades.started_monotonic > self.timeout_s):
+                needs_refresh = needs_refresh or owner.unresolved(a)
                 continue
             owner.observe_order(a, order_raw(read.data), [trade_raw(t) for t in trades.data],
                                 min(read.started_monotonic, trades.started_monotonic))
         if requirements:
             self.service.track_orders(requirements)
+        unknown = owner.recovery.waiting()
+        if needs_refresh or unknown:
+            self.refresh_repair(account=unknown)
 
     async def prove_sl_canceled_submission(self, attempt, snap, boundary):
         """Use fresh complete cached pages and the existing exact POST proof.
@@ -334,34 +384,40 @@ class CachedExecutionReads:
         if self.inflight:
             return False
         if details:
-            rejected = self.proof_only_rejections()
-            requirements = {}
-            trades = good["trades"].data
-            opened = {row["order_id"] for row in good["open_orders"].data}
-            for oid in self.e.known - rejected:
-                name = "order:" + oid
-                r = good.get(name)
-                after = self.order_writes.get(oid, 0.0)
-                if not r or attempts.get(name) != r or r.started_monotonic < after:
-                    requirements[oid] = after
-                    continue
-                row = r.data
-                if oid in opened and row["status"] in {"CANCELED", "CANCELLED", "MATCHED"}:
-                    requirements[oid] = max(after, good["open_orders"].completed_monotonic)
-                    continue
-                legs = {(t["trade_id"], leg["order_id"]): leg for t in trades
-                        for leg in t["maker_legs"] if leg["order_id"] == oid}
-                qty = sum((Decimal(str(leg["matched_amount"])) for leg in legs.values()), Decimal(0))
-                if (abs(qty - Decimal(str(row["size_matched"]))) > Decimal(".000001")
-                        or not row.get("associate_trades_present")
-                        or set(row["associate_trades"]) != {key[0] for key in legs}):
-                    requirements[oid] = max(after, r.completed_monotonic)
+            requirements = self._detail_requirements(snap)
             if requirements:
                 self.service.track_orders(requirements)
                 return False
         return True
 
-    async def acquire(self, *, account=False, details=True, newer=False):
+    def _detail_requirements(self, snap):
+        """The same per-order evidence rules apply to admission and closeout."""
+        good = {r.name: r for r in snap.last_good}
+        attempts = {r.name: r for r in snap.attempts}
+        requirements = {}
+        trades = good["trades"].data
+        opened = {row["order_id"] for row in good["open_orders"].data}
+        for oid in self.e.known - self.proof_only_rejections():
+            name = "order:" + oid
+            r = good.get(name)
+            after = self.order_writes.get(oid, 0.0)
+            if not r or attempts.get(name) != r or r.started_monotonic < after:
+                requirements[oid] = after
+                continue
+            row = r.data
+            if oid in opened and row["status"] in {"CANCELED", "CANCELLED", "MATCHED"}:
+                requirements[oid] = max(after, good["open_orders"].completed_monotonic)
+                continue
+            legs = {(t["trade_id"], leg["order_id"]): leg for t in trades
+                    for leg in t["maker_legs"] if leg["order_id"] == oid}
+            qty = sum((Decimal(str(leg["matched_amount"])) for leg in legs.values()), Decimal(0))
+            if (abs(qty - Decimal(str(row["size_matched"]))) > Decimal(".000001")
+                    or not row.get("associate_trades_present")
+                    or set(row["associate_trades"]) != {key[0] for key in legs}):
+                requirements[oid] = max(after, r.completed_monotonic)
+        return requirements
+
+    async def acquire(self, *, account=False, details=True, newer=False, partial=False):
         deadline = time.monotonic() + self.timeout_s
         version = self.last_version if newer else -1
         while True:
@@ -370,26 +426,26 @@ class CachedExecutionReads:
                 raise _Issue(SessionStatus.BLOCKED, "SYNC_CACHE_UNAVAILABLE")
             if snap.version > version and self._ready(snap, account, details):
                 self.last_version = snap.version
+                self.last_acquired = snap
                 return snap
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                # Closeout may make per-ID progress after the ordinary wait,
+                # using fresh complete collections. This never grants account
+                # admission or waives any individual order proof.
+                if partial and snap.version > version and self._ready(snap, account, False):
+                    self.last_version = snap.version
+                    self.last_acquired = snap
+                    return snap
                 raise _Issue(SessionStatus.BLOCKED, "SYNC_CACHE_NOT_READY")
-            # A single publisher notifies consumers; no refresh, polling or
-            # abandoned worker. Each wait is bounded and drained on cancellation.
-            task = asyncio.create_task(asyncio.to_thread(
-                self.service.wait_after, snap.version, min(.25, remaining)))
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                await task
-                raise
+            await self.service.wait_after_async(snap.version, min(.25, remaining))
 
     @asynccontextmanager
-    async def scope(self, purpose, *, account=False):
+    async def scope(self, purpose, *, account=False, details=True, partial=False):
         if self.active is not None:
             yield self.active
             return
-        snap = await self.acquire(account=account)
+        snap = await self.acquire(account=account, details=details, partial=partial)
         self.active = snap
         good = {r.name: r for r in snap.last_good}
         client = self.e.gateway._client
@@ -414,6 +470,31 @@ class CachedExecutionReads:
     async def source(self, name):
         snap = self.active or await self.acquire(account=name in {"capital", "positions"})
         read = next((r for r in snap.last_good if r.name == name), None)
+        if name.startswith("order:"):
+            oid = name.removeprefix("order:")
+            requirements = self._detail_requirements(snap)
+            latest = next((r for r in snap.attempts if r.name == name), None)
+            if (oid in requirements or read is None or latest != read
+                    or read.started_monotonic < self.order_writes.get(oid, 0.0)):
+                self.service.track_orders({oid: requirements.get(oid, self.order_writes.get(oid, 0.0))})
+                code = (latest.error_code or latest.error_type) if latest else None
+                key = (latest.read_id if latest else None, requirements.get(oid))
+                if self.detail_waits.get(oid) != key:
+                    self.detail_waits[oid] = key
+                    self.e.record("sm_sync_detail_wait", {
+                        "order_id": oid, "snapshot_version": snap.version,
+                        "source_error": code, "http_status": latest.http_status if latest else None,
+                        "placement_outcome": next((a.outcome for a in self.e.attempts
+                                                   if a.order_id == oid), None),
+                        "risk_retained": True,
+                    })
+                raise GatewayReadError(f"order read {oid}:{code or 'UNRESOLVED'}:SYNC_DETAIL_NOT_READY")
+            if oid in self.detail_waits:
+                del self.detail_waits[oid]
+                self.e.record("sm_sync_detail_recovered", {
+                    "order_id": oid, "snapshot_version": snap.version,
+                    "source_read_id": read.read_id, "close_barrier_still_required": True,
+                })
         if read is None:
             raise GatewayReadError("SYNC_DETAIL_NOT_READY")
         return read

@@ -124,7 +124,7 @@ class RepairPricePoint:
 
 
 class SessionFeed:
-    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None):
+    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
         self.proxy = proxy
         self.lock = RLock()
@@ -136,6 +136,11 @@ class SessionFeed:
             for t in (meta.yes.token_id, meta.no.token_id)
         }
         self.episodes = Episodes()
+        self.ba = None
+        if ba_cfg is not None:
+            from polymaker.rdp_sm_ba import BidAbsorption
+
+            self.ba = BidAbsorption(self, ba_cfg)
         self.changed = asyncio.Event()
         self.stop_event = asyncio.Event()
         self.ws = None
@@ -153,6 +158,9 @@ class SessionFeed:
         self.tick_verified = {}
         self.signal_event = 0.0
         self.signal_changes = deque(maxlen=4096)
+        self.normal_signals = deque(maxlen=max(
+            cfg.normal_confirmations_before_60, cfg.normal_confirmations_from_60))
+        self._normal_signal_event = None
         self.signal_change_count = 0
         self.last_signal_label = None
         self.last_failure = None
@@ -197,10 +205,19 @@ class SessionFeed:
                 "last_failure": dict(self.last_failure) if self.last_failure else None,
                 "notices": dict(self.notices),
                 "last_notice": self.last_notice,
+                **({"ba": self.ba.diagnostics()} if self.ba is not None else {}),
             }
 
     def _track_signal(self, signal, event_mono):
         self.episodes.observe(signal)
+        key = (self.generation, self.signal_event)
+        if not signal.direction:
+            self.normal_signals.clear()
+        elif key != self._normal_signal_event:
+            if self.normal_signals and self.normal_signals[-1].direction != signal.direction:
+                self.normal_signals.clear()
+            self.normal_signals.append(signal)
+        self._normal_signal_event = key
         if signal.label != self.last_signal_label:
             self.last_signal_label = signal.label
             self.signal_change_count += 1
@@ -214,6 +231,16 @@ class SessionFeed:
                 )
             )
 
+    def normal_confirmations(self, snapshot, since):
+        """Distinct depth events; repeated snapshots cannot add a sample."""
+        with self.lock:
+            if not snapshot.valid:
+                self.normal_signals.clear()
+                return ()
+            if (snapshot.generation, snapshot.signal_event) != self._normal_signal_event:
+                return ()
+            return tuple(s for s in self.normal_signals if s.event_mono >= since)
+
     def changes_since(self, event_mono):
         with self.lock:
             return {
@@ -223,7 +250,11 @@ class SessionFeed:
 
     def connect(self):
         with self.lock:
+            if self.ba is not None:
+                self.ba.reset()
             self.generation += 1
+            self.normal_signals.clear()
+            self._normal_signal_event = None
             self.connected = True
             self.reason = "WS_REBUILD_REQUIRED"
             self.books = {
@@ -241,6 +272,8 @@ class SessionFeed:
 
     def invalidate(self, reason):
         with self.lock:
+            if self.ba is not None:
+                self.ba.invalidate(reason)
             self.connected = False
             self.repair_path_valid = False
             self.reason = reason
@@ -275,18 +308,26 @@ class SessionFeed:
                 if ((b.reported_bid is not None and b.reported_bid != (b.best_bid or Decimal(0)))
                         or (b.reported_ask is not None and b.reported_ask != (b.best_ask or Decimal(1)))):
                     reason = reason or "WS_TOP_PENDING"
-                if not repair and not 0 <= (now - b.received_mono) * 1000 <= self.cfg.max_book_age_ms:
+                book_age = (self.ba.cfg.max_book_age_ms if self.ba is not None
+                            and not repair_token else self.cfg.max_book_age_ms)
+                if not repair and not 0 <= (now - b.received_mono) * 1000 <= book_age:
                     reason = reason or "WS_BOOK_STALE"
                 if self.tick_verified.get(b.token_id) != b.tick:
                     reason = reason or "WS_TICK_UNVERIFIED"
             if repair and (self.last_transport_receipt is None or
                            not 0 <= now-self.last_transport_receipt <= 2*WS_HEARTBEAT_SEC):
                 reason = reason or "WS_TRANSPORT_STALE"
-            if not repair and not repair_token and (
-                abs(yes.received_mono - no.received_mono) * 1000 > self.cfg.max_pair_skew_ms
-                or int(abs(yes.source_time - no.source_time)) * 1000 > self.cfg.max_pair_skew_ms
-            ):
-                reason = reason or "WS_PAIR_TIME_SKEW"
+            if not repair and not repair_token:
+                if self.ba is not None:
+                    pair_skew = self.ba.cfg.max_pair_skew_ms
+                    source_skew_ms = abs(number(yes.source_time)-number(no.source_time))*1000
+                else:
+                    pair_skew = self.cfg.max_pair_skew_ms
+                    # Preserve the existing OBI path; BA uses exact milliseconds.
+                    source_skew_ms = int(abs(yes.source_time-no.source_time))*1000
+                if (abs(yes.received_mono-no.received_mono)*1000 > pair_skew
+                        or source_skew_ms > pair_skew):
+                    reason = reason or "WS_PAIR_TIME_SKEW"
             return PairSnapshot(
                 self.meta.condition_id,
                 self.generation,
@@ -376,9 +417,17 @@ class SessionFeed:
                         if token not in updated:
                             raise ValueError("WS_TOKEN_IDENTITY")
                         b = updated[token]
-                        if kind in {"last_trade_price", "best_bid_ask"}:
+                        if kind == "last_trade_price":
+                            if self.ba is not None:
+                                self.ba.trade(row, b, received_mono, received_wall)
+                            continue
+                        if kind == "best_bid_ask":
+                            if self.ba is not None:
+                                self.ba.top(row, b, received_mono, received_wall)
                             continue
                         if kind == "tick_size_change":
+                            if self.ba is not None:
+                                self.ba.invalidate("BA_TICK_CHANGED", token)
                             tick = number(ch["new_tick_size"])
                             if tick == b.tick:
                                 continue  # Repeated venue notification is idempotent.
@@ -391,6 +440,8 @@ class SessionFeed:
                         if stamp <= 0 or int(stamp) > int(received_wall) + 2:
                             raise ValueError("WS_SOURCE_CLOCK_INVALID")
                         if int(b.source_time - stamp) > 0:
+                            if self.ba is not None:
+                                self.ba.invalidate("BA_EVENT_OUT_OF_ORDER", token)
                             self.notice("WS_OLD_SOURCE_IGNORED", token_id=token,
                                         incoming_timestamp=stamp, previous_timestamp=b.source_time)
                             continue  # Old seconds do not overwrite newer depth or force reconnect.
@@ -446,6 +497,8 @@ class SessionFeed:
                             reported_ask=reported_ask,
                         )
                         touched.add(token)
+                        if self.ba is not None:
+                            self.ba.depth(row, b, updated[token], received_mono, received_wall)
                 # Explicit venue BBO bounds supersede cached contradictory depth.
                 # Do this after every change in the frame; never invent top quantities.
                 for token in touched:
@@ -483,7 +536,7 @@ class SessionFeed:
                         self.probability_points[-1] = point
                     else:
                         self.probability_points.append(point)
-                if touched or tick_changed:
+                if touched or tick_changed or self.ba is not None:
                     self.sequence += 1
                     self.tick_revision += tick_changed
                     if depth_changed:

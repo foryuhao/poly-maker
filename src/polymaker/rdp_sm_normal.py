@@ -1,4 +1,4 @@
-"""NORMAL controller: one causal signal event, one maker order on its side."""
+"""Single-sided NORMAL entry, with configurable confirmations in each time band."""
 
 from dataclasses import asdict
 from decimal import Decimal
@@ -23,10 +23,16 @@ class NormalController:
     phase = "NORMAL"
     cutoff = 120
 
+    @property
+    def episodes(self):
+        return self.lifecycle.feed.episodes
+
     def __init__(self, executor, lifecycle):
         self.executor, self.lifecycle = executor, lifecycle
         self.sigma_ready = None
         self.quote_block_reason = None
+        self.signal_block_reason = None
+        self.signal_confirmation = None
 
     def volatility(self, snapshot):
         from polymaker.rdp_sm_volatility import estimate_sigma
@@ -75,6 +81,24 @@ class NormalController:
 
     def select(self, snapshot):
         signal = evaluate(snapshot, self.executor.cfg.rdp_sm.obi.threshold)
+        self.signal_block_reason = None
+        self.signal_confirmation = None
+        e = self.executor
+        start = int(e.slug.rsplit("-", 1)[1])
+        elapsed = e.official_time+e.monotonic()-e.time_anchor-start
+        if 0 <= elapsed < self.cutoff:
+            cfg = e.cfg.rdp_sm.obi
+            band_start = 0 if elapsed < 60 else 60
+            required = (cfg.normal_confirmations_before_60 if elapsed < 60
+                        else cfg.normal_confirmations_from_60)
+            since = e.time_anchor+start+band_start-e.official_time
+            samples = self.lifecycle.feed.normal_confirmations(snapshot, since)[-required:]
+            self.signal_confirmation = {"required": required, "elapsed_s": elapsed,
+                "band_start_s": band_start,
+                "samples": [asdict(s) for s in samples]}
+            if signal.direction and len(samples) < required:
+                self.signal_block_reason = "NORMAL_SIGNAL_CONFIRMATION_PENDING"
+                return None, signal
         return signal.direction, signal
 
     def deadline(self, snapshot):
@@ -104,5 +128,65 @@ class NormalController:
         slot = await self.lifecycle.prepare(self, yes, no, window_id)
         if slot:
             return await self.lifecycle.activate(self, slot)
+        await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+        return None
+
+
+class BANormalController(NormalController):
+    """BA direction and lifetime, sharing only NORMAL quote sizing/execution."""
+
+    immediate_activation = True
+
+    @property
+    def episodes(self):
+        return self.lifecycle.feed.ba
+
+    def candidates(self, snapshot, yes, no, window_id):
+        result = {}
+        self.quote_block_reason = None
+        for direction in ("YES", "NO"):
+            evidence = {}
+            try:
+                # Sigma does not enter the existing sizing formula. BA has no
+                # volatility readiness gate; 0 uses the same legal bid/sizing.
+                quotes = normal_quotes(self.executor.meta, snapshot, yes, no, window_id,
+                    self.executor.cfg.rdp_sm, direction, sigma=0, evidence=evidence,
+                    **self.lifecycle.clock(normal=True))
+                evidence.pop("normal_sigma", None)
+                evidence.pop("sigma_window_seconds", None)
+                evidence["normal_entry_mode"] = "ba_v1"
+                result[direction] = (tuple(quotes), evidence)
+            except QuoteUnavailable as exc:
+                self.quote_block_reason = str(exc)
+        return result
+
+    def select(self, snapshot):
+        signal = self.episodes.evaluate(snapshot)
+        self.signal_block_reason = "BA_NO_SIGNAL" if signal.direction is None else None
+        return signal.direction, signal
+
+    def deadline(self, snapshot):
+        with self.lifecycle.feed.lock:
+            self.select(snapshot)
+            return self.episodes.selected.order_deadline if self.episodes.selected else 0
+
+    def matches(self, intent, snapshot):
+        with self.lifecycle.feed.lock:
+            direction, _ = self.select(snapshot)
+            if (direction != intent.direction or self.episodes.selected is None
+                    or intent.claim is not None and self.episodes.selected.episode_id != intent.claim[0]):
+                return False
+            return self.candidates(snapshot, intent.yes, intent.no, intent.window_id).get(
+                direction, (None,))[0] == intent.quotes
+
+    def active_close_reason(self, intent, snapshot):
+        return self.episodes.active_reason(intent.claim, snapshot)
+
+    async def enter(self, yes, no, window_id):
+        slot = await self.lifecycle.prepare(self, yes, no, window_id)
+        if slot:
+            result = await self.lifecycle.activate(self, slot)
+            if result is not None:
+                return result
         await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
         return None

@@ -119,7 +119,9 @@ async def test_partial_tp_hands_off_to_sl_without_waiting_for_another_loop(env, 
         assert quote.price == .559 and quote.size == 5  # venue NO tick is .001; remaining 3 cannot be new
         assert e.economic_inventory() == (Decimal(5), Decimal(7))
         restored = PathRepairController(e, lifecycle)
-        assert restored._policy().mode == "SL"
+        assert e.repair_episode is None and restored._policy() is None
+        assert Decimal(e.cooldown.last_result["paired_shares"]) == 5
+        assert Decimal(e.cooldown.last_result["pair_pnl"]) == Decimal(".903")
         assert await restored.repair(*e.economic_inventory(), "no-ping-pong") is None
         assert len(v.post_requests) == 3
     finally:

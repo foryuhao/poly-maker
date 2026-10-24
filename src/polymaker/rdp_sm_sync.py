@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 
+from polymaker.rdp_sm_recovery import retry_read
 from polymaker.rdp_sm_sync_reads import ObservedMarket, ReadEvidence
 
 
@@ -59,7 +60,7 @@ class SyncSnapshot:
 class SyncObserver:
     """One coordinator thread owns publication; its six I/O workers only read.
 
-    Consumers have no refresh API. Stop wakes timers, but drains real SDK reads
+    Repair proof requests only advance bounded read-only rounds. Stop drains real SDK reads
     before closing the private transport; cancelling an awaiter cannot own I/O.
     """
 
@@ -85,6 +86,31 @@ class SyncObserver:
         self._detail_retries = {}
         self._position_proofs = {}
         self.network = None
+        self.account_failure_revision = 0
+        self._refresh_pending = set()
+        self._refresh_events = {}
+        self._async_waiters = {}
+
+    def request_repair_refresh(self, lanes=("orders",)):
+        """Coalesce executor repair-proof work; never perform I/O or grant authority.
+
+        Observe-only services retain their ordinary cadence. The coordinator
+        enforces the probe cadence, lane serialization and all retry backoffs.
+        """
+        lanes = set(lanes)
+        if not lanes <= {"orders", "account"}:
+            raise ValueError("SYNC_REFRESH_LANE_INVALID")
+        with self._condition:
+            if self.network is None or self._stop.is_set():
+                return False
+            self._refresh_pending.update(lanes)
+            events = [self._refresh_events[lane] for lane in lanes
+                      if lane in self._refresh_events]
+        if self._loop is not None:
+            for event in events:
+                with suppress(RuntimeError):
+                    self._loop.call_soon_threadsafe(event.set)
+        return True
 
     @staticmethod
     def position_proof_signature(oid, order, trades, capital, positions):
@@ -174,6 +200,27 @@ class SyncObserver:
             self._condition.wait_for(lambda: self._snapshot.version > version, timeout)
             return self._snapshot
 
+    async def wait_after_async(self, version, timeout):
+        """Publication notification with atomic registration and no worker thread."""
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        with self._condition:
+            if self._snapshot.version > version:
+                return self._snapshot
+            self._async_waiters[future] = (loop, version)
+        try:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(future, timeout)
+            return self.latest()
+        finally:
+            with self._condition:
+                self._async_waiters.pop(future, None)
+
+    @staticmethod
+    def _notify_waiter(future):
+        if not future.done():
+            future.set_result(None)
+
     def drain_events(self):
         result = []
         while True:
@@ -217,6 +264,13 @@ class SyncObserver:
             self._snapshot = current
             self._history.append(current)
             self._condition.notify_all()
+            ready = [(future, loop) for future, (loop, version) in self._async_waiters.items()
+                     if current.version > version]
+            for future, _ in ready:
+                self._async_waiters.pop(future, None)
+        for future, loop in ready:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._notify_waiter, future)
         changed = [r for r in current.attempts if self._emitted_reads.get(r.name) != r.read_id]
         self._emitted_reads.update({r.name: r.read_id for r in changed})
         event = {"kind": "sync_snapshot",
@@ -236,6 +290,9 @@ class SyncObserver:
         self._emit(event)
 
     def _accept(self, evidence):
+        if (evidence.name in {"time", "open_orders", "trades", "capital", "positions"}
+                and not evidence.complete):
+            self.account_failure_revision += 1
         self._attempts[evidence.name] = evidence
         if evidence.complete:
             self._good[evidence.name] = evidence
@@ -255,26 +312,61 @@ class SyncObserver:
         except Exception as exc:
             self._publish(status="FAILED", fatal=type(exc).__name__)
 
+    async def _initialize(self):
+        failures = 0
+        while not self._stop.is_set():
+            error = None
+
+            for name, scope, read in (("bootstrap", "bootstrap", self.reader.open),
+                                      ("time", "account", self.reader.server_time)):
+                def read_initial(read=read):
+                    nonlocal error
+                    try:
+                        return read()
+                    except Exception as exc:
+                        # read() keeps sanitized evidence; classification needs
+                        # the original exception, including HTTP auth status.
+                        error = exc
+                        raise
+
+                evidence = await self._read(name, scope, read_initial)
+                if self._stop.is_set():
+                    return False
+                if not evidence.complete:
+                    break
+            else:
+                self._anchor = (evidence.data, evidence.completed_monotonic)
+                self._publish()
+                return True
+            self.reader.close()
+            if error is None:
+                raise RuntimeError("SYNC_INITIAL_CLOCK_UNAVAILABLE")
+            if not retry_read(error):
+                raise error
+            failures += 1
+            backoff = max(evidence.retry_after_s, min(8.0, 2.0 ** min(failures, 3)))
+            self._publish(status="CREATED")
+            self._emit({"kind": "sync_startup_retry", "error_type": evidence.error_type,
+                        "attempt": failures, "backoff_s": backoff})
+            await self._sleep_until(time.monotonic() + backoff)
+        return False
+
     async def _run(self):
         self._loop = asyncio.get_running_loop()
         self._async_stop = asyncio.Event()
+        self._refresh_events = {lane: asyncio.Event() for lane in ("orders", "account")}
         self.reader = self.reader_factory(self._emit, self._stop)
         tasks = []
         try:
             with ThreadPoolExecutor(max_workers=6, thread_name_prefix="sync-read") as pool:
                 self._pool = pool
                 try:
-                    await self._loop.run_in_executor(pool, self.reader.open)
-                    clock = await self._read("time", "account", self.reader.server_time)
-                    if not clock.complete:
-                        raise RuntimeError("SYNC_INITIAL_CLOCK_UNAVAILABLE")
-                    self._anchor = (clock.data, clock.completed_monotonic)
-                    self._publish()
-                    tasks = [asyncio.create_task(self._periodic("orders", self.settings.order_interval_s,
-                                                              self._orders_round)),
-                             asyncio.create_task(self._periodic("account", self.settings.account_interval_s,
-                                                              self._account_round))]
-                    await asyncio.gather(*tasks)
+                    if await self._initialize():
+                        tasks = [asyncio.create_task(self._periodic("orders", self.settings.order_interval_s,
+                                                                  self._orders_round)),
+                                 asyncio.create_task(self._periodic("account", self.settings.account_interval_s,
+                                                                  self._account_round))]
+                        await asyncio.gather(*tasks)
                 finally:
                     self._stop.set()
                     self._async_stop.set()
@@ -302,6 +394,9 @@ class SyncObserver:
             if self.follow_main and self._target is None:
                 await self._sleep_until(began + interval)
                 continue
+            with self._condition:
+                repair_refresh = lane in self._refresh_pending
+                self._refresh_pending.discard(lane)
             before = self._snapshot.version
             retry_after = 0.0
             try:
@@ -317,13 +412,37 @@ class SyncObserver:
                         "completed_wall": time.time(), "started_monotonic": began,
                         "completed_monotonic": ended, "duration_s": ended - began,
                         "target_interval_s": period, "overrun": ended - began > period,
+                        "repair_proof_refresh": repair_refresh,
                         "complete": complete and covered, "reads_complete": complete,
                         "detail_coverage_complete": covered, "error_type": error,
                         "shutdown": self._stop.is_set(),
                         "market_slug": self._market.slug if self._market else None})
             # Missing/invalid reads back off without overlapping this lane.
             backoff = max(retry_after, min(8.0, 2.0 ** min(failures, 3))) if failures else 0.0
-            await self._sleep_until(max(began + period, ended + backoff))
+            probe = (min(period, self.network.cfg.network_probe_interval_sec)
+                     if self.network is not None else period)
+            await self._wait_round(lane, max(began + period, ended + backoff),
+                                   max(began + probe, ended + backoff))
+
+    async def _wait_round(self, lane, regular, earliest):
+        """A request can shorten idle cadence, never a retry embargo or live read."""
+        event = self._refresh_events.setdefault(lane, asyncio.Event())
+        while not self._stop.is_set():
+            event.clear()
+            with self._condition:
+                pending = lane in self._refresh_pending
+            target = min(regular, earliest) if pending else regular
+            delay = target - time.monotonic()
+            if delay <= 0:
+                return
+            tasks = [asyncio.create_task(event.wait()),
+                     asyncio.create_task(self._async_stop.wait())]
+            try:
+                await asyncio.wait(tasks, timeout=delay, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     def _change_market(self, market):
         self._market = market

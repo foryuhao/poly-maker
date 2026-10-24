@@ -22,6 +22,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -38,6 +39,7 @@ from polymaker.execution.gateway import PlacementUnknown
 from polymaker.journal import Journal
 from polymaker.rdp_sm import (
     DUST_SHARES,
+    MIN_REPAIR_EXPOSURE,
     NORMAL_END_S,
     OFFICIAL_HOSTS,
     TEST_CAPITAL_LIMIT_USDC,
@@ -54,6 +56,7 @@ from polymaker.rdp_sm import (
     _token_id,
     inventory_delta,
     inventory_trading_state,
+    repair_required,
     run_preflight,
 )
 from polymaker.rdp_sm_recovery import pause_reason, reason_code, retry_read
@@ -171,6 +174,7 @@ class Placement:
     request_hash: str | None = None
     raw_response: Any = None
     expected_order_id: str | None = None
+    unknown_recovery_eligible: bool = False
 
     @property
     def maximum(self) -> Decimal:
@@ -523,7 +527,7 @@ class _ExecutionReads(_Reads):
         self.lease = getattr(risk_reads, "lease", None)
         self.network = getattr(risk_reads, "network", None)
         self.market_raw = getattr(risk_reads, "market_raw", None)
-        if cfg.rdp_sm.normal_entry_mode == "obi_v1" and self.network is None:
+        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and self.network is None:
             from polymaker.rdp_sm_network import NetworkHealth
 
             self.network = NetworkHealth(cfg.rdp_sm.obi)
@@ -587,7 +591,7 @@ class _ExecutionReads(_Reads):
         return raw
 
     async def book(self, token: str):
-        _require(self.cfg.rdp_sm.normal_entry_mode != "obi_v1", "OBI_REST_BOOK_FORBIDDEN")
+        _require(self.cfg.rdp_sm.normal_entry_mode not in {"obi_v1", "ba_v1"}, "OBI_REST_BOOK_FORBIDDEN")
         # SDK normally caches tick size indefinitely. SM needs an official read
         # at every submission, rather than a permanently cached M1 snapshot.
         self.gateway._client._ClobClient__tick_sizes.pop(token, None)
@@ -599,7 +603,8 @@ class _ExecutionReads(_Reads):
         from polymaker.rdp_sm_marketdata import SessionFeed
 
         if self.feed is None:
-            self.feed = SessionFeed(meta, self.cfg.rdp_sm.obi, proxy=self.cfg.proxy)
+            self.feed = SessionFeed(meta, self.cfg.rdp_sm.obi, proxy=self.cfg.proxy,
+                ba_cfg=self.cfg.rdp_sm.ba if self.cfg.rdp_sm.normal_entry_mode == "ba_v1" else None)
             try:
                 await self.refresh_feed_ticks()
             except BaseException:
@@ -744,6 +749,8 @@ class _SMProcessor(UserEventProcessor):
             e.fill_observed_at[key].setdefault(
                 "economic_observed_elapsed", e.official_time+e.monotonic()-e.time_anchor
                 - int(e.slug.rsplit("-", 1)[1]))
+        economic_before = {(f.trade_id, f.maker_order_id, f.size, f.price)
+                           for f in e.economic_fills()}
         before = (
             dict(self.fill_records),
             set(self.applied_fill_keys),
@@ -768,6 +775,15 @@ class _SMProcessor(UserEventProcessor):
                 "TRADE_CONFIRMATION_ADVANCED" if confirmation_only else "TRADE_EVIDENCE_CHANGED",
                 None if confirmation_only else ev.maker_order_id,
             )
+            if e.cfg.rdp_sm.normal_entry_mode == "ba_v1":
+                e.update_repair_episode()
+            economic_after = {(f.trade_id, f.maker_order_id, f.size, f.price)
+                              for f in e.economic_fills()}
+            if economic_before != economic_after:
+                e.economic_revision += 1
+                e.last_economic_change_monotonic = e.monotonic()
+                if e.shared_reads is not None:
+                    e.shared_reads.confirmed_inventory_changed()
             with suppress(Exception):
                 self.executor.record("sm_trade", asdict(ev))
                 if confirmation_only:
@@ -861,14 +877,27 @@ class SMWindowExecutor:
         self.position_excluded: set[tuple[str, str]] = set()
         self.starting_collateral: Decimal | None = None
         self.repair_episode: dict | None = None
+        from polymaker.rdp_sm_cooldown import Cooldown
+
+        self.cooldown = Cooldown(cfg.rdp_sm.cooldown)
+        self.repair_abandonment: dict | None = None
+        self._repair_abandon_lock = RLock()
         self.repair_order_started: dict[str, float] = {}
         self.fill_observed_at: dict[tuple[str, str], dict] = {}
+        self.ba_opening = None
+        self.ba_orders = {}
+        self.ba_logged = {}
         self.order_post_elapsed: dict[str, float] = {}
         self.merged_pairs = Decimal(0)
         self.merged_cost: dict[str, Decimal] = {}
         self.merge_pending = False
         self.inventory_mismatch = None
         self.inventory_observation = None
+        self.economic_revision = 0
+        self.last_economic_change_monotonic = 0.0
+        from polymaker.rdp_sm_inventory_lag import InventoryLagAdmission
+
+        self.inventory_lag = InventoryLagAdmission(self)
         self.revision = 0
         self.external_revision = 0
         self.proof_revision = -1
@@ -889,7 +918,7 @@ class SMWindowExecutor:
         self.shared_reads = None
         if cfg.rdp_sm.sync_observe.use_for_execution:
             companion = getattr(reads.account_policy, "sync_observer", None)
-            _require(cfg.rdp_sm.normal_entry_mode == "obi_v1" and companion is not None,
+            _require(cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and companion is not None,
                      "SYNC_CACHE_SERVICE_REQUIRED")
             from polymaker.rdp_sm_cached_reads import CachedExecutionReads
 
@@ -928,7 +957,7 @@ class SMWindowExecutor:
             await reads.connect_account()
             authority = _execution_identity(reads)
             journal = RiskJournal(cfg.paths.journal_dir, reads.gateway.funder, session_id=session_id)
-            if cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
                 from polymaker.rdp_sm_fence import create_fence
                 from polymaker.rdp_sm_writer import AsyncRiskWriter
 
@@ -950,24 +979,30 @@ class SMWindowExecutor:
                     "session_id": session_id,
                     **(
                         {
-                            "normal_entry_mode": "obi_v1",
+                            "normal_entry_mode": cfg.rdp_sm.normal_entry_mode,
                             "normal_order_policy": "SIGNAL_SIDE_ONLY",
-                            "normal_active_order_policy": "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL",
-                            "normal_sigma_required": True,
+                            "normal_active_order_policy": ("BA_FIXED_T0_DEADLINE" if cfg.rdp_sm.normal_entry_mode == "ba_v1"
+                                                           else "FIXED_DEADLINE_CANCEL_ON_VALID_REVERSAL"),
+                            "normal_sigma_required": cfg.rdp_sm.normal_entry_mode == "obi_v1",
                             "probability_sigma": sigma_specification(),
                             "tp_execution_policy": "INDEPENDENT_FIXED_PRICE_TP_WITH_SL_HANDOFF",
                             "runtime_source_sha256": {
                                 name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-                                for name in ("rdp_sm_execution.py", "rdp_sm_normal.py", "rdp_sm_quotes.py",
+                                for name in ("rdp_sm.py", "rdp_sm_execution.py", "rdp_sm_normal.py", "rdp_sm_quotes.py",
                                     "rdp_sm_volatility.py", "rdp_sm_repair.py", "rdp_sm_path_repair.py",
-                                    "rdp_sm_tp.py", "rdp_sm_sl.py", "rdp_sm_sl_ledger.py",
+                                    "rdp_sm_tp.py", "rdp_sm_sl.py", "rdp_sm_sl_ledger.py", "rdp_sm_cooldown.py", "rdp_sm_abandon.py",
                                     "rdp_sm_lifecycle.py", "rdp_sm_loop.py", "rdp_sm_marketdata.py",
-                                    "repair_policy.py")},
+                                    "rdp_sm_unknown_recovery.py", "rdp_sm_inventory_lag.py",
+                                    "rdp_sm_cached_reads.py", "rdp_sm_network.py", "rdp_sm_sync.py",
+                                    "repair_policy.py", "rdp_sm_ba.py", "rdp_sm_signal.py", "config.py")},
                             "config_dir": str(cfg.config_dir),
                             "obi": cfg.rdp_sm.obi.model_dump(mode="json"),
+                            **({"ba": cfg.rdp_sm.ba.model_dump(mode="json")} if cfg.rdp_sm.normal_entry_mode == "ba_v1" else {}),
                             "repair": cfg.rdp_sm.repair.model_dump(mode="json"),
+                            "cooldown": cfg.rdp_sm.cooldown.model_dump(mode="json"),
+                            "repair_exit_threshold_shares": str(MIN_REPAIR_EXPOSURE),
                         }
-                        if cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                         else {}
                     ),
                     "slug": slug,
@@ -1075,7 +1110,7 @@ class SMWindowExecutor:
     def interrupted_before_orders(self) -> bool:
         """An abort latch can be cleared only before any OBI candidate risk exists."""
         return (
-            self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+            self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
             and not self.preparation_started
             and not self.attempts
             and not self.known
@@ -1120,9 +1155,10 @@ class SMWindowExecutor:
             return abs(after) < abs(delta) and delta*after >= -abs(delta)*limit
         return max(abs(delta), abs(after)) <= limit
 
-    def begin_repair_episode(self, window_id, quotes):
+    def begin_repair_episode(self, window_id, quotes, *, baseline=None):
         if self.repair_episode is not None:
             raise ValueError("REPAIR_EPISODE_ALREADY_OWNS_SESSION")
+        self.cooldown.begin(window_id, self._cooldown_pair_snapshot() if baseline is None else baseline)
         dual = len(quotes) == 2 and {q.outcome for q in quotes} == {"YES", "NO"}
         self.repair_episode = {"opening_window": window_id,
                                "side": None if dual else quotes[0].outcome,
@@ -1134,9 +1170,153 @@ class SMWindowExecutor:
                                "windows": [window_id]}
         self.record("sm_repair_episode", {"event": "OPENING_SUBMITTED", **self.repair_episode})
 
+    def _cooldown_pair_snapshot(self):
+        from polymaker.rdp_sm_cooldown import pair_snapshot
+
+        # economic_fills contains CONFIRMED trades plus actual-position and
+        # collateral reconciled trades admitted by the existing close barrier.
+        # Both carry real maker leg prices; pending/estimated fills are absent.
+        return pair_snapshot(self.economic_fills(), self.fill_observed_at,
+                             self.meta.yes.token_id, self.meta.no.token_id)
+
+    @property
+    def trading_state(self):
+        if self.repair_abandonment is not None:
+            return "HOLD_TO_SETTLEMENT"
+        if self.cooldown.active:
+            return "COOLDOWN"
+        return "REPAIR" if (self.repair_episode is not None
+                            or repair_required(*self.economic_inventory())) else "NORMAL"
+
+    def check_repair_abandonment(self):
+        """Permanent market latch. Also called by the SDK's final POST guard."""
+        with self._repair_abandon_lock:
+            return self._check_repair_abandonment()
+
+    def _check_repair_abandonment(self):
+        from polymaker.rdp_sm_abandon import REASON, eligible
+
+        if self.repair_abandonment is not None:
+            return True
+        ep, cfg = self.repair_episode, self.cfg.rdp_sm.repair.abandon_high_entry
+        elapsed = self.official_time+self.monotonic()-self.time_anchor-int(self.slug.rsplit("-", 1)[1])
+        if (ep is None or self.cooldown.active or not cfg.enabled
+                or elapsed < cfg.min_elapsed_sec or elapsed >= TRADING_END_S):
+            return False
+        # Reverse repair legs keep the original NORMAL window through round_id.
+        opening = self.cooldown.round_id
+        attempts = [a for a in self.attempts if a.quote.window_id == opening
+                    and a.outcome not in {"REJECTED", "ABORTED"}]
+        if not attempts or any(a.order_id not in self.proofs or a.order_id not in self.terminal
+                               for a in attempts):
+            return False  # NORMAL has not finished its existing order/fill barrier.
+        ids = {a.order_id for a in attempts}
+        fills = [f for f in self.economic_fills() if f.maker_order_id in ids]
+        sides = {a.quote.outcome for a in attempts}
+        side = next(iter(sides)) if len(sides) == 1 else ep.get("normal_entry_side", ep.get("side"))
+        token = self.meta.yes.token_id if side == "YES" else self.meta.no.token_id if side == "NO" else None
+        fills = [f for f in fills if f.token_id == token]
+        qty = sum((Decimal(str(f.size)) for f in fills), Decimal(0))
+        cost = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in fills), Decimal(0))
+        vwap = cost/qty if qty else None
+        if not eligible(cfg, elapsed, vwap):
+            return False
+        self._cooldown_pair_snapshot()  # Validate actual fill facts before latching.
+        self.repair_abandonment = {"event": "TRIGGERED", "state": "HOLD_TO_SETTLEMENT",
+            "reason": REASON, "round_id": opening, "entry_side": side,
+            "entry_quantity": str(qty), "entry_cost": str(cost), "entry_vwap": str(vwap),
+            "elapsed_s": elapsed, "triggered_monotonic": self.monotonic(),
+            "parameters": cfg.model_dump(mode="json"),
+            "action": "STOP_MAKER_CANCEL_AND_RECONCILE", "inventory_retained": True}
+        self.record("sm_repair_abandoned", dict(self.repair_abandonment))
+        return True
+
+    def finalize_repair_abandonment(self):
+        if self.repair_abandonment is None:
+            return
+        if not self.safe_to_continue or self.inventory_mismatch is not None:
+            return
+        from polymaker.rdp_sm_abandon import fifo_attribution
+
+        y, n = self.economic_inventory()
+        result = {**self.repair_abandonment, "event": "RECONCILED", "close_barrier": "SAFE_TO_CONTINUE",
+            "yes_inventory": str(y), "no_inventory": str(n), "residual_shares": str(abs(y-n)),
+            **fifo_attribution(self._cooldown_pair_snapshot(), self.cooldown.baseline,
+                               self.meta.yes.token_id)}
+        if result != self.repair_abandonment:
+            self.repair_abandonment = result
+            self.record("sm_repair_abandoned", dict(result))
+
+    def _complete_repair_episode(self):
+        _require(self.safe_to_continue and self.inventory_mismatch is None,
+                 "COOLDOWN_CLOSE_BARRIER_REQUIRED")
+        y, n = self.economic_inventory()
+        _require(not repair_required(y, n), "REPAIR_RESIDUAL_ABOVE_EXIT_THRESHOLD")
+        result = self.cooldown.complete(self._cooldown_pair_snapshot(),
+                                        self.meta.yes.token_id, self.monotonic())
+        ep = self.repair_episode
+        self.record("sm_repair_episode", {"event": "COMPLETE_WITH_RESIDUAL_TOLERANCE",
+            "opening_window": ep["opening_window"], "direction_leg": ep.get("direction_leg", 0),
+            "actual_delta": str(y-n), "residual_shares": str(abs(y-n)),
+            "threshold_shares": str(MIN_REPAIR_EXPOSURE), "inventory_flat": y == n,
+            "residual_retained_in_ledger": True})
+        self.record("sm_cooldown", result)
+        self.repair_episode = None
+
+    def resume_cooldown(self, snapshot, health):
+        if self.check_repair_abandonment():
+            return False
+        if not self.cooldown.active:
+            return True
+        now = self.monotonic()
+        elapsed = self.official_time+now-self.time_anchor-int(self.slug.rsplit("-", 1)[1])
+        if now < self.cooldown.deadline:
+            return False
+        checks = (
+            ("CLOSE_BARRIER_REQUIRED", self.safe_to_continue),
+            ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", self.inventory_mismatch is None),
+            ("NORMAL_SUBMISSION_CUTOFF", TRADING_START_S <= elapsed < NORMAL_END_S),
+            ("MARKET_DATA_NOT_READY", snapshot.valid),
+            ("NETWORK_ADMISSION_BLOCKED", health.allowed),
+            ("ACCOUNT_EVIDENCE_STALE", now-self.time_anchor <= self.cfg.risk.ws_stale_halt_s),
+        )
+        reason = next((reason for reason, valid in checks if not valid), None)
+        if reason is not None:
+            if reason != self.cooldown.resume_block_reason:
+                self.record("sm_cooldown", {"state": "COOLDOWN", "event": "EXPIRED_WAITING_FOR_ADMISSION",
+                    "reason": reason, "round_id": self.cooldown.last_result["round_id"],
+                    "deadline_monotonic": self.cooldown.deadline,
+                    "observed_monotonic": now, "elapsed_s": elapsed})
+                self.cooldown.resume_block_reason = reason
+            return False
+        self.record("sm_cooldown", {"state": "NORMAL", "event": "EXPIRED",
+            "round_id": self.cooldown.last_result["round_id"],
+            "deadline_monotonic": self.cooldown.deadline, "resumed_monotonic": now})
+        self.cooldown.deadline = None
+        self.cooldown.resume_block_reason = None
+        return True
+
     def update_repair_episode(self):
+        if self.cfg.rdp_sm.normal_entry_mode == "ba_v1":
+            self.record_ba_fills()
+        # BA creates REPAIR ownership only for actual inventory. Preserve the
+        # pre-POST FIFO baseline, including fills arriving during cancellation.
+        if self.ba_opening is not None and self.repair_episode is None:
+            opening = self.ba_opening
+            if any(f.maker_order_id in opening["ids"] for f in self.economic_fills()):
+                self.begin_repair_episode(opening["window_id"], opening["quotes"],
+                                          baseline=opening["baseline"])
+                self.ba_opening = None
+            elif self.safe_to_continue:
+                self.ba_opening = None
+        if self.check_repair_abandonment():
+            return
         ep = self.repair_episode
         if ep is None:
+            return
+        if (self.safe_to_continue and self.inventory_mismatch is None
+                and not repair_required(*self.economic_inventory())):
+            self._complete_repair_episode()
             return
         if ep.get("dual_normal") and "source_lots" not in ep:
             # Both original BUYs can still fill until the full NORMAL barrier.
@@ -1146,11 +1326,6 @@ class SMWindowExecutor:
             from polymaker.rdp_sm_sl_ledger import fifo_residual
 
             y, n = self.economic_inventory()
-            if not inventory_delta(y, n):
-                self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE",
-                    **ep, "actual_delta": str(y-n)})
-                self.repair_episode = None
-                return
             lots = fifo_residual(self.economic_fills(), self.fill_observed_at, self.meta.yes.token_id)
             qty = sum((Decimal(str(f.size)) for f in lots), Decimal(0))
             if not lots or qty != abs(y-n):
@@ -1159,6 +1334,7 @@ class SMWindowExecutor:
             first = min(times, key=lambda t: t.get("fill_monotonic",
                 self.time_anchor+t["elapsed"]+int(self.slug.rsplit("-", 1)[1])-self.official_time))
             ep.update(side="YES" if y > n else "NO", source_lots=lots,
+                      normal_entry_side="YES" if y > n else "NO",
                       original_qty=str(qty), original_cost=str(sum(
                           (Decimal(str(f.size))*Decimal(str(f.price)) for f in lots), Decimal(0))),
                       first_fill_elapsed=first["elapsed"], first_fill_time_source=first["source"],
@@ -1174,10 +1350,6 @@ class SMWindowExecutor:
         if "source_lots" in ep:
             # FIFO reverse legs already carry actual acquisition quantity/time.
             # Repair fills must not reset their opening inputs or HD policy.
-            if self.safe_to_continue and not inventory_delta(*self.economic_inventory()):
-                self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE",
-                    "opening_window": ep["opening_window"], "direction_leg": ep["direction_leg"]})
-                self.repair_episode = None
             return
         ids = {a.order_id for a in self.attempts if a.order_id and
                a.quote.window_id == ep["opening_window"]}
@@ -1197,10 +1369,21 @@ class SMWindowExecutor:
         if ep["original_qty"] != str(qty):
             ep["original_qty"] = str(qty)
             self.record("sm_repair_episode", {"event": "ACTUAL_OPENING_QUANTITY", **ep})
-        if self.safe_to_continue and not inventory_delta(*self.economic_inventory()):
-            self.record("sm_repair_episode", {"event": "COMPLETE_WITH_DUST_TOLERANCE", **ep,
-                                              "actual_delta": str(self.economic_inventory()[0]-self.economic_inventory()[1])})
-            self.repair_episode = None
+
+    def record_ba_fills(self):
+        for oid, context in self.ba_orders.items():
+            fills = [f for f in self.economic_fills() if f.maker_order_id == oid]
+            qty = sum((Decimal(str(f.size)) for f in fills), Decimal(0))
+            stamps = [self.fill_observed_at[(f.trade_id, oid)] for f in fills
+                      if (f.trade_id, oid) in self.fill_observed_at]
+            first = min(stamps, key=lambda s: s["fill_monotonic"]) if stamps else None
+            evidence = {**context, "order_id": oid, "confirmed_fill_qty": str(qty),
+                "first_fill_time": first["fill_monotonic"] if first else None,
+                "fill_time_source": first["source"] if first else None,
+                "signal_age_at_fill": first["fill_monotonic"]-context["signal_start_mono"] if first else None}
+            if evidence != self.ba_logged.get(oid):
+                self.record("sm_ba_normal_execution", evidence)
+                self.ba_logged[oid] = evidence
 
     def committed(self) -> Decimal:
         """One exposure per placement; terminal proof releases only unfilled size."""
@@ -1225,7 +1408,7 @@ class SMWindowExecutor:
         return max(Decimal(0), total - sum(self.merged_cost.values(), Decimal(0)))
 
     async def _read_books(self, meta):
-        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
             feed = await self.reads.ensure_feed(meta)
             snapshot = feed.snapshot()
             _require(snapshot.valid, snapshot.reason)
@@ -1253,12 +1436,15 @@ class SMWindowExecutor:
                     raise _Issue(SessionStatus.BLOCKED, reason_code(exc)) from exc
                 raise
 
-    async def _snapshot(self, *, include_books=True):
+    async def _snapshot(self, *, include_books=True, allow_repair_inventory_lag=False):
+        allow_repair_inventory_lag = (allow_repair_inventory_lag
+            and self.cfg.rdp_sm.repair.inventory_lag.enabled)
         if self.shared_reads is not None and self.shared_reads.active is None:
             async with self.shared_reads.scope("account", account=True):
                 if self.attempts and not self.safe_to_continue:
                     _require(await self._verify_close(), self.reason or "CLOSE_EVIDENCE_INVALIDATED")
-                result = await self._snapshot(include_books=include_books)
+                result = await self._snapshot(include_books=include_books,
+                    allow_repair_inventory_lag=allow_repair_inventory_lag)
                 clock = await self.shared_reads.source("time")
                 self.official_time_read_duration_s = (
                     clock.completed_monotonic - clock.started_monotonic)
@@ -1423,7 +1609,7 @@ class SMWindowExecutor:
         )
         inventory = {}
         consistent = True
-        inventory_tolerance = (Decimal(".01") if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+        inventory_tolerance = (Decimal(".01") if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                                else INVENTORY_TOLERANCE_SHARES)
         for token, name in ((meta.yes.token_id, "yes"), (meta.no.token_id, "no")):
             owned_qty = sum(
@@ -1450,8 +1636,10 @@ class SMWindowExecutor:
         self.inventory_observation = context
         if not consistent:
             self.inventory_mismatch = context
-            raise InventoryMismatch(context)
-        self.inventory_mismatch = None
+            if not allow_repair_inventory_lag:
+                raise InventoryMismatch(context)
+        else:
+            self.inventory_mismatch = None
         _require(client._ClobClient__resolve_version() == 2, "M2_ORDER_VERSION_UNSUPPORTED")
         clock_read_started = self.monotonic()
         now = await self.reads.server_time()
@@ -1475,6 +1663,10 @@ class SMWindowExecutor:
             and all(-2 <= current_time - b["timestamp"] <= age for b in books.values()),
             "EXECUTION_DATA_STALE",
         )
+        if consistent:
+            self.inventory_lag.matched(account)
+        elif not self.inventory_lag.consider(account):
+            raise InventoryMismatch(context)
         return meta, start, books, account
 
     async def _external_no_fill_terminal(self, oid: str, identity) -> bool:
@@ -1561,7 +1753,7 @@ class SMWindowExecutor:
         _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
 
     async def _verify_order(self, oid: str) -> None:
-        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
             row = await self.gateway.get_order(oid)
             ev = normalize_order(row)
             owned = self.processor.owned_record(oid)
@@ -1590,7 +1782,7 @@ class SMWindowExecutor:
         ev = normalize_order(row)
         owned = self.processor.owned_record(oid)
         identity_tolerance = (
-            Decimal(0) if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" else RDP_TOLERANCE
+            Decimal(0) if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} else RDP_TOLERANCE
         )
         _require(
             ev is not None
@@ -1606,7 +1798,7 @@ class SMWindowExecutor:
             self.fatal = "TERMINAL_LIVE_CONTRADICTION"
         _require(_terminal(ev, self.matched_remaining_tolerance_shares), "ORDER_NOT_TERMINAL")
         official = self._official_fills(trades, {oid})
-        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" and (
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and (
             any(v[0] is not TradeState.CONFIRMED for v in official.values())
             or any(k[1] == oid for k in self.position_excluded)
         ) and await self._reconcile_actual_positions():
@@ -1791,7 +1983,7 @@ class SMWindowExecutor:
             if cancel:
                 self._cancel_jobs = {}  # An explicit later cleanup may retry cancellation.
             safe = await self._await_owned(self._verify_close(cancel=cancel))
-            if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
                 network = self.reads.network
                 if safe and network is not None:
                     network.complete_batch(network.snapshot().active_batch, safe=True)
@@ -1843,7 +2035,7 @@ class SMWindowExecutor:
                 began, cancel_ts = self.monotonic(), time.time()
                 ack = (
                     asdict(await self.gateway.cancel_detailed(sorted(scope)))
-                    if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                    if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                     else await self.gateway.cancel(sorted(scope))
                 )
                 with suppress(Exception):
@@ -1855,7 +2047,7 @@ class SMWindowExecutor:
         while True:
             try:
                 await asyncio.shield(job)
-                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+                if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
                     self._cancel_jobs.pop(scope, None)
                 return
             except asyncio.CancelledError:
@@ -1869,7 +2061,10 @@ class SMWindowExecutor:
             try:
                 if cancel:
                     await self._cancel_known()
-                async with self.shared_reads.scope("close", account=True):
+                # Keep the ordinary detail wait. On timeout, fresh complete
+                # collections allow per-ID progress, never a SAFE shortcut:
+                # every known ID still needs its original closure proof.
+                async with self.shared_reads.scope("close", account=True, partial=True):
                     return await self._verify_close(cancel=False)
             except Exception as exc:
                 self.reason = self.fatal or str(exc)
@@ -1899,7 +2094,7 @@ class SMWindowExecutor:
                             **lookup,
                             "resolution": (
                                 "PREPARED_SIGNED_IDS; awaiting official per-ID proof"
-                                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                                if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                                 else "NO_RELIABLE_REQUEST_TO_ORDER_CORRELATION; risk retained"
                             ),
                         },
@@ -1908,7 +2103,7 @@ class SMWindowExecutor:
             errors = []
             candidates = [
                 a for a in self.attempts
-                if self.cfg.rdp_sm.normal_entry_mode == "obi_v1"
+                if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                 and (
                     a.order_id in self.canceled_submission_proofs
                     or a.outcome in {"UNKNOWN", "REJECTED"}
@@ -1941,7 +2136,7 @@ class SMWindowExecutor:
                 == self._local_fills(self.known),
                 "CROSS_ORDER_TRADE_SET_CHANGED",
             )
-            if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+            if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
                 for attempt in self.attempts:
                     if (
                         attempt.outcome == "UNKNOWN"

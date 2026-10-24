@@ -21,6 +21,7 @@ from polymaker.rdp_sm import (
     TEST_CAPITAL_LIMIT_USDC,
     inventory_delta,
     inventory_trading_state,
+    repair_required,
 )
 
 NA = "NOT_AVAILABLE"
@@ -119,6 +120,8 @@ class HumanRunLog:
     def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False):
         self.signature_type = signature_type
         self.repair_mode = repair_mode
+        self.cooldown_active = False
+        self.repair_abandoned = False
         self.capital_limit = TEST_CAPITAL_LIMIT_USDC
         self.secrets = tuple(s for s in secrets if isinstance(s, str) and s)
         self.queue = SimpleQueue()
@@ -333,7 +336,11 @@ class HumanRunLog:
         reconciliation = ", ".join(f"{shortened(oid)}={value(status)}" for oid, status in latest.items()) or NA
         next_state = inventory_trading_state(inventory_delta(w.get("yes_inventory", 0), w.get("no_inventory", 0)))
         if self.repair_mode:
-            next_state = "REPAIR" if inventory_delta(w.get("yes_inventory", 0), w.get("no_inventory", 0)) else "NORMAL"
+            next_state = "REPAIR" if repair_required(w.get("yes_inventory", 0), w.get("no_inventory", 0)) else "NORMAL"
+        if self.cooldown_active:
+            next_state = "COOLDOWN"
+        if self.repair_abandoned:
+            next_state = "HOLD_TO_SETTLEMENT"
         fill_label = "Economic" if self.repair_mode else "Confirmed"
         lines.extend([
             f"Known Order IDs (run): {', '.join(shortened(i) for i in w.get('known_order_ids', [])) or NA}",
@@ -397,7 +404,22 @@ class HumanRunLog:
         if kind == "events":
             lines = []
             for name, p in payload or []:
-                if name == "sm_repair_decision":
+                if name == "sm_repair_abandoned":
+                    self.repair_abandoned = True
+                    lines.append(f"REPAIR -> HOLD_TO_SETTLEMENT | {p['event']} | "
+                                 f"Entry {p['entry_side']} VWAP={p['entry_vwap']} | "
+                                 f"T={value(p['elapsed_s'])}s | Maker disabled for this market")
+                elif name == "sm_cooldown":
+                    self.cooldown_active = p["state"] == "COOLDOWN"
+                    if p.get("event") == "EXPIRED":
+                        lines.append("COOLDOWN -> NORMAL | Original admission conditions verified")
+                    elif p.get("event") == "EXPIRED_WAITING_FOR_ADMISSION":
+                        lines.append(f"COOLDOWN timer expired | NORMAL admission blocked: {p['reason']} "
+                                     "| Maker submissions remain blocked")
+                    else:
+                        lines.append(f"REPAIR -> {p['state']} | PairPnL={p['pair_pnl']} "
+                                     f"PairedShares={p['paired_shares']} | Cooldown={value(p['cooldown_sec'])}s")
+                elif name == "sm_repair_decision":
                     if p.get("policy") == "hd_tp_sl_v1":
                         lines.append(f"REPAIR: {p['action']} | Mode={p['mode']} | "
                                      f"Side={value(p.get('side'))} Price={value(p.get('price'))} | "
@@ -421,7 +443,7 @@ class HumanRunLog:
                     lines.append(f"REPAIR Reverse: HD | {p['side']} {p['original_qty']} shares | "
                                  f"Cost={p['original_cost']} | Basis=FIFO")
                 elif name == "sm_repair_small_exposure":
-                    lines.append(f"REPAIR: WAIT_WITH_RESIDUAL | Delta={value(p['actual_delta'])} shares | "
+                    lines.append(f"REPAIR: {p.get('action', 'WAIT_WITH_RESIDUAL')} | Delta={value(p['actual_delta'])} shares | "
                                  f"Threshold={value(p['threshold_shares'])} shares | "
                                  "Actual inventory and cost retained")
                 elif name == "sm_position_reconciled":

@@ -63,6 +63,22 @@ class RepairPolicy:
         self.tp_price: Decimal | None = None
         self.tp_tick: Decimal | None = None
         self.last_transition = None
+        self.apply_switches()
+
+    def force_hold(self, elapsed, reason):
+        previous, self.mode = self.mode, "HD"
+        self.tp_price = self.tp_tick = None
+        self.last_reason = reason
+        if previous != "HD":
+            self.last_transition = {"from": previous, "to": "HD", "reason": reason,
+                                    "observations": {"elapsed": elapsed, "source": "EXIT_CONTROL"}}
+
+    def apply_switches(self):
+        """A restored disabled exit cannot retain an executable mode/TP price."""
+        previous = self.mode
+        if self.mode in {"TP", "SL"} and not self.cfg.exit_enabled(self.mode):
+            self.force_hold(None, self.mode+"_DISABLED")
+        return self.mode != previous
 
     def _reset_contribution(self, reason):
         self.path_complete = False
@@ -86,6 +102,8 @@ class RepairPolicy:
         self._inventory_gap = True
 
     def force_sl(self, elapsed, reason="TIME_FORCE_SL"):
+        if not self.cfg.sl_enabled:
+            return
         if self.mode != "SL":
             previous, self.mode = self.mode, "SL"
             self.last_reason = reason
@@ -164,31 +182,38 @@ class RepairPolicy:
         features = features if features is not None else self.observe(
             point, original_side=original_side, original_qty=original_qty)
         previous = self.mode
+        self.apply_switches()
         boundary_elapsed = point.elapsed if session_elapsed is None else session_elapsed
         if boundary_elapsed >= 240:
             reason = "CUTOFF"
         elif abs(point.delta) < float(DUST):
             reason = "PAIRED"
+        elif not self.cfg.tp_enabled and not self.cfg.sl_enabled:
+            self.mode, reason = "HD", "TP_SL_DISABLED"
         elif self.mode == "SL":
             reason = self.last_reason
-        elif abs(point.delta) > delta_limit:
+        elif self.cfg.sl_enabled and abs(point.delta) > delta_limit:
             self.mode, reason = "SL", "SESSION_DELTA_LIMIT"
         elif boundary_elapsed >= 180:
-            self.mode, reason = "SL", "TIME_FORCE_SL"
-        elif features["shock_triggered"]:
+            if self.cfg.sl_enabled:
+                self.mode, reason = "SL", "TIME_FORCE_SL"
+            else:
+                self.force_hold(boundary_elapsed, "SL_DISABLED_AFTER_T180")
+                reason = self.last_reason
+        elif self.cfg.sl_enabled and features["shock_triggered"]:
             self.mode, reason = "SL", "ADVERSE_SHOCK"
-        elif (self.cfg.drawdown_per_share is not None
+        elif (self.cfg.sl_enabled and self.cfg.drawdown_per_share is not None
               and features["drawdown_valid"]
               and Decimal(str(features["drawdown_per_share"])) >= self.cfg.drawdown_per_share):
             self.mode, reason = "SL", "CUMULATIVE_DRAWDOWN"
         elif self.mode == "TP":
             reason = self.last_reason
-        elif (self.cfg.tp_profit_rate is not None and point.elapsed > first_fill_elapsed
+        elif (self.cfg.tp_enabled and self.cfg.tp_profit_rate is not None and point.elapsed > first_fill_elapsed
               and Decimal(str(point.pnl_per_share)) > self.cfg.tp_profit_rate
               * Decimal(str(point.elapsed-first_fill_elapsed))):
             self.mode, reason = "TP", "PROFIT_RATE_TARGET"
         else:
-            reason = "DEFAULT_HOLD"
+            reason = "DEFAULT_HOLD" if self.cfg.tp_enabled else "TP_DISABLED"
         self.last_reason = reason
         if self.mode != previous:
             self.last_transition = {"from": previous, "to": self.mode, "reason": reason,
@@ -198,12 +223,13 @@ class RepairPolicy:
                 "observations": {**asdict(point), **features},
                 "target_remaining_delta": "0" if self.mode != "HD" else str(point.delta),
                 "hold_seconds": max(0., point.elapsed-first_fill_elapsed),
+                "tp_enabled": self.cfg.tp_enabled, "sl_enabled": self.cfg.sl_enabled,
                 "last_transition": self.last_transition}
 
     def price(self, *, bid: Decimal, ask: Decimal, tick: Decimal, sigma: float | None):
         if not (tick.is_finite() and tick > 0 and bid.is_finite() and ask.is_finite()):
             raise ValueError("REPAIR_BOOK_INVALID")
-        if self.mode == "HD":
+        if self.mode == "HD" or not self.cfg.exit_enabled(self.mode):
             return None
         if self.mode == "SL":
             price = ask-tick
@@ -230,6 +256,7 @@ class RepairPolicy:
 
     def payload(self):
         return {"schema_version": 2, "mode": self.mode, "reason": self.last_reason,
+                "tp_enabled": self.cfg.tp_enabled, "sl_enabled": self.cfg.sl_enabled,
                 "peak": str(self.peak), "price_pnl": str(self.price_pnl),
                 "path_complete": self.path_complete, "path_breaks": list(self.path_breaks),
                 "price_gap": self._price_gap, "inventory_gap": self._inventory_gap,
@@ -245,6 +272,8 @@ class RepairPolicy:
         if mode not in {"HD", "TP", "SL"}:
             raise ValueError("REPAIR_MODE_INVALID")
         policy = cls(cfg, mode=mode, peak=payload["peak"], price_pnl=payload["price_pnl"])
+        # Restore evidence first, then apply the current configuration once.
+        policy.mode = mode
         policy.last_reason = payload["reason"]
         policy.last_transition = payload.get("last_transition")
         policy.tp_price = Decimal(payload["tp_price"]) if payload["tp_price"] else None
@@ -258,4 +287,5 @@ class RepairPolicy:
             policy._price_gap = payload.get("price_gap", False)
             policy._inventory_gap = payload.get("inventory_gap", False)
             policy._original_qty = payload.get("original_qty")
+        policy.apply_switches()
         return policy

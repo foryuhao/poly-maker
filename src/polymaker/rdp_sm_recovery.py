@@ -74,6 +74,13 @@ READ_ERRORS = frozenset({
 UNCERTAIN_MUTATIONS = frozenset({"UNKNOWN_PLACEMENT_EXPOSURE", "MERGE_UNKNOWN"})
 
 
+class PreparationReadRetry(Exception):
+    """Retryable constraint GET failed before candidate WAL or activation.
+
+    Raised only around preparation reads, never around POST or journal writes.
+    """
+
+
 def reason_code(exc):
     if isinstance(exc, (_Issue, GatewayReadError)):
         return str(exc)

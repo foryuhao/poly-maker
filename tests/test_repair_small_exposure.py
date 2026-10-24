@@ -30,17 +30,20 @@ async def test_small_actual_opening_does_not_repair_or_erase_inventory(env, monk
             raise AssertionError("A small exposure must be filtered before signal evaluation")
 
         monkeypatch.setattr(controller, "observe", no_signal_needed)
-        opening = e.repair_episode
         inventory, committed = e.economic_inventory(), e.committed()
         for wid in ("small-1", "small-2"):
             assert await controller.repair(*inventory, wid) is None
         assert len(v.post_requests) == 1
-        assert e.repair_episode is opening and opening is not None
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        assert e.cooldown.last_result["cooldown_sec"] == 0
+        assert Decimal(e.cooldown.last_result["paired_shares"]) == 0
         assert e.economic_inventory() == inventory == (Decimal(str(quantity)), Decimal(0))
         assert e.committed() == committed
         records = journal_records(e.journal.path)
-        skips = [r["data"]["payload"] for r in records if r["kind"] == "sm_repair_small_exposure"]
-        assert len(skips) == 1 and skips[0]["inventory_flat"] is False
+        exits = [r["data"]["payload"] for r in records if r["kind"] == "sm_repair_episode"
+                 and r["data"]["payload"].get("event") == "COMPLETE_WITH_RESIDUAL_TOLERANCE"]
+        assert len(exits) == 1 and exits[0]["inventory_flat"] is False
+        assert exits[0]["residual_retained_in_ledger"] is True
     finally:
         await cleanup(setup)
 
@@ -100,12 +103,13 @@ async def test_partial_repair_cancels_remainder_when_actual_delta_becomes_small(
         result, _ = await controller.repair(*e.economic_inventory(), "partial-small")
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
         assert e.economic_inventory() == (Decimal(5), Decimal(3))
-        assert e.repair_episode is not None
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
         assert len(v.post_requests) == 2
         assert all(row["status"] == "CANCELED" for row in v.rows.values())
-        closes = [r["data"]["payload"] for r in journal_records(e.journal.path)
-                  if r["kind"] == "sm_obi_close_requested"]
-        assert closes[-1]["reason"] == "REPAIR_SMALL_EXPOSURE"
+        assert Decimal(e.cooldown.last_result["paired_shares"]) == 3
+        assert Decimal(e.cooldown.last_result["paired_yes_cost"]) == Decimal(".9")
+        assert Decimal(e.cooldown.last_result["paired_no_cost"]) == Decimal("1.38")
+        assert e.committed() == Decimal("2.88")  # also retains the unpaired 2*.3
         lifecycle.account = (await e._snapshot(include_books=False))[3]
         assert await controller.repair(*e.economic_inventory(), "no-small-replacement") is None
         assert len(v.post_requests) == 2 and e.economic_inventory() == (Decimal(5), Decimal(3))

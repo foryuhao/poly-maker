@@ -368,9 +368,10 @@ async def test_time_force_does_not_override_confirmed_small_exposure_rule(env, m
         await open_yes(setup, size=2.5)
         e = setup[1]
         controller = PathRepairController(e, setup[3])
-        assert controller._policy().mode == "HD"
+        assert controller._policy() is None and e.repair_episode is None
         assert controller.boundary_close_reason(None, 180) is None
-        assert controller.policy.mode == "HD" and len(setup[0].post_requests) == 1
+        assert controller.policy is None and len(setup[0].post_requests) == 1
+        assert e.trading_state == "NORMAL" and e.economic_inventory() == (D("2.5"), D(0))
     finally:
         await cleanup(setup)
 

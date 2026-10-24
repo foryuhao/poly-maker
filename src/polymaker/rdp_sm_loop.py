@@ -22,6 +22,7 @@ from polymaker.rdp_sm import (
     _require,
     inventory_delta,
     inventory_trading_state,
+    repair_required,
     run_preflight,
 )
 from polymaker.rdp_sm_execution import (
@@ -33,6 +34,7 @@ from polymaker.rdp_sm_execution import (
 from polymaker.rdp_sm_quotes import QuoteUnavailable, make_quotes
 from polymaker.rdp_sm_recovery import (
     UNCERTAIN_MUTATIONS,
+    PreparationReadRetry,
     pause_reason,
     preflight_pause,
     reason_code,
@@ -79,6 +81,7 @@ class RunResult:
     stop_elapsed_s: float | None = None
     sizing_report: dict = field(default_factory=empty_sizing_report)
     repair_readiness: dict | None = None
+    repair_abandonment: dict | None = None
 
     def to_dict(self):
         result = asdict(self)
@@ -141,6 +144,10 @@ class SMTradingLoop:
             self.pause_reason = self.pause_stage = None
 
     async def _merge(self, result, elapsed=None):
+        if self.executor.check_repair_abandonment():
+            return False  # Retain all remaining inventory for settlement.
+        if self.executor.inventory_mismatch is not None:
+            return False  # A restricted REPAIR lease never authorizes settlement.
         if not self.production or self.merge_disabled_reason is not None:
             return False
         from polymaker.rdp_sm_merge import merge_confirmed_pairs
@@ -245,7 +252,7 @@ class SMTradingLoop:
         return yes, no
 
     async def _run_session(self, result, fill_window_sec):
-        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1":
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
             return await self._run_obi_session(result)
         executor = self.executor
         failed = False
@@ -441,13 +448,15 @@ class SMTradingLoop:
     async def _run_obi_session(self, result):
         """Single writer coordinator; controllers share only order primitives."""
         from polymaker.rdp_sm_lifecycle import BatchLifecycle
-        from polymaker.rdp_sm_normal import NormalController
+        from polymaker.rdp_sm_normal import BANormalController, NormalController
         from polymaker.rdp_sm_path_repair import PathRepairController
         from polymaker.rdp_sm_repair import RepairController
 
         executor = self.executor
         lifecycle = BatchLifecycle(executor)
-        normal = NormalController(executor, lifecycle)
+        normal = (BANormalController(executor, lifecycle)
+                  if self.cfg.rdp_sm.normal_entry_mode == "ba_v1"
+                  else NormalController(executor, lifecycle))
         rebalance = (PathRepairController(executor, lifecycle)
                      if self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1"
                      else RepairController(executor, lifecycle))
@@ -477,9 +486,14 @@ class SMTradingLoop:
 
         warmer = (None if executor.shared_reads is not None else
                   asyncio.create_task(warm_network(), name="rdp-network-warmup"))
-        boundaries = (asyncio.create_task(rebalance.watch_time_boundaries(),
-                                          name="rdp-repair-time-boundaries")
-                      if isinstance(rebalance, PathRepairController) else None)
+        async def watch_abandonment():
+            while True:
+                executor.check_repair_abandonment()
+                await asyncio.sleep(.05)
+
+        boundaries = asyncio.create_task(
+            rebalance.watch_time_boundaries() if isinstance(rebalance, PathRepairController)
+            else watch_abandonment(), name="rdp-repair-time-boundaries")
         try:
             while True:
                 if boundaries is not None and boundaries.done():
@@ -496,6 +510,7 @@ class SMTradingLoop:
                     - start
                 )
                 result.stop_elapsed_s = elapsed
+                executor.check_repair_abandonment()
                 if elapsed >= TRADING_END_S:
                     result.stop_reason = "MARKET_CUTOFF"
                     break
@@ -515,7 +530,7 @@ class SMTradingLoop:
                 try:
                     async with executor.lock:
                         meta, _, _, account = await executor._await_owned(
-                            executor._snapshot(include_books=False)
+                            executor._snapshot(include_books=False, allow_repair_inventory_lag=True)
                         )
                 except InventoryMismatch:
                     await self._wait_for_inventory(result)
@@ -533,13 +548,43 @@ class SMTradingLoop:
                     )
                 yes, no = self._inventory(result)
                 executor.update_repair_episode()
+                if executor.check_repair_abandonment():
+                    executor.finalize_repair_abandonment()
+                    result.repair_abandonment = executor.repair_abandonment
+                    self._display_events()
+                    await self.sleep(min(1.0, max(.001, TRADING_END_S-elapsed)))
+                    continue
                 if isinstance(rebalance, PathRepairController):
                     rebalance.reconcile_episode()
                 if await self._merge(result, elapsed):
                     continue
                 if executor.merge_pending or executor.fatal:
                     continue
-                controller = normal if not inventory_delta(yes, no) and executor.repair_episode is None else rebalance
+                if executor.cooldown.active:
+                    snapshot = lifecycle.snapshot(normal, yes, no)
+                    cooldown_now = executor.monotonic()
+                    cooldown_elapsed = executor.official_time+cooldown_now-executor.time_anchor-start
+                    if (snapshot.reason == "WS_TICK_UNVERIFIED"
+                            and cooldown_elapsed < normal.cutoff):
+                        try:
+                            await executor.reads.refresh_feed_ticks()
+                        except Exception as exc:
+                            if not retry_read(exc):
+                                raise
+                            await self._pause(result, reason_code(exc), "books")
+                        continue
+                    if not executor.resume_cooldown(snapshot, executor.network_health()):
+                        self._display_events()
+                        # A book tick cannot end a time-based cooldown. Bound
+                        # account rechecks even on a busy socket; after NORMAL
+                        # closes, keep the original one-second cutoff cadence.
+                        wait = 1.0 if cooldown_elapsed >= normal.cutoff else .1
+                        remaining = executor.cooldown.deadline-executor.monotonic()
+                        if remaining > 0:
+                            wait = min(wait, remaining)
+                        await self.sleep(min(wait, max(.001, TRADING_END_S-cooldown_elapsed)))
+                        continue
+                controller = normal if not repair_required(yes, no) and executor.repair_episode is None else rebalance
                 elapsed = (
                     executor.official_time + executor.monotonic() - executor.time_anchor - start
                 )
@@ -562,14 +607,28 @@ class SMTradingLoop:
                 if not snapshot.valid or not health.allowed:
                     lifecycle.wait(snapshot.reason if not snapshot.valid else health.reason,
                                    snapshot, health)
-                    await feed.wait_after(feed.sequence, 0.5)
+                    if not health.allowed:
+                        await self._wait_network_retry(boundaries)
+                    else:
+                        await feed.wait_after(feed.sequence, 0.5)
                     continue
                 lifecycle.account = account
                 window_id = f"{self.session_id}:w{result.total_windows + 1}"
                 # Independent controller entry methods own their preparation
                 # and exit policy, rather than passing a TTL to execute_window.
                 entry = normal.enter if controller is normal else rebalance.repair
-                outcome = await entry(yes, no, window_id)
+                try:
+                    outcome = await entry(yes, no, window_id)
+                except PreparationReadRetry as exc:
+                    # Only pre-WAL constraint GETs can request this retry. The
+                    # next iteration rechecks existing orders and all admission
+                    # evidence; no activation or unknown POST is retried here.
+                    pause_elapsed = (self._estimated_elapsed()
+                        if self.market_deadline is not None else executor.official_time
+                        + executor.monotonic() - executor.time_anchor - start)
+                    await self._pause(result, str(exc), "prepare", elapsed=pause_elapsed)
+                    continue
+                self._resume("prepare")
                 if outcome is None:
                     continue
                 window, sizing = outcome
@@ -593,6 +652,8 @@ class SMTradingLoop:
                         result, window.block_reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
                     )
             safe = await executor.verify_close(cancel=True)
+            executor.finalize_repair_abandonment()
+            result.repair_abandonment = executor.repair_abandonment
             if safe and self.production and executor.inventory_mismatch is None:
                 await self._merge(result)
                 safe = executor.safe_to_continue
@@ -601,14 +662,19 @@ class SMTradingLoop:
             result.execution_status = (
                 "INCOMPLETE" if not safe else "BLOCKED" if failed else "COMPLETED"
             )
-            self._inventory(result)
+            if not safe:
+                result.stop_reason = executor.reason or result.stop_reason
+            if executor.meta is not None:
+                self._inventory(result)
         finally:
             boundary_results = []
             if boundaries is not None:
                 boundaries.cancel()
                 boundary_results = await asyncio.gather(boundaries, return_exceptions=True)
-                rebalance.flush_blocked("SESSION_END")
-            executor.record("sm_obi_metrics", dict(lifecycle.metrics))
+                if isinstance(rebalance, PathRepairController):
+                    rebalance.flush_blocked("SESSION_END")
+            lifecycle.drain_ba()
+            executor.record("sm_ba_metrics" if lifecycle.ba_mode else "sm_obi_metrics", dict(lifecycle.metrics))
             executor.record("sm_ws_diagnostics", feed.diagnostics())
             if warmer is not None:
                 warmer.cancel()
@@ -618,6 +684,25 @@ class SMTradingLoop:
             for error in boundary_results:
                 if isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError):
                     raise error
+
+    async def _wait_network_retry(self, boundaries):
+        """Bound account retries independently of book traffic; safety still wakes."""
+        e = self.executor
+        now = e.monotonic()
+        elapsed = (self._estimated_elapsed() if self.market_deadline is not None else
+                   e.official_time+now-e.time_anchor-int(self.slug.rsplit("-", 1)[1]))
+        deadline = now+min(.5, max(0., TRADING_END_S-elapsed))
+        while e.monotonic() < deadline:
+            if (e.fatal or getattr(e.journal, "failure", None) or e.closed
+                    or e.inventory_mismatch is not None or e.merge_pending
+                    or (e.attempts and not e.safe_to_continue)
+                    or e.repair_abandonment is not None
+                    or boundaries.done()):
+                return
+            # These checks are memory-only. Market ticks cannot cause another
+            # account/cache snapshot before the retry deadline. Close proof
+            # invalidation, fatal errors and timer failures still wake promptly.
+            await self.sleep(min(.05, deadline-e.monotonic()))
 
     async def _wait_for_inventory(self, result):
         """No BUY or Merge while Data API inventory is unexplained; retry until T=300."""
@@ -630,7 +715,14 @@ class SMTradingLoop:
             self.observer.emit("inventory_check", {**executor.inventory_mismatch,
                 "status": "BLOCKED_WAIT_UNTIL_300", "elapsed_s": elapsed})
         if elapsed < TRADING_END_S:
-            await self.sleep(min(1, TRADING_END_S - elapsed))
+            wait = min(1, TRADING_END_S - elapsed)
+            cache = executor.shared_reads
+            if cache is not None and cache.refresh_repair(account=True):
+                # Notification only; the caller reruns the full original
+                # snapshot, inventory, order and network admission checks.
+                await cache.wait_account_update(wait)
+            else:
+                await self.sleep(wait)
 
     async def run(self, *, offline: bool = False, fill_window_sec: float = 3.0) -> RunResult:
         return await self._run(offline=offline, fill_window_sec=fill_window_sec)
@@ -650,7 +742,7 @@ class SMTradingLoop:
         fill_window_sec=3.0,
     ) -> RunResult:
         result = RunResult(None, self.session_id)
-        if self.cfg.rdp_sm.normal_entry_mode == "obi_v1" and self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1":
             from polymaker.repair_policy import repair_readiness
 
             result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)

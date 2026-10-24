@@ -46,11 +46,31 @@ post_only = true                # every quote is post-only (maker-only mandate)
 max_orders_per_batch = 15       # exchange batch cap
 
 [rdp_sm]
-normal_entry_mode = "obi_v1"
+normal_entry_mode = "ba_v1"
 base_size = "5"
 target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
+
+[rdp_sm.ba]
+min_sell_shares = "5"
+min_depletion_shares = "5"
+min_refill_shares = "5"
+observation_sec = 0.75
+signal_lifetime_sec = 3.0
+max_sell_age_ms = 500.0
+max_book_age_ms = 200.0
+max_pair_skew_ms = 200.0
+max_entry_age_ms = 1000.0
+
+[rdp_sm.ba.network]
+post_budget_floor_ms = 750.0
+min_live_budget_ms = 500.0
+max_cancel_rtt_ms = 750.0
+
+[rdp_sm.cooldown]
+max_sec = 0.0
+loss_sec_per_dollar = 100.0
 
 [rdp_sm.repair]
 policy = "hd_tp_sl_v1"
@@ -58,7 +78,23 @@ delta_limit = "5"
 review_sec = 2.0
 cutoff_sec = 240.0
 
+[rdp_sm.repair.inventory_lag]
+# 持仓接口滞后时的受限 REPAIR 容错；成交、订单及资金必须已完整核对。
+enabled = true
+# 启用时必须同时设为 true，确认本市场无其他程序或人工交易、转仓、结算。
+exclusive_market_writer = true
+grace_sec = 2.0
+max_unreported_shares = "5"
+
+[rdp_sm.repair.abandon_high_entry]
+enabled = true
+min_elapsed_sec = 140.0
+entry_price_threshold = "0.80"
+
 [rdp_sm.repair.path]
+# Independent exit controls; both false holds residual Delta without repair.
+tp_enabled = true
+sl_enabled = true
 tp_profit_rate = "0.002"
 shock_window_sec = 2.0
 shock_max_age_sec = 3.0
@@ -71,6 +107,9 @@ parameter_reference = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
 validation_reference = "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
 
 [rdp_sm.obi]
+# Consecutive same-direction depth signals, counted separately in [0,60) and [60,120).
+normal_confirmations_before_60 = 1
+normal_confirmations_from_60 = 3
 # Historical field name: individual slow-request threshold; p95 is diagnostic only.
 max_rtt_p95_ms = 500.0
 network_recent_window_sec = 5.0

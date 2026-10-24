@@ -48,6 +48,104 @@ Everything else is TOML under [`config/`](config/):
 - `strategy.toml` — named parameter profiles (`political-longdated`, `political-hot`)
 - `markets.toml` — the trade list (populated via the CLI below)
 
+### RDP TP / SL comparison switches
+
+The `hd_tp_sl_v1` policy has independent exit switches in both
+`config/config.toml` and `livecfg/config.toml`:
+
+```toml
+[rdp_sm.repair.path]
+tp_enabled = true
+sl_enabled = true
+```
+
+Both default to `true`, including when the fields are omitted. Change the file
+used by the intended run; configuration is read when a new session starts,
+not hot reloaded into an active trading session.
+
+| `tp_enabled` | `sl_enabled` | Exit behavior |
+|---|---|---|
+| `true` | `true` | Existing TP, SL and T+180 forced SL behavior. |
+| `false` | `true` | Skip TP; retain SL signals, Delta breach repair and T+180 forced SL. |
+| `true` | `false` | TP may operate before T+180; then cancel its remaining order and hold residual Delta. |
+| `false` | `false` | Submit no TP / SL repair; hold residual Delta through market end. |
+
+Disabling SL also disables the adverse shock, drawdown, T+180 and Delta breach
+**SL orders**. Existing NORMAL admission and capital/Delta limits still apply.
+Order cancellation, fill reconciliation, ownership proofs and merging of
+already paired positions continue normally. Previously filled shares remain
+in inventory; changing a switch does not undo fills.
+
+The switches apply to `hd_tp_sl_v1`; disabling either with `ev_legacy` is a
+configuration error. Existing parameter and replay readiness checks still
+apply. Session configuration, repair decisions and policy snapshots record
+the switches for later comparison.
+
+With repair disabled, an unpaired episode continues to block new NORMAL
+entry under the existing coordinator. Live comparisons therefore will not
+reproduce the offline experiment's fixed set of 148 historical NORMAL fills.
+
+### RDP dynamic cooldown
+
+After a completed REPAIR ownership barrier, the OBI coordinator consumes this
+round's newly completed FIFO YES/NO pairs once. Only actual Maker BUY fill
+prices enter `PairPnL = shares - YES cost - NO cost`; existing position and
+collateral reconciliation remains the authority for delayed native statuses.
+Unpaired residuals, rebates and pairs consumed in earlier rounds are excluded.
+TP, SL and TP-to-SL use the same economic test.
+
+REPAIR completes only after order/fill reconciliation is safe and the exact
+session residual is at most **2.5 shares**, inclusive. The residual stays in
+inventory, actual acquisition cost, capital commitment and Delta admission;
+it is neither rounded away nor treated as paired PnL. NORMAL may resume with
+that residual, using its existing quoting, sizing, risk and time checks.
+Unresolved orders/fills still block completion even below the threshold;
+the small-residual wait uses a bounded timer rather than socket events.
+
+```toml
+[rdp_sm.cooldown]
+max_sec = 20.0
+loss_sec_per_dollar = 100.0
+```
+
+`cooldown_sec = min(max_sec, max(0, -PairPnL / shares * loss_sec_per_dollar))`;
+zero pairs produce zero seconds. Positive durations enter `COOLDOWN`, blocking
+all Maker submissions while market feeds, volatility samples, reconciliation,
+cancellation and emergency handling continue. The monotonic deadline never
+resets on repeated proofs. Expiry requires the original NORMAL admission
+conditions, including its T+120 cutoff. Unresolved execution or invalid PnL
+evidence stays blocked. An expired timer logs the reason if NORMAL cannot
+resume. Account rechecks use a bounded timer rather than each book update;
+after T+120 they retain the original one-second cutoff waiting cadence.
+Settings apply when a new session starts; zero
+`max_sec` disables the wait without changing FIFO accounting.
+
+High-entry REPAIR abandonment (v1.2) is configurable:
+
+```toml
+[rdp_sm.repair.abandon_high_entry]
+enabled = true
+min_elapsed_sec = 120.0
+entry_price_threshold = "0.80"
+```
+
+When a round is still in REPAIR at or after T+120 and its original NORMAL
+first-leg actual VWAP is at least 0.80 (inclusive, either side), the market
+permanently enters `HOLD_TO_SETTLEMENT`. The NORMAL order/fill barrier must
+first establish its actual fills. Reverse repair prices and current Mid are
+not entry prices. Existing controllers cancel and reconcile all outstanding
+orders; final POST guards also stop already prepared orders. Earlier partial
+repair fills and fills racing cancellation remain in the ledger and risk.
+No further NORMAL, REPAIR, cooldown resumption or merge is performed in this
+market; feeds, volatility, account reconciliation and safety handling continue.
+`sm_repair_abandoned` records the trigger and reconciled FIFO pair PnL plus
+retained residual acquisition costs. Residual settlement PnL stays pending
+until actual settlement; rebates and estimated terminal values are excluded.
+Disabling this rule preserves the other state transitions.
+
+Offline 100-market validation and its simulation assumptions are recorded in
+[v1.2 validation](docs/development/reviews/20261022_high_entry_abandon_v12/README.md).
+
 ## Use
 
 ```bash
@@ -91,6 +189,13 @@ all I/O and state around it; the `ExecutionGateway` wraps `py-clob-client-v2`
 thread pool so the hot path never stalls. State (positions, orders, PnL, catalog)
 lives in one SQLite file; raw WS/order events are journaled to `journal/` for
 replay.
+
+Runtime data stays inside this project: `journal/`, `logs/`,
+`research_outputs/`, `research_data/`, `research_audits/`, and `backups/`.
+The `livecfg/` configuration uses its own `livecfg/journal/` and `livecfg/logs/`.
+These are real directories, without links to sibling directories. Run commands
+from the project root. Log retention operations are documented in
+[`ops/README.md`](ops/README.md).
 
 ## Strategy
 

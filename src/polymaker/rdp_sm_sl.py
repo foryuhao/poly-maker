@@ -21,7 +21,9 @@ from polymaker.rdp_sm_execution import (
     _canceled_submission_response,
     _terminal,
 )
+from polymaker.rdp_sm_recovery import retry_read
 from polymaker.rdp_sm_sl_ledger import SMALL, exposure
+from polymaker.rdp_sm_unknown_recovery import UnknownRepairRecovery
 from polymaker.userstream.parse import normalize_order, parse_trade
 
 ZERO = Decimal(0)
@@ -46,6 +48,9 @@ class SLExecution:
         self.cancels = {}
         self.cancel_ack = {}
         self.cancel_after = {}
+        self.cancel_started = {}
+        self.cancel_completed = {}
+        self.cancel_revision = {}
         self.cancel_wanted = set()
         self.post_returned = {}
         self.post_started = {}
@@ -61,6 +66,7 @@ class SLExecution:
         self.last_progress = self.e.monotonic()
         self.last_wait = None
         self.cutoff_logged = False
+        self.changed = asyncio.Event()
         self.e.sl_terminal_quantities = getattr(self.e, "sl_terminal_quantities", {})
         self.e.sl_order_ids = getattr(self.e, "sl_order_ids", set())
         ep = self.e.repair_episode
@@ -74,6 +80,16 @@ class SLExecution:
         self.capital = min(self.e.capital_limit, ledger.spent+own_reserved+cash,
                            self.e.starting_collateral if self.e.starting_collateral is not None
                            else ledger.spent+own_reserved+cash)
+        self.recovery = UnknownRepairRecovery(self)
+
+    def health(self):
+        return self.recovery.health()
+
+    async def wait_changed(self):
+        # Keep the existing market/safety polling ceiling; completed commands
+        # and published proofs can wake the coordinator sooner.
+        with suppress(TimeoutError):
+            await asyncio.wait_for(self.changed.wait(), .005)
 
     def elapsed(self):
         return self.controller.elapsed()
@@ -137,6 +153,8 @@ class SLExecution:
 
     def goal(self):
         e = self.e
+        if not e.cfg.rdp_sm.repair.path.exit_enabled(self.mode):
+            return None, self.mode+"_DISABLED"
         state = exposure(e)
         side = e.repair_episode["side"] if e.repair_episode else None
         if abs(state.actual) <= SMALL:
@@ -178,12 +196,20 @@ class SLExecution:
         e = self.e
         if self.closed or e.closed:
             return "SL_EXECUTION_CLOSED"
+        if e.check_repair_abandonment():
+            return "HIGH_ENTRY_REPAIR_ABANDONED"
+        if e.cooldown.active:
+            return "COOLDOWN_ACTIVE"
+        if not e.cfg.rdp_sm.repair.path.exit_enabled(self.mode):
+            return self.mode+"_DISABLED"
         if not 15 <= self.elapsed() < 240:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.fatal:
             return e.fatal
         if e.inventory_mismatch is not None:
-            return "ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM"
+            reason = e.inventory_lag.admission_reason(self, goal, reserved)
+            if reason:
+                return reason
         if not e.journal.ready:
             return "ASYNC_JOURNAL_NOT_READY"
         if e.gateway._client.pagination_failure is not None:
@@ -196,9 +222,11 @@ class SLExecution:
                or e.processor.has_unresolved_fill_key(self.oid(a))
                or self.oid(a) in e.processor.quarantined_orders for a in self.orders if self.oid(a)):
             return "REPAIR_EXECUTION_UNRESOLVED"
-        health = e.reads.network.continuation(self.group)
+        health = self.health()
         if not health.allowed:
             return health.reason
+        if not self.recovery.allows(reserved):
+            return "UNKNOWN_REPAIR_RECONCILING"
         current = self.lifecycle.snapshot(self.controller, *e.economic_inventory())
         book = current.yes if outcome == "YES" else current.no
         if not current.valid:
@@ -267,10 +295,12 @@ class SLExecution:
                 return reason is None
 
             def started():
+                if e.check_repair_abandonment():
+                    raise ValueError("HIGH_ENTRY_REPAIR_ABANDONED")
                 network = e.reads.network
                 if network.snapshot().active_batch is None and not network.begin_batch(self.group):
                     raise ValueError("NETWORK_ADMISSION_CHANGED")
-                if not network.continuation(self.group).allowed:
+                if not self.health().allowed or not self.recovery.allows(a):
                     raise ValueError("NETWORK_ADMISSION_CHANGED")
                 e.order_post_elapsed[a.expected_order_id] = self.elapsed()
                 self.post_started[a.attempt_id] = e.monotonic()
@@ -284,6 +314,7 @@ class SLExecution:
             try:
                 raw = await e.gateway.send_prepared(signed, submit_guard=guard, operation_context=context)
             except Exception as exc:
+                a.unknown_recovery_eligible = retry_read(exc)
                 self.record("post_error", {"order_id": a.expected_order_id,
                                                    "error": type(exc).__name__})
             finally:
@@ -334,12 +365,17 @@ class SLExecution:
             # A cancellation before POST drained never covers a late acceptance.
             if a.attempt_id in self.cancel_wanted:
                 self.cancel_ack.pop(a.attempt_id, None)
+            self.changed.set()
 
     async def cancel(self, a):
         oid = self.oid(a)
         began = self.e.monotonic()
+        self.cancel_started[a.attempt_id] = began
+        self.cancel_revision[a.attempt_id] = self.e.revision
+        self.cancel_completed[a.attempt_id] = False
         try:
             ack = await self.e.gateway.cancel_detailed([oid])
+            self.cancel_completed[a.attempt_id] = True
             if oid in ack.canceled and self.post_done(a):
                 self.cancel_ack[a.attempt_id] = self.e.monotonic()
             self.e.record("sm_cancel_ack", {"ids": [oid], "result": asdict(ack),
@@ -347,6 +383,7 @@ class SLExecution:
                 "delete_ack": ack.ack_monotonic, "scope": self.mode+"_ORDER"})
         finally:
             self.cancel_after[a.attempt_id] = self.e.monotonic()
+            self.changed.set()
 
     def cancel_old(self, *, except_attempt=None):
         for a in self.orders:
@@ -364,6 +401,8 @@ class SLExecution:
             if (self.post_done(a) and _canceled_submission_response(a)
                     and not self.e._canceled_submission_observed(self.oid(a))):
                 continue  # Keep full risk while awaiting strict rejection proof.
+            if self.recovery.suppress_cancel(a):
+                continue  # Fresh positive/changed evidence immediately resumes DELETE.
             self.cancels[aid] = asyncio.create_task(self.cancel(a), name=self.mode.lower()+"-cancel")
 
     async def poll(self):
@@ -374,7 +413,10 @@ class SLExecution:
                 for a in self.orders:
                     self.register(a)
                 if e.shared_reads is not None:
+                    version = e.shared_reads.service.latest().version
                     await e.shared_reads.observe_sl(self)
+                    self.recovery.observe()
+                    self.changed.set()
                 elif self.reads_ready is None or self.reads_ready():
                     trades = await e.gateway.get_trades(market=e.meta.condition_id)
                     now = e.monotonic()
@@ -395,7 +437,10 @@ class SLExecution:
                         self.observe_order(a, row, trades, now)
                 if self.lifecycle.snapshot(self.controller, *e.economic_inventory()).reason == "WS_TICK_UNVERIFIED":
                     await e.reads.refresh_feed_ticks()
-                await asyncio.sleep(.05)
+                if e.shared_reads is not None:
+                    await e.shared_reads.service.wait_after_async(version, .05)
+                else:
+                    await asyncio.sleep(.05)
             except Exception as exc:
                 self.wait(self.mode+"_PROOF_"+type(exc).__name__)
                 await asyncio.sleep(.1)
@@ -448,6 +493,7 @@ class SLExecution:
             e.sl_terminal_quantities[oid] = qty
             self.proof_after[oid] = read_started
             self.last_progress = e.monotonic()
+            self.changed.set()
             self.record("order_release", {"order_id": oid, "matched_quantity": str(qty),
                 "unfilled_released": str(Decimal(str(a.quote.size))-qty),
                 "source": "OWNED_TERMINAL_AND_COMPLETE_TRADE_SET", **self.evidence()})
@@ -456,14 +502,19 @@ class SLExecution:
         polling = asyncio.create_task(self.poll(), name="sl-proof-observer")
         try:
             while True:
+                self.changed.clear()
                 for a in self.orders:
                     self.register(a)
-                goal, reason = self.goal()
-                health = self.e.reads.network.continuation(self.group)
-                stopping = (self.closed or self.elapsed() >= 240 or self.e.closed or self.e.fatal
-                            or getattr(self.e.journal, "failure", None))
+                abandoned = self.e.check_repair_abandonment()
+                goal, reason = (None, "HIGH_ENTRY_REPAIR_ABANDONED") if abandoned else self.goal()
+                health = self.health()
+                lag_reason = (self.e.inventory_lag.maintenance_reason()
+                              if self.e.inventory_mismatch is not None else None)
+                stopping = (abandoned or self.closed or self.elapsed() >= 240 or self.e.closed or self.e.fatal
+                            or getattr(self.e.journal, "failure", None) or lag_reason)
                 if stopping:
-                    self.reason = self.e.fatal or "MARKET_SUBMISSION_CUTOFF"
+                    self.reason = self.e.fatal or ("HIGH_ENTRY_REPAIR_ABANDONED" if abandoned
+                        else lag_reason or "MARKET_SUBMISSION_CUTOFF")
                     goal = None
                     if not self.cutoff_logged:
                         self.cutoff_logged = True
@@ -490,6 +541,8 @@ class SLExecution:
                         outcome, Side.BUY, float(price), float(qty), wid)
                     a = Placement(uuid.uuid4().hex, quote)
                     self.e.attempts.append(a)  # Atomic reservation before any await.
+                    self.e.inventory_lag.reserve(a)
+                    self.recovery.reserve(a)
                     self.orders.append(a)
                     self.created.append(a)
                     self.latest = a
@@ -522,17 +575,20 @@ class SLExecution:
                     self.cancel_old(except_attempt=current)
                 unresolved = [a for a in self.orders if self.unresolved(a)]
                 pending_posts = [t for t in self.posts.values() if not t.done()]
+                if stopping and not pending_posts and self.recovery.waiting():
+                    break  # Final cleanup/closeout retains all unresolved risk.
                 if not unresolved and not pending_posts:
                     self.e.reads.network.complete_batch(self.group, safe=True)
                     if (stopping or goal is None or needs and not self.allowed(goal)
                             or self.rejected_target == goal[:3]):
                         break
                 waiting_cancel = unresolved and all(a.attempt_id in self.cancel_wanted for a in unresolved)
-                if waiting_cancel and self.e.monotonic()-self.last_progress > self.e.cfg.risk.ws_stale_halt_s:
+                if (waiting_cancel and not self.recovery.waiting()
+                        and self.e.monotonic()-self.last_progress > self.e.cfg.risk.ws_stale_halt_s):
                     self.reason = "SL_ORDER_PROOF_UNRESOLVED"
                     break
                 self.e.drain_network_events()
-                await asyncio.sleep(.005)
+                await self.wait_changed()
         finally:
             self.closed = True
             self.cancel_old()

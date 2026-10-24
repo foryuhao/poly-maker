@@ -1,0 +1,26 @@
+[Unit]
+Description=Retain 24 hours of PolyMaker trading logs and preserve recovery evidence
+RequiresMountsFor=/home/ubuntu/poly-maker
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/poly-maker/log_retention.py --data-root /home/ubuntu/poly-maker --state-dir /home/ubuntu/poly-maker/logs/retention --apply
+TimeoutStartSec=4min
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/poly-maker/journal /home/ubuntu/poly-maker/logs
+ReadWritePaths=/home/ubuntu/poly-maker/livecfg/journal /home/ubuntu/poly-maker/livecfg/logs
+ReadWritePaths=/home/ubuntu/poly-maker/research_outputs/periodic_sync
+ReadOnlyPaths=/home/ubuntu/poly-maker/research_outputs/rdp_risk_shadow
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+StandardOutput=journal
+StandardError=journal

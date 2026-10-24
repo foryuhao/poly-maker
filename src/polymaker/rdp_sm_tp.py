@@ -44,8 +44,14 @@ class TPExecution(SLExecution):
         c.boundary_close_reason(None, self.elapsed())
         if e.repair_episode is not self.episode:
             return None, "REPAIR_EPISODE_CHANGED"
-        if c.policy.mode == "SL":
+        if c.policy.mode == "SL" and e.cfg.rdp_sm.repair.path.sl_enabled:
             return None, "REPAIR_MODE_SL_CANCEL_OLD_STATE"
+        if not e.cfg.rdp_sm.repair.path.tp_enabled:
+            return None, "TP_DISABLED"
+        if self.elapsed() >= 180:
+            return None, "TP_SUBMISSION_CUTOFF"
+        if c.policy.mode != "TP":
+            return None, "TP_MODE_INACTIVE"
         state = exposure(e)
         if abs(state.actual) <= SMALL:
             return None, "REPAIR_SMALL_EXPOSURE"
@@ -75,7 +81,9 @@ class TPExecution(SLExecution):
                 return None, str(exc)
             self.last_observation = key
             if decision["mode"] != "TP":
-                return None, "REPAIR_MODE_SL_CANCEL_OLD_STATE"
+                return None, ("REPAIR_MODE_SL_CANCEL_OLD_STATE"
+                              if decision["mode"] == "SL" and e.cfg.rdp_sm.repair.path.sl_enabled
+                              else "TP_MODE_INACTIVE")
         return (self.plan["side"], Decimal(str(self.plan["price"])),
                 Decimal(str(self.plan["quantity"])), snapshot), None
 
@@ -84,12 +92,20 @@ class TPExecution(SLExecution):
         side, price, qty, snapshot = goal
         if self.closed or e.closed:
             return "TP_EXECUTION_CLOSED"
+        if e.check_repair_abandonment():
+            return "HIGH_ENTRY_REPAIR_ABANDONED"
+        if e.cooldown.active:
+            return "COOLDOWN_ACTIVE"
+        if not e.cfg.rdp_sm.repair.path.tp_enabled:
+            return "TP_DISABLED"
         if not 15 <= self.elapsed() < 180:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.fatal:
             return e.fatal
         if e.inventory_mismatch is not None:
-            return "ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM"
+            reason = e.inventory_lag.admission_reason(self, goal, reserved)
+            if reason:
+                return reason
         if not e.journal.ready:
             return "ASYNC_JOURNAL_NOT_READY"
         if e.gateway._client.pagination_failure is not None:
@@ -104,9 +120,11 @@ class TPExecution(SLExecution):
                or e.processor.has_unresolved_fill_key(self.oid(a))
                or self.oid(a) in e.processor.quarantined_orders for a in self.orders if self.oid(a)):
             return "REPAIR_EXECUTION_UNRESOLVED"
-        health = e.reads.network.continuation(self.group)
+        health = self.health()
         if not health.allowed:
             return health.reason
+        if not self.recovery.allows(reserved):
+            return "UNKNOWN_REPAIR_RECONCILING"
         if e.monotonic()-e.time_anchor > e.cfg.risk.ws_stale_halt_s:
             return "OFFICIAL_CLOCK_STALE"
         current = self.lifecycle.snapshot(c, *e.economic_inventory())
@@ -151,6 +169,7 @@ class TPExecution(SLExecution):
             side, Side.BUY, float(price), float(qty), wid)
         attempt = Placement(uuid.uuid4().hex, quote)
         self.e.attempts.append(attempt)  # Reserve all possible exposure before I/O.
+        self.e.inventory_lag.reserve(attempt)
         self.orders.append(attempt)
         self.created.append(attempt)
         self.latest = attempt
@@ -184,13 +203,18 @@ class TPExecution(SLExecution):
         draining = None
         try:
             while True:
+                self.changed.clear()
                 for attempt in self.orders:
                     self.register(attempt)
-                goal, reason = self.goal()
-                health = self.e.reads.network.continuation(self.group)
-                stopping = (self.closed or self.e.closed or self.e.fatal or self.elapsed() >= 240
-                            or getattr(self.e.journal, "failure", None))
-                if not stopping and reason == "REPAIR_MODE_SL_CANCEL_OLD_STATE":
+                abandoned = self.e.check_repair_abandonment()
+                goal, reason = (None, "HIGH_ENTRY_REPAIR_ABANDONED") if abandoned else self.goal()
+                health = self.health()
+                lag_reason = (self.e.inventory_lag.maintenance_reason()
+                              if self.e.inventory_mismatch is not None else None)
+                stopping = (abandoned or self.closed or self.e.closed or self.e.fatal or self.elapsed() >= 240
+                            or getattr(self.e.journal, "failure", None) or lag_reason)
+                if (not stopping and reason == "REPAIR_MODE_SL_CANCEL_OLD_STATE"
+                        and self.e.cfg.rdp_sm.repair.path.sl_enabled):
                     self.reason = reason
                     self.closed = True  # Prevent any old TP from starting after the handoff.
                     polling.cancel()
@@ -205,7 +229,8 @@ class TPExecution(SLExecution):
                     await self.e._await_owned(self.handoff.run(), propagate_cancel=False)
                     break
                 if stopping:
-                    self.reason = self.e.fatal or "MARKET_SUBMISSION_CUTOFF"
+                    self.reason = self.e.fatal or ("HIGH_ENTRY_REPAIR_ABANDONED" if abandoned
+                        else lag_reason or "MARKET_SUBMISSION_CUTOFF")
                     goal = None
                 elif health.close_active:
                     reason, goal = "NETWORK_EXECUTION_FAILURE", None
@@ -231,14 +256,17 @@ class TPExecution(SLExecution):
                     self.cancel_old(except_attempt=current)
                 unresolved = [a for a in self.orders if self.unresolved(a)]
                 pending = [task for task in self.posts.values() if not task.done()]
+                if stopping and not pending and self.recovery.waiting():
+                    break
                 if not unresolved and not pending and (goal is None or self.created):
                     break
                 waiting = unresolved and all(a.attempt_id in self.cancel_wanted for a in unresolved)
-                if waiting and self.e.monotonic()-self.last_progress > self.e.cfg.risk.ws_stale_halt_s:
+                if (waiting and not self.recovery.waiting()
+                        and self.e.monotonic()-self.last_progress > self.e.cfg.risk.ws_stale_halt_s):
                     self.reason = "TP_ORDER_PROOF_UNRESOLVED"
                     break
                 self.e.drain_network_events()
-                await asyncio.sleep(.005)
+                await self.wait_changed()
         finally:
             self.closed = True
             self.cancel_old()

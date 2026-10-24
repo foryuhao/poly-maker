@@ -13,7 +13,7 @@ from test_rdp_sm_obi_execution import env as env
 
 @pytest.mark.parametrize("direction,token", [("YES", "1"), ("NO", "2")])
 async def test_sigma_warmup_then_only_signal_side_is_signed_and_posted(env, monkeypatch, direction, token):
-    setup = await setup_obi(env, monkeypatch)
+    setup = await setup_obi(env, monkeypatch, warm_sigma=False)
     venue, executor, feed, _, normal, _, _, pump, _ = setup
     try:
         pump["direction"] = direction

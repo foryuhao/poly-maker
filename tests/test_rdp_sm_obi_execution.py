@@ -102,7 +102,7 @@ class Wire:
         return None
 
 
-async def setup_obi(env, monkeypatch, horizon=0.12):
+async def setup_obi(env, monkeypatch, horizon=0.12, *, warm_sigma=True):
     v, e = await open_executor(env)
     e.monotonic, e.sleep = time.monotonic, asyncio.sleep
     await e._snapshot(include_books=False)
@@ -117,6 +117,14 @@ async def setup_obi(env, monkeypatch, horizon=0.12):
         network.observe("GET", 0.001)
     e.reads.network, e.gateway._client.network = network, network
     anchor = time.monotonic()
+    native_server_time = e.reads.server_time
+
+    async def advancing_server_time():
+        # A frozen START+60 response moves the confirmation band's start to
+        # every account read. Match the socket's advancing official clock.
+        return await native_server_time() + time.monotonic() - anchor
+
+    monkeypatch.setattr(e.reads, "server_time", advancing_server_time)
     feed = SessionFeed(e.meta, cfg.obi, wall=lambda: v.time + time.monotonic() - anchor)
     feed.verify_ticks(v.ticks)
     feed.connect()
@@ -154,7 +162,16 @@ async def setup_obi(env, monkeypatch, horizon=0.12):
             await asyncio.sleep(0.01)
 
     pump_task = asyncio.create_task(pump())
-    await asyncio.sleep(0.015)
+    # Reach the existing late-band three distinct confirmations before cases
+    # that exercise execution, rather than racing a 10ms socket pump.
+    await asyncio.sleep(0.04)
+    if warm_sigma:
+        # Existing execution/guard cases start after NORMAL's sigma warmup.
+        # Keep the separate readiness test able to exercise a cold feed.
+        now, wall = feed.monotonic(), feed.wall()
+        feed.probability_points.extendleft(reversed([
+            (int(wall)-age, now-age, .51, feed.generation) for age in range(11, 0, -1)
+        ]))
     lifecycle = BatchLifecycle(e)
     lifecycle.account = (await e._snapshot(include_books=False))[3]
     normal = NormalController(e, lifecycle)
