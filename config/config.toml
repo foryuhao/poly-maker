@@ -53,6 +53,7 @@ target_delta = "0"
 matched_remaining_tolerance_shares = 0.1
 
 [rdp_sm.ba]
+out_of_order_tolerance_ms = 10.0 # Ignore late frames within this gap; 0 is strict.
 min_sell_shares = "5"
 min_depletion_shares = "5"
 min_refill_shares = "5"
@@ -80,6 +81,7 @@ review_sec = 2.0
 cutoff_sec = 240.0
 
 [rdp_sm.repair.opposite_ba]
+out_of_order_tolerance_ms = 10.0
 # Independent exit BA detector; no holding timeout, TP, SL or T180 transition.
 min_sell_shares = "5"
 min_depletion_shares = "5"

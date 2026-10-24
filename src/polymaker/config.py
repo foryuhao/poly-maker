@@ -164,6 +164,7 @@ class RDPBAConfig(BaseModel):
     max_book_age_ms: float = Field(default=100., gt=0, allow_inf_nan=False)
     max_pair_skew_ms: float = Field(default=200., gt=0, allow_inf_nan=False)
     max_entry_age_ms: float = Field(default=1000., gt=0, allow_inf_nan=False)
+    out_of_order_tolerance_ms: float = Field(default=10., ge=0, allow_inf_nan=False)
     network: RDPBANetworkConfig = Field(default_factory=RDPBANetworkConfig)
 
     @model_validator(mode="after")

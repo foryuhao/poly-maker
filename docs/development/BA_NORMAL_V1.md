@@ -4,6 +4,23 @@
 并已应用下述三秒与网络准入修订；`livecfg/` 仍使用 `obi_v1`。
 原有 OBI 参数及 HD/TP/SL 策略与参数未修改。
 
+## 乱序容差修订（2026-10-25）
+
+`[rdp_sm.ba].out_of_order_tolerance_ms` 默认并显式配置为 `10.0`，
+允许有限非负数；设为 `0` 使用严格乱序判定。对侧退出在
+`[rdp_sm.repair.opposite_ba]` 下独立配置同名参数。
+
+同一 token 的消息源时间戳相对最新已接受盘口/消息时间水位回退不超过 10ms
+（含边界）时，丢弃该消息并保留现有 BA。旧深度在写入共享盘口之前丢弃；
+旧成交、BBO 不产生新证据。所有被丢弃消息均不回退时间水位、不刷新盘口年龄、
+不累计卖量/消耗/回补、不刷新 SELL 年龄或延长 BA/订单期限，也不排序后重放。
+超过容差仍以 `BA_EVENT_OUT_OF_ORDER` 作废该 token 的 BA 并触发现有撤单流程。
+
+容差内丢弃在诊断 `last_rejections` 中记为 `BA_EVENT_OUT_OF_ORDER_IGNORED`，
+不会作为 BA 的 invalid_reason。两种乱序诊断均记录 `rollback_ms` 和
+`out_of_order_tolerance_ms`。入场和退出独立作出保留/作废判断，共享盘口不应用旧帧。
+纯 OBI、无 BA 检测器的盘口处理沿用原有规则。
+
 ## 当前三秒修订（2026-10-24）
 
 - 固定期限为首次有效 SELL 的 T0+3 秒；ACK、重试、新 SELL、补单均不重置。
@@ -46,6 +63,13 @@ HD/TP/SL/ledger/policy/cooldown/abandon 文件已与任务开始源码逐字节�
 
 ## 验证范围
 
+2026-10-25 乱序容差修订回归 **404 项通过**，其中新增 **45 项**覆盖
+入场/对侧退出的深度、完整快照、成交、BBO，10ms 包含边界、超过边界、
+0/5/20ms 配置、独立检测器配置、旧帧不伪造证据/刷新年龄/延长期限，
+以及真实 SDK 最终 Guard 前和 ACK 后收到旧帧的订单生命周期。
+新测试在旧代码上首先复现了晚到 1ms 完整快照覆盖当前盘口的问题。
+Ruff、配置加载和 `git diff --check` 通过；交易边界均使用现有 mock。
+
 已运行 BA 定向测试，以及现有 OBI 信号、确认次数、Maker 执行、取消/reversal、preflight、
 资金边界、网络、sizing、WS frame、周期缓存读入和 Path REPAIR 回归。
 相关集合 525 项通过；最后增加了“排队帧不能在观察期限后确认”及
@@ -63,6 +87,7 @@ normal_entry_mode = "ba_v1"
 # base_size / target_delta / favorite_threshold / max_order_size 保留现有值。
 
 [rdp_sm.ba]
+out_of_order_tolerance_ms = 10.0
 min_sell_shares = "5"
 min_depletion_shares = "5"
 min_refill_shares = "5"
@@ -85,7 +110,7 @@ policy = "hd_tp_sl_v1"
 
 切回 OBI 只需将 `normal_entry_mode` 改回 `"obi_v1"`，下一次启动生效。
 `legacy` 继续兼容原有 `ev_legacy`。未知模式和非法 BA 参数加载即失败。
-观察期限必须短于订单期限，数量、期限和新鲜度必须为有限正数。
+观察期限必须短于订单期限，数量、期限和新鲜度必须为有限正数；乱序容差为有限非负数。
 网络健康与取消重试仍复用 `rdp_sm.obi` 中的现有执行安全参数；
 BA 两侧时间偏差使用自身 `max_pair_skew_ms`；
 其方向阈值、确认次数和信号 horizon 不参与 BA 判断。
@@ -93,7 +118,7 @@ BA 两侧时间偏差使用自身 `max_pair_skew_ms`；
 `max_book_age_ms` 按现有 SessionFeed 语义校验本地 WS 接收后的 monotonic 年龄，
 包括处理排队时间；盘口及成交的源证据年龄另外受 `max_sell_age_ms` 限制。
 不能把 venue 到本机的传输耗时同时套入本地盘口租期。
-时间戳反向、未来时间、重复和 generation 不明仍然作废。
+超过容差的时间戳回退、未来时间、按序处理时检测出的重复成交和 generation 不明仍然作废。
 
 2026-10-24 人工 17:35–17:40 会话排查：收到 563 笔公共成交（160 SELL），
 BA episode/POST 均为 0。进场时段 T49.688 的样本中 SELL=Best Bid=0.8，
@@ -102,7 +127,8 @@ BA episode/POST 均为 0。进场时段 T49.688 的样本中 SELL=Best Bid=0.8�
 现已对齐本地盘口与源证据两个时间预算，未修改参数数值或 REPAIR。
 146 条 `BA_SELL_NOT_FRESH_AT_BID` 是多个检查共用的拒绝计数，
 其中也可能包含价格不等于 Best Bid、缺少盘口等情形，不能全部归因于源时间。
-另有成交/深度时间戳回退，继续保留 Fail-Closed；本次修复不保证随后必然形成完整 BA。
+当时成交/深度时间戳回退仍按零容差 Fail-Closed；2026-10-25 的最新规则见上文。
+源年龄修复本身不保证随后必然形成完整 BA。
 下次人工启动仍使用当前 `config` 中的 `normal_entry_mode = "ba_v1"`。
 
 ## 信号与订单生命周期
@@ -117,8 +143,8 @@ SELL 必须带有效数量、价格及毫秒时间戳，且成交在此前新鲜
 从第一次有效 SELL 的本地 monotonic 接收时间 T0 冻结 token、outcome、Bid 价格/数量、
 generation、episode ID 及两个绝对期限。SELL 达到门槛后，同价位依次累计消耗和补单。
 在 T0+0.75 秒前补单达到门槛即确认；不需要深度完全恢复，不需要 OBI 或 Sigma 信号。
-这条 WS socket 的接收次序必须与每个 token 非递减的官方时间戳一致；
-同一毫秒内用原始 socket/数组序号区分顺序，不排序或补造事件。
+参与 BA 证据的消息按每个 token 非递减的源时间戳处理；容差内晚到旧消息丢弃，
+不参与证据。同一毫秒内用原始 socket/数组序号区分顺序，不排序或补造事件。
 批量帧的每个深度更新都检查，因此不会把先减少、后恢复合并成零变化。
 
 确认后走现有 NORMAL 的账户/库存、资金、TargetDelta、Favorite、动态 tick、最小数量/金额、

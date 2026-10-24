@@ -68,7 +68,25 @@ projection consumes this metadata after every exit outcome, including rejection.
 Omitting it previously raised `KeyError: signed_target_delta` after an otherwise
 reconciled BA exit window and stopped the session with its actual residual.
 
+`out_of_order_tolerance_ms` defaults to `10.0` and is declared independently in
+`[rdp_sm.ba]` and `[rdp_sm.repair.opposite_ba]` in both local configurations.
+Source-time regressions up to and including the configured gap are discarded
+without invalidating existing BA; larger regressions keep the existing invalidation
+and close behavior. Zero enables strict detection. Late depth is discarded before
+updating shared books, even when the entry/exit tolerances differ. Ignored messages
+cannot move the source watermark backwards, refresh a book or SELL clock, contribute
+SELL/depletion/refill evidence, or extend the original BA/order deadline.
+Diagnostics distinguish `BA_EVENT_OUT_OF_ORDER_IGNORED` from invalidating
+`BA_EVENT_OUT_OF_ORDER`, with the actual rollback and configured tolerance in ms.
+
 ## Verification
+
+Ordering-tolerance regression: **404 tests passed**, including **45 new tests**
+covering late full books, depth, trades and BBO in entry and exit detectors,
+inclusive boundaries, configurable strict mode, independent settings, preserved
+books/evidence/clocks, reconnect and native SDK guards/active orders. The old
+implementation failed the new late-snapshot test by overwriting current depth.
+Configuration loading, changed-file Ruff and `git diff --check` passed.
 
 Phase-specific conflict regression: **49 opposite-BA tests passed**, including
 both inventory directions, either order of BA confirmation, NORMAL conflict

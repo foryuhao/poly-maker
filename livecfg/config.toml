@@ -37,6 +37,9 @@ base_size = "5"
 target_delta = "1"
 matched_remaining_tolerance_shares = 0.1
 
+[rdp_sm.ba]
+out_of_order_tolerance_ms = 10.0
+
 [rdp_sm.cooldown]
 max_sec = 20.0
 loss_sec_per_dollar = 100.0
@@ -49,6 +52,7 @@ review_sec = 2.0
 cutoff_sec = 240.0
 
 [rdp_sm.repair.opposite_ba]
+out_of_order_tolerance_ms = 10.0
 min_sell_shares = "5"
 min_depletion_shares = "5"
 min_refill_shares = "5"

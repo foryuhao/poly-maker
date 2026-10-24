@@ -78,7 +78,7 @@ def test_rejected_sell_before_episode_is_visible_without_changing_admission(faul
     elif fault == "huge_timestamp":
         row["timestamp"] = "1e999"
     elif fault == "order":
-        row["timestamp"] = str((feed.wall()-.02)*1000)
+        row["timestamp"] = str((feed.wall()-.03)*1000)
     elif fault == "price":
         row["price"] = ".52"
     else:
@@ -184,7 +184,7 @@ def test_incomplete_evidence_never_signals(missing):
 
 @pytest.mark.parametrize("fault", ["duplicate", "out_of_order", "missing_side", "book_side", "missing_time", "old_sell", "wrong_price", "reconnect", "wrong_token", "wrong_market"])
 def test_bad_data_fails_closed(fault):
-    feed, clock, rows = ba_feed()
+    feed, clock, rows = ba_feed(out_of_order_tolerance_ms=0)
     clock.now = .01
     first = trade(feed)
     feed.apply(first)

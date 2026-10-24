@@ -2,8 +2,8 @@
 
 Only market-channel last_trade_price SELL prints at a fresh noncrossed bid are
 accepted. price_change.side is a book side and is NEVER used as trade direction.
-The socket receive order and nondecreasing venue milliseconds must both agree;
-equal timestamps use the socket ordinal, never a sort or inferred reorder.
+Equal source timestamps use socket order. Small source-time regressions are
+discarded within the configured tolerance, never reordered or used as evidence.
 """
 
 import math
@@ -122,6 +122,10 @@ class BidAbsorption:
             age = (wall-float(number(row["timestamp"])/1000))*1000
             if math.isfinite(age):
                 evidence["trade_source_age_ms"] = age
+            if reason in {"BA_EVENT_OUT_OF_ORDER", "BA_EVENT_OUT_OF_ORDER_IGNORED"}:
+                evidence["rollback_ms"] = float(
+                    number(self.source_times[book.token_id])*1000-number(row["timestamp"]))
+                evidence["out_of_order_tolerance_ms"] = self.cfg.out_of_order_tolerance_ms
         self.last_rejections[key] = evidence
 
     def record(self, ep, event):
@@ -155,13 +159,19 @@ class BidAbsorption:
         self.trade_floor.clear()
         self.selected = self.claimed = None
 
-    def ordered(self, token, row, mono, wall):
+    def ordered(self, kind, row, book, mono, wall, *, source_floor=0):
         self.ordinal += 1
+        token = book.token_id
         stamp = number(row["timestamp"]) / 1000
         if stamp <= 0 or stamp > number(wall) + Decimal(".002"):
             raise ValueError("BA_SOURCE_CLOCK_INVALID")
-        previous = self.source_times.get(token)
-        if previous is not None and stamp < previous:
+        previous = max(self.source_times.get(token, Decimal(0)),
+                       number(book.source_time), number(source_floor))
+        if stamp < previous:
+            self.source_times[token] = previous
+            if (previous-stamp)*1000 <= number(self.cfg.out_of_order_tolerance_ms):
+                self.reject(kind, "BA_EVENT_OUT_OF_ORDER_IGNORED", row, book, mono, wall)
+                return None
             raise ValueError("BA_EVENT_OUT_OF_ORDER")
         self.source_times[token] = stamp
         return float(stamp)
@@ -186,7 +196,8 @@ class BidAbsorption:
 
     def top(self, row, book, mono, wall):
         try:
-            self.ordered(book.token_id, row, mono, wall)
+            if self.ordered("best_bid_ask", row, book, mono, wall) is None:
+                return
             bid, ask = number(row["best_bid"]), number(row["best_ask"])
             self.tops[book.token_id] = (bid, ask)
             if (bid, ask) != (book.best_bid, book.best_ask):
@@ -210,7 +221,9 @@ class BidAbsorption:
         self.counts["sell_events" if row.get("side") == "SELL" else
                     "buy_events" if row.get("side") == "BUY" else "unknown_side_events"] += 1
         try:
-            stamp = self.ordered(token, row, mono, wall)
+            stamp = self.ordered("last_trade_price", row, book, mono, wall)
+            if stamp is None:
+                return
             price, qty = number(row["price"]), number(row["size"])
             if row.get("side") not in {"SELL", "BUY"} or qty <= 0 or not 0 < price < 1:
                 raise ValueError("BA_TRADE_DIRECTION_OR_QUANTITY_UNKNOWN")
@@ -256,10 +269,11 @@ class BidAbsorption:
             self.reject("last_trade_price", str(exc), row, book, mono, wall)
             self.invalidate(str(exc), token)
 
-    def depth(self, row, old, new, mono, wall):
+    def depth(self, row, old, new, mono, wall, *, source_floor=0):
         token = new.token_id
         try:
-            self.ordered(token, row, mono, wall)
+            if self.ordered("depth", row, old, mono, wall, source_floor=source_floor) is None:
+                return
             self.tops.pop(token, None)  # A later depth event supersedes a BBO-only notice.
             ep = self.states.get(token)
             if ep is None:

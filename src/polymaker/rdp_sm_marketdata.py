@@ -446,9 +446,25 @@ class SessionFeed:
                             updated[token] = replace(b, tick=tick)
                             tick_changed = True
                             continue
-                        stamp = float(number(row["timestamp"]) / 1000)
+                        exact_stamp = number(row["timestamp"]) / 1000
+                        stamp = float(exact_stamp)
                         if stamp <= 0 or int(stamp) > int(received_wall) + 2:
                             raise ValueError("WS_SOURCE_CLOCK_INVALID")
+                        detectors = self.ba_detectors()
+                        if detectors:
+                            source_floor = max([number(b.source_time)] + [
+                                detector.source_times.get(token, Decimal(0))
+                                for detector in detectors])
+                            if exact_stamp < source_floor:
+                                # Never apply late depth to shared books. Each
+                                # detector independently tolerates or retires BA.
+                                for detector in detectors:
+                                    detector.depth(row, b, b, received_mono, received_wall,
+                                                   source_floor=source_floor)
+                                self.notice("WS_OLD_SOURCE_IGNORED", token_id=token,
+                                            incoming_timestamp=stamp,
+                                            previous_timestamp=float(source_floor))
+                                continue
                         if int(b.source_time - stamp) > 0:
                             for detector in self.ba_detectors():
                                 detector.invalidate("BA_EVENT_OUT_OF_ORDER", token)
