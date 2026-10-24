@@ -57,6 +57,14 @@ configuration completeness only; it does not inherit price-policy calibration
 requirements or claim performance validation. Capital remains the current
 20-USDC session budget. Switching configuration does not restart a running bot.
 
+BA exit sizing metadata supplies the same reporting contract as other REPAIR
+controllers: `signed_target_delta="0"`, `target_sizing_applied=false`, and
+`favorite_data_validity="NOT_USED"`. These fields describe the zero-target exit;
+they do not introduce price or Favorite signals. The common M3 inventory/PnL
+projection consumes this metadata after every exit outcome, including rejection.
+Omitting it previously raised `KeyError: signed_target_delta` after an otherwise
+reconciled BA exit window and stopped the session with its actual residual.
+
 ## Verification
 
 Offline tests use the existing dummy signer, real SDK and mocked HTTP/WS/venue
@@ -64,6 +72,14 @@ fixtures. Cover opposite directions, stale/pre-opening/conflicting BA, separate
 entry/exit claims, shared sizing, complete/partial/no fills, repeated signals,
 UNKNOWN ACK, final POST guards, T180 independence, high-price independence,
 T240, inclusive residual completion and FIFO handoff of large reverse residuals.
+Six additional M3 coordinator tests cover real BA entry followed by rejected
+exit/retry, partial exit and full exit, each with and without the execution cache.
+They exercise inventory reporting, continuation and human rendering together;
+the rejected-exit case reproduced the missing-field exception before the fix.
+Reporting-fix regression: **332 passed**, including the six new coordinator
+cases, BA quantity/admission, common sizing/PnL projection, CLI rendering and
+small-residual tests. The original 362-test quantity regression remains a
+separate run; this fix adds reporting metadata without changing execution rules.
 
 Focused regression: **362 passed**, including all **32 opposite-BA tests**.
 Coverage includes 0.005-share tails, the inclusive 2.5-share boundary, legal

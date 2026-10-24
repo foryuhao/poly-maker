@@ -88,6 +88,8 @@ class OppositeBAController(BANormalController):
                             Side.BUY, float(price), float(qty), window_id)
         return {direction: ((quote,), {"policy": "opposite_ba_v1",
             "episode_id": ep.episode_id, "order_policy": "OPPOSITE_BA_ANCHOR_BID",
+            "signed_target_delta": "0", "target_sizing_applied": False,
+            "favorite_data_validity": "NOT_USED",
             "actual_delta_before": str(delta), "target_remaining_delta": "0",
             "quantity": str(qty), "anchor_bid_price": str(price)})}
 
