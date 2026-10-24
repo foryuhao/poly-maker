@@ -285,17 +285,18 @@ class BidAbsorption:
             self.reject("depth", str(exc), row, new, mono, wall)
             self.invalidate(str(exc), token)
 
-    def evaluate(self, snapshot):
+    def evaluate(self, snapshot, *, outcome=None):
         with self.feed.lock:
             now = self.feed.monotonic()
             valid = []
             for ep in self.states.values():
                 self.expire(ep, now)
                 if (not ep.invalid_reason and ep.ba_confirmed_mono is not None
-                        and ep.generation == snapshot.generation):
+                        and ep.generation == snapshot.generation
+                        and (outcome is None or ep.outcome == outcome)):
                     valid.append(ep)
-            # Retire both conflicting opportunities, rather than entering a
-            # surviving stale opportunity when the other one times out.
+            # NORMAL considers both sides and retires conflicting entries.
+            # REPAIR scopes selection to the position's opposite outcome first.
             if len(valid) > 1:
                 self.invalidate("BA_BOTH_SIDES_VALID")
                 valid = []

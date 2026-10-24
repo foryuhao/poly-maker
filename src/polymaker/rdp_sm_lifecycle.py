@@ -25,7 +25,7 @@ from polymaker.rdp_sm_execution import (
 )
 from polymaker.rdp_sm_quotes import QuoteUnavailable
 from polymaker.rdp_sm_recovery import PreparationReadRetry, reason_code, retry_read
-from polymaker.rdp_sm_signal import evaluate
+from polymaker.rdp_sm_signal import Signal, evaluate
 
 
 async def _drain_task(task):
@@ -118,14 +118,23 @@ class BatchLifecycle:
         if key == self.wait_reason:
             return
         self.wait_reason = key
+        if opposite_exit:
+            yes, no = self.executor.economic_inventory()
+            opposite = "NO" if yes > no else "YES" if no > yes else None
+            # Diagnostic evaluation must not retire a valid exit as a NORMAL
+            # conflict before the controller gets to select the opposite BA.
+            signal = (detector.evaluate(snapshot, outcome=opposite) if opposite else
+                      Signal("NONE", snapshot.snapshot_id))
+        else:
+            signal = (detector.evaluate(snapshot) if detector is not None else
+                      evaluate(snapshot, self.executor.cfg.rdp_sm.obi.threshold))
         self.executor.record(
             "sm_opposite_ba_wait" if opposite_exit else "sm_ba_wait" if self.ba_mode else "sm_obi_wait",
             {
                 "reason": reason,
                 "snapshot_id": snapshot.snapshot_id,
                 "phase_inventory": self.executor.inventory_observation,
-                "signal": asdict(detector.evaluate(snapshot) if detector is not None
-                                 else evaluate(snapshot, self.executor.cfg.rdp_sm.obi.threshold)),
+                "signal": asdict(signal),
                 "ws_diagnostics": diagnostics,
                 "health": asdict(health) if health else None,
                 **({"ba_admission": ba_admission} if ba_admission is not None else {}),

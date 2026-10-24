@@ -50,17 +50,62 @@ def test_only_fresh_opposite_ba_selects(delta, token, outcome):
     assert c.signal_block_reason == "OPPOSITE_BA_PREDATES_POSITION"
 
 
-def test_same_side_conflict_expiry_and_reconnect_cannot_exit():
+def test_same_side_expiry_and_reconnect_cannot_exit():
     c, feed, clock = controller_fixture()
     clock.now = .01
     absorption(feed, "1")
-    assert c.select(feed.snapshot())[0] is None
-    absorption(feed, "2")
     assert c.select(feed.snapshot())[0] is None
     clock.now = 10
     assert c.select(feed.snapshot())[0] is None
     feed.connect()
     assert not feed.opposite_ba.states
+
+
+@pytest.mark.parametrize("delta,held,opposite,outcome", [
+    ("5", "1", "2", "NO"), ("-5", "2", "1", "YES"),
+])
+@pytest.mark.parametrize("opposite_first", [False, True])
+def test_both_sides_select_only_position_opposite(delta, held, opposite, outcome, opposite_first):
+    c, feed, clock = controller_fixture(delta)
+    clock.now = .01
+    for token in ((opposite, held) if opposite_first else (held, opposite)):
+        absorption(feed, token)
+    snapshot = feed.snapshot()
+    # NORMAL still retires both opportunities in its independent detector.
+    normal = BANormalController(c.executor, c.lifecycle)
+    assert normal.select(snapshot)[0] is None
+    assert all(ep.invalid_reason == "BA_BOTH_SIDES_VALID" for ep in feed.ba.states.values())
+    direction, signal = c.select(snapshot)
+    assert direction == signal.direction == outcome
+    assert c.episodes.selected.token_id == opposite
+    assert all(ep.invalid_reason is None for ep in c.episodes.states.values())
+    y, n = c.executor.economic_inventory()
+    quote = c.candidates(snapshot, y, n, "both-valid")[outcome][0][0]
+    assert (quote.outcome, quote.size) == (outcome, 5)
+    claim = c.episodes.claim(signal)
+    assert claim and claim[1] == outcome
+    c.episodes.consume(claim)
+    c.episodes.release(claim)
+    assert not c.episodes.states[held].consumed
+    assert c.select(snapshot)[0] is None  # Never fall back to the held side.
+
+
+@pytest.mark.parametrize("fault", ["preopening", "expired", "sell_age", "anchor"])
+def test_both_sides_do_not_bypass_opposite_evidence_guards(fault):
+    c, feed, clock = controller_fixture(max_book_age_ms=1000)
+    clock.now = .01
+    absorption(feed, "1")
+    absorption(feed, "2")
+    if fault == "preopening":
+        c.executor.repair_episode["first_fill_monotonic"] = .02
+    elif fault == "expired":
+        clock.now = c.episodes.states["2"].order_deadline
+    elif fault == "sell_age":
+        clock.now += .501
+    else:
+        feed.apply(depth(feed, 5, "2", price=".50"))
+    assert c.select(feed.snapshot())[0] is None
+    assert not c.candidates(feed.snapshot(), D(5), D(0), "invalid-opposite")
 
 
 @pytest.mark.parametrize("delta,quantity", [("2.5", None), ("3", 5), ("5", 5), ("5.009", 5.01), ("20", 15)])
@@ -149,6 +194,41 @@ async def test_no_signal_keeps_position_even_after_t180_and_ignores_abandonment(
         assert not e.check_repair_abandonment()
         assert len(v.post_requests) == 1
         assert e.trading_state == "REPAIR" and e.economic_inventory() == (D(5), D(0))
+    finally:
+        await cleanup(setup)
+
+
+async def test_wait_logging_preserves_both_valid_exit_through_sdk_and_completion(env, monkeypatch):
+    setup, c = await setup_exit(env, monkeypatch)
+    v, e, feed, lifecycle = setup[:4]
+    try:
+        absorption(feed, "1")
+        lifecycle.wait("OPPOSITE_BA_NO_SIGNAL", lifecycle.snapshot(c, *e.economic_inventory()))
+        absorption(feed, "2")
+        # Logging must use the same position-specific selection as admission.
+        lifecycle.wait("NETWORK_RECOVERING", lifecycle.snapshot(c, *e.economic_inventory()))
+        assert all(ep.invalid_reason is None for ep in c.episodes.states.values())
+        assert c.select(lifecycle.snapshot(c, *e.economic_inventory()))[0] == "NO"
+
+        def filled(venue):
+            oid = e.attempts[-1].expected_order_id
+            if venue.rows[oid]["asset_id"] == "2" and not venue.rows[oid]["associate_trades"]:
+                venue.fill(oid, "both-valid-exit", 5)
+            reflect_positions(venue)
+
+        v.on_cancel = filled
+        result, sizing = await c.repair(*e.economic_inventory(), "both-valid-exit")
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert len(v.post_requests) == 2
+        assert [(q.outcome, q.size) for q in result.requested_quotes] == [("NO", 5)]
+        assert sizing["signed_target_delta"] == "0"
+        assert e.economic_inventory() == (D(5), D(5))
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        records = journal_records(e.journal.path)
+        waits = [r["data"]["payload"] for r in records if r["kind"] == "sm_opposite_ba_wait"]
+        assert waits[-1]["signal"]["label"] == "VALID_NO"
+        assert not any(r["data"]["payload"].get("invalid_reason") == "BA_BOTH_SIDES_VALID"
+                       for r in records if r["kind"] == "sm_opposite_ba_episode")
     finally:
         await cleanup(setup)
 

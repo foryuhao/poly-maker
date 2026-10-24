@@ -23,7 +23,7 @@ async def until(predicate):
 
 
 @pytest.mark.parametrize("cached", [False, True])
-@pytest.mark.parametrize("exit_result", ["rejected_retry", "partial", "full"])
+@pytest.mark.parametrize("exit_result", ["rejected_retry", "partial", "full", "both_sides"])
 async def test_main_loop_projects_ba_exit_and_continues(env, monkeypatch, tmp_path, cached, exit_result):
     setup = await setup_obi(env, monkeypatch)
     v, e, feed, _, _, wire = setup[:6]
@@ -66,6 +66,8 @@ async def test_main_loop_projects_ba_exit_and_continues(env, monkeypatch, tmp_pa
         await until(lambda: result.normal_windows == 1)
         if exit_result == "rejected_retry":
             wire.reject_index = 0
+        if exit_result == "both_sides":
+            absorption(feed, "2")  # A fresh held-side BA must not veto exit.
         absorption(feed, "1")
         await until(lambda: result.repair_windows == 1)
         first = result.windows[-1]

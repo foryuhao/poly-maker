@@ -37,11 +37,12 @@ class OppositeBAController(BANormalController):
     def select(self, snapshot):
         e = self.executor
         with self.lifecycle.feed.lock:
-            signal = self.episodes.evaluate(snapshot)
-            ep = self.episodes.selected
             y, n = e.economic_inventory()
             opposite = "NO" if y > n else "YES" if n > y else None
             held = "YES" if y > n else "NO" if n > y else None
+            signal = (self.episodes.evaluate(snapshot, outcome=opposite) if opposite else
+                      Signal("NONE", snapshot.snapshot_id))
+            ep = self.episodes.selected
             reason = (
                 "OPPOSITE_BA_NO_POSITION" if e.repair_episode is None or not repair_required(y, n) else
                 "OPPOSITE_BA_DIRECTION_HANDOFF_UNPROVEN" if e.repair_episode.get("side") != held else

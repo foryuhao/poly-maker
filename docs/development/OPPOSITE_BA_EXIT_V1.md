@@ -14,7 +14,10 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
    are independent; consuming an exit never consumes a future entry opportunity.
 3. Net YES selects NO BA; net NO selects YES BA. The first SELL must be at or
    after the earliest known opening fill. Missing opening-time evidence blocks
-   admission. Both-side conflicts, source ordering, age and reconnect rules
+   admission. NORMAL retires both opportunities when both sides have valid BA.
+   REPAIR evaluates only the net position's opposite outcome: a valid held-side
+   BA does not veto, consume or invalidate that exit. Waiting diagnostics use
+   the same outcome scope. Source ordering, age, anchor and reconnect checks
    remain those of BidAbsorption. Old or expired opportunities are not replayed.
 4. Submit one GTC/post-only BUY per BA episode at its anchor Bid. The shared
    `repair_buy_quantity` function preserves the price policy's rules: round up
@@ -66,6 +69,15 @@ Omitting it previously raised `KeyError: signed_target_delta` after an otherwise
 reconciled BA exit window and stopped the session with its actual residual.
 
 ## Verification
+
+Phase-specific conflict regression: **49 opposite-BA tests passed**, including
+both inventory directions, either order of BA confirmation, NORMAL conflict
+rejection, no held-side fallback, waiting diagnostics, SDK execution/completion
+and both-sided exits through the M3 loop with and without cached reads. Five
+new selection/diagnostic cases failed on the previous implementation before
+the fix. Another **400 related tests passed** across BA entry/network admission,
+shared sizing/reporting, small residuals, the original price path, OBI execution
+and cooldown. Ruff on the changed Python files and `git diff --check` passed.
 
 Offline tests use the existing dummy signer, real SDK and mocked HTTP/WS/venue
 fixtures. Cover opposite directions, stale/pre-opening/conflicting BA, separate
