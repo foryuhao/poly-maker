@@ -20,7 +20,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -100,6 +100,27 @@ def maker_buy_size(price: Decimal, inventory_gap: Decimal,
     """Round up the gap, share minimum and BUY notional to the SDK quantity grid."""
     return max(inventory_gap, MIN_MAKER_BUY_SHARES, min_order_size,
                MIN_MAKER_BUY_NOTIONAL / price).quantize(Decimal(".01"), rounding=ROUND_CEILING)
+
+
+def repair_buy_quantity(executor, side: str, price: Decimal, delta: Decimal,
+                        cash: Decimal) -> Decimal:
+    """Shared repair sizing: legal minimums, decreasing exposure and capital limits."""
+    qty = maker_buy_size(price, abs(delta), Decimal(str(executor.meta.min_order_size)))
+    if abs(delta) > executor.cfg.rdp_sm.repair.delta_limit:
+        qty = min(qty, executor.cfg.rdp_sm.max_order_size,
+                  (cash/price).quantize(Decimal(".01"), rounding=ROUND_FLOOR))
+        if qty < maker_buy_size(price, Decimal(0), Decimal(str(executor.meta.min_order_size))):
+            raise ValueError("LIMIT_RECOVERY_MINIMUM_NOT_FEASIBLE")
+    if qty > executor.cfg.rdp_sm.max_order_size:
+        raise ValueError("MINIMUM_ORDER_EXCEEDS_MAXIMUM")
+    after = delta+(qty if side == "YES" else -qty)
+    if abs(after) >= abs(delta):
+        raise ValueError("REPAIR_WOULD_NOT_REDUCE_DELTA")
+    if not executor.delta_candidate_allowed(delta, side, qty):
+        raise ValueError("SESSION_DELTA_LIMIT")
+    if price*qty > cash:
+        raise ValueError("OFFICIAL_OR_SESSION_CAPITAL_INSUFFICIENT")
+    return qty
 
 
 def _explicit_maker_rejection(item, notional) -> bool:
@@ -1003,8 +1024,7 @@ class SMWindowExecutor:
                             **({"ba": cfg.rdp_sm.ba.model_dump(mode="json")} if cfg.rdp_sm.normal_entry_mode == "ba_v1" else {}),
                             "repair": cfg.rdp_sm.repair.model_dump(mode="json"),
                             "cooldown": cfg.rdp_sm.cooldown.model_dump(mode="json"),
-                            "repair_exit_threshold_shares": ("0" if cfg.rdp_sm.repair.policy == "opposite_ba_v1"
-                                                             else str(MIN_REPAIR_EXPOSURE)),
+                            "repair_exit_threshold_shares": str(MIN_REPAIR_EXPOSURE),
                         }
                         if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
                         else {}
@@ -1255,7 +1275,7 @@ class SMWindowExecutor:
 
     def repair_inventory_complete(self):
         y, n = self.economic_inventory()
-        return y == n if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1" else not repair_required(y, n)
+        return not repair_required(y, n)
 
     def _complete_repair_episode(self):
         _require(self.safe_to_continue and self.inventory_mismatch is None,
@@ -1272,10 +1292,10 @@ class SMWindowExecutor:
             with self.reads.feed.lock:
                 for detector in self.reads.feed.ba_detectors():
                     detector.invalidate("BA_EXIT_ROUND_COMPLETED")
-        self.record("sm_repair_episode", {"event": "COMPLETE_PAIRED" if opposite_ba else "COMPLETE_WITH_RESIDUAL_TOLERANCE",
+        self.record("sm_repair_episode", {"event": "COMPLETE_WITH_RESIDUAL_TOLERANCE",
             "opening_window": ep["opening_window"], "direction_leg": ep.get("direction_leg", 0),
             "actual_delta": str(y-n), "residual_shares": str(abs(y-n)),
-            "threshold_shares": "0" if opposite_ba else str(MIN_REPAIR_EXPOSURE), "inventory_flat": y == n,
+            "threshold_shares": str(MIN_REPAIR_EXPOSURE), "inventory_flat": y == n,
             "residual_retained_in_ledger": True})
         self.record("sm_cooldown", result)
         self.repair_episode = None

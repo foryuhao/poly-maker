@@ -6,8 +6,9 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
 
 ## Contract
 
-1. An opening economic fill creates REPAIR ownership. Any positive unpaired
-   residual, including <=2.5 shares, retains that ownership and blocks NORMAL.
+1. An opening economic fill creates REPAIR ownership. Both exit policies use
+   the existing inclusive 2.5-share completion threshold. Actual quantities and
+   acquisition costs remain in the ledger even when the round completes.
 2. A dedicated instance of the existing BidAbsorption detector consumes the
    same ordered market messages as the entry detector. Parameters and claims
    are independent; consuming an exit never consumes a future entry opportunity.
@@ -15,9 +16,12 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
    after the earliest known opening fill. Missing opening-time evidence blocks
    admission. Both-side conflicts, source ordering, age and reconnect rules
    remain those of BidAbsorption. Old or expired opportunities are not replayed.
-4. Submit one GTC/post-only BUY per BA episode at its anchor Bid. Use the smaller
-   of the residual and configured maximum order, rounded down to 0.01 shares.
-   If that is below the legal minimum/notional, wait without enlarging it.
+4. Submit one GTC/post-only BUY per BA episode at its anchor Bid. The shared
+   `repair_buy_quantity` function preserves the price policy's rules: round up
+   the residual and legal minimum/notional to 0.01 shares, require reduced
+   absolute Delta and the existing Delta/capital/max-order admission. A true
+   Delta breach may use a feasible partial recovery. Smaller reverse residuals
+   are allowed; an equal or larger absolute residual is rejected.
 5. The deadline is the earlier of the original BA deadline and T240. Recheck
    BA claim, direction, anchor, freshness, POST/live budgets, revision, account,
    capital and Delta immediately before the native POST. Consumption happens
@@ -25,10 +29,14 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
 6. Anchor/data invalidation, deadline or execution failure closes the order.
    Partial fills remain actual inventory. No overlap/replacement is allowed
    until the ownership barrier resolves the previous order, including UNKNOWN
-   submissions and delayed fills. Then wait for a new BA if still unpaired.
-7. Exact net zero plus safe order/fill/account reconciliation completes the
-   round. The existing FIFO cooldown and NORMAL time/admission rules apply.
-   A small residual is not a completed round. No automatic reverse leg exists.
+   submissions and delayed fills. Then wait for a new BA if repair is still
+   required. An active order is closed when actual residual reaches <=2.5 shares
+   or its direction reverses; that close still requires full reconciliation.
+7. Residual <=2.5 plus safe order/fill/account reconciliation completes the
+   round. Existing FIFO cooldown and NORMAL time/admission rules apply. A larger
+   reverse residual uses `install_reverse_episode` after the ownership barrier,
+   retaining FIFO cost and the same cooldown round. Its mode is WAIT_OPPOSITE_BA,
+   and it waits for a fresh opposite BA from the residual opening-fill time.
 8. No hold timeout, price/volatility exit, T180 forced exit, or high-entry-price
    abandonment applies. T240 stops new submissions; cancellation and accounting
    continue. Residual inventory remains until settlement. The conservative
@@ -53,19 +61,20 @@ requirements or claim performance validation. Capital remains the current
 
 Offline tests use the existing dummy signer, real SDK and mocked HTTP/WS/venue
 fixtures. Cover opposite directions, stale/pre-opening/conflicting BA, separate
-entry/exit claims, exact sizing, complete/partial/no fills, repeated signals,
+entry/exit claims, shared sizing, complete/partial/no fills, repeated signals,
 UNKNOWN ACK, final POST guards, T180 independence, high-price independence,
-T240, small residual ownership and return to NORMAL only after actual pairing.
+T240, inclusive residual completion and FIFO handoff of large reverse residuals.
 
-Final focused regression: **256 passed**, including all **26 opposite-BA tests**,
-existing BA entry/admission, price policy, path execution, small residuals,
-cooldown, sync companion and configuration tests. New-module Ruff and
-`git diff --check` pass. Both local configuration checks pass; `config` selects
-BA exits and `livecfg` selects HD/TP/SL.
-An additional **72 tests passed** for queue follow-up, rejection latency,
-runtime regressions and SL execution/recovery after the interrupted expanded run.
+Focused regression: **362 passed**, including all **32 opposite-BA tests**.
+Coverage includes 0.005-share tails, the inclusive 2.5-share boundary, legal
+minimum overbuy, large reverse residuals, fresh BA after FIFO handoff and actual
+cost conservation. The same run covers existing BA entry/admission, price
+policy/path execution, SL execution/recovery, small residuals, cooldown, MATCHED
+order tolerance, inventory precision, known dust and sync companion tests.
+New-module Ruff and `git diff --check` pass. `config` selects BA exits and
+`livecfg` selects HD/TP/SL; their configuration checks pass.
 
-The expanded 1,834-test RDP run was **not all green**: two cached/timing cases
+The earlier expanded 1,834-test RDP run was **not all green**: two cached/timing cases
 failed in the combined run and passed when rerun separately. The run was then
 stopped at `test_repair_preparation_quote_race.py`, which did not complete.
 That file also exceeded a 30-second limit in an isolated checkout of the

@@ -126,8 +126,8 @@ def fifo_residual(fills, stamps, yes_token):
     return [replace(fill, size=float(qty)) for q in queues.values() for fill, qty in q]
 
 
-def install_reverse_episode(executor):
-    """TP/SL-created reverse inventory starts an ordinary HD policy, never NORMAL."""
+def install_reverse_episode(executor, *, mode="HD"):
+    """A proven reverse residual above tolerance starts a new leg in the same round."""
     ep = executor.repair_episode
     if ep is None:
         return False
@@ -165,7 +165,7 @@ def install_reverse_episode(executor):
         executor.repair_episode["first_fill_monotonic"] = first["fill_monotonic"]
         executor.repair_episode["opening_monotonic"] = first["fill_monotonic"]
     executor.record("sm_repair_reverse", {
-        "chain_id": chain, "direction_leg": leg, "mode": "HD", "side": side,
+        "chain_id": chain, "direction_leg": leg, "mode": mode, "side": side,
         "original_qty": str(qty), "cost_basis": "FIFO", "first_fill_elapsed": first["elapsed"],
         "original_cost": executor.repair_episode["original_cost"],
         "sources": [{"trade_id": f.trade_id, "order_id": f.maker_order_id,

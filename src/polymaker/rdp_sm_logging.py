@@ -440,7 +440,7 @@ class HumanRunLog:
                     lines.append(f"SL Wait: {p['reason']} | Delta={p['actual_delta']} | "
                                  f"ExecutionDelta={p['execution_delta']}")
                 elif name == "sm_repair_reverse":
-                    lines.append(f"REPAIR Reverse: HD | {p['side']} {p['original_qty']} shares | "
+                    lines.append(f"REPAIR Reverse: {p.get('mode', 'HD')} | {p['side']} {p['original_qty']} shares | "
                                  f"Cost={p['original_cost']} | Basis=FIFO")
                 elif name == "sm_repair_small_exposure":
                     lines.append(f"REPAIR: {p.get('action', 'WAIT_WITH_RESIDUAL')} | Delta={value(p['actual_delta'])} shares | "

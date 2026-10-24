@@ -5,14 +5,14 @@ import asyncio
 import math
 import time
 from dataclasses import asdict
-from decimal import ROUND_FLOOR, Decimal
+from decimal import Decimal
 from threading import RLock
 from types import SimpleNamespace
 
 from polymaker.domain import Side, TradeState
 from polymaker.execution.filltruth import reconcile_owned_order
 from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
-from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, maker_buy_size
+from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, repair_buy_quantity
 from polymaker.rdp_sm_repair import RepairController
 from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
 
@@ -389,26 +389,10 @@ class PathRepairController(RepairController):
         if price is None:
             return None
         y, n = e.economic_inventory()
-        qty = maker_buy_size(price, abs(y-n), Decimal(str(e.meta.min_order_size)))
         cash = max(Decimal(0), getattr(e, "capital_limit", CAPITAL_LIMIT)-e.committed())
         if self.lifecycle.account is not None:
             cash = min(cash, Decimal(str(self.lifecycle.account["basic_spendable_budget_usd"])))
-        if abs(y-n) > self.cfg.delta_limit:
-            # A true breach must still admit a feasible partial restoration if
-            # full pairing cannot be funded or exceeds the order-size bound.
-            qty = min(qty, e.cfg.rdp_sm.max_order_size,
-                      (cash/price).quantize(Decimal(".01"), rounding=ROUND_FLOOR))
-            if qty < maker_buy_size(price, Decimal(0), Decimal(str(e.meta.min_order_size))):
-                raise ValueError("LIMIT_RECOVERY_MINIMUM_NOT_FEASIBLE")
-        if qty > e.cfg.rdp_sm.max_order_size:
-            raise ValueError("MINIMUM_ORDER_EXCEEDS_MAXIMUM")
-        after = y-n+(qty if side == "YES" else -qty)
-        if abs(after) >= abs(y-n):
-            raise ValueError("REPAIR_WOULD_NOT_REDUCE_DELTA")
-        if not e.delta_candidate_allowed(y-n, side, qty):
-            raise ValueError("SESSION_DELTA_LIMIT")
-        if price*qty > cash:
-            raise ValueError("OFFICIAL_OR_SESSION_CAPITAL_INSUFFICIENT")
+        qty = repair_buy_quantity(e, side, price, y-n, cash)
         return {**decision, "policy": "hd_tp_sl_v1", "action": "BUY", "side": side,
                 "price": float(price), "quantity": float(qty), "tick": str(book.tick),
                 "cancel_at": 180. if self.policy.mode == "TP" else 240.,

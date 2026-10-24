@@ -1,11 +1,12 @@
-"""Opposite BA exits: fresh absorption, anchor Bid, exact pairing, no hold timeout."""
+"""Opposite BA exits with shared repair quantities and residual tolerance."""
 from __future__ import annotations
 
 import math
-from decimal import ROUND_FLOOR, Decimal
+from decimal import Decimal
 
 from polymaker.domain import Side
-from polymaker.rdp_sm_execution import WindowQuote, maker_buy_size
+from polymaker.rdp_sm import repair_required
+from polymaker.rdp_sm_execution import WindowQuote, repair_buy_quantity
 from polymaker.rdp_sm_normal import BANormalController
 from polymaker.rdp_sm_signal import Signal
 
@@ -42,8 +43,8 @@ class OppositeBAController(BANormalController):
             opposite = "NO" if y > n else "YES" if n > y else None
             held = "YES" if y > n else "NO" if n > y else None
             reason = (
-                "OPPOSITE_BA_NO_POSITION" if e.repair_episode is None or opposite is None else
-                "OPPOSITE_BA_DIRECTION_CHANGED" if e.repair_episode.get("side") != held else
+                "OPPOSITE_BA_NO_POSITION" if e.repair_episode is None or not repair_required(y, n) else
+                "OPPOSITE_BA_DIRECTION_HANDOFF_UNPROVEN" if e.repair_episode.get("side") != held else
                 "OPPOSITE_BA_NO_SIGNAL" if signal.direction != opposite else
                 "OPPOSITE_BA_PREDATES_POSITION" if ep.signal_start_mono < self._opening_time() else
                 None
@@ -71,16 +72,17 @@ class OppositeBAController(BANormalController):
         if delta != current_y-current_n or (delta > 0) != (direction == "NO"):
             self.quote_block_reason = "OPPOSITE_BA_INVENTORY_CHANGED"
             return {}
-        # The lifecycle requires the previous ownership barrier before preparing.
-        # Never round UP the residual to the minimum order or open a reverse leg.
-        qty = min(abs(delta), self.executor.cfg.rdp_sm.max_order_size).quantize(
-            Decimal(".01"), rounding=ROUND_FLOOR)
-        minimum = maker_buy_size(price, Decimal(0), Decimal(str(self.executor.meta.min_order_size)))
-        if qty < minimum:
-            self.quote_block_reason = "OPPOSITE_BA_RESIDUAL_BELOW_MINIMUM"
-            return {}
         if price != book.best_bid or not 0 < price < book.best_ask:
             self.quote_block_reason = "BA_ANCHOR_INVALID"
+            return {}
+        e = self.executor
+        cash = max(Decimal(0), e.capital_limit-e.committed())
+        if self.lifecycle.account is not None:
+            cash = min(cash, Decimal(str(self.lifecycle.account["basic_spendable_budget_usd"])))
+        try:
+            qty = repair_buy_quantity(e, direction, price, delta, cash)
+        except ValueError as exc:
+            self.quote_block_reason = str(exc)
             return {}
         quote = WindowQuote(self.executor.meta.condition_id, book.token_id, direction,
                             Side.BUY, float(price), float(qty), window_id)
@@ -99,17 +101,26 @@ class OppositeBAController(BANormalController):
         return "MARKET_SUBMISSION_CUTOFF" if elapsed >= self.cutoff else None
 
     async def review_active(self, intent, deadline):
-        # No price review, sigma, TP/SL handoff or small-residual early completion.
+        # Shared residual and direction handling, without price/volatility signals.
         y, n = self.executor.economic_inventory()
-        if y == n:
-            return "OPPOSITE_BA_PAIRED"
+        if not repair_required(y, n):
+            return "REPAIR_SMALL_EXPOSURE"
         if (y > n) != (intent.direction == "NO"):
             return "OPPOSITE_BA_DIRECTION_CHANGED"
         return None
 
+    def reconcile_episode(self):
+        from polymaker.rdp_sm_sl_ledger import install_reverse_episode
+
+        if self.executor.safe_to_continue and install_reverse_episode(self.executor, mode="WAIT_OPPOSITE_BA"):
+            self.lifecycle.cached_slot = None
+            return True
+        return False
+
     async def repair(self, yes, no, window_id):
         e = self.executor
         e.update_repair_episode()
+        self.reconcile_episode()
         if e.repair_episode is None or e.cooldown.active:
             await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
             return None

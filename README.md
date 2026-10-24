@@ -63,12 +63,15 @@ Only an unconsumed, currently valid opposite BA whose first SELL is at or after
 the opening fill can submit a BUY at that BA's anchor Bid. The BA deadline starts
 at its first SELL and is never extended by preparation, submission or retries.
 
-Partial fills remain owned by REPAIR. Invalid/expired BA orders are cancelled
-and reconciled before another independent opposite BA can submit. Quantity is
-rounded down to the legal grid and never enlarged past the residual to meet a
-minimum order. Untradeable residuals remain in inventory and block NORMAL.
-Only exact net pairing plus the existing order/fill/account close barrier ends
-the round; existing cooldown and NORMAL time/admission rules then apply.
+Invalid/expired BA orders are cancelled and reconciled before another independent
+opposite BA can submit. BA and the price policy share repair sizing: round up to
+the legal quantity/minimum notional, require smaller absolute net exposure after
+the proposed BUY, and enforce the same capital, Delta and maximum-order limits.
+This can produce a smaller opposite-side residual. Residuals of **at most 2.5
+shares**, inclusive, end the round once the existing order/fill/account close
+barrier is safe; their exact quantities and costs remain in the ledger. Larger
+reverse residuals use the existing FIFO direction handoff and wait for a fresh
+opposite BA. Existing cooldown and NORMAL time/admission rules then apply.
 
 There is no holding timeout, TP/SL price signal, sigma requirement, T180 forced
 exit, or high-entry-price abandonment. The existing T240 market submission

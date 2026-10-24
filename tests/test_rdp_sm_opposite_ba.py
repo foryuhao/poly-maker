@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from polymaker.config import Config, RDPBAConfig, RDPSMConfig
 from polymaker.rdp_sm import session_capital_limit
 from polymaker.rdp_sm_ba import BidAbsorption
+from polymaker.rdp_sm_execution import SMWindowExecutor
 from polymaker.rdp_sm_normal import BANormalController
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
 from polymaker.repair_policy import repair_readiness
@@ -32,8 +33,10 @@ def controller_fixture(delta="5", **settings):
     d = D(delta)
     e = SimpleNamespace(cfg=SimpleNamespace(rdp_sm=cfg),
         economic_inventory=lambda: (max(d, D(0)), max(-d, D(0))),
+        capital_limit=D(20), committed=lambda: D(0),
         repair_episode={"first_fill_monotonic": .005, "side": "YES" if d > 0 else "NO"}, meta=feed.meta)
-    return OppositeBAController(e, SimpleNamespace(feed=feed)), feed, clock
+    e.delta_candidate_allowed = lambda delta, side, qty: SMWindowExecutor.delta_candidate_allowed(e, delta, side, qty)
+    return OppositeBAController(e, SimpleNamespace(feed=feed, account=None)), feed, clock
 
 
 @pytest.mark.parametrize("delta,token,outcome", [("5", "2", "NO"), ("-5", "1", "YES")])
@@ -60,17 +63,18 @@ def test_same_side_conflict_expiry_and_reconnect_cannot_exit():
     assert not feed.opposite_ba.states
 
 
-@pytest.mark.parametrize("delta,quantity", [("3", None), ("5", 5), ("5.009", 5), ("20", 15)])
-def test_exact_residual_sizing_never_rounds_up(delta, quantity):
+@pytest.mark.parametrize("delta,quantity", [("2.5", None), ("3", 5), ("5", 5), ("5.009", 5.01), ("20", 15)])
+def test_shared_repair_sizing_uses_minimums_and_reduces_delta(delta, quantity):
     c, feed, clock = controller_fixture(delta)
     clock.now = .01
     absorption(feed, "2")
     plans = c.candidates(feed.snapshot(), D(delta), D(0), "exit")
     if quantity is None:
-        assert not plans and c.quote_block_reason == "OPPOSITE_BA_RESIDUAL_BELOW_MINIMUM"
+        assert not plans and c.quote_block_reason == "OPPOSITE_BA_NO_POSITION"
     else:
         quote = plans["NO"][0][0]
-        assert quote.size == quantity and D(str(quote.size)) <= D(delta)
+        assert quote.size == quantity
+        assert abs(D(delta)-D(str(quote.size))) < abs(D(delta))
         assert quote.price == float(feed.opposite_ba.states["2"].anchor_bid_price)
 
 
@@ -86,13 +90,13 @@ def test_entry_and_exit_have_independent_claims_and_parameters():
     assert not feed.opposite_ba.selected.consumed
 
 
-def test_unexpected_reverse_inventory_does_not_start_a_reverse_repair_leg():
+def test_reverse_inventory_requires_ownership_handoff_before_submission():
     c, feed, clock = controller_fixture("-5")
     c.executor.repair_episode["side"] = "YES"
     clock.now = .01
     absorption(feed, "1")
     assert c.select(feed.snapshot())[0] is None
-    assert c.signal_block_reason == "OPPOSITE_BA_DIRECTION_CHANGED"
+    assert c.signal_block_reason == "OPPOSITE_BA_DIRECTION_HANDOFF_UNPROVEN"
 
 
 def test_configuration_and_readiness_do_not_depend_on_price_parameters():
@@ -149,7 +153,7 @@ async def test_no_signal_keeps_position_even_after_t180_and_ignores_abandonment(
         await cleanup(setup)
 
 
-@pytest.mark.parametrize("fill_size", [0, 3, 5])
+@pytest.mark.parametrize("fill_size", [0, 2.5, 3, 4.995, 5])
 async def test_signal_order_full_partial_or_no_fill_preserves_ownership(env, monkeypatch, fill_size):
     setup, c = await setup_exit(env, monkeypatch)
     v, e, feed = setup[:3]
@@ -174,9 +178,10 @@ async def test_signal_order_full_partial_or_no_fill_preserves_ownership(env, mon
         assert ep.consumed
         assert result.t0_monotonic == ep.signal_start_mono
         assert result.fill_deadline_monotonic == ep.order_deadline
-        assert e.economic_inventory() == (D(5), D(fill_size))
-        assert (e.repair_episode is None) is (fill_size == 5)
-        assert e.trading_state == ("NORMAL" if fill_size == 5 else "REPAIR")
+        assert e.economic_inventory() == (D(5), D(str(fill_size)))
+        complete = D(5)-D(str(fill_size)) <= D("2.5")
+        assert (e.repair_episode is None) is complete
+        assert e.trading_state == ("NORMAL" if complete else "REPAIR")
         assert await c.repair(*e.economic_inventory(), "no-reuse") is None
         assert len(v.post_requests) == 2
         events = journal_records(e.journal.path)
@@ -185,17 +190,101 @@ async def test_signal_order_full_partial_or_no_fill_preserves_ownership(env, mon
         await cleanup(setup)
 
 
-@pytest.mark.parametrize("quantity", [.01, 2.5, 3])
-async def test_small_position_does_not_return_normal_or_overbuy(env, monkeypatch, quantity):
+@pytest.mark.parametrize("quantity", [.005, .01, 2.5])
+async def test_small_residual_returns_normal_without_erasing_inventory(env, monkeypatch, quantity):
     setup, c = await setup_exit(env, monkeypatch, size=quantity)
     v, e, feed = setup[:3]
     try:
-        assert e.repair_episode is not None and e.trading_state == "REPAIR"
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
         absorption(feed, "2")
         assert await c.repair(*e.economic_inventory(), "too-small") is None
         assert len(v.post_requests) == 1
         assert e.economic_inventory() == (D(str(quantity)), D(0))
+        assert e.repair_episode is None
+        events = journal_records(e.journal.path)
+        complete = [r["data"]["payload"] for r in events if r["kind"] == "sm_repair_episode"
+                    and r["data"]["payload"].get("event") == "COMPLETE_WITH_RESIDUAL_TOLERANCE"]
+        assert complete[-1]["threshold_shares"] == "2.5"
+        assert not complete[-1]["inventory_flat"]
+    finally:
+        await cleanup(setup)
+
+
+@pytest.mark.parametrize("quantity", [2.500001, 3])
+async def test_minimum_order_can_reverse_into_small_residual_and_end_round(env, monkeypatch, quantity):
+    setup, c = await setup_exit(env, monkeypatch, size=quantity)
+    v, e, feed = setup[:3]
+    try:
         assert e.repair_episode is not None
+        absorption(feed, "2")
+
+        def fill(venue):
+            oid = e.attempts[-1].expected_order_id
+            if venue.rows[oid]["asset_id"] == "2" and not venue.rows[oid]["associate_trades"]:
+                venue.fill(oid, "minimum-exit", 5)
+            reflect_positions(venue)
+
+        v.on_cancel = fill
+        result, _ = await c.repair(*e.economic_inventory(), "minimum-exit")
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert result.requested_quotes[0].size == 5
+        assert e.economic_inventory() == (D(str(quantity)), D(5))
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        assert len(v.post_requests) == 2
+    finally:
+        await cleanup(setup)
+
+
+async def test_large_reverse_residual_reuses_fifo_handoff_and_waits_for_new_ba(env, monkeypatch):
+    setup, c = await setup_exit(env, monkeypatch)
+    v, e, feed, lifecycle, _, _, _, pump, _ = setup
+    try:
+        # A low-priced NO exit needs >5 shares to meet the existing $1 minimum.
+        pump.update(bid=".87", yes_ask=".89", no_bid=".11", no_ask=".13")
+        await asyncio.sleep(.025)
+        absorption(feed, "2")
+        round_id = e.cooldown.round_id
+
+        def fill(venue):
+            oid = e.attempts[-1].expected_order_id
+            row = venue.rows[oid]
+            if row["asset_id"] == "2" and not row["associate_trades"]:
+                venue.fill(oid, "nine-point-one-no", 9.1)
+            reflect_positions(venue)
+
+        v.on_cancel = fill
+        result, _ = await c.repair(*e.economic_inventory(), "low-price-exit")
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert result.requested_quotes[0].size == 9.1
+        assert e.economic_inventory() == (D(5), D("9.1"))
+        ep = e.repair_episode
+        assert ep["side"] == "NO" and ep["direction_leg"] == 1
+        assert D(ep["original_qty"]) == D("4.1") and D(ep["original_cost"]) == D(".451")
+        assert e.cooldown.round_id == round_id and e.trading_state == "REPAIR"
+        assert not c.reconcile_episode()
+        lifecycle.account = (await e._snapshot(include_books=False))[3]
+        assert await c.repair(*e.economic_inventory(), "no-new-signal") is None
+        assert len(v.post_requests) == 2
+
+        def pair(venue):
+            oid = e.attempts[-1].expected_order_id
+            if venue.rows[oid]["asset_id"] == "1" and not venue.rows[oid]["associate_trades"]:
+                venue.fill(oid, "five-yes", 5)
+            reflect_positions(venue)
+
+        v.on_cancel = pair
+        absorption(feed, "1")
+        result, _ = await c.repair(*e.economic_inventory(), "reverse-ba-exit")
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert e.economic_inventory() == (D(10), D("9.1"))
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        assert e.cooldown.last_result["round_id"] == round_id
+        assert D(e.cooldown.last_result["paired_shares"]) == D("9.1")
+        assert len(v.post_requests) == 3
+        records = journal_records(e.journal.path)
+        reverse = [r["data"]["payload"] for r in records if r["kind"] == "sm_repair_reverse"]
+        assert len(reverse) == 1 and reverse[0]["mode"] == "WAIT_OPPOSITE_BA"
+        assert not any(r["kind"] in {"sm_sl_signal", "sm_tp_signal", "sm_repair_policy_state"} for r in records)
     finally:
         await cleanup(setup)
 
