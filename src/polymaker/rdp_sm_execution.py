@@ -827,7 +827,7 @@ class _SMProcessor(UserEventProcessor):
                 released.pop(ev.order_id, None)
                 self.executor.fatal = "SL_TERMINAL_EVIDENCE_CONTRADICTION"
             if previous is not None and not _terminal(ev, self.executor.matched_remaining_tolerance_shares):
-                self.executor.fatal = "TERMINAL_LIVE_CONTRADICTION"
+                self.executor.terminal_conflict(ev.order_id, source="ORDER_EVENT")
             self.executor.invalidate("ORDER_EVIDENCE_CHANGED", ev.order_id)
             with suppress(Exception):
                 self.executor.record("sm_order", asdict(ev))
@@ -890,6 +890,7 @@ class SMWindowExecutor:
         self.preparation_started = False
         self.known: set[str] = set()
         self.terminal: dict[str, OrderEvent] = {}
+        self.terminal_conflicts: dict[str, float] = {}
         self.proofs: dict[str, dict[str, Any]] = {}
         # Keep rejected signed IDs observable, without inventing exchange orders
         # or terminal OrderEvents for submissions the venue declared invalid.
@@ -1114,6 +1115,26 @@ class SMWindowExecutor:
         self.reason = reason
         if order_id is not None:
             self.proofs.pop(order_id, None)
+
+    def terminal_conflict(self, oid, *, source, observed_after=None):
+        """Revoke trading authority until full proof newer than the conflict."""
+        stamp = time.monotonic() if observed_after is None else observed_after
+        previous = self.terminal_conflicts.get(oid, 0.0)
+        if stamp <= previous:
+            return
+        self.terminal_conflicts[oid] = stamp
+        # Do not overwrite unrelated fatal states, e.g. a failed WAL or mutation.
+        if self.fatal is None:
+            self.fatal = "TERMINAL_LIVE_CONTRADICTION"
+        self.invalidate("TERMINAL_LIVE_CONTRADICTION", oid)
+        getattr(self, "sl_terminal_quantities", {}).pop(oid, None)
+        if self.shared_reads is not None:
+            cache = self.shared_reads
+            cache.last_write = max(cache.last_write, stamp)
+            cache.order_writes[oid] = max(cache.order_writes.get(oid, 0.0), stamp)
+            cache.service.track_orders({oid: stamp})
+        self.record("sm_terminal_recheck", {"order_id": oid, "source": source,
+            "proof_after_monotonic": stamp, "risk_retained": True})
 
     @property
     def safe_to_continue(self) -> bool:
@@ -1542,8 +1563,7 @@ class SMWindowExecutor:
         self._check_canceled_submission_observations()
         for order in orders:
             if order.order_id in self.terminal:
-                self.fatal = "TERMINAL_LIVE_CONTRADICTION"
-                self.invalidate("OFFICIAL_OPEN_ORDER_CONTRADICTS_TERMINAL", order.order_id)
+                self.terminal_conflict(order.order_id, source="OPEN_ORDERS")
                 self.record("sm_terminal_open_order_contradiction", asdict(order))
                 _require(False, self.fatal)
             if order.order_id in self.known:
@@ -1604,8 +1624,7 @@ class SMWindowExecutor:
                         "OPEN_ORDER_ECONOMICS_CONTRADICT_OWNERSHIP",
                     )
                 if oid in self.terminal:
-                    self.fatal = "TERMINAL_LIVE_CONTRADICTION"
-                    self.invalidate("OFFICIAL_OPEN_ORDER_CONTRADICTS_TERMINAL", oid)
+                    self.terminal_conflict(oid, source="OPEN_ORDER_SNAPSHOT")
                     _require(False, self.fatal)
                 policy = self.reads.account_policy
                 if (policy is not None and policy.use_starting_balance
@@ -1832,7 +1851,7 @@ class SMWindowExecutor:
         )
         UserEventProcessor.on_order(self.processor, ev, self.meta.condition_id)
         if oid in self.terminal and not _terminal(ev, self.matched_remaining_tolerance_shares):
-            self.fatal = "TERMINAL_LIVE_CONTRADICTION"
+            self.terminal_conflict(oid, source="ORDER_DETAIL")
         _require(_terminal(ev, self.matched_remaining_tolerance_shares), "ORDER_NOT_TERMINAL")
         official = self._official_fills(trades, {oid})
         if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and (
@@ -2118,6 +2137,16 @@ class SMWindowExecutor:
             if cancel and self.known:
                 await self._cancel_known()
             await self._recover_pagination()
+            terminal_rechecks = dict(self.terminal_conflicts)
+            if terminal_rechecks:
+                # A terminal detail alone cannot explain a still-open order.
+                # Cached scopes require all collection reads after the conflict;
+                # uncached callers perform this new complete read explicitly.
+                opened = await self.gateway.open_orders()
+                for order in opened:
+                    if order.order_id in self.terminal:
+                        self.terminal_conflict(order.order_id, source="CLOSE_OPEN_ORDERS")
+                        _require(False, "TERMINAL_LIVE_CONTRADICTION")
             if any(a.outcome in {"UNKNOWN", "INTENT"} for a in self.attempts):
                 try:
                     candidates = await self.gateway.open_orders()
@@ -2187,13 +2216,24 @@ class SMWindowExecutor:
                 all(a.outcome in {"ACK", "VERIFIED", "REJECTED", "ABORTED"} for a in self.attempts),
                 "UNKNOWN_PLACEMENT_EXPOSURE",
             )
-            _require(self.fatal is None, self.fatal or "FATAL_EXECUTION_STATE")
+            recovered_terminal = (self.fatal == "TERMINAL_LIVE_CONTRADICTION"
+                                  and bool(terminal_rechecks)
+                                  and self.terminal_conflicts == terminal_rechecks)
+            _require(self.fatal is None or recovered_terminal, self.fatal or "FATAL_EXECUTION_STATE")
             _require(getattr(self.journal, "failure", None) is None, "JOURNAL_WRITE_FAILED")
             _require(not self.merge_pending, "MERGE_PENDING")
             _require(
                 self.gateway._client.pagination_failure is None,
                 self.gateway._client.pagination_failure or "ACCOUNT_PAGINATION_UNRESOLVED",
             )
+            if recovered_terminal:
+                self.fatal = None
+                self.terminal_conflicts.clear()
+                self.record("sm_terminal_recovered", {
+                    "order_ids": sorted(terminal_rechecks),
+                    "proof_after_monotonic": terminal_rechecks,
+                    "source": "FRESH_COMPLETE_ORDER_AND_TRADE_CLOSE_PROOF",
+                })
             self.reason = None
             self.proof_revision = self.revision
             self.proof_pagination_revision = self.gateway._client.pagination_revision

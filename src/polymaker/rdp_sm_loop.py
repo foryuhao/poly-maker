@@ -34,6 +34,7 @@ from polymaker.rdp_sm_execution import (
 from polymaker.rdp_sm_quotes import QuoteUnavailable, make_quotes
 from polymaker.rdp_sm_recovery import (
     UNCERTAIN_MUTATIONS,
+    WAITABLE_EXECUTION_STATES,
     PreparationReadRetry,
     pause_reason,
     preflight_pause,
@@ -118,6 +119,7 @@ class SMTradingLoop:
         self.pause_reason = None
         self.pause_stage = None
         self.merge_disabled_reason = None
+        self.merge_retry_deadline = 0.0
 
     def _estimated_elapsed(self):
         return 300 - (self.market_deadline - self.monotonic()) if self.market_deadline is not None else None
@@ -148,16 +150,29 @@ class SMTradingLoop:
             return False  # Retain all remaining inventory for settlement.
         if self.executor.inventory_mismatch is not None:
             return False  # A restricted REPAIR lease never authorizes settlement.
-        if not self.production or self.merge_disabled_reason is not None:
+        if (not self.production or self.merge_disabled_reason is not None
+                or self.monotonic() < self.merge_retry_deadline):
             return False
-        from polymaker.rdp_sm_merge import merge_confirmed_pairs
+        from polymaker.rdp_sm_merge import MergeRateLimited, merge_confirmed_pairs
 
         try:
             merged = await merge_confirmed_pairs(self.executor, elapsed_s=elapsed,
                                                 on_progress=self._display_events)
         except Exception as exc:
+            if isinstance(exc, MergeRateLimited):
+                delay = max(5.0, exc.retry_after or 0.0)
+                self.merge_retry_deadline = self.monotonic() + delay
+                self.executor.record("sm_settlement_retry", {
+                    "reason": str(exc), "retry_after_s": delay,
+                    "retry_deadline_monotonic": self.merge_retry_deadline,
+                    "inventory_and_cost_retained": True,
+                })
+                if self.observer is not None:
+                    self.observer.emit("recovery", {"status": "MERGE_DEFERRED", "reason": str(exc),
+                        "retry_after_s": delay, "elapsed_s": self._estimated_elapsed(), "stage": "merge"})
+                return False
             reason = str(exc)
-            if (self.executor.fatal in UNCERTAIN_MUTATIONS or pause_reason(reason)
+            if (self.executor.fatal in WAITABLE_EXECUTION_STATES or pause_reason(reason)
                     or not self.executor.merge_pending and retry_read(exc)):
                 await self._pause(result, self.executor.fatal or reason_code(exc), "close")
                 return False
@@ -278,12 +293,12 @@ class SMTradingLoop:
                 result.stop_reason = ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM" if executor.inventory_mismatch
                                       else self.pause_reason or "MARKET_CUTOFF")
                 break
-            if executor.fatal is not None and executor.fatal not in UNCERTAIN_MUTATIONS:
+            if executor.fatal is not None and executor.fatal not in WAITABLE_EXECUTION_STATES:
                 _require(False, executor.fatal)
             if (executor.attempts or self.pause_stage == "close") and not executor.safe_to_continue:
                 safe = await executor.verify_close(cancel=True)
                 if not safe:
-                    if executor.fatal not in UNCERTAIN_MUTATIONS and not pause_reason(executor.reason):
+                    if executor.fatal not in WAITABLE_EXECUTION_STATES and not pause_reason(executor.reason):
                         _require(False, executor.fatal or executor.reason or "M2_PREVIOUS_WINDOW_BLOCKED")
                     await self._pause(result, executor.fatal or executor.reason, "close")
                     continue
@@ -307,7 +322,7 @@ class SMTradingLoop:
                 _require(meta.condition_id == self.expected_market.condition_id
                          and meta.tokens == self.expected_market.tokens, "DISCOVERED_MARKET_CHANGED")
             if executor.attempts and not executor.safe_to_continue:
-                if executor.fatal is not None and executor.fatal not in UNCERTAIN_MUTATIONS:
+                if executor.fatal is not None and executor.fatal not in WAITABLE_EXECUTION_STATES:
                     _require(False, executor.fatal)
                 await self._pause(result, executor.reason or "M2_PREVIOUS_EVIDENCE_CHANGED", "close")
                 continue
@@ -415,7 +430,7 @@ class SMTradingLoop:
             if window.close_barrier != "SAFE_TO_CONTINUE":
                 result.blocked_windows += 1
                 reason = window.block_reason or "M2_WINDOW_BLOCKED"
-                if executor.fatal not in UNCERTAIN_MUTATIONS and not pause_reason(reason):
+                if executor.fatal not in WAITABLE_EXECUTION_STATES and not pause_reason(reason):
                     result.stop_reason, failed = reason, True
                     break
                 stage = "capital" if reason in {"OFFICIAL_CAPITAL_INSUFFICIENT", "TEST_CAPITAL_LIMIT_EXCEEDED"} else "close"
@@ -517,7 +532,8 @@ class SMTradingLoop:
                 if elapsed >= TRADING_END_S:
                     result.stop_reason = "MARKET_CUTOFF"
                     break
-                if executor.fatal is not None or getattr(executor.journal, "failure", None):
+                if ((executor.fatal is not None and executor.fatal not in WAITABLE_EXECUTION_STATES)
+                        or getattr(executor.journal, "failure", None)):
                     failed = True
                     result.stop_reason = executor.fatal or "JOURNAL_WRITE_FAILED"
                     break
@@ -530,6 +546,7 @@ class SMTradingLoop:
                         result, executor.reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
                     )
                     continue
+                self._resume("close")
                 try:
                     async with executor.lock:
                         meta, _, _, account = await executor._await_owned(

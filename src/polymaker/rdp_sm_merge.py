@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from contextlib import suppress
@@ -19,6 +20,15 @@ from polymaker.settlement_sweep import (
 from polymaker.state.tracker import exceeds_tolerance
 
 MERGE_START_S = 240
+
+
+class MergeRateLimited(RuntimeError):
+    """An explicit SDK 429 before a transaction handle exists; safe to defer."""
+
+    def __init__(self, retry_after=None):
+        super().__init__("MERGE_RATE_LIMITED")
+        self.retry_after = (float(retry_after) if type(retry_after) in (int, float)
+                            and math.isfinite(retry_after) and retry_after >= 0 else None)
 
 
 def _progress(callback):
@@ -142,6 +152,10 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
                 position, collateral = await executor._await_owned(
                     executor.gateway._io(merger.prepare, executor.meta, before))
             except Exception as exc:
+                from polymarket.errors import RateLimitError
+
+                if isinstance(exc, RateLimitError):
+                    raise MergeRateLimited(exc.retry_after) from None
                 reason = "BUILDER_AUTH_MISSING" if str(exc) == "BUILDER_AUTH_MISSING" else type(exc).__name__
                 raise RuntimeError(f"MERGE_PREPARE_FAILED:{reason}") from None
             _require(executor.safe_to_continue and executor.revision == revision,
@@ -175,9 +189,16 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
                 result = await executor._await_owned(executor.gateway._io(
                     merger.settle, handle, position, collateral))
             except Exception as exc:
-                from polymarket.errors import UserInputError
+                from polymarket.errors import RateLimitError, UserInputError
                 if isinstance(exc, UserInputError) and not submitted:
                     result = {"status": "NOT_SUBMITTED", "error_type": "UserInputError"}
+                elif isinstance(exc, RateLimitError) and not submitted:
+                    # The pinned SDK returns a handle immediately after acceptance.
+                    # An explicit 429 before that is rejection, unlike a transport
+                    # timeout or a rate limit while polling an accepted transaction.
+                    limited = MergeRateLimited(exc.retry_after)
+                    result = {"status": "NOT_SUBMITTED", "error_type": "RateLimitError",
+                              "http_status": 429, "retry_after_s": limited.retry_after}
                 else:
                     executor.fatal = "MERGE_UNKNOWN"
                     executor.record("sm_merge_result", {**intent, "status": "UNKNOWN",
@@ -197,6 +218,8 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             executor.record("sm_merge_result", {**intent, **result})
             _progress(on_progress)
             executor.merge_pending = False
+            if result.get("error_type") == "RateLimitError":
+                raise MergeRateLimited(result["retry_after_s"])
             _require(result["status"] == "CONFIRMED", f"MERGE_{result['status']}")
             for token, cost in released.items():
                 executor.merged_cost[token] = executor.merged_cost.get(token, Decimal(0)) + cost
@@ -268,7 +291,9 @@ def validate_merge_history(group, session, summary, check):
                 continue
             check(kind == "sm_merge_result")
             if p["status"] == "NOT_SUBMITTED":
-                check(mid not in submitted and p.get("error_type") == "UserInputError")
+                check(mid not in submitted and (
+                    p.get("error_type") == "UserInputError"
+                    or p.get("error_type") == "RateLimitError" and p.get("http_status") == 429))
             else:
                 check(mid in submitted and isinstance(p["tx_hash"], str)
                       and re.fullmatch(r"0x[0-9a-fA-F]{64}", p["tx_hash"]))

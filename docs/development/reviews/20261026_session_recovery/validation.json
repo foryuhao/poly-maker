@@ -1,0 +1,44 @@
+{
+  "checked_at": "2026-10-26T11:49:31.617982+08:00",
+  "final_targeted_regression": {
+    "status": "PASS",
+    "passed": 251,
+    "seconds": 85.7,
+    "new_regression_cases": 12,
+    "command": "PYTHONPATH=src:tests .venv/bin/pytest -q tests/test_rdp_sm_terminal_recovery.py tests/test_rdp_sm_merge.py tests/test_rdp_sm_m2_execution.py tests/test_rdp_sm_recovery.py tests/test_rdp_sm_cached_reads.py tests/test_rdp_sm_opposite_ba_loop.py tests/test_rdp_sm_cli_logging.py tests/test_repair_queue_followup.py tests/test_repair_rejection_latency.py tests/test_repair_runtime_regressions.py tests/test_repair_sl_execution.py tests/test_repair_sl_recovery.py tests/test_repair_small_exposure.py --junitxml=docs/development/reviews/20261026_session_recovery/targeted.xml",
+    "log": "targeted.log",
+    "junit": "targeted.xml",
+    "warnings": "2 existing pytest record_property/xunit2 compatibility warnings"
+  },
+  "expanded_regression": {
+    "status": "INCOMPLETE_NOT_A_PASS",
+    "command": "PYTHONPATH=src:tests .venv/bin/pytest -q tests/test_rdp_sm_*.py tests/test_repair_*.py",
+    "reason": "Long wait in test_repair_preparation_quote_race.py::test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[TP]; interrupted, then terminated. No completed full-suite result. Any F markers after interruption are not treated as an attributable regression result."
+  },
+  "original_code_comparison": {
+    "status": "TIMEOUT",
+    "timeout_seconds": 25,
+    "exit_code": 124,
+    "method": "Copy local package into a temporary directory; restore the five changed source modules from git HEAD; run the same old TP test with only that source directory on PYTHONPATH.",
+    "test": "tests/test_repair_preparation_quote_race.py::test_quote_crosses_during_flush_retries_and_pairs_without_session_exit[TP]",
+    "limitation": "Reproduces the long wait in baseline within the bounded check; does not establish the eventual baseline test outcome.",
+    "log": "baseline_tp.log"
+  },
+  "ruff": {
+    "status": "PASS",
+    "output": "All checks passed!"
+  },
+  "git_diff_check": "PASS",
+  "tracked_config_diff_empty": true,
+  "trading_started_or_restarted_by_this_task": false,
+  "source_sha256": {
+    "src/polymaker/rdp_sm_execution.py": "6fed4b96b98ec778f091b4b5aab90d1d04b73a416ddf91d3780ea42400e37f50",
+    "src/polymaker/rdp_sm_loop.py": "90ca75e1a7e76ab74f028c0d39b33e7f49335e3f1c55dca05d02dbf3d97b43f4",
+    "src/polymaker/rdp_sm_cached_reads.py": "0e7a057a56b188133583c138f992c9975bcade6b4c2163d8494e610f1a7a5ed3",
+    "src/polymaker/rdp_sm_merge.py": "1dabd69630698ddac39217d69d286ebd9699fb56e7073da7cd5dae9c910491b3",
+    "src/polymaker/rdp_sm_recovery.py": "6d61af0bdf6fddf70b9e0ab7533164707899217c6471f752606c20d7522aeef5",
+    "tests/test_rdp_sm_terminal_recovery.py": "0b5eb1936957cbfca53e29c8caf90ef018812ae895d9c0f4655544890d2b3cf8",
+    "tests/test_rdp_sm_merge.py": "e67603078a07415b3acacbf8fe018104932934841dd535796c90e5558e482b9a",
+    "tests/test_rdp_sm_m2_execution.py": "a98147390a41cf2301df36adc9d905d23794279f33bcfc94dc43a825ab104163"
+  }
+}

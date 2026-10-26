@@ -378,9 +378,9 @@ class CachedExecutionReads:
                 return False
         for row in good["open_orders"].data:
             if row["order_id"] in self.e.terminal:
-                self.e.fatal = "TERMINAL_LIVE_CONTRADICTION"
-                self.e.invalidate(self.e.fatal, row["order_id"])
-                raise _Issue(SessionStatus.BLOCKED, self.e.fatal)
+                self.e.terminal_conflict(row["order_id"], source="CACHED_OPEN_ORDERS",
+                    observed_after=good["open_orders"].completed_monotonic)
+                raise _Issue(SessionStatus.BLOCKED, "TERMINAL_LIVE_CONTRADICTION")
         if self.inflight:
             return False
         if details:

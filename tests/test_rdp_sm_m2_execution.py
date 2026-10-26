@@ -346,16 +346,19 @@ async def test_e06_h02_late_confirmed_invalidates_complete_and_requires_official
     assert len(v.posts) == 4 and next_result.yes_inventory == 2
 
 
-async def test_e07_h01_terminal_then_live_blocks_even_old_official_terminal(env):
+async def test_e07_h01_terminal_then_live_requires_fresh_full_close_before_resume(env):
     v, executor = await open_executor(env)
     assert (await executor.execute_window("w1", quotes())).close_barrier == "SAFE_TO_CONTINUE"
     live = normalize_order({**v.rows["o-1"], "status": "LIVE"})
     executor.processor.on_order(live, CID)
     assert not executor.safe_to_continue and executor.committed() == Decimal("2.45")
-    assert not await executor.verify_close()  # no timestamp explanation: latch contradiction
+    # An event cannot clear itself. A later complete REST order/trade/open-order
+    # proof can establish that the regression was transient.
+    assert executor.fatal == "TERMINAL_LIVE_CONTRADICTION"
+    assert await executor.verify_close()
+    assert executor.fatal is None and not executor.terminal_conflicts
     result = await executor.execute_window("w2", quotes("w2"))
-    assert result.close_barrier == "BLOCKED" and len(v.posts) == 2
-    assert result.block_reason == "TERMINAL_LIVE_CONTRADICTION"
+    assert result.close_barrier == "SAFE_TO_CONTINUE" and len(v.posts) == 4
     assert any(c[1] == "/data/order/o-1" for c in v.calls)
 
 
@@ -530,7 +533,11 @@ async def test_official_live_after_terminal_also_blocks_next_post(env):
     v.rows["o-1"]["status"] = "LIVE"
     result = await executor.execute_window("w2", quotes("w2"))
     assert result.close_barrier == "BLOCKED" and len(v.posts) == 2
-    assert executor.fatal == "TERMINAL_LIVE_CONTRADICTION"
+    # The candidate was rejected. Its cleanup canceled the reopened order and
+    # completed a fresh proof; this must not authorize the rejected candidate.
+    assert executor.fatal is None
+    assert any(r['kind'] == 'sm_terminal_recovered' for r in journal_records(executor.journal.path))
+    assert await executor.verify_close()
 
 
 async def test_new_trade_during_multi_order_close_cannot_reuse_first_order_proof(env):

@@ -1,0 +1,15 @@
+........................................................................ [ 28%]
+........................................................................ [ 57%]
+........................................................................ [ 86%]
+...................................                                      [100%]
+=============================== warnings summary ===============================
+tests/test_repair_queue_followup.py::test_identity_bound_canceled_post_allows_fresh_account_without_timeout
+  tests/test_repair_queue_followup.py:99: PytestWarning: record_property is incompatible with junit_family 'xunit2' (use 'legacy' or 'xunit1')
+    async def test_identity_bound_canceled_post_allows_fresh_account_without_timeout(
+
+tests/test_repair_rejection_latency.py::test_sl_native_rejection_closes_on_fresh_account_without_delete_loop
+  tests/test_repair_rejection_latency.py:26: PytestWarning: record_property is incompatible with junit_family 'xunit2' (use 'legacy' or 'xunit1')
+    async def test_sl_native_rejection_closes_on_fresh_account_without_delete_loop(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+251 passed, 2 warnings in 85.70s (0:01:25)

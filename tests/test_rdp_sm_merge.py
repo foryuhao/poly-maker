@@ -391,3 +391,70 @@ async def test_unknown_merge_cannot_create_realized_profit(env):
     assert result.realized_merge_pnl == 0
     assert result.sizing_report['pair_pnl'] == 'UNKNOWN'
     assert result.final_close_barrier == 'BLOCKED'
+
+
+@pytest.mark.parametrize('stage', ['prepare', 'submit'])
+async def test_explicit_merge_rate_limit_defers_with_inventory_and_safe_retry(env, monkeypatch, stage):
+    from polymarket.errors import RateLimitError
+
+    from polymaker.rdp_sm_merge import SMMerger
+    from polymaker.settlement_sweep import PolymarketSettlementBackend
+
+    v, ex = await paired(env)
+    v.time = START + 240
+    owner = SMMerger if stage == 'prepare' else PolymarketSettlementBackend
+    method = 'prepare' if stage == 'prepare' else 'submit_merge'
+    native = getattr(owner, method)
+    attempts = []
+
+    def limited_once(self, *args):
+        attempts.append(v.mono)
+        if len(attempts) == 1:
+            raise RateLimitError('explicit HTTP 429', retry_after=12)
+        return native(self, *args)
+
+    monkeypatch.setattr(owner, method, limited_once)
+    loop, result = inventory_report(ex)
+    loop.production = True
+    loop.monotonic = lambda: v.mono
+    assert not await loop._merge(result, 240)
+    assert not ex.merge_pending and ex.fatal is None and ex.safe_to_continue
+    assert ex.merged_pairs == 0 and ex.committed() == Decimal('4.85')
+    deadline = loop.merge_retry_deadline
+    assert deadline == v.mono + 12
+    for _ in range(3):
+        assert not await loop._merge(result, 240)
+    assert len(attempts) == 1 and not v.merge_submissions
+    v.mono = deadline
+    assert await loop._merge(result, 252)
+    assert len(attempts) == 2 and len(v.merge_submissions) == 1
+    assert ex.merged_pairs == 5 and ex.committed() == 0 and ex.safe_to_continue
+    records = journal_records(ex.journal.path)
+    rejected = [r['data']['payload'] for r in records if r['kind'] == 'sm_merge_result'
+                and r['data']['payload']['status'] == 'NOT_SUBMITTED']
+    assert len(rejected) == (stage == 'submit')
+    if rejected:
+        assert rejected[0]['http_status'] == 429 and rejected[0]['retry_after_s'] == 12
+        assert rejected[0]['error_type'] == 'RateLimitError'
+
+
+async def test_rate_limit_after_merge_acceptance_stays_unknown_and_cannot_resubmit(env, monkeypatch):
+    from polymarket.errors import RateLimitError
+
+    from polymaker.rdp_sm_merge import SMMerger
+
+    v, ex = await paired(env)
+    v.time = START + 240
+
+    def poll_limited(*args):
+        raise RateLimitError('poll rejected after acceptance', retry_after=12)
+
+    monkeypatch.setattr(SMMerger, 'settle', poll_limited)
+    with pytest.raises(RuntimeError, match='MERGE_UNKNOWN'):
+        await merge_confirmed_pairs(ex)
+    assert ex.fatal == 'MERGE_UNKNOWN' and ex.merge_pending
+    assert ex.merged_pairs == 0 and ex.committed() == Decimal('4.85')
+    assert len(v.merge_submissions) == 1 and not await ex.verify_close()
+    with pytest.raises(Exception, match='MERGE_CLOSE_BARRIER_REQUIRED'):
+        await merge_confirmed_pairs(ex)
+    assert len(v.merge_submissions) == 1

@@ -11,6 +11,7 @@ PAUSE_CODES = frozenset(
         "SYNC_CACHE_UNAVAILABLE",
         "SYNC_CACHE_EVIDENCE_CHANGED",
         "SYNC_DETAIL_NOT_READY",
+        "TERMINAL_LIVE_CONTRADICTION",
         "WS_READINESS_TIMEOUT",
         "WS_NOT_CONNECTED",
         "WS_DISCONNECTED",
@@ -72,6 +73,8 @@ READ_ERRORS = frozenset({
     "GatewayReadError", "JSONDecodeError",
 })
 UNCERTAIN_MUTATIONS = frozenset({"UNKNOWN_PLACEMENT_EXPOSURE", "MERGE_UNKNOWN"})
+# Keep the same Session and its risk until fresh proof or the market deadline.
+WAITABLE_EXECUTION_STATES = UNCERTAIN_MUTATIONS | {"TERMINAL_LIVE_CONTRADICTION"}
 
 
 class PreparationReadRetry(Exception):
