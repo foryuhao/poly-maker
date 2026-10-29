@@ -46,14 +46,25 @@ post_only = true                # every quote is post-only (maker-only mandate)
 max_orders_per_batch = 15       # exchange batch cap
 
 [rdp_sm]
-normal_entry_mode = "ba_v1"
+normal_entry_mode = "ca_v1"
+# Seconds from market start; no new NORMAL orders at or after this time.
+normal_cutoff_sec = 150.0
 base_size = "5"
 target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
 
+[rdp_sm.ca_matched_tp]
+enabled = true
+restore_after_ba = true # Restore a fixed TP after the BA order is fully reconciled.
+# Opposite fixed maker BUY after the CA opening is MATCHED, before CONFIRMED.
+# Match actual quantity on the BA 0.01-share grid; top up at most 0.01 share.
+# Skip when entry >= 1 - profit_per_share (0.95).
+# A crossing TP target falls back to best bid; each submitted quote stays fixed.
+profit_per_share = "0.05"
+
 [rdp_sm.ba]
-out_of_order_tolerance_ms = 10.0 # Ignore late frames within this gap; 0 is strict.
+out_of_order_tolerance_ms = 20.0 # Ignore late frames within this gap; 0 is strict.
 min_sell_shares = "5"
 min_depletion_shares = "5"
 min_refill_shares = "5"
@@ -69,6 +80,12 @@ post_budget_floor_ms = 750.0
 min_live_budget_ms = 500.0
 max_cancel_rtt_ms = 750.0
 
+[rdp_sm.ca_observe]
+# CA evidence/logging. ca_v1 uses CA for NORMAL; ba_v1 only observes it.
+enabled = true
+min_buy_shares = "10"
+output_dir = "research_outputs/ca_observe"
+
 [rdp_sm.cooldown]
 max_sec = 0.0
 loss_sec_per_dollar = 100.0
@@ -78,11 +95,11 @@ loss_sec_per_dollar = 100.0
 policy = "opposite_ba_v1"
 delta_limit = "5"
 review_sec = 2.0
-cutoff_sec = 240.0
+cutoff_sec = 240.0 # No new REPAIR orders; cancel active pairing orders at this time.
 
 [rdp_sm.repair.opposite_ba]
-out_of_order_tolerance_ms = 10.0
-# Independent exit BA detector; no holding timeout, TP, SL or T180 transition.
+out_of_order_tolerance_ms = 20.0
+# Independent exit BA detector; fixed TP restoration is configured above.
 min_sell_shares = "5"
 min_depletion_shares = "5"
 min_refill_shares = "5"
@@ -92,6 +109,10 @@ max_sell_age_ms = 500.0
 max_book_age_ms = 200.0
 max_pair_skew_ms = 200.0
 max_entry_age_ms = 1000.0
+
+[rdp_sm.repair.opposite_ba_execution]
+enabled = true
+# Quote once at best ask - 1 tick, without an anchor-relative upper price cap.
 
 [rdp_sm.repair.opposite_ba.network]
 post_budget_floor_ms = 750.0

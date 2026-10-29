@@ -183,13 +183,14 @@ class RepairPolicy:
                 "path_breaks": list(self.path_breaks)}
 
     def decide(self, point: PathPoint, *, original_side: str, original_qty: float,
-               first_fill_elapsed: float, delta_limit=5., features=None, session_elapsed=None):
+               first_fill_elapsed: float, delta_limit=5., features=None, session_elapsed=None,
+               cutoff_sec=240.):
         features = features if features is not None else self.observe(
             point, original_side=original_side, original_qty=original_qty)
         previous = self.mode
         self.apply_switches()
         boundary_elapsed = point.elapsed if session_elapsed is None else session_elapsed
-        if boundary_elapsed >= 240:
+        if boundary_elapsed >= cutoff_sec:
             reason = "CUTOFF"
         elif abs(point.delta) < float(DUST):
             reason = "PAIRED"

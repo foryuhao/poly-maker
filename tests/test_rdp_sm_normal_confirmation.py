@@ -29,7 +29,7 @@ def controller(elapsed=60, cfg=None):
         feed.connect()
         feed.apply(rows)
     executor = SimpleNamespace(
-        cfg=SimpleNamespace(rdp_sm=SimpleNamespace(obi=feed.cfg)),
+        cfg=SimpleNamespace(rdp_sm=RDPSMConfig(obi=feed.cfg)),
         slug=SLUG,
         official_time=START + elapsed,
         time_anchor=0.0,

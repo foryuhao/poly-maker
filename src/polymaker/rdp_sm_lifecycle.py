@@ -92,7 +92,15 @@ class BatchLifecycle:
 
     @property
     def ba_mode(self):
-        return self.executor.cfg.rdp_sm.normal_entry_mode == "ba_v1"
+        # Both anchored evidence modes share the original execution/repair path.
+        return self.executor.cfg.rdp_sm.normal_entry_mode in {"ba_v1", "ca_v1"}
+
+    @property
+    def ca_mode(self):
+        return self.executor.cfg.rdp_sm.normal_entry_mode == "ca_v1"
+
+    def normal_event(self, suffix):
+        return "sm_"+("ca" if self.ca_mode else "ba" if self.ba_mode else "obi")+"_"+suffix
 
     def episodes(self, controller):
         return getattr(controller, "episodes", self.feed.episodes)
@@ -107,13 +115,17 @@ class BatchLifecycle:
         if getattr(self.feed, "opposite_ba", None) is not None:
             for event in self.feed.opposite_ba.drain():
                 self.executor.record("sm_opposite_ba_episode", event)
+            if hasattr(self.feed.opposite_ba, "drain_execution"):
+                for event in self.feed.opposite_ba.drain_execution():
+                    self.executor.record("sm_opposite_ba_execution", event)
 
     def wait(self, reason, snapshot, health=None, *, ba_admission=None):
         self.drain_ba()
         diagnostics = self.feed.diagnostics()
         opposite_exit = (self.executor.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
                          and self.executor.repair_episode is not None)
-        detector = self.feed.opposite_ba if opposite_exit else self.feed.ba if self.ba_mode else None
+        detector = (self.feed.opposite_ba if opposite_exit else self.feed.ca_entry if self.ca_mode
+                    else self.feed.ba if self.ba_mode else None)
         key = (reason, snapshot.generation, diagnostics["failure_count"], opposite_exit)
         if key == self.wait_reason:
             return
@@ -129,7 +141,7 @@ class BatchLifecycle:
             signal = (detector.evaluate(snapshot) if detector is not None else
                       evaluate(snapshot, self.executor.cfg.rdp_sm.obi.threshold))
         self.executor.record(
-            "sm_opposite_ba_wait" if opposite_exit else "sm_ba_wait" if self.ba_mode else "sm_obi_wait",
+            "sm_opposite_ba_wait" if opposite_exit else self.normal_event("wait"),
             {
                 "reason": reason,
                 "snapshot_id": snapshot.snapshot_id,
@@ -137,7 +149,8 @@ class BatchLifecycle:
                 "signal": asdict(signal),
                 "ws_diagnostics": diagnostics,
                 "health": asdict(health) if health else None,
-                **({"ba_admission": ba_admission} if ba_admission is not None else {}),
+                **({"ca_admission" if self.ca_mode and not opposite_exit else "ba_admission": ba_admission}
+                   if ba_admission is not None else {}),
                 "metrics": dict(self.metrics),
             },
         )
@@ -151,11 +164,14 @@ class BatchLifecycle:
             "max_age": (e.cfg.rdp_sm.ba if normal and self.ba_mode else e.cfg.rdp_sm.obi).max_book_age_ms / 1000,
         }
 
-    def ba_entry_evidence(self, snapshot, t0, deadline, health, cfg=None):
+    def ba_entry_evidence(self, snapshot, t0, deadline, health, cfg=None, *, admission=None, wall=None):
         e = self.executor
-        admission = entry_admission(cfg or e.cfg.rdp_sm.ba, t0=t0, deadline=deadline,
-                                    writes=e.reads.network.recent_writes())
-        now, wall = admission.observed_monotonic, self.feed.wall()
+        if admission is None:
+            admission = entry_admission(cfg or e.cfg.rdp_sm.ba, t0=t0, deadline=deadline,
+                                        writes=e.reads.network.recent_writes())
+        now = admission.observed_monotonic
+        if wall is None:
+            wall = self.feed.wall()
         return {**asdict(admission), "snapshot_id": snapshot.snapshot_id,
                 "generation": snapshot.generation,
                 "network_allowed": health.allowed, "network_reason": health.reason,
@@ -188,9 +204,31 @@ class BatchLifecycle:
                 raise
             raise PreparationReadRetry(reason_code(exc)) from exc
 
+    def _cached_repair_ticks(self, controller, client):
+        # The SDK caches ticks/version without a TTL. BA repair may reuse the
+        # same cache values without three worker round trips, but only after
+        # matching both ticks against the currently verified WS constraints.
+        if not getattr(controller, "ba_signal", False) or client._ClobClient__cached_version != 2:
+            return None
+        with self.feed.lock:
+            ticks = {}
+            for token, book in self.feed.books.items():
+                tick = client._ClobClient__tick_sizes.get(token)
+                if (tick is None or Decimal(str(tick)) != book.tick
+                        or self.feed.tick_verified.get(token) != book.tick):
+                    return None
+                ticks[token] = float(tick)
+            return ticks
+
     async def prepare(self, controller, yes, no, window_id):
         e = self.executor
-        _require(not e.attempts or e.safe_to_continue, "PREVIOUS_WINDOW_UNRESOLVED")
+        admission_ready = not e.attempts or e.admission_ready
+        if not admission_ready and e.normal_unknown.unknowns():
+            reason = ("BA_REPAIR_UNKNOWN_CACHE_NOT_READY" if getattr(controller, "ba_signal", False)
+                      and controller.phase == "REPAIR" else "NORMAL_UNKNOWN_CACHE_NOT_READY")
+            self.wait(reason, self.snapshot(controller, yes, no))
+            return None
+        _require(admission_ready, "PREVIOUS_WINDOW_UNRESOLVED")
         if e.inventory_mismatch is not None:
             self.wait("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", self.snapshot(controller, yes, no))
             return None
@@ -208,7 +246,13 @@ class BatchLifecycle:
             return None
         _require(not self.busy, "BATCH_ALREADY_ACTIVE")
         _require(window_id not in e.used_windows, "WINDOW_ID_ALREADY_USED")
-        _require(not e.attempts or e.safe_to_continue, "PREVIOUS_WINDOW_UNRESOLVED")
+        admission_ready = not e.attempts or e.admission_ready
+        if not admission_ready and e.normal_unknown.unknowns():
+            reason = ("BA_REPAIR_UNKNOWN_CACHE_NOT_READY" if getattr(controller, "ba_signal", False)
+                      and controller.phase == "REPAIR" else "NORMAL_UNKNOWN_CACHE_NOT_READY")
+            self.wait(reason, self.snapshot(controller, yes, no))
+            return None
+        _require(admission_ready, "PREVIOUS_WINDOW_UNRESOLVED")
         _require(e.journal.ready, "ASYNC_JOURNAL_NOT_READY")
         snapshot = self.snapshot(controller, yes, no)
         if not snapshot.valid:
@@ -271,33 +315,80 @@ class BatchLifecycle:
                 for c in cached.candidates
             ):
                 return cached
-        try:
-            plans = controller.candidates(snapshot, yes, no, window_id)
-        except QuoteUnavailable as exc:
-            self.wait(str(exc), snapshot)
-            return None
-        if not plans:
-            self.wait(getattr(controller, "quote_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
-            return None
+        quote_after_constraints = getattr(controller, "ba_signal", False)
+        if quote_after_constraints:
+            if not direction:
+                self.wait(getattr(controller, "signal_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
+                return None
+            quote_episode = self.episodes(controller).episode_id
+        else:
+            try:
+                plans = controller.candidates(snapshot, yes, no, window_id)
+            except QuoteUnavailable as exc:
+                self.wait(str(exc), snapshot)
+                return None
+            if not plans:
+                self.wait(getattr(controller, "quote_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
+                return None
         # Warm SDK constraints in preparation, and require agreement with the WS.
         client = e.gateway._client
-        ticks = {}
-        for token in self.feed.books:
-            cached_tick = client._ClobClient__tick_sizes.get(token)
-            current_tick = self.feed.books[token].tick
-            if (not getattr(controller, "immediate_activation", False)
-                    or cached_tick is None or Decimal(str(cached_tick)) != current_tick):
-                client._ClobClient__tick_sizes.pop(token, None)
-            ticks[token] = float(await self._read_preparation_constraint(client.get_tick_size, token))
+        cached_ticks = self._cached_repair_ticks(controller, client)
+        ticks = cached_ticks if cached_ticks is not None else {}
+        if cached_ticks is None:
+            for token in self.feed.books:
+                cached_tick = client._ClobClient__tick_sizes.get(token)
+                current_tick = self.feed.books[token].tick
+                if (not getattr(controller, "immediate_activation", False)
+                        or cached_tick is None or Decimal(str(cached_tick)) != current_tick):
+                    client._ClobClient__tick_sizes.pop(token, None)
+                ticks[token] = float(await self._read_preparation_constraint(client.get_tick_size, token))
         try:
             self.feed.verify_ticks(ticks)
         except ValueError as exc:
             self.wait(str(exc), snapshot)
             return None  # REST/WS tick transition is a retryable preparation pause.
-        _require(
-            await self._read_preparation_constraint(client._ClobClient__resolve_version) == 2,
-            "M2_ORDER_VERSION_UNSUPPORTED",
-        )
+        if cached_ticks is None:
+            _require(
+                await self._read_preparation_constraint(client._ClobClient__resolve_version) == 2,
+                "M2_ORDER_VERSION_UNSUPPORTED",
+            )
+        if quote_after_constraints:
+            # SDK preparation may have awaited workers/HTTP. Price only the
+            # latest book, without retiming or replacing the admitted BA.
+            generation = snapshot.generation
+            snapshot = self.snapshot(controller, yes, no)
+            if not snapshot.valid or snapshot.generation != generation:
+                self.wait(snapshot.reason or "WS_GENERATION_CHANGED", snapshot)
+                return None
+            if any(Decimal(str(ticks[b.token_id])) != b.tick for b in (snapshot.yes, snapshot.no)):
+                self.wait("WS_OFFICIAL_TICK_CONFLICT", snapshot)
+                return None
+            direction, signal = controller.select(snapshot)
+            with self.feed.lock:
+                ep = self.episodes(controller).selected
+                timing = ((ep.signal_start_mono, ep.order_deadline)
+                          if ep and ep.episode_id == quote_episode else None)
+            if not direction or timing is None:
+                self.wait(getattr(controller, "signal_block_reason", None) or "BA_EPISODE_CHANGED", snapshot)
+                return None
+            health = e.network_health()
+            if not health.allowed:
+                self.wait(health.reason, snapshot, health)
+                return None
+            t0, deadline = timing
+            admission = self.ba_entry_evidence(snapshot, t0, min(deadline, controller.deadline(snapshot)),
+                                               health, controller.ba_config)
+            if admission["reason"]:
+                self.wait(admission["reason"], snapshot, health, ba_admission=admission)
+                return None
+            try:
+                plans = controller.candidates(snapshot, yes, no, window_id)
+            except QuoteUnavailable as exc:
+                self.wait(str(exc), snapshot)
+                return None
+            if not plans:
+                self.wait(getattr(controller, "quote_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
+                return None
         candidates = []
         for direction, (quotes, sizing) in plans.items():
             if any(not e.delta_candidate_allowed(yes-no, q.outcome, Decimal(str(q.size))) for q in quotes):
@@ -305,10 +396,6 @@ class BatchLifecycle:
             for q in quotes:
                 e._validate(q, window_id, snapshot.books(), e.meta)
                 _require(f"{ticks[q.token_id]:g}" in ROUNDING_CONFIG, "SDK_TICK_UNSUPPORTED")
-                _require(
-                    Decimal(str(q.price)) * Decimal(str(q.size)) >= 1,
-                    "MAKER_BUY_NOTIONAL_BELOW_MINIMUM",
-                )
             commitment = sum(
                 (Decimal(str(q.price)) * Decimal(str(q.size)) for q in quotes), Decimal(0)
             )
@@ -392,7 +479,7 @@ class BatchLifecycle:
         self.prepared_ids.update(ids)
         return slot
 
-    def guard(self, controller, intent, revision, deadline):
+    def guard(self, controller, intent, revision, deadline, *, pending_batch=(), diagnostics=True):
         e, cfg = self.executor, self.executor.cfg.rdp_sm.obi
         self.ba_admission = None
         if e.check_repair_abandonment():
@@ -401,7 +488,7 @@ class BatchLifecycle:
         if e.cooldown.active:
             self.guard_reason = "COOLDOWN_ACTIVE"
             return False
-        if e.shared_reads is not None and not e.shared_reads.admission_current():
+        if e.shared_reads is not None and not e.shared_reads.admission_current(pending_batch=pending_batch):
             self.guard_reason = "SYNC_CACHE_EVIDENCE_CHANGED"
             return False
         now = e.monotonic()
@@ -416,9 +503,31 @@ class BatchLifecycle:
         # OBI's 100ms signal clock to a 750ms BA observation sequence.
         health = e.network_health(age if intent.phase == "NORMAL" and not ba_normal else 0)
         self.final_evidence = (current, health)
-        self.ba_admission = (self.ba_entry_evidence(current, signal_start, deadline[0], health,
-                                                  getattr(controller, "ba_config", None))
-                             if ba_normal else None)
+        admission, admission_wall, admission_reason = None, None, None
+        if ba_normal:
+            if diagnostics:
+                self.ba_admission = self.ba_entry_evidence(current, signal_start, deadline[0], health,
+                                                          getattr(controller, "ba_config", None))
+                admission_reason = self.ba_admission["reason"]
+            else:
+                # Repeat the live decision at every boundary; only skip the
+                # diagnostic expansion on successful intermediate checks.
+                admission = entry_admission(getattr(controller, "ba_config", None) or e.cfg.rdp_sm.ba,
+                    t0=signal_start, deadline=deadline[0], writes=e.reads.network.recent_writes())
+                admission_wall = self.feed.wall()
+                admission_reason = admission.reason
+                # Keep immutable inputs for diagnostics if the SDK fails
+                # before the next guard. Never reuse them for admission.
+                self.ba_admission = (current, admission, health, admission_wall)
+        def match_check():
+            if hasattr(controller, "matches_for_submit"):
+                matches = controller.matches_for_submit(intent, current, pending_batch)
+                reason = getattr(controller, "quote_block_reason", None)
+            else:
+                matches = controller.matches(intent, current)
+                reason = None
+            return reason or "FINAL_QUOTES_OR_DIRECTION_CHANGED", matches
+
         checks = [
             ("REPAIR_REQUIRED", intent.phase != "NORMAL" or not repair_required(intent.yes, intent.no)),
             ("SESSION_CLOSED", not e.closed),
@@ -452,13 +561,17 @@ class BatchLifecycle:
                 ),
             ),
             (health.reason, health.allowed),
-            (self.ba_admission["reason"] if ba_normal else None,
-             not ba_normal or self.ba_admission["reason"] is None),
-            ("FINAL_QUOTES_OR_DIRECTION_CHANGED", controller.matches(intent, current)),
+            (admission_reason, admission_reason is None),
+            match_check(),
             ("SESSION_DELTA_LIMIT", all(e.delta_candidate_allowed(intent.yes-intent.no,
-                 q.outcome, Decimal(str(q.size))) for q in intent.quotes)),
+                 q.outcome, Decimal(str(q.size)), pending_batch=pending_batch) for q in intent.quotes)),
         ]
         self.guard_reason = next((reason for reason, valid in checks if not valid), None)
+        if self.guard_reason is not None and admission is not None:
+            # Preserve the failed check's exact facts and clock, without a
+            # second admission calculation or a new market/network sample.
+            self.ba_admission = self.ba_entry_evidence(current, signal_start, deadline[0], health,
+                getattr(controller, "ba_config", None), admission=admission, wall=admission_wall)
         return self.guard_reason is None
 
     async def activate(self, controller, slot):
@@ -514,7 +627,7 @@ class BatchLifecycle:
                     ("BATCH_ALREADY_ACTIVE", self.busy),
                     ("CAPITAL_EVIDENCE_CHANGED_BEFORE_SUBMIT", e.revision != slot.revision),
                     ("ASYNC_JOURNAL_NOT_READY", not e.journal.ready),
-                    ("PREVIOUS_WINDOW_UNRESOLVED", bool(e.attempts and not e.safe_to_continue)),
+                    ("PREVIOUS_WINDOW_UNRESOLVED", bool(e.attempts and not e.admission_ready)),
                     ("FINAL_QUOTES_OR_DIRECTION_CHANGED", not controller.matches(intent, snapshot)),
                 ) if failed), None)
                 if reason:
@@ -538,6 +651,9 @@ class BatchLifecycle:
 
     async def _send(self, controller, intent, candidate, signal):
         e, client = self.executor, self.executor.gateway._client
+        unknown_admission = e.normal_unknown.facts()
+        admitted_unknowns = set(unknown_admission["order_ids"]) if unknown_admission else set()
+        e.normal_unknown.active_ids = admitted_unknowns
         result = WindowResult(
             e.session_id,
             intent.window_id,
@@ -550,6 +666,11 @@ class BatchLifecycle:
             for q, oid in zip(intent.quotes, candidate.signed.order_ids, strict=True)
         ]
         e.attempts.extend(batch)
+        ba_repair = intent.phase == "REPAIR" and getattr(controller, "ba_signal", False)
+        if intent.phase == "NORMAL":
+            e.normal_unknown.track(batch, self.account)
+        elif ba_repair:
+            e.normal_unknown.track(batch, self.account, repair=True)
         e.invalidate("PREPARED_ACTIVATION")
         revision = e.revision
         deadline = [intent.deadline]
@@ -565,7 +686,8 @@ class BatchLifecycle:
         def submit_guard():
             if close_requested.is_set():
                 return False
-            allowed = self.guard(controller, intent, revision, deadline)
+            allowed = self.guard(controller, intent, revision, deadline, pending_batch=batch,
+                                 diagnostics=not getattr(controller, "ba_signal", False))
             ba_admission_evidence[0] = self.ba_admission
             return allowed
 
@@ -576,9 +698,12 @@ class BatchLifecycle:
         last_review_price_sequence = [-1]
         final_evidence = [None]
         normal_confirmation = [None]
+        ca_observation = [None]
         close_evidence = [None]
         sl_handoff = [None]
         sl_actor = [None]
+        matched_tp = None
+        matched_tp_task = None
 
         async def drain_review():
             task = active_review[0]
@@ -604,7 +729,8 @@ class BatchLifecycle:
                 }
                 # A diagnostic failure must never prevent cancellation.
                 with suppress(Exception):
-                    e.record("sm_ba_close_requested" if self.ba_mode else "sm_obi_close_requested", close_evidence[0])
+                    e.record(self.normal_event("close_requested") if intent.phase == "NORMAL" else
+                             "sm_ba_close_requested" if self.ba_mode else "sm_obi_close_requested", close_evidence[0])
                 if (reason == "REPAIR_MODE_SL_CANCEL_OLD_STATE"
                         and e.cfg.rdp_sm.repair.path.sl_enabled
                         and hasattr(controller, "execute_sl")):
@@ -619,7 +745,7 @@ class BatchLifecycle:
         def on_post_start():
             _require(not e.check_repair_abandonment(), "HIGH_ENTRY_REPAIR_ABANDONED")
             if self.uses_ba(controller):
-                allowed = self.guard(controller, intent, revision, deadline)
+                allowed = self.guard(controller, intent, revision, deadline, pending_batch=batch)
                 ba_admission_evidence[0] = self.ba_admission
                 _require(allowed,
                          self.guard_reason or "BA_FINAL_GUARD")
@@ -628,7 +754,21 @@ class BatchLifecycle:
             _require(e.reads.network.begin_batch(intent.window_id), "NETWORK_ADMISSION_CHANGED")
             if intent.claim:
                 self.episodes(controller).consume(intent.claim)
+            if intent.phase == "NORMAL":
+                # Freeze before the native POST timestamp; later CA confirmations
+                # cannot be backfilled into the opening's evidence.
+                ca_observation[0] = self.feed.observe_ca("snapshot")
+                if self.ca_mode:
+                    observation = ca_observation[0]
+                    _require(observation is not None and observation.get("data_complete")
+                             and observation.get("recording_active")
+                             and any(s["episode_id"] == intent.claim[0] and s["candidate_usable"]
+                                     for s in observation["outcomes"].values()),
+                             "CA_FINAL_EVIDENCE_UNAVAILABLE")
             post_start[0] = e.monotonic()
+            if ca_observation[0] is not None:
+                self.feed.observe_ca("post", intent.window_id, intent.direction,
+                                     post_start[0], ca_observation[0])
             elapsed = e.official_time+post_start[0]-e.time_anchor-int(e.slug.rsplit("-", 1)[1])
             for oid in prospective:
                 e.order_post_elapsed[oid] = elapsed
@@ -637,7 +777,7 @@ class BatchLifecycle:
                     e.ba_opening = {"window_id": intent.window_id, "quotes": intent.quotes,
                         "ids": prospective, "baseline": e._cooldown_pair_snapshot()}
                     for oid in prospective:
-                        e.ba_orders[oid] = {"normal_entry_mode": "ba_v1",
+                        e.ba_orders[oid] = {"normal_entry_mode": e.cfg.rdp_sm.normal_entry_mode,
                             "market_id": e.meta.condition_id, "episode_id": intent.claim[0],
                             "opening_window_id": intent.window_id,
                             "post_time": post_start[0], "signal_start_mono": intent.episode_start,
@@ -665,6 +805,7 @@ class BatchLifecycle:
             # no conflicting order/fill evidence. Generic UNKNOWN never skips.
             return [a.expected_order_id for a in batch
                     if a.post_started and a.outcome not in {"REJECTED", "ABORTED"}
+                    and not e.normal_unknown.suppress_cancel(a.expected_order_id)
                     and not (_canceled_submission_response(a)
                              and not e._canceled_submission_observed(a.order_id))]
 
@@ -695,7 +836,8 @@ class BatchLifecycle:
         async def watch():
             while True:
                 now = e.monotonic()
-                current = self.snapshot(controller, intent.yes, intent.no)
+                current = (controller.active_snapshot(intent) if hasattr(controller, "active_snapshot")
+                           else self.snapshot(controller, intent.yes, intent.no))
                 elapsed = e.official_time + now - e.time_anchor - int(e.slug.rsplit("-", 1)[1])
                 health = e.network_health()
                 e.drain_network_events()
@@ -723,10 +865,12 @@ class BatchLifecycle:
                 reason = next((name for name, failed in (
                     (boundary_reason, boundary_reason is not None),
                     ("ORDER_DEADLINE", deadline[0] is not None and now >= deadline[0]),
-                    ("BA_CONFIRMED_FILL", ba_filled),
+                    ("CA_CONFIRMED_FILL" if self.ca_mode else "BA_CONFIRMED_FILL", ba_filled),
                     (ba_reason, ba_reason is not None),
-                    ("SESSION_ECONOMICS_CHANGED", any(oid not in prospective and oid not in e.proofs
-                                                      for oid in e.known)),
+                    ("SESSION_ECONOMICS_CHANGED", any(
+                        oid not in prospective and oid not in e.proofs
+                        and not (oid in admitted_unknowns and e.normal_unknown.still_absent(admitted_unknowns))
+                        for oid in e.known)),
                     (current.reason or "WS_INVALID", invalid),
                     ("NETWORK_EXECUTION_FAILURE", health.close_active),
                     ("ASYNC_JOURNAL_NOT_READY", not e.journal.ready),
@@ -803,6 +947,8 @@ class BatchLifecycle:
                 )
             except Exception as exc:
                 error = type(exc).__name__
+                if intent.phase == "NORMAL" or ba_repair:
+                    e.normal_unknown.post_failed(batch, exc)
             finally:
                 if write is not None:
                     e.shared_reads.end_write(write)
@@ -844,9 +990,20 @@ class BatchLifecycle:
             if not all(a.outcome == "ACK" for a in batch):
                 request_close("PLACEMENT_NOT_ACKNOWLEDGED", outcomes=[a.outcome for a in batch])
             post_done.set()
+            if (self.ca_mode and intent.phase == "NORMAL"
+                    and e.cfg.rdp_sm.ca_matched_tp.enabled
+                    and all(a.outcome == "ACK" for a in batch)):
+                from polymaker.rdp_sm_ca_matched_tp import CAMatchedTP
+
+                matched_tp = CAMatchedTP(self, intent, batch, post_done)
+                matched_tp_task = asyncio.create_task(matched_tp.run(), name="ca-matched-tp")
             if close_requested.is_set() and batch[0].post_started and sl_handoff[0] is None:
                 await cancel_possible()
             # Diagnostics only follow the operation and complete ID registration.
+            if isinstance(ba_admission_evidence[0], tuple):
+                snapshot, admission, health, wall = ba_admission_evidence[0]
+                ba_admission_evidence[0] = self.ba_entry_evidence(snapshot, admission.t0,
+                    admission.deadline, health, admission=admission, wall=wall)
             anchor_book = max((intent.snapshot.yes, intent.snapshot.no), key=lambda b: b.received_mono)
             post_wall = (
                 (
@@ -878,7 +1035,7 @@ class BatchLifecycle:
                     "quotes": [asdict(q) for q in intent.quotes],
                     "sizing": candidate.sizing,
                     "decision_source": ("OPPOSITE_BA_EXECUTION_WS" if getattr(controller, "ba_signal", False) else
-                                        "BA_EXECUTION_WS" if self.ba_mode else
+                                        "CA_EXECUTION_WS" if self.ca_mode else "BA_EXECUTION_WS" if self.ba_mode else
                                         "OBI_EXECUTION_WS; observer slots are comparison only"),
                     "execution_snapshot_id": final_evidence[0][0].snapshot_id
                     if final_evidence[0]
@@ -889,7 +1046,7 @@ class BatchLifecycle:
             )
             e.record(
                 "sm_opposite_ba_final_decision" if getattr(controller, "ba_signal", False) else
-                "sm_ba_final_decision" if self.ba_mode else "sm_obi_final_decision",
+                self.normal_event("final_decision"),
                 {
                     "mode": ("opposite_ba_v1" if getattr(controller, "ba_signal", False)
                              else e.cfg.rdp_sm.normal_entry_mode),
@@ -909,9 +1066,11 @@ class BatchLifecycle:
                         ),
                         "signal": asdict(signal) if signal else None,
                         "normal_signal_confirmation": normal_confirmation[0],
-                        **({"ba_admission": ba_admission_evidence[0]}
+                        **({"ca_observation": ca_observation[0]} if ca_observation[0] is not None else {}),
+                        **({"ca_admission" if self.ca_mode and intent.phase == "NORMAL" else "ba_admission": ba_admission_evidence[0]}
                            if self.uses_ba(controller) else {}),
                         "claim": intent.claim,
+                        **({"normal_unknown_admission": unknown_admission} if unknown_admission else {}),
                         "quotes": [asdict(q) for q in intent.quotes],
                         "offset_ticks": {
                             q.outcome: str(
@@ -968,6 +1127,11 @@ class BatchLifecycle:
 
             await e._await_owned(await_close_request(), propagate_cancel=False)
             await drain_review()
+            if matched_tp_task is not None:
+                # Only the opening IDs belong to the CA deadline watcher.
+                # Its matched companion keeps its independent lease; BA waits
+                # for the owner to cancel/drain it and the full close proof.
+                await e._await_owned(_drain_task(matched_tp_task), propagate_cancel=False)
             if sl_handoff[0] is not None:
                 await e._await_owned(_drain_task(sl_handoff[0]), propagate_cancel=False)
             safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
@@ -982,6 +1146,9 @@ class BatchLifecycle:
             if hasattr(controller, "reconcile_episode"):
                 controller.reconcile_episode()
         finally:
+            if matched_tp_task is not None and not matched_tp_task.done():
+                matched_tp.closed = True
+                await e._await_owned(_drain_task(matched_tp_task), propagate_cancel=False)
             if sl_handoff[0] is not None and not sl_handoff[0].done():
                 sl_actor[0].closed = True
                 await e._await_owned(_drain_task(sl_handoff[0]), propagate_cancel=False)
@@ -998,6 +1165,7 @@ class BatchLifecycle:
                     await asyncio.shield(watcher)
 
                 await e._await_owned(drain_watcher(), propagate_cancel=False)
+            e.normal_unknown.active_ids = set()
             watcher.result()
             e.reads.network.complete_batch(
                 intent.window_id, safe=not any(a.post_started for a in batch) or e.safe_to_continue,
@@ -1011,7 +1179,20 @@ class BatchLifecycle:
         result.fill_deadline_monotonic = deadline[0]
         result.close_monotonic = e.monotonic()
         result.end_time = time.time()
-        reported = batch + (sl_actor[0].created if sl_actor[0] is not None else [])
+        reported = (batch + (sl_actor[0].created if sl_actor[0] is not None else [])
+                    + (matched_tp.created+matched_tp.ba_attempts if matched_tp is not None else []))
+        if matched_tp is not None:
+            from polymaker.rdp_sm_tp_ba_handoff import record_ba_handoff_result
+
+            record_ba_handoff_result(matched_tp, e.safe_to_continue)
+            candidate.sizing["ca_matched_tp"] = {
+                "enabled": True, "profit_per_share": str(matched_tp.cfg.profit_per_share),
+                "reason": matched_tp.reason,
+                "orders": [asdict(a) for a in matched_tp.created],
+                "ba_handoff_orders": [asdict(a) for a in matched_tp.ba_attempts],
+                "handoff_policy": ("POST_BA_ACK_THEN_CANCEL_TP"
+                                   if matched_tp.ba_controller is not None else "CANCEL_TP_THEN_BA"),
+            }
         if sl_actor[0] is not None and sl_actor[0].last_plan is not None:
             e.record("sm_strategy_window", sl_actor[0].last_plan)
         result.requested_quotes = [a.quote for a in reported]
@@ -1033,22 +1214,26 @@ class BatchLifecycle:
         )
         e.record(
             "sm_opposite_ba_signal_changes" if getattr(controller, "ba_signal", False) else
-            "sm_ba_signal_changes" if self.ba_mode else "sm_obi_signal_changes",
+            self.normal_event("signal_changes"),
             {
                 "window_id": intent.window_id,
                 "policy": (
                     "FIXED_DEADLINE; fresh valid opposite signal cancels; "
                     "NONE or WS_BOOK_STALE keeps active order; no reprice or automatic flip"
                     if intent.phase == "NORMAL" and not self.ba_mode
-                    else "BA_FIXED_T0_DEADLINE; cancel on anchor/data invalidation or actual fill"
+                    else ("CA_FIXED_T0_DEADLINE" if self.ca_mode else "BA_FIXED_T0_DEADLINE")
+                    +"; cancel on anchor/data invalidation or actual fill"
                     if intent.phase == "NORMAL"
+                    else "OPPOSITE_BA_FIXED_T0_DEADLINE; retain submitted quote on book consistency failure"
+                    if getattr(self.episodes(controller), "fixed_ask_quote", False)
+                    and getattr(controller, "ba_signal", False)
                     else "OPPOSITE_BA_FIXED_T0_DEADLINE; cancel on anchor/data invalidation"
                     if getattr(controller, "ba_signal", False)
                     else "MODEL_ABSOLUTE_DEADLINE; REPAIR independent of OBI"
                 ),
                 **({"repair_policy": "opposite_ba_v1", "episode_id": intent.claim[0] if intent.claim else None}
                    if getattr(controller, "ba_signal", False) else
-                   {"normal_entry_mode": "ba_v1", "episode_id": intent.claim[0] if intent.claim else None}
+                   {"normal_entry_mode": e.cfg.rdp_sm.normal_entry_mode, "episode_id": intent.claim[0] if intent.claim else None}
                    if self.ba_mode else self.feed.changes_since(intent.snapshot.signal_event)),
             },
         )

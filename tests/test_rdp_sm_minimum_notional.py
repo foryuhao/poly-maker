@@ -1,4 +1,4 @@
-"""Minimum BUY notional through actual M1/M3/M2/SDK, with fake HTTP only."""
+"""Share-only maker sizing through M1/M3/M2/SDK, with fake HTTP only."""
 
 from dataclasses import replace
 from decimal import Decimal
@@ -9,10 +9,10 @@ import pytest
 from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_entry import run_current_market
-from polymaker.rdp_sm_execution import RiskJournal, maker_buy_size
-from polymaker.rdp_sm_loop import QuoteUnavailable, make_quotes
+from polymaker.rdp_sm_execution import maker_buy_size
+from polymaker.rdp_sm_loop import make_quotes
 from test_rdp_sm_entry import boundary
-from test_rdp_sm_m1 import ADDRESS, SLUG, START, Venue
+from test_rdp_sm_m1 import SLUG, START, Venue
 from test_rdp_sm_m2_execution import journal_records, open_executor, quotes
 from test_rdp_sm_m3_loop import current_orders, on_windows
 from test_rdp_sm_m3_loop import env as loop_env
@@ -29,31 +29,26 @@ def books(yes, no):
             for i, p in ((1, yes), (2, no))}
 
 
-@pytest.mark.parametrize("delta,yes,no,allowed", [
-    (0, ".19", ".5", False), (0, ".5", ".19", False),
-    (0, ".2", ".2", True), (0, ".199", ".5", False),
-    (2, ".5", ".15", True), (-2, ".15", ".5", True),
-    (2, ".19", ".5", False), (-2, ".5", ".19", False),
+@pytest.mark.parametrize("delta,yes,no", [
+    (0, ".19", ".5"), (0, ".5", ".19"),
+    (0, ".2", ".2"), (0, ".199", ".5"),
+    (2, ".5", ".15"), (-2, ".15", ".5"),
+    (2, ".19", ".5"), (-2, ".5", ".19"),
 ])
-def test_normal_checks_each_actual_skewed_leg_amount(delta, yes, no, allowed):
+def test_normal_keeps_actual_skewed_leg_size_below_one_dollar(delta, yes, no):
     meta, _ = _market(Venue().raw, SLUG)
     inventory = (Decimal(max(delta, 0)), Decimal(max(-delta, 0)))
-    if not allowed:
-        with pytest.raises(QuoteUnavailable, match="NORMAL_LEG_NOTIONAL_BELOW_MINIMUM"):
-            make_quotes(meta, books(yes, no), *inventory, "w", RDPSMConfig(base_size=5, max_order_size=1000))
-        return
     state, pair = make_quotes(meta, books(yes, no), *inventory, "w", RDPSMConfig(base_size=5, max_order_size=1000))
     assert state == "NORMAL" and {q.outcome for q in pair} == {"YES", "NO"}
-    assert all(Decimal(str(q.price)) * Decimal(str(q.size)) >= 1 for q in pair)
     assert {q.outcome: q.size for q in pair} == {"YES": 5 + max(-delta, 0), "NO": 5 + max(delta, 0)}
 
 
 @pytest.mark.parametrize("delta,price,size", [
-    (5, ".15", "6.67"), (-5, ".15", "6.67"),
+    (5, ".15", "5"), (-5, ".15", "5"),
     (5, ".2", "5"), (-5, ".2", "5"), (7, ".15", "7"),
-    (5, ".1", "10"), (5, ".03", "33.34"), (5, ".01", "100"),
+    (5, ".1", "5"), (5, ".03", "5"), (5, ".01", "5"),
 ])
-def test_rebalance_tops_up_only_short_side_to_smallest_legal_size(delta, price, size):
+def test_rebalance_repairs_gap_without_dollar_topup(delta, price, size):
     meta, _ = _market(Venue().raw, SLUG)
     view = {str(i): {"best_bid": float(price), "best_ask": float(Decimal(price) + Decimal(".001")),
                     "tick": .001} for i in (1, 2)}
@@ -62,9 +57,7 @@ def test_rebalance_tops_up_only_short_side_to_smallest_legal_size(delta, price, 
     q = single[0]
     assert q.outcome == ("NO" if delta > 0 else "YES") and q.side.value == "BUY"
     qty = Decimal(str(q.size))
-    assert qty == Decimal(size) and qty * Decimal(price) >= 1
-    if qty > abs(delta):
-        assert (qty - Decimal(".01")) * Decimal(price) < 1
+    assert qty == Decimal(size) == abs(delta)
 
 
 @pytest.mark.parametrize("gap,price,minimum,expected", [
@@ -72,10 +65,10 @@ def test_rebalance_tops_up_only_short_side_to_smallest_legal_size(delta, price, 
     ("5", ".49", "5", "5.00"),
     ("5.003207", ".49", "5", "5.01"),
     ("5.010001", ".49", "5", "5.02"),
-    ("5.003207", ".15", "5", "6.67"),
+    ("5.003207", ".15", "5", "5.01"),
     ("5.003207", ".49", "6.001", "6.01"),
 ])
-def test_legal_buy_size_covers_share_minimum_precision_and_notional(gap, price, minimum, expected):
+def test_legal_buy_size_covers_share_minimum_and_precision(gap, price, minimum, expected):
     assert maker_buy_size(Decimal(price), Decimal(gap), Decimal(minimum)) == Decimal(expected)
 
 
@@ -127,7 +120,7 @@ async def test_m2_rejects_below_minimum_or_off_grid_quantity_before_post(env, si
 
 
 @pytest.mark.parametrize("final_only", [False, True])
-async def test_normal_small_leg_skips_both_at_decision_or_final_admission(env, monkeypatch, final_only):
+async def test_normal_small_leg_posts_at_decision_or_final_admission(env, monkeypatch, final_only):
     v, cfg = env
     reads = [0]
     def lower_no(request):
@@ -137,41 +130,36 @@ async def test_normal_small_leg_skips_both_at_decision_or_final_admission(env, m
                 v.books["2"]["bids"][0]["price"] = ".16"
                 v.books["2"]["asks"][0]["price"] = ".17"
         return None
-    async def finish_after_skip(_):
+    async def finish_after_window(_):
         v.time = START + 300
-    v.on_sleep = finish_after_skip
+    v.on_sleep = finish_after_window
     with boundary(monkeypatch, v, lower_no):
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED", result.stop_reason
-    assert not v.posts and not v.cancels and result.confirmed_fills == 0
-    assert result.skipped_quotes[0]["reason"] == "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM"
+    assert len(v.post_requests) == 1 and len(v.post_requests[0]) == 2
+    low = next(q for q in result.windows[0]["result"]["requested_quotes"] if q["outcome"] == "NO")
+    assert low["price"] == .159 and low["size"] == 5
+    assert result.confirmed_fills == 0 and result.skipped_quotes == []
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
-    if final_only:
-        assert result.windows[0]["result"]["placement_results"] == []
-        assert result.windows[0]["result"]["t0_monotonic"] is None
-    j = RiskJournal(cfg.paths.journal_dir, ADDRESS)
-    assert j.sequence == 0
-    j.close()
 
 
-async def test_normal_skip_retries_with_fresh_eligible_pair(env):
+async def test_normal_low_price_posts_without_waiting_for_price_recovery(env):
     v, cfg = env
     v.books["2"]["bids"][0]["price"] = ".16"
     v.books["2"]["asks"][0]["price"] = ".17"
-    async def recover_book(_):
-        v.books["2"]["bids"][0]["price"] = ".30"
-        v.books["2"]["asks"][0]["price"] = ".31"
-    v.on_sleep = recover_book
     on_windows(v, lambda *_: None, stop_after=1)
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED", result.stop_reason
-    assert result.skipped_quotes[0]["reason"] == "NORMAL_LEG_NOTIONAL_BELOW_MINIMUM"
+    assert result.skipped_quotes == []
     assert len(v.post_requests) == 1 and len(v.post_requests[0]) == 2
-    assert all(Decimal(row["order"]["makerAmount"]) >= 1_000_000 for row in v.post_requests[0])
+    low = v.post_requests[0][1]
+    assert low["order"]["tokenId"] == "2"
+    assert Decimal(low["order"]["makerAmount"]) == 795_000
+    assert Decimal(low["order"]["takerAmount"]) == 5_000_000
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
-async def test_topped_up_confirmed_fill_recomputes_next_normal_sizes(env):
+async def test_exact_low_price_repair_leaves_no_reverse_inventory_or_next_cycle_skew(env):
     v, cfg = env
     def fills(venue, index):
         ids = current_orders(venue)
@@ -180,7 +168,7 @@ async def test_topped_up_confirmed_fill_recomputes_next_normal_sizes(env):
             venue.books["2"]["bids"][0]["price"] = ".15"
             venue.books["2"]["asks"][0]["price"] = ".16"
         elif index == 2:
-            venue.fill(ids["NO"], "repair", 6.67)
+            venue.fill(ids["NO"], "repair", 5)
             venue.books["2"]["bids"][0]["price"] = ".30"
             venue.books["2"]["asks"][0]["price"] = ".31"
     on_windows(v, fills, stop_after=3)
@@ -188,13 +176,13 @@ async def test_topped_up_confirmed_fill_recomputes_next_normal_sizes(env):
     assert result.execution_status == "COMPLETED", result.stop_reason
     assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "NORMAL"]
     pair = result.windows[2]["result"]["requested_quotes"]
-    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 6.67, "NO": 5}
-    assert result.confirmed_yes == 0 and result.confirmed_no == pytest.approx(1.67)
+    assert {q["outcome"]: q["size"] for q in pair} == {"YES": 5, "NO": 5}
+    assert result.confirmed_yes == result.confirmed_no == 0
     assert result.merged_pairs == 5
-    assert result.delta == pytest.approx(-1.67) and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    assert result.delta == 0 and result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 
-@pytest.mark.parametrize("refresh,capital", [(False, "6000000"), (True, "6000000"), (False, "900000")])
+@pytest.mark.parametrize("refresh,capital", [(False, "6000000"), (True, "6000000"), (False, "700000")])
 async def test_rebalance_minimum_size_refresh_fill_and_capital_safety(env, monkeypatch, refresh, capital):
     v, cfg = env
     reads = [0]
@@ -219,7 +207,7 @@ async def test_rebalance_minimum_size_refresh_fill_and_capital_safety(env, monke
         result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     repair = result.windows[1]["result"]
     assert result.windows[1]["state"] == "REBALANCE"
-    if capital == "900000":
+    if capital == "700000":
         assert result.stop_reason == "OFFICIAL_CAPITAL_INSUFFICIENT"
         assert len(v.post_requests) == 1 and repair["placement_results"] == []
         assert result.confirmed_yes == 5 and result.confirmed_no == 0
@@ -227,12 +215,12 @@ async def test_rebalance_minimum_size_refresh_fill_and_capital_safety(env, monke
         assert result.execution_status == "COMPLETED", result.stop_reason
         assert [len(p) for p in v.post_requests] == [2, 1]
         q = repair["requested_quotes"][0]
-        assert q["outcome"] == "NO" and q["size"] == (10 if refresh else 6.67)
+        assert q["outcome"] == "NO" and q["size"] == 5
         assert q["price"] == (.1 if refresh else .15)
-        assert Decimal(str(q["size"])) * Decimal(str(q["price"])) >= 1
+        assert Decimal(str(q["size"])) * Decimal(str(q["price"])) < 1
         signed = v.post_requests[1][0]
         assert signed["postOnly"] is True and signed["orderType"] == "GTC"
-        assert Decimal(signed["order"]["makerAmount"]) >= 1_000_000
+        assert Decimal(signed["order"]["makerAmount"]) == Decimal(str(q["price"])) * 5_000_000
         assert Decimal(signed["order"]["takerAmount"]) == Decimal(str(q["size"])) * 1_000_000
         assert result.confirmed_yes == 0 and result.confirmed_no == pytest.approx(q["size"] - 5)
         assert result.merged_pairs == 5

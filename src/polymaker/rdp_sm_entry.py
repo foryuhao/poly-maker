@@ -17,7 +17,6 @@ from polymaker.btc5m import current_epoch, slug_for_epoch
 from polymaker.catalog.gamma import GammaClient
 from polymaker.domain import TradeState
 from polymaker.rdp_sm import (
-    NORMAL_END_S,
     OFFICIAL_HOSTS,
     TRADING_END_S,
     TRADING_START_S,
@@ -72,7 +71,7 @@ async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotoni
         observer.emit("discovery", {"slug": meta.slug, "condition_id": meta.condition_id,
                                      "start": start, "end": start + 300,
                                      "elapsed_s": elapsed, "official_time": now})
-    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} or not TRADING_START_S <= elapsed < NORMAL_END_S:
+    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"} or not TRADING_START_S <= elapsed < cfg.rdp_sm.normal_cutoff_sec:
         return meta, start, now, {}
     books = {}
     for token in (meta.yes.token_id, meta.no.token_id):
@@ -168,7 +167,7 @@ class AccountRiskPolicy:
 
 async def run_current_market(cfg, *, sleep=None, monotonic=None, observer=None, shadow_mode=False):
     """One market per invocation; optionally own a read-only sync companion."""
-    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
+    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"} and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
         from polymaker.repair_policy import repair_readiness
 
         readiness = repair_readiness(cfg.rdp_sm.repair)

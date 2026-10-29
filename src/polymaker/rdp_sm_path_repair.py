@@ -295,10 +295,10 @@ class PathRepairController(RepairController):
         features = policy.observe(point, original_side=ep["side"], original_qty=q0)
         decision = policy.decide(point, original_side=ep["side"], original_qty=q0,
                                  first_fill_elapsed=first_fill, features=features,
-                                 session_elapsed=session_now)
+                                 session_elapsed=session_now, cutoff_sec=self.cutoff)
         decision["session_elapsed"] = session_now
-        decision["next_review_at"] = min(session_now+self.cfg.review_sec,
-                                         240. if policy.mode == "SL" or session_now >= 180 else 180.)
+        decision["next_review_at"] = min(session_now+self.cfg.review_sec, self.cutoff,
+                                         self.cutoff if policy.mode == "SL" or session_now >= 180 else 180.)
         decision["wake_on"] = ["PRICE_EVENT", "EXECUTION_FACT", "TIME_BOUNDARY"]
         # Only a bounded causal window is needed for future short-shock tests;
         # the cumulative price peak is separately preserved across the episode.
@@ -355,9 +355,9 @@ class PathRepairController(RepairController):
         episode = e.repair_episode
         while e.monotonic() < until:
             elapsed = self.elapsed()
-            boundary = 180 if elapsed < 180 else 240
+            boundary = min(180, self.cutoff) if elapsed < 180 else self.cutoff
             remaining = min(until-e.monotonic(), boundary-elapsed)
-            if remaining <= 0 or elapsed >= 240:
+            if remaining <= 0 or elapsed >= self.cutoff:
                 return
             sequence = feed.sequence
             current = self.lifecycle.snapshot(self, *e.economic_inventory())
@@ -377,7 +377,7 @@ class PathRepairController(RepairController):
     def _make_plan(self, snapshot, decision, point):
         e, ep = self.executor, self.executor.repair_episode
         if (not self.cfg.path.exit_enabled(self.policy.mode)
-                or decision.get("session_elapsed", point.elapsed) >= 240
+                or decision.get("session_elapsed", point.elapsed) >= self.cutoff
                 or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE):
             return None
         side = "NO" if point.delta > 0 else "YES"
@@ -395,17 +395,17 @@ class PathRepairController(RepairController):
         qty = repair_buy_quantity(e, side, price, y-n, cash)
         return {**decision, "policy": "hd_tp_sl_v1", "action": "BUY", "side": side,
                 "price": float(price), "quantity": float(qty), "tick": str(book.tick),
-                "cancel_at": 180. if self.policy.mode == "TP" else 240.,
+                "cancel_at": min(180., self.cutoff) if self.policy.mode == "TP" else self.cutoff,
                 "next_review_at": min(decision.get("session_elapsed", point.elapsed)+self.cfg.review_sec,
-                                      180. if self.policy.mode == "TP" else 240.),
-                "switch_conditions": ["PATH_SL", "T180"] if self.policy.mode == "TP" else ["PAIRED", "T240"],
+                                      min(180., self.cutoff) if self.policy.mode == "TP" else self.cutoff),
+                "switch_conditions": ["PATH_SL", "T180"] if self.policy.mode == "TP" else ["PAIRED", f"T{self.cutoff:g}"],
                 "candidates": [], "parameter_status": self.cfg.path.calibration_status}
 
     async def repair(self, yes, no, window_id):
         if self.executor.cooldown.active:
             await self.executor.sleep(.1)
             return None
-        if self.elapsed() >= 240:
+        if self.elapsed() >= self.cutoff:
             self.plan = None
             return None
         e, feed = self.executor, self.lifecycle.feed
@@ -583,18 +583,18 @@ class PathRepairController(RepairController):
             if self.plan is not None and not self.cfg.path.exit_enabled(self.plan["mode"]):
                 return self.plan["mode"]+"_DISABLED"
             delta = self.executor.economic_inventory()[0]-self.executor.economic_inventory()[1]
-            boundary = 240 if elapsed >= 240 else 180 if elapsed >= 180 else None
+            boundary = self.cutoff if elapsed >= self.cutoff else 180 if elapsed >= 180 else None
             key = (ep["opening_window"], boundary)
             if boundary is not None and key not in self._time_boundaries:
                 self._time_boundaries.add(key)
                 self.executor.record("sm_repair_time_boundary", {
                     "opening_window": ep["opening_window"], "boundary": boundary,
                     "elapsed_s": elapsed, "actual_delta": str(delta),
-                    "action": "STOP_NEW_REPAIR" if boundary == 240 else
+                    "action": "STOP_NEW_REPAIR" if boundary == self.cutoff else
                         "SMALL_EXPOSURE_NO_REPAIR" if abs(delta) <= MIN_REPAIR_EXPOSURE else
                         "HOLD_SL_DISABLED" if not self.cfg.path.sl_enabled else "FORCE_SL",
                     "tp_enabled": self.cfg.path.tp_enabled, "sl_enabled": self.cfg.path.sl_enabled})
-            if elapsed >= 240:
+            if elapsed >= self.cutoff:
                 self.flush_blocked("CUTOFF")
                 return "MARKET_SUBMISSION_CUTOFF"
             if elapsed >= 180:

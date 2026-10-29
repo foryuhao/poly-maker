@@ -165,10 +165,10 @@ def test_entry_and_exit_tolerances_are_independent_on_a_shared_book():
 
 def test_local_configs_expose_both_tolerances():
     assert RDPBAConfig().out_of_order_tolerance_ms == 10
-    for folder in ("config", "livecfg"):
+    for folder, tolerance in (("config", 20), ("livecfg", 10)):
         cfg = Config.load(folder).rdp_sm
-        assert cfg.ba.out_of_order_tolerance_ms == 10
-        assert cfg.repair.opposite_ba.out_of_order_tolerance_ms == 10
+        assert cfg.ba.out_of_order_tolerance_ms == tolerance
+        assert cfg.repair.opposite_ba.out_of_order_tolerance_ms == tolerance
 
 
 @pytest.mark.parametrize("value", [-1, float("nan"), float("inf")])

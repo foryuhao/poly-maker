@@ -13,7 +13,6 @@ from polymaker.rdp_sm import _market
 from polymaker.rdp_sm_marketdata import SessionFeed
 from polymaker.rdp_sm_network import NetworkHealth
 from polymaker.rdp_sm_normal import normal_quotes
-from polymaker.rdp_sm_quotes import QuoteUnavailable
 from polymaker.rdp_sm_rebalance import rebalance_quotes
 from polymaker.rdp_sm_recovery import preflight_pause, retry_read
 from polymaker.rdp_sm_signal import Episodes, Signal, evaluate
@@ -237,7 +236,7 @@ def test_only_signal_side_uses_its_bid_and_original_skew(direction, price, size)
     assert evidence["order_policy"] == "SIGNAL_SIDE_ONLY"
 
 
-def test_opposite_minimum_notional_cannot_veto_legal_signal_order():
+def test_low_price_signal_order_needs_only_share_minimum():
     feed, _, _ = feed_fixture()
     snapshot = feed.snapshot()
     snapshot = replace(
@@ -247,8 +246,8 @@ def test_opposite_minimum_notional_cannot_veto_legal_signal_order():
     )
     quotes = normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'YES', sigma=0.01)
     assert [(q.outcome, q.price, q.size) for q in quotes] == [('YES', .87, 5)]
-    with pytest.raises(QuoteUnavailable, match='NORMAL_LEG_NOTIONAL_BELOW_MINIMUM'):
-        normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'NO', sigma=0.01)
+    quotes = normal_quotes(feed.meta, snapshot, Decimal(0), Decimal(0), 'w', RDPSMConfig(), 'NO', sigma=0.01)
+    assert [(q.outcome, q.price, q.size) for q in quotes] == [('NO', .12, 5)]
 
 
 @pytest.mark.parametrize('direction', ['YES', 'NO'])

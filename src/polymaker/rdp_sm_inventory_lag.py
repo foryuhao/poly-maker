@@ -86,12 +86,12 @@ class InventoryLagAdmission:
         elapsed = e.official_time+e.monotonic()-e.time_anchor-int(e.slug.rsplit("-", 1)[1])
         if not cfg.enabled or not cfg.exclusive_market_writer:
             return "INVENTORY_LAG_DISABLED"
-        if (e.cfg.rdp_sm.normal_entry_mode not in {"obi_v1", "ba_v1"}
+        if (e.cfg.rdp_sm.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1"}
                 or e.cfg.rdp_sm.repair.policy != "hd_tp_sl_v1"):
             return "INVENTORY_LAG_POLICY_UNSUPPORTED"
         if (e.closed or e.fatal or not e.journal.ready or e.gateway._client.pagination_failure
                 or e.merge_pending or e.cooldown.active or e.repair_abandonment is not None
-                or e.repair_episode is None or not 15 <= elapsed < 240):
+                or e.repair_episode is None or not 15 <= elapsed < e.cfg.rdp_sm.repair.cutoff_sec):
             return "INVENTORY_LAG_SAFETY_BLOCKED"
         if (self.since is None or e.monotonic() >= self.since+cfg.grace_sec):
             return "INVENTORY_LAG_EXPIRED"

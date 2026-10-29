@@ -124,8 +124,11 @@ class RepairPricePoint:
 
 
 class SessionFeed:
-    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None):
+    def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None,
+                 ca_config=None, ca_log_path=None, ca_session_id=None, normal_entry_mode="ba_v1",
+                 opposite_ba_execution=None):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
+        self.normal_entry_mode = normal_entry_mode
         self.proxy = proxy
         self.lock = RLock()
         self.generation = self.sequence = 0
@@ -145,7 +148,12 @@ class SessionFeed:
         if opposite_ba_cfg is not None:
             from polymaker.rdp_sm_ba import BidAbsorption
 
-            self.opposite_ba = BidAbsorption(self, opposite_ba_cfg)
+            if opposite_ba_execution is not None and opposite_ba_execution.enabled:
+                from polymaker.rdp_sm_repair_ba import RepairBidAbsorption
+
+                self.opposite_ba = RepairBidAbsorption(self, opposite_ba_cfg, opposite_ba_execution)
+            else:
+                self.opposite_ba = BidAbsorption(self, opposite_ba_cfg)
         self.changed = asyncio.Event()
         self.stop_event = asyncio.Event()
         self.ws = None
@@ -172,6 +180,44 @@ class SessionFeed:
         self.failure_count = 0
         self.notices = Counter()
         self.last_notice = None
+        self.ca = None
+        self.ca_start_failure = None
+        if ca_config is not None and ca_config.enabled and ba_cfg is not None:
+            writer = None
+            try:
+                from polymaker.rdp_sm_ca import CounterAttack
+                from polymaker.rdp_sm_ca_writer import CAWriter
+
+                writer = CAWriter(ca_log_path) if ca_log_path is not None else None
+                self.ca = CounterAttack(self, ba_cfg, ca_config, writer=writer, session_id=ca_session_id)
+            except Exception as exc:
+                self.ca_start_failure = "CA_START_FAILED:"+type(exc).__name__
+                if writer is not None:
+                    writer.stopping.set()
+        from polymaker.rdp_sm_ca_entry import CounterAttackEntry
+
+        self.ca_entry = CounterAttackEntry(self)
+
+    def observe_ca(self, method, *args):
+        # Keep CA outside ba_detectors(): BA ordering/depth filtering and REPAIR
+        # remain independent. ca_v1 explicitly uses the separate entry adapter.
+        with self.lock:
+            if self.ca is not None:
+                if self.ca.closed and method not in {"diagnostics", "snapshot", "disable", "stop"}:
+                    return None
+                result = self.ca.safe(method, *args)
+                if method != "snapshot" or result is not None:
+                    return result
+            if method == "snapshot" and (self.ca is not None or self.ca_start_failure):
+                return {"mode": ("NORMAL_ENTRY" if self.normal_entry_mode == "ca_v1" else "OBSERVATION_ONLY"), "data_complete": False,
+                        "failure": self.ca.failure if self.ca is not None else self.ca_start_failure,
+                        "observed_monotonic": self.monotonic(), "outcomes": {}}
+        return None
+
+    def ca_diagnostics(self):
+        if self.ca is not None:
+            return self.observe_ca("diagnostics") or {"failure": self.ca.failure, "data_complete": False}
+        return {"failure": self.ca_start_failure, "data_complete": False} if self.ca_start_failure else None
 
     def record_failure(self, exc, context=None):
         # Preserve the parser/transport cause across generic disconnect states.
@@ -212,6 +258,8 @@ class SessionFeed:
                 "last_notice": self.last_notice,
                 **({"ba": self.ba.diagnostics()} if self.ba is not None else {}),
                 **({"opposite_ba": self.opposite_ba.diagnostics()} if self.opposite_ba is not None else {}),
+                **({"ca_observation": self.ca_diagnostics()}
+                   if self.ca is not None or self.ca_start_failure else {}),
             }
 
     def _track_signal(self, signal, event_mono):
@@ -259,6 +307,7 @@ class SessionFeed:
 
     def connect(self):
         with self.lock:
+            self.observe_ca("reset")
             for detector in self.ba_detectors():
                 detector.reset()
             self.generation += 1
@@ -281,6 +330,7 @@ class SessionFeed:
 
     def invalidate(self, reason):
         with self.lock:
+            self.observe_ca("invalidate", "CA_"+reason)
             for detector in self.ba_detectors():
                 detector.invalidate(reason)
             self.connected = False
@@ -301,7 +351,7 @@ class SessionFeed:
                 self.books[token] = replace(b, tick=tick)
                 self.tick_verified[token] = tick
 
-    def snapshot(self, *, repair_token=None, repair=False, ba_cfg=None):
+    def snapshot(self, *, repair_token=None, repair=False, ba_cfg=None, allow_pending_top=False):
         now = self.monotonic()
         with self.lock:
             yes, no = (self.books[t] for t in (self.meta.yes.token_id, self.meta.no.token_id))
@@ -315,8 +365,10 @@ class SessionFeed:
                     reason = reason or "WS_EMPTY_BOOK"
                 if b.best_bid is not None and b.best_ask is not None and b.best_bid >= b.best_ask:
                     reason = reason or "WS_CROSSED_BOOK"
-                if ((b.reported_bid is not None and b.reported_bid != (b.best_bid or Decimal(0)))
-                        or (b.reported_ask is not None and b.reported_ask != (b.best_ask or Decimal(1)))):
+                if not allow_pending_top and (
+                    (b.reported_bid is not None and b.reported_bid != (b.best_bid or Decimal(0)))
+                    or (b.reported_ask is not None and b.reported_ask != (b.best_ask or Decimal(1)))
+                ):
                     reason = reason or "WS_TOP_PENDING"
                 book_age = (signal_cfg.max_book_age_ms if signal_cfg is not None
                             and not repair_token else self.cfg.max_book_age_ms)
@@ -403,6 +455,8 @@ class SessionFeed:
                 if not rows:
                     raise ValueError("WS_EMPTY_FRAME")
                 updated, touched, tick_changed = dict(self.books), set(), False
+                # Before any depth can refresh receipts: stale gaps stay latched.
+                self.observe_ca("tick")
                 for row in rows:
                     if not isinstance(row, dict):
                         raise ValueError("WS_FRAME_INVALID")
@@ -427,6 +481,8 @@ class SessionFeed:
                         if token not in updated:
                             raise ValueError("WS_TOKEN_IDENTITY")
                         b = updated[token]
+                        ca_ordered = self.observe_ca("before_event", kind, row, b,
+                                                     received_mono, received_wall)
                         if kind == "last_trade_price":
                             for detector in self.ba_detectors():
                                 detector.trade(row, b, received_mono, received_wall)
@@ -525,6 +581,8 @@ class SessionFeed:
                         touched.add(token)
                         for detector in self.ba_detectors():
                             detector.depth(row, b, updated[token], received_mono, received_wall)
+                        if ca_ordered:
+                            self.observe_ca("depth", updated[token])
                 # Explicit venue BBO bounds supersede cached contradictory depth.
                 # Do this after every change in the frame; never invent top quantities.
                 for token in touched:
@@ -553,6 +611,8 @@ class SessionFeed:
                 self.last_transport_receipt = received_mono
                 self.last_wall = received_wall
                 self.books = updated
+                for token in touched:
+                    self.observe_ca("book_updated", updated[token])
                 y = updated[self.meta.yes.token_id]
                 if (self.meta.yes.token_id in touched and y.best_bid is not None
                         and y.best_ask is not None and y.best_bid < y.best_ask):
@@ -654,16 +714,27 @@ class SessionFeed:
                 self.ws = None
 
     async def run(self):
-        while not self.stop_event.is_set():
-            try:
-                await self._connection()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self.record_failure(exc)
-                self.invalidate("WS_RECONNECT_REQUIRED")
-            with suppress(TimeoutError):
-                await asyncio.wait_for(self.stop_event.wait(), 1)
+        async def ca_maintenance():
+            while not self.stop_event.is_set():
+                self.observe_ca("tick")
+                await asyncio.sleep(.025)
+
+        maintenance = asyncio.create_task(ca_maintenance(), name="ca-observe-timer") if self.ca else None
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    await self._connection()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self.record_failure(exc)
+                    self.invalidate("WS_RECONNECT_REQUIRED")
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(self.stop_event.wait(), 1)
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
 
     async def close(self):
         self.stop_event.set()
@@ -671,3 +742,15 @@ class SessionFeed:
         if self.task:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
+        await self.close_ca()
+
+    async def close_ca(self):
+        if self.ca is not None:
+            # Freeze CA under the same lock as frame processing. Only disk drain
+            # runs in a worker, after order cleanup and with no state mutations.
+            self.observe_ca("stop")
+            if self.ca.writer is not None:
+                try:
+                    await asyncio.to_thread(self.ca.writer.close)
+                except Exception as exc:
+                    self.observe_ca("disable", "CA_LOG_CLOSE_FAILED:"+type(exc).__name__)

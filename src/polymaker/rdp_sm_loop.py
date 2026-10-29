@@ -14,7 +14,6 @@ from py_clob_client_v2.http_helpers import helpers
 
 from polymaker.config import Config
 from polymaker.rdp_sm import (
-    NORMAL_END_S,
     TRADING_END_S,
     TRADING_START_S,
     SessionStatus,
@@ -83,6 +82,7 @@ class RunResult:
     sizing_report: dict = field(default_factory=empty_sizing_report)
     repair_readiness: dict | None = None
     repair_abandonment: dict | None = None
+    ca_observation: dict | None = None
 
     def to_dict(self):
         result = asdict(self)
@@ -150,6 +150,9 @@ class SMTradingLoop:
             return False  # Retain all remaining inventory for settlement.
         if self.executor.inventory_mismatch is not None:
             return False  # A restricted REPAIR lease never authorizes settlement.
+        recovery = getattr(self.executor, "normal_unknown", None)
+        if recovery is not None and recovery.unknowns() and not self.executor.safe_to_continue:
+            return False  # Limited cache admission never authorizes Merge.
         if (not self.production or self.merge_disabled_reason is not None
                 or self.monotonic() < self.merge_retry_deadline):
             return False
@@ -267,7 +270,7 @@ class SMTradingLoop:
         return yes, no
 
     async def _run_session(self, result, fill_window_sec):
-        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}:
             return await self._run_obi_session(result)
         executor = self.executor
         failed = False
@@ -343,7 +346,7 @@ class SMTradingLoop:
                 continue
             if executor.fatal in UNCERTAIN_MUTATIONS or self.pause_stage == "close":
                 continue
-            if elapsed < TRADING_START_S or (normal and elapsed >= NORMAL_END_S):
+            if elapsed < TRADING_START_S or (normal and elapsed >= self.cfg.rdp_sm.normal_cutoff_sec):
                 # Hold balanced inventory until market end without requiring a
                 # quotable late-market book or creating any planned order.
                 if not waiting and self.observer is not None:
@@ -463,15 +466,17 @@ class SMTradingLoop:
     async def _run_obi_session(self, result):
         """Single writer coordinator; controllers share only order primitives."""
         from polymaker.rdp_sm_lifecycle import BatchLifecycle
-        from polymaker.rdp_sm_normal import BANormalController, NormalController
+        from polymaker.rdp_sm_normal import BANormalController, CANormalController, NormalController
         from polymaker.rdp_sm_opposite_ba import OppositeBAController
         from polymaker.rdp_sm_path_repair import PathRepairController
         from polymaker.rdp_sm_repair import RepairController
 
         executor = self.executor
         lifecycle = BatchLifecycle(executor)
-        normal = (BANormalController(executor, lifecycle)
-                  if self.cfg.rdp_sm.normal_entry_mode == "ba_v1"
+        normal = (CANormalController(executor, lifecycle)
+                  if self.cfg.rdp_sm.normal_entry_mode == "ca_v1"
+                  else BANormalController(executor, lifecycle)
+                  if self.cfg.rdp_sm.normal_entry_mode in {"ba_v1", "ca_v1"}
                   else NormalController(executor, lifecycle))
         rebalance = (PathRepairController(executor, lifecycle)
                      if self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1"
@@ -516,6 +521,13 @@ class SMTradingLoop:
             while True:
                 if boundaries is not None and boundaries.done():
                     boundaries.result()
+                if feed.ca is not None:
+                    try:
+                        ca_elapsed = executor.official_time+executor.monotonic()-executor.time_anchor-start
+                        phase = executor.trading_state if executor.meta is not None else "PREFLIGHT"
+                        feed.observe_ca("set_context", phase, ca_elapsed)
+                    except Exception:
+                        feed.observe_ca("disable", "CA_CONTEXT_UNAVAILABLE")
                 executor.drain_network_events()
                 if not self.production:
                     await self._offline_boundary()
@@ -537,10 +549,12 @@ class SMTradingLoop:
                     failed = True
                     result.stop_reason = executor.fatal or "JOURNAL_WRITE_FAILED"
                     break
+                executor.normal_unknown.observe()
                 if (
                     executor.attempts
-                    and not executor.safe_to_continue
+                    and not executor.admission_ready
                     and not await executor.verify_close(cancel=True)
+                    and not executor.normal_unknown.observe()
                 ):
                     await self._pause(
                         result, executor.reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
@@ -633,6 +647,8 @@ class SMTradingLoop:
                         await feed.wait_after(feed.sequence, 0.5)
                     continue
                 lifecycle.account = account
+                if feed.ca is not None:
+                    feed.observe_ca("set_context", controller.phase, elapsed)
                 window_id = f"{self.session_id}:w{result.total_windows + 1}"
                 # Independent controller entry methods own their preparation
                 # and exit policy, rather than passing a TTL to execute_window.
@@ -715,7 +731,7 @@ class SMTradingLoop:
         while e.monotonic() < deadline:
             if (e.fatal or getattr(e.journal, "failure", None) or e.closed
                     or e.inventory_mismatch is not None or e.merge_pending
-                    or (e.attempts and not e.safe_to_continue)
+                    or (e.attempts and not e.admission_ready)
                     or e.repair_abandonment is not None
                     or boundaries.done()):
                 return
@@ -762,7 +778,7 @@ class SMTradingLoop:
         fill_window_sec=3.0,
     ) -> RunResult:
         result = RunResult(None, self.session_id)
-        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"} and self.cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"} and self.cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"}:
             from polymaker.repair_policy import repair_readiness
 
             result.repair_readiness = repair_readiness(self.cfg.rdp_sm.repair)
@@ -787,7 +803,8 @@ class SMTradingLoop:
             startup_reads = None
             while True:
                 startup_reads = _ExecutionReads(self.cfg, risk_reads=startup_reads,
-                                                account_policy=account_policy)
+                                                account_policy=account_policy,
+                                                ca_session_id=self.session_id)
                 preflight = await run_preflight(self.cfg, self.slug, _reads=startup_reads)
                 if self.observer is not None:
                     self.observer.emit("preflight", preflight.to_dict())
@@ -887,6 +904,12 @@ class SMTradingLoop:
             result.stop_time = time.time()
             result.sizing_report["safe_exit_status"] = result.final_close_barrier
             if self.executor is not None:
+                ca_feed = getattr(self.executor.reads, "feed", None)
+                if ca_feed is not None and (ca_feed.ca is not None or ca_feed.ca_start_failure):
+                    # Required order close has already run. CA drain is bounded
+                    # and its failure becomes observation metadata, never a gate.
+                    await ca_feed.close_ca()
+                    result.ca_observation = ca_feed.ca_diagnostics()
                 try:
                     self.executor.record("sm_run_result", result.to_dict())
                 except Exception:

@@ -309,7 +309,7 @@ async def test_just_closed_market_uses_sdk_closed_lookup_without_skipping_identi
     assert len(v.merge_submissions) == 1 and ex.merged_pairs == 5
 
 
-async def test_verified_merge_recovers_capital_before_large_minimum_notional_repair(env):
+async def test_verified_merge_after_low_price_repair_needs_no_reverse_repair(env):
     v, cfg = env
     def fill(venue, index):
         ids = current_orders(venue)
@@ -318,22 +318,16 @@ async def test_verified_merge_recovers_capital_before_large_minimum_notional_rep
             venue.books["2"]["bids"][0]["price"] = ".01"
             venue.books["2"]["asks"][0]["price"] = ".02"
         elif index == 2:
-            venue.fill(ids["NO"], "minimum-topup", 100)
-            venue.time = START + 240
-            # The repair fits the $15 cap only after verified merge recovery.
-            venue.books["1"]["bids"][0]["price"] = ".14"
-            venue.books["1"]["asks"][0]["price"] = ".15"
-        elif index == 3:
-            venue.fill(ids["YES"], "repair", 95)
+            venue.fill(ids["NO"], "exact-low-price-repair", 5)
             venue.time = START + 300
     on_windows(v, fill)
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED", result.stop_reason
-    assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE", "REBALANCE"]
-    assert [m[2] for m in v.merge_submissions] == [5_000_000, 95_000_000]
-    assert result.merged_pairs == result.recovered_collateral_usdc == 100
+    assert [w["state"] for w in result.windows] == ["NORMAL", "REBALANCE"]
+    assert [m[2] for m in v.merge_submissions] == [5_000_000]
+    assert result.merged_pairs == result.recovered_collateral_usdc == 5
     assert result.confirmed_yes == result.confirmed_no == 0 and result.delta == 0
-    assert result.windows[-1]["result"]["requested_quotes"][0]["size"] == 95
+    assert result.windows[-1]["result"]["requested_quotes"][0]["size"] == 5
     assert result.final_close_barrier == "SAFE_TO_CONTINUE"
 
 

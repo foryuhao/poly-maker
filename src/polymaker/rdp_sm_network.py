@@ -272,6 +272,18 @@ class NetworkHealth:
                                              "state": self.state}, now)
             return True
 
+    def release_drained_unknown_batch(self, batch_id):
+        """Release transport ownership after cache checks; keep failure/probe rules."""
+        with self.lock:
+            now = self.monotonic()
+            if (batch_id is None or batch_id != self.active_batch or now < self.pause_until
+                    or not self._probe_ready(now)):
+                return
+            self._event("sm_network_batch", {"action": "DRAINED_UNKNOWN_RISK_RETAINED",
+                                             "batch_id": batch_id}, now)
+            self.active_batch = None
+            self._snapshot(now, 0)  # Existing PAUSED -> PROBE readiness rules.
+
     def complete_batch(self, batch_id, *, safe):
         with self.lock:
             if batch_id is None or batch_id != self.active_batch:

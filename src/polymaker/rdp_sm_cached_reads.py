@@ -129,13 +129,17 @@ class CachedExecutionReads:
     async def cancel(self, ids):
         token = self.begin_write("DELETE", ids)
         task = asyncio.create_task(self.original_cancel(ids))
+        result = None
         try:
-            return await asyncio.shield(task)
+            result = await asyncio.shield(task)
+            return result
         except asyncio.CancelledError:
             await task  # The real SDK DELETE must drain before advancing its boundary.
             raise
         finally:
             self.end_write(token)
+            if result is not None:
+                self.e.normal_unknown.cancel_completed(result)
 
     def context_matches(self, snap):
         if snap.session_id != self.e.session_id or not snap.market_json:
@@ -181,9 +185,10 @@ class CachedExecutionReads:
         return True
 
     def cancel_ids(self, ids):
-        return [oid for oid in ids if not self.terminal_observed([oid])]
+        return [oid for oid in ids if not self.terminal_observed([oid])
+                and not self.e.normal_unknown.suppress_cancel(oid)]
 
-    def admission_current(self):
+    def admission_current(self, *, pending_batch=()):
         """Worker-safe final check; never applies state or starts a read."""
         snap = self.service.latest()
         if (snap.status != "RUNNING" or self.companion.failure or not self.context_matches(snap)
@@ -200,7 +205,8 @@ class CachedExecutionReads:
             if (read is None or attempts.get(name) != read or read.data_json != payload
                     or not 0 <= time.monotonic() - read.started_monotonic <= self.timeout_s):
                 return False
-        return True
+        return not self.e.normal_unknown.unknowns() or bool(
+            self.e.normal_unknown.ids(snap, pending_batch=pending_batch))
 
     def _ingest(self, snap):
         """Keep observed page risk even when its collection later failed."""
@@ -384,20 +390,24 @@ class CachedExecutionReads:
         if self.inflight:
             return False
         if details:
-            requirements = self._detail_requirements(snap)
+            requirements = self._detail_requirements(snap, allow_unknown=True)
             if requirements:
                 self.service.track_orders(requirements)
                 return False
         return True
 
-    def _detail_requirements(self, snap):
+    def _detail_requirements(self, snap, *, allow_unknown=False):
         """The same per-order evidence rules apply to admission and closeout."""
         good = {r.name: r for r in snap.last_good}
         attempts = {r.name: r for r in snap.attempts}
         requirements = {}
         trades = good["trades"].data
         opened = {row["order_id"] for row in good["open_orders"].data}
-        for oid in self.e.known - self.proof_only_rejections():
+        ignored = self.e.normal_unknown.ids(snap) if allow_unknown else set()
+        if (allow_unknown and self.e.normal_unknown.active_ids
+                and self.e.normal_unknown.still_absent(self.e.normal_unknown.active_ids)):
+            ignored |= self.e.normal_unknown.active_ids
+        for oid in self.e.known - self.proof_only_rejections() - ignored:
             name = "order:" + oid
             r = good.get(name)
             after = self.order_writes.get(oid, 0.0)

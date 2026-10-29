@@ -259,7 +259,7 @@ async def test_startup_read_failure_retries_same_market_before_orders(env, monke
     assert len(v.posts) == 2 and result.stop_elapsed_s == 300
 
 
-async def test_missing_merge_auth_does_not_abandon_rebalance_or_release_inventory_cost(env):
+async def test_missing_merge_auth_preserves_low_price_pair_and_inventory_cost(env):
     v, cfg = env
     type2(env)
     cfg.secrets.builder_key = None
@@ -271,20 +271,17 @@ async def test_missing_merge_auth_does_not_abandon_rebalance_or_release_inventor
             venue.books["2"]["bids"][0]["price"] = ".01"
             venue.books["2"]["asks"][0]["price"] = ".02"
         elif index == 2:
-            venue.fill(ids["NO"], "minimum-notional", 100)
+            venue.fill(ids["NO"], "exact-low-price-repair", 5)
             venue.time = START + 240
-            # Keep this recovery scenario within the current $15 session cap.
-            venue.books["1"]["bids"][0]["price"] = ".12"
-            venue.books["1"]["asks"][0]["price"] = ".13"
-        elif index == 3:
-            venue.fill(ids["YES"], "repair", 95)
-    on_windows(v, fills, stop_after=3)
+    on_windows(v, fills, stop_after=2)
     result = await run(env)
     assert result.stop_elapsed_s == 300 and result.execution_status == "BLOCKED"
     assert result.stop_reason == "MERGE_PREPARE_FAILED:BUILDER_AUTH_MISSING"
-    assert len(v.posts) == 4 and result.delta == 0 and result.confirmed_yes == result.confirmed_no == 100
+    assert len(v.posts) == 3 and result.delta == 0 and result.confirmed_yes == result.confirmed_no == 5
     assert not v.merge_submissions and result.merged_pairs == 0
-    assert 14 < v.executor.committed() <= 15 and result.final_close_barrier == "SAFE_TO_CONTINUE"
+    cost = sum(f.price * f.size for f in v.executor.economic_fills())
+    assert float(v.executor.committed()) == pytest.approx(cost) and cost > 0
+    assert result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert len([r for r in journal_records(v.executor.journal.path) if r["kind"] == "sm_trade"]) > 0
 
 

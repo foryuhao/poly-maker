@@ -123,7 +123,8 @@ async def test_memory_safety_events_interrupt_retry_without_account_reads(hazard
     clock = SimpleNamespace(now=100.)
     executor = SimpleNamespace(monotonic=lambda: clock.now, official_time=20., time_anchor=100.,
         fatal=None, journal=SimpleNamespace(failure=None), closed=False, inventory_mismatch=None,
-        merge_pending=False, attempts=[object()], safe_to_continue=True, repair_abandonment=None)
+        merge_pending=False, attempts=[object()], safe_to_continue=True, admission_ready=True,
+        repair_abandonment=None)
     boundary = SimpleNamespace(done=lambda: False)
     sleeps = []
 
@@ -142,6 +143,7 @@ async def test_memory_safety_events_interrupt_retry_without_account_reads(hazard
             executor.merge_pending = True
         elif hazard == "proof":
             executor.safe_to_continue = False
+            executor.admission_ready = False
         elif hazard == "abandon":
             executor.repair_abandonment = {"event": "TRIGGERED"}
         else:

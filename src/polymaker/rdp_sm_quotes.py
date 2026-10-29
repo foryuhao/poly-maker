@@ -6,7 +6,7 @@ from decimal import Decimal
 from polymaker.config import RDPSMConfig
 from polymaker.domain import Side
 from polymaker.rdp_sm import inventory_delta, inventory_trading_state
-from polymaker.rdp_sm_execution import MIN_MAKER_BUY_NOTIONAL, MIN_MAKER_BUY_SHARES, WindowQuote
+from polymaker.rdp_sm_execution import MIN_MAKER_BUY_SHARES, WindowQuote
 from polymaker.rdp_sm_sizing import (
     adjust_normal_pair,
     adjusted_normal_size,
@@ -143,8 +143,6 @@ def make_quotes(
             or size % Decimal(".01") != 0
         ):
             raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
-        if state == "NORMAL" and price * size < MIN_MAKER_BUY_NOTIONAL:
-            raise QuoteUnavailable("NORMAL_LEG_NOTIONAL_BELOW_MINIMUM")
         quotes.append(
             WindowQuote(
                 meta.condition_id, token, outcome, Side.BUY, float(price), float(size), window_id

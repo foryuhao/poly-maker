@@ -53,7 +53,7 @@ class UnknownRepairRecovery:
         New order/fill facts or any positive order detail re-enable cancellation.
         A not-found reply is never interpreted as successful cancellation.
         """
-        if (not self.waiting() or self.owner.closed or not 15 <= self.owner.elapsed() < 240
+        if (not self.waiting() or self.owner.closed or not 15 <= self.owner.elapsed() < self.e.cfg.rdp_sm.repair.cutoff_sec
                 or self.e.repair_abandonment is not None
                 or a not in self.unknowns() or not self.owner.post_done(a)):
             return False
@@ -80,7 +80,7 @@ class UnknownRepairRecovery:
         if (not self.waiting() or e.closed or e.fatal or not e.journal.ready
                 or e.inventory_mismatch is not None or e.merge_pending
                 or e.cooldown.active or e.repair_abandonment is not None
-                or e.repair_episode is None or not 15 <= owner.elapsed() < 240
+                or e.repair_episode is None or not 15 <= owner.elapsed() < e.cfg.rdp_sm.repair.cutoff_sec
                 or cache.companion.failure or e.gateway._client.pagination_failure):
             return None
         if any(not owner.post_done(a) or not a.order_id or a.order_id != a.expected_order_id

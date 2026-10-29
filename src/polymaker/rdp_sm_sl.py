@@ -2,8 +2,8 @@
 
 The coordinator serializes local reservation/target changes; POST, DELETE and
 targeted reads have independent tasks. It never runs the session close barrier
-while a replacement is active. TP reuses its I/O with a separate fixed-price
-coordinator; only the SL run loop permits replacement overlap.
+while a replacement is active. TP and acknowledged BA replacement reuse its
+I/O with separate coordinators and their own overlap policies.
 """
 from __future__ import annotations
 
@@ -31,6 +31,10 @@ ZERO = Decimal(0)
 
 class SLExecution:
     mode = "SL"
+
+    @property
+    def cutoff(self):
+        return self.e.cfg.rdp_sm.repair.cutoff_sec
 
     def __init__(self, controller, window_id, *, inherited=(), parent_done=None, reads_ready=None):
         self.controller = controller
@@ -99,6 +103,9 @@ class SLExecution:
 
     def on_accepted(self, attempt):
         """Mode-specific acceptance policy; shared I/O never changes SL pricing."""
+
+    def on_post_start(self, attempt, goal):
+        """Optional mode-specific final admission/claim under the native POST guard."""
 
     @staticmethod
     def consistent(snapshot):
@@ -202,7 +209,7 @@ class SLExecution:
             return "COOLDOWN_ACTIVE"
         if not e.cfg.rdp_sm.repair.path.exit_enabled(self.mode):
             return self.mode+"_DISABLED"
-        if not 15 <= self.elapsed() < 240:
+        if not 15 <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.fatal:
             return e.fatal
@@ -302,6 +309,7 @@ class SLExecution:
                     raise ValueError("NETWORK_ADMISSION_CHANGED")
                 if not self.health().allowed or not self.recovery.allows(a):
                     raise ValueError("NETWORK_ADMISSION_CHANGED")
+                self.on_post_start(a, goal)
                 e.order_post_elapsed[a.expected_order_id] = self.elapsed()
                 self.post_started[a.attempt_id] = e.monotonic()
                 a.order_id = a.expected_order_id
@@ -510,7 +518,7 @@ class SLExecution:
                 health = self.health()
                 lag_reason = (self.e.inventory_lag.maintenance_reason()
                               if self.e.inventory_mismatch is not None else None)
-                stopping = (abandoned or self.closed or self.elapsed() >= 240 or self.e.closed or self.e.fatal
+                stopping = (abandoned or self.closed or self.elapsed() >= self.cutoff or self.e.closed or self.e.fatal
                             or getattr(self.e.journal, "failure", None) or lag_reason)
                 if stopping:
                     self.reason = self.e.fatal or ("HIGH_ENTRY_REPAIR_ABANDONED" if abandoned
@@ -521,7 +529,7 @@ class SLExecution:
                         self.e.record("sm_obi_close_requested", {
                             "window_id": self.window_id, "reason": self.reason,
                             "requested_monotonic": self.e.monotonic(),
-                            "deadline": self.e.monotonic()+240-self.elapsed()})
+                            "deadline": self.e.monotonic()+self.cutoff-self.elapsed()})
                 elif health.close_active:
                     reason, goal = "NETWORK_EXECUTION_FAILURE", None
                 current = self.latest

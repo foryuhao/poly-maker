@@ -117,9 +117,12 @@ class _ConsoleQueue(QueueHandler):
 class HumanRunLog:
     """One CLI invocation, one FIFO writer; emit is an O(1) memory handoff."""
 
-    def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False):
+    def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False,
+                 normal_cutoff_sec=NORMAL_END_S, repair_cutoff_sec=240):
         self.signature_type = signature_type
         self.repair_mode = repair_mode
+        self.normal_cutoff_sec = normal_cutoff_sec
+        self.repair_cutoff_sec = repair_cutoff_sec
         self.cooldown_active = False
         self.repair_abandoned = False
         self.capital_limit = TEST_CAPITAL_LIMIT_USDC
@@ -199,7 +202,8 @@ class HumanRunLog:
     def _market_lines(self, market):
         elapsed = market.get("elapsed_s")
         remaining = max(0, 300 - elapsed) if isinstance(elapsed, (int, float)) else None
-        repair_window = "REPAIR 15 <= T < 240s" if self.repair_mode else "REBALANCE 15 <= T < 300s"
+        repair_window = (f"REPAIR 15 <= T < {self.repair_cutoff_sec:g}s" if self.repair_mode
+                         else "REBALANCE 15 <= T < 300s")
         return [
             "BTC Up/Down 5m Market",
             f"Market Slug: {value(market.get('slug'))}",
@@ -207,8 +211,8 @@ class HumanRunLog:
             f"Market Time: {local_time(market['start']) if market.get('start') is not None else NA} -> "
             f"{local_time(market['end']) if market.get('end') is not None else NA}",
             f"Market Elapsed Seconds: {value(elapsed)} | Trading Window: "
-            f"NORMAL 15 <= T < {NORMAL_END_S}s | {repair_window}",
-            f"Completion: T >= 300s | NORMAL waits for market end after T >= {NORMAL_END_S}s",
+            f"NORMAL 15 <= T < {self.normal_cutoff_sec:g}s | {repair_window}",
+            f"Completion: T >= 300s | NORMAL waits for market end after T >= {self.normal_cutoff_sec:g}s",
             f"Remaining Trading Time: {value(remaining)}s",
         ]
 
@@ -436,6 +440,24 @@ class HumanRunLog:
                     self.maximum_committed = max(self.maximum_committed or 0, committed)
                     lines.append(f"SL Submit Requested: {p['side']} {p['quantity']}@{p['price']} | "
                                  f"Delta={p['actual_delta']} | PossibleDelta={p['delta_interval']}")
+                elif name == "sm_restored_tp_signal":
+                    lines.append(f"REPAIR Default TP Restored: {p['side']} {p['quantity']}@{p['price']} | "
+                                 f"Price Source={p['price_source']} | Fixed Maker Quote")
+                elif name == "sm_ca_matched_tp_direction_proven":
+                    lines.append(f"CA TP Direction Proven: {p['side']} | Delta={p['actual_delta']} | "
+                                 "Owned opening fills and actual FIFO residual")
+                elif name == "sm_restored_tp_ba_handoff":
+                    lines.append(f"Restored TP -> BA | Episode={p['episode_id']} | "
+                                 "Keep TP until BA Maker acceptance")
+                elif name == "sm_tp_ba_handoff_accepted":
+                    lines.append(f"BA Maker Accepted -> Cancel TP | Episode={p['episode_id']} | "
+                                 f"BA={shortened(p['ba_order_id'])}")
+                elif name == "sm_tp_ba_handoff_closed":
+                    lines.append(f"TP/BA Switch Closed: {value(p.get('reason'))} | "
+                                 f"BA Accepted={value(p.get('ba_accepted'))} | "
+                                 f"TP Preserved={value(p.get('tp_preserved'))}")
+                elif name == "sm_restored_tp_closed":
+                    lines.append(f"Restored TP Closed: {value(p.get('reason'))} | Full close proof required")
                 elif name == "sm_sl_wait":
                     lines.append(f"SL Wait: {p['reason']} | Delta={p['actual_delta']} | "
                                  f"ExecutionDelta={p['execution_delta']}")

@@ -9,8 +9,12 @@ from pydantic import ValidationError
 from polymaker.config import Config, RDPSMConfig
 from polymaker.rdp_sm import NORMAL_END_S, _market, inventory_trading_state
 from polymaker.rdp_sm_execution import RiskJournal, maker_buy_size
-from polymaker.rdp_sm_loop import QuoteUnavailable, make_quotes
-from polymaker.rdp_sm_sizing import resolve_favorite_target, validate_market_sizing
+from polymaker.rdp_sm_loop import make_quotes
+from polymaker.rdp_sm_sizing import (
+    calculate_rebalance_size,
+    resolve_favorite_target,
+    validate_market_sizing,
+)
 from test_rdp_sm_entry import boundary
 from test_rdp_sm_m1 import ADDRESS, CID, SLUG, START, Venue
 from test_rdp_sm_m3_loop import current_orders, on_windows, runner
@@ -178,9 +182,14 @@ def test_normal_minimum_and_maximum_constraints():
     assert sizes == {"NO": 6}
 
 
-def test_minimum_notional_exceeding_maximum_skips():
-    with pytest.raises(QuoteUnavailable, match="MINIMUM_ORDER_EXCEEDS_MAXIMUM"):
-        decision(7, p=".98")
+def test_low_price_repair_does_not_exceed_maximum_to_reach_one_dollar():
+    state, sizes, _, _ = decision(7, p=".98")
+    assert state == "REBALANCE" and sizes == {"NO": D(6)}
+
+
+def test_actual_share_minimum_exceeding_maximum_still_skips():
+    with pytest.raises(ValueError, match="MINIMUM_ORDER_EXCEEDS_MAXIMUM"):
+        calculate_rebalance_size(D(7), D(0), D(".01"), D(16), D(15))
 
 
 @pytest.mark.parametrize("delta,state", [("4.499", "NORMAL"), ("4.5", "REBALANCE"),

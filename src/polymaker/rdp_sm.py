@@ -37,7 +37,7 @@ TEST_CAPITAL_LIMIT_USDC = 15.0
 
 def session_capital_limit(cfg):
     """The path strategy's confirmed session budget; legacy tools retain 15."""
-    return (20.0 if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
+    return (20.0 if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}
             and cfg.rdp_sm.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} else TEST_CAPITAL_LIMIT_USDC)
 
 
@@ -467,7 +467,7 @@ async def _account(reads: _Reads, meta: MarketMeta, market: dict[str, Any]) -> d
 async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None) -> PreflightResult:
     """Read one selected market/account once; never submit, cancel or persist."""
     result = PreflightResult(test_capital_limit_usdc=session_capital_limit(cfg))
-    if _reads is None and cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
+    if _reads is None and cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}:
         from polymaker.rdp_sm_execution import _ExecutionReads
 
         reads = _ExecutionReads(cfg)
@@ -490,12 +490,12 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
         meta, start = _market(raw, slug)
         stage = "account_identity"
         await reads.connect_account()
-        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}:
+        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}:
             from polymaker.rdp_sm_fence import recover_fence
 
             await recover_fence(reads, meta)
         stage = "books"
-        obi = cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1"}
+        obi = cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}
         if obi:
             ws_books = await reads.ws_readiness(meta)
         else:
@@ -573,7 +573,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check(
                 "trading_window",
                 "PASS" if window else "REJECTED",
-                f"15 <= elapsed < 300; NORMAL stops at {NORMAL_END_S}; M2 rechecks phase before POST",
+                f"15 <= elapsed < 300; NORMAL stops at {cfg.rdp_sm.normal_cutoff_sec:g}; M2 rechecks phase before POST",
             )
         )
         result.status = (

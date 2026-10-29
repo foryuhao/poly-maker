@@ -16,7 +16,10 @@ from polymaker.repair_model import RepairOrder, RepairPlanner, RepairState
 
 class RepairController:
     phase = "REPAIR"
-    cutoff = 240
+
+    @property
+    def cutoff(self):
+        return self.cfg.cutoff_sec
 
     def __init__(self, executor, lifecycle):
         self.executor, self.lifecycle = executor, lifecycle

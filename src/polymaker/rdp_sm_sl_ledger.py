@@ -84,7 +84,7 @@ def exposure(executor, *, retain_unknown_reservations=False):
     return Exposure(y-n, execution, pending["YES"], pending["NO"], spent, reserved)
 
 
-def _fifo(fills, stamps, yes_token):
+def _fifo(fills, stamps, yes_token, *, pairs=None):
     """Shared FIFO allocation for residual inventory and completed pair costs."""
     queues = {True: deque(), False: deque()}
     paired = {}
@@ -101,6 +101,8 @@ def _fifo(fills, stamps, yes_token):
         while qty > 0 and opposite:
             old, remaining = opposite[0]
             used = min(qty, remaining)
+            if pairs is not None:
+                pairs.append((old, fill, used))
             for leg in (old, fill):
                 key = (leg.trade_id, leg.maker_order_id)
                 paired[key] = paired.get(key, ZERO)+used
@@ -118,6 +120,13 @@ def _fifo(fills, stamps, yes_token):
 def fifo_paired_quantities(fills, stamps, yes_token):
     """Actual paired quantity per fill identity, excluding every residual share."""
     return _fifo(fills, stamps, yes_token)[1]
+
+
+def fifo_pairs(fills, stamps, yes_token):
+    """Actual FIFO opening/closing legs and shares for auditable role PnL."""
+    pairs = []
+    _fifo(fills, stamps, yes_token, pairs=pairs)
+    return pairs
 
 
 def fifo_residual(fills, stamps, yes_token):

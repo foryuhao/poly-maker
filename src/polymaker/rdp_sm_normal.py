@@ -21,7 +21,10 @@ def normal_quotes(meta, snapshot, yes, no, window_id, cfg, direction, *, sigma=N
 
 class NormalController:
     phase = "NORMAL"
-    cutoff = 120
+
+    @property
+    def cutoff(self):
+        return self.executor.cfg.rdp_sm.normal_cutoff_sec
 
     @property
     def episodes(self):
@@ -154,7 +157,7 @@ class BANormalController(NormalController):
                     **self.lifecycle.clock(normal=True))
                 evidence.pop("normal_sigma", None)
                 evidence.pop("sigma_window_seconds", None)
-                evidence["normal_entry_mode"] = "ba_v1"
+                evidence["normal_entry_mode"] = self.executor.cfg.rdp_sm.normal_entry_mode
                 result[direction] = (tuple(quotes), evidence)
             except QuoteUnavailable as exc:
                 self.quote_block_reason = str(exc)
@@ -190,3 +193,16 @@ class BANormalController(NormalController):
                 return result
         await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
         return None
+
+
+class CANormalController(BANormalController):
+    """CA direction/first-SELL lease, with the unchanged anchored Bid order path."""
+
+    @property
+    def episodes(self):
+        return self.lifecycle.feed.ca_entry
+
+    def select(self, snapshot):
+        signal = self.episodes.evaluate(snapshot)
+        self.signal_block_reason = "CA_NO_SIGNAL" if signal.direction is None else None
+        return signal.direction, signal

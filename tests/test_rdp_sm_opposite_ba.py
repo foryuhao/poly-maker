@@ -167,7 +167,8 @@ def test_local_configs_keep_both_policies_and_independent_ba_settings():
 
 
 async def setup_exit(env, monkeypatch, size=5):
-    setup = await setup_obi(env, monkeypatch)
+    # Opening is setup for exit tests, not a 120ms signing-speed test.
+    setup = await setup_obi(env, monkeypatch, horizon=.5)
     _, e, feed, lifecycle = setup[:4]
     e.cfg.rdp_sm.repair.policy = "opposite_ba_v1"
     e.cfg.rdp_sm.repair.opposite_ba = RDPBAConfig(
@@ -177,6 +178,7 @@ async def setup_exit(env, monkeypatch, size=5):
     feed.opposite_ba = BidAbsorption(feed, e.cfg.rdp_sm.repair.opposite_ba)
     result, _ = await open_yes(setup, size=size)
     assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+    assert e.economic_inventory() == (D(str(size)), D(0)), "exit fixture opening did not fill"
     lifecycle.account = (await e._snapshot(include_books=False))[3]
     return setup, OppositeBAController(e, lifecycle)
 
@@ -316,10 +318,21 @@ async def test_minimum_order_can_reverse_into_small_residual_and_end_round(env, 
 
 
 async def test_large_reverse_residual_reuses_fifo_handoff_and_waits_for_new_ba(env, monkeypatch):
+    import polymaker.rdp_sm_opposite_ba as opposite_ba
+
     setup, c = await setup_exit(env, monkeypatch)
     v, e, feed, lifecycle, _, _, _, pump, _ = setup
     try:
-        # A low-priced NO exit needs >5 shares to meet the existing $1 minimum.
+        # Inject the quantity of an old, dollar-topped-up intent so its fill
+        # and reverse-FIFO recovery remain covered after removing that policy.
+        # Current share-only sizing must independently return exactly five.
+        sizing = opposite_ba.repair_buy_quantity
+
+        def legacy_quantity(*args):
+            assert sizing(*args) == D(5)
+            return D("9.10")
+
+        monkeypatch.setattr(opposite_ba, "repair_buy_quantity", legacy_quantity)
         pump.update(bid=".87", yes_ask=".89", no_bid=".11", no_ask=".13")
         await asyncio.sleep(.025)
         absorption(feed, "2")
@@ -342,6 +355,7 @@ async def test_large_reverse_residual_reuses_fifo_handoff_and_waits_for_new_ba(e
         assert D(ep["original_qty"]) == D("4.1") and D(ep["original_cost"]) == D(".451")
         assert e.cooldown.round_id == round_id and e.trading_state == "REPAIR"
         assert not c.reconcile_episode()
+        monkeypatch.setattr(opposite_ba, "repair_buy_quantity", sizing)
         lifecycle.account = (await e._snapshot(include_books=False))[3]
         assert await c.repair(*e.economic_inventory(), "no-new-signal") is None
         assert len(v.post_requests) == 2

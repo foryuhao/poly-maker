@@ -424,7 +424,13 @@ async def test_quiet_stale_book_keeps_normal_order_until_original_deadline(
     task = None
     try:
         state["direction"] = direction
-        await asyncio.sleep(.025)
+        # NO needs three fresh directional samples; a fixed 25ms sleep can
+        # deliver only two when the socket pump is scheduled late.
+        for _ in range(200):
+            if normal.select(feed.snapshot())[0] == direction:
+                break
+            await asyncio.sleep(.005)
+        assert normal.select(feed.snapshot())[0] == direction
         task = asyncio.create_task(normal.enter(Decimal(0), Decimal(0), "quiet-book"))
         for _ in range(200):
             if v.post_requests:

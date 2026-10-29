@@ -110,7 +110,7 @@ def adjusted_normal_size(side, legacy, target, price, minimum, maximum):
     trim = max(-target, 0) if side == "YES" else max(target, 0)
     legal_min = maker_buy_size(price, Decimal(0), minimum)
     # Never enlarge a legacy leg to accommodate the soft target. Its preexisting
-    # illegality (including notional) is handled by make_quotes as before.
+    # share minimum and precision are checked by make_quotes as before.
     adjusted = max(legacy - trim, min(legacy, legal_min))
     size = min(adjusted, maximum)
     reasons = []
@@ -130,7 +130,7 @@ def calculate_rebalance_size(delta, target, price, minimum, maximum):
     size = min(legal, maximum)
     reasons = []
     if legal != ideal:
-        reasons.append("MINIMUM_NOTIONAL_OR_PRECISION_FALLBACK")
+        reasons.append("MINIMUM_SHARES_OR_PRECISION_FALLBACK")
     if size != legal:
         reasons.append("MAX_ORDER_SIZE")
     return ideal, size, reasons

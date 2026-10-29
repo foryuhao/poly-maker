@@ -211,7 +211,7 @@ class TPExecution(SLExecution):
                 health = self.health()
                 lag_reason = (self.e.inventory_lag.maintenance_reason()
                               if self.e.inventory_mismatch is not None else None)
-                stopping = (abandoned or self.closed or self.e.closed or self.e.fatal or self.elapsed() >= 240
+                stopping = (abandoned or self.closed or self.e.closed or self.e.fatal or self.elapsed() >= self.cutoff
                             or getattr(self.e.journal, "failure", None) or lag_reason)
                 if (not stopping and reason == "REPAIR_MODE_SL_CANCEL_OLD_STATE"
                         and self.e.cfg.rdp_sm.repair.path.sl_enabled):

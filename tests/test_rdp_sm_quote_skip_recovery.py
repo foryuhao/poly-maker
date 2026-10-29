@@ -28,9 +28,8 @@ def set_probability(v, yes_bid):
 
 
 @pytest.mark.parametrize("target", [0, 1])
-@pytest.mark.parametrize("recover", [True, False])
-async def test_repair_minimum_exceeds_maximum_skips_until_legal_or_market_end(
-    env, monkeypatch, target, recover
+async def test_low_price_repair_stays_at_gap_when_final_snapshot_price_falls(
+    env, monkeypatch, target
 ):
     v, cfg = env
     cfg.rdp_sm.base_size = Decimal(7)
@@ -52,9 +51,7 @@ async def test_repair_minimum_exceeds_maximum_skips_until_legal_or_market_end(
             venue.time = START + 164
             set_probability(venue, ".07")
         elif index == 4:
-            # Only seven shares actually fill, even though minimum notional
-            # requires a planned quantity of 14.29 at this price.
-            venue.fill(orders["YES"], "actual-partial-repair", 7)
+            venue.fill(orders["YES"], "exact-repair", 7)
 
     on_windows(v, fills, stop_after=4)
 
@@ -62,35 +59,27 @@ async def test_repair_minimum_exceeds_maximum_skips_until_legal_or_market_end(
         if (request.url.path == "/book" and request.url.params["token_id"] == "1"
                 and v.executor is not None and len(v.executor.attempts) == 5):
             low_reads.append(v.time)
-            # First read generates a legal plan at .07. The M2 admission
-            # snapshot moves to .06 (16.67 shares required, above max15).
-            if len(low_reads) == 2 or len(low_reads) > 2 and not recover:
+            # Both prices accept the same seven shares; a final price drop
+            # must no longer inflate quantity past max15 to reach a dollar.
+            if len(low_reads) >= 2:
                 set_probability(v, ".06")
-            elif len(low_reads) > 2:
-                set_probability(v, ".07")
         return None
 
     with boundary(monkeypatch, v, move):
         result = await run(env)
     assert len(low_reads) >= 2
-    skipped = result.windows[3]["result"]
-    assert skipped["requested_quotes"][0]["price"] == .07
-    assert skipped["requested_quotes"][0]["size"] == 14.29
-    assert skipped["placement_results"] == [] and skipped["t0_monotonic"] is None
-    assert skipped["block_reason"] == "MINIMUM_ORDER_EXCEEDS_MAXIMUM"
-    assert skipped["close_barrier"] == "SAFE_TO_CONTINUE"
-    assert any(r["reason"] == "MINIMUM_ORDER_EXCEEDS_MAXIMUM" for r in result.skipped_quotes)
+    repair = result.windows[3]["result"]
+    assert repair["requested_quotes"][0]["price"] == .06
+    assert repair["requested_quotes"][0]["size"] == 7
+    assert len(repair["placement_results"]) == 1 and repair["t0_monotonic"] is not None
+    assert repair["close_barrier"] == "SAFE_TO_CONTINUE"
+    assert result.skipped_quotes == []
     assert result.stop_elapsed_s == 300 and result.stop_reason == "MARKET_CUTOFF"
     assert result.execution_status == "COMPLETED" and result.final_close_barrier == "SAFE_TO_CONTINUE"
     assert all(row["status"] != "LIVE" for row in v.rows.values())
-    assert len(v.post_requests) == (4 if recover else 3)
-    if recover:
-        repair = result.windows[4]
-        assert repair["result"]["requested_quotes"][0]["size"] == 14.29
-        assert repair["sizing"]["confirmed_yes_fill"] == "7.0"
-        assert result.delta == -target
-    else:
-        assert result.delta == -7 - target
+    assert len(v.post_requests) == 4
+    assert result.windows[3]["sizing"]["confirmed_yes_fill"] == "7.0"
+    assert result.delta == -target
 
 
 async def test_unquotable_repair_never_requotes_without_fresh_close_proof(env, monkeypatch):
@@ -106,7 +95,8 @@ async def test_unquotable_repair_never_requotes_without_fresh_close_proof(env, m
         if (request.url.path == "/book" and request.url.params["token_id"] == "1"
                 and v.trades):
             reads.append(v.time)
-            set_probability(v, ".07" if len(reads) == 1 else ".06")
+            # A genuine tick-grid violation still forces a close before POST.
+            set_probability(v, ".07" if len(reads) == 1 else ".0605")
         if request.url.path == "/data/order/o-1" and len(reads) >= 2:
             failed.append(v.time)
             return httpx.Response(503, request=request, json={"error": "offline close outage"})

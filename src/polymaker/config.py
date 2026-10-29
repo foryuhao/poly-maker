@@ -181,6 +181,30 @@ class RDPBAConfig(BaseModel):
         return self
 
 
+class RDPCAObserveConfig(BaseModel):
+    """Read-only CA observation; all timing/SELL budgets come from NORMAL BA."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, strict=True)
+    min_buy_shares: Decimal = Field(default=Decimal("10"), gt=0, allow_inf_nan=False)
+    output_dir: str = "research_outputs/ca_observe"
+
+
+class RDPCAMatchedTPConfig(BaseModel):
+    """Fixed opposite maker BUY, admitted only after an owned CA fill."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, strict=True)
+    restore_after_ba: bool = Field(default=False, strict=True)
+    profit_per_share: Decimal = Field(default=Decimal("0.20"), gt=0, lt=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _restore_requires_tp(self):
+        if self.restore_after_ba and not self.enabled:
+            raise ValueError("restore_after_ba requires ca_matched_tp.enabled")
+        return self
+
+
 class RDPSyncObserveConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = False
@@ -253,6 +277,15 @@ class RDPInventoryLagConfig(BaseModel):
         return self
 
 
+class RDPOppositeBAExecutionConfig(BaseModel):
+    """Ask-minus-tick execution; quotes stay fixed once posted."""
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, strict=True)
+    # Accept legacy configurations; this field no longer constrains execution.
+    price_tolerance: Decimal | None = Field(default=None, ge=0, lt=1, allow_inf_nan=False)
+
+
 class RDPRepairConfig(BaseModel):
     """Versioned REPAIR model inputs. Defaults are research, not fitted estimates."""
 
@@ -260,6 +293,7 @@ class RDPRepairConfig(BaseModel):
     policy: Literal["ev_legacy", "hd_tp_sl_v1", "opposite_ba_v1"] = "ev_legacy"
     path: RDPRepairPathConfig = Field(default_factory=RDPRepairPathConfig)
     opposite_ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
+    opposite_ba_execution: RDPOppositeBAExecutionConfig = Field(default_factory=RDPOppositeBAExecutionConfig)
     abandon_high_entry: RDPRepairAbandonConfig = Field(default_factory=RDPRepairAbandonConfig)
     unknown_recovery: RDPUnknownRecoveryConfig = Field(default_factory=RDPUnknownRecoveryConfig)
     inventory_lag: RDPInventoryLagConfig = Field(default_factory=RDPInventoryLagConfig)
@@ -267,7 +301,7 @@ class RDPRepairConfig(BaseModel):
     parameter_status: Literal["UNCALIBRATED"] = "UNCALIBRATED"
     delta_limit: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     review_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
-    cutoff_sec: float = Field(default=240.0, gt=0, le=240, allow_inf_nan=False)
+    cutoff_sec: float = Field(default=240.0, gt=0, le=300, allow_inf_nan=False)
     liquidity_rate: float = Field(default=2.0, ge=0, allow_inf_nan=False)
     queue_scale_sec: float = Field(default=2.0, gt=0, allow_inf_nan=False)
     depth_decay: float = Field(default=50.0, ge=0, allow_inf_nan=False)
@@ -284,10 +318,12 @@ class RDPRepairConfig(BaseModel):
 
     @model_validator(mode="after")
     def _limits(self):
+        if self.opposite_ba_execution.enabled and self.policy != "opposite_ba_v1":
+            raise ValueError("opposite_ba_execution requires repair.policy=opposite_ba_v1")
         if self.policy == "ev_legacy" and not (self.path.tp_enabled and self.path.sl_enabled):
             raise ValueError("TP/SL switches require repair.policy=hd_tp_sl_v1")
-        if self.delta_limit != Decimal("5") or self.cutoff_sec != 240:
-            raise ValueError("REPAIR v1 requires session Delta limit 5 and cutoff T240")
+        if self.delta_limit != Decimal("5"):
+            raise ValueError("REPAIR v1 requires session Delta limit 5")
         if not self.horizon_sec or any(not 0 < h <= 240 for h in self.horizon_sec):
             raise ValueError("repair horizons must be finite positive seconds <=240")
         return self
@@ -301,9 +337,12 @@ class RDPCooldownConfig(BaseModel):
 
 
 class RDPSMConfig(BaseModel):
-    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1"] = "legacy"
+    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1"] = "legacy"
+    normal_cutoff_sec: float = Field(default=120.0, gt=0, le=300, allow_inf_nan=False)
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
     ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
+    ca_observe: RDPCAObserveConfig = Field(default_factory=RDPCAObserveConfig)
+    ca_matched_tp: RDPCAMatchedTPConfig = Field(default_factory=RDPCAMatchedTPConfig)
     repair: RDPRepairConfig = Field(default_factory=RDPRepairConfig)
     cooldown: RDPCooldownConfig = Field(default_factory=RDPCooldownConfig)
     sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
@@ -319,8 +358,16 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
-        if self.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} and self.normal_entry_mode not in {"obi_v1", "ba_v1"}:
-            raise ValueError(f"{self.repair.policy} requires normal_entry_mode=obi_v1 or ba_v1")
+        if self.ca_matched_tp.enabled and (
+            self.normal_entry_mode != "ca_v1" or self.repair.policy != "opposite_ba_v1"
+        ):
+            raise ValueError("ca_matched_tp requires ca_v1 and repair.policy=opposite_ba_v1")
+        if self.ca_observe.enabled and self.normal_entry_mode not in {"ba_v1", "ca_v1"}:
+            raise ValueError("CA observation requires normal_entry_mode=ba_v1 or ca_v1")
+        if self.normal_entry_mode == "ca_v1" and not self.ca_observe.enabled:
+            raise ValueError("normal_entry_mode=ca_v1 requires ca_observe.enabled=true")
+        if self.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} and self.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1"}:
+            raise ValueError(f"{self.repair.policy} requires normal_entry_mode=obi_v1, ba_v1 or ca_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")
         if self.max_order_size < self.base_size:

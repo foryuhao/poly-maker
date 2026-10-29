@@ -140,11 +140,13 @@ async def test_inflight_reversal_canceled_reply_releases_risk_and_allows_next_ep
 async def test_canceled_reply_incomplete_proof_retains_risk_until_successful_retry(
     env, monkeypatch, failed_read,
 ):
-    setup = await setup_obi(env, monkeypatch)
+    # Exercise rejected-order proof, rather than expiry during 120ms setup.
+    setup = await setup_obi(env, monkeypatch, horizon=.5)
     v, e, _, _, normal, *_ = setup
     state, client = inject_reply(setup, monkeypatch, failed_read=failed_read)
     try:
         result, _ = await normal.enter(Decimal(0), Decimal(0), "incomplete-proof")
+        assert len(v.post_requests) == 1
         assert result.close_barrier == "BLOCKED"
         assert e.attempts[-1].outcome == "UNKNOWN" and e.committed() == Decimal("2.5")
         assert not e.canceled_submission_proofs
