@@ -12,9 +12,8 @@ from polymaker.rdp_sm_ca_matched_tp import CAMatchedTP
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
 from polymaker.rdp_sm_sl_ledger import fifo_pairs
 from polymaker.state.tracker import TradeEvent
-from test_rdp_sm_ba import trade
-from test_rdp_sm_ca import buy
-from test_rdp_sm_ca_matched_tp import fill, tp_setup
+from test_rdp_sm_ca_entry import confirm_ca
+from test_rdp_sm_ca_matched_tp import fill, prices, tp_setup
 from test_rdp_sm_cached_reads import attach, finish
 from test_rdp_sm_m2_execution import journal_records
 from test_rdp_sm_obi_execution import cleanup
@@ -52,11 +51,13 @@ def observe(v, e, oid, tid, qty=5, status=TradeState.CONFIRMED):
 
 
 @asynccontextmanager
-async def delayed_tp(env, monkeypatch, tmp_path, cached=False, token="1", preposition_ba=False):
+async def delayed_tp(env, monkeypatch, tmp_path, cached=False, token="1", preposition_ba=False, ba_enabled=True, ttl_sec=15.0):
     setup = await tp_setup(env, monkeypatch)
     v, e, feed, lifecycle, normal, wire = setup[:6]
     e.cfg.rdp_sm.ca_matched_tp.restore_after_ba = True
+    e.cfg.rdp_sm.repair.ba_enabled = ba_enabled
     e.cfg.rdp_sm.ca_matched_tp.profit_per_share = D(".05")
+    e.cfg.rdp_sm.ca_matched_tp.ttl_sec = ttl_sec
     for cfg in (e.cfg.rdp_sm.repair.opposite_ba, feed.opposite_ba.cfg):
         cfg.signal_lifetime_sec = 1
         cfg.max_entry_age_ms = 750
@@ -112,7 +113,7 @@ async def delayed_tp(env, monkeypatch, tmp_path, cached=False, token="1", prepos
     monkeypatch.setattr(CAMatchedTP, "__init__", capture)
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        feed.apply([trade(feed, token), buy(feed, token)])
+        await confirm_ca(feed, token)
         c.task = asyncio.create_task(normal.enter(D(0), D(0), "delayed-ca"))
         await until(lambda: c.tp is not None and e.attempts[1].outcome == "ACK")
         assert e.economic_inventory() == (D(0), D(0)) and e.repair_episode is None
@@ -200,6 +201,32 @@ async def test_delayed_confirmation_proves_original_side_then_ba_ack_precedes_tp
         assert initial["side"] is None  # This is the actual previously broken creation path.
         assert proof["first_fill_monotonic"] == c.first_fill_mono
         assert any(r["kind"] == "sm_tp_ba_handoff_accepted" for r in logs)
+
+
+@pytest.mark.parametrize("cached", [False, True])
+async def test_dollar_topup_closes_tp_before_replanning_ba(env, monkeypatch, tmp_path, cached):
+    async with delayed_tp(env, monkeypatch, tmp_path, cached) as c:
+        await c.confirm()
+        prices(c.feed, ".85")
+        await asyncio.sleep(.025)
+        absorption(c.feed, c.opposite)
+        result, _ = await asyncio.wait_for(c.task, 5)
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert len(c.v.post_requests) == 2  # Opening and TP only; no overlap BA.
+        assert c.v.rows[c.tp]["status"] != "LIVE"
+        assert c.e.economic_inventory() == (D(5), D(0))
+        logs = journal_records(c.e.journal.path)
+        assert any(r["kind"] == "sm_ca_matched_tp_ba_handoff"
+                   and r["data"]["payload"].get("policy") == "CANCEL_TP_PROVE_THEN_REPLAN_BA"
+                   for r in logs)
+        # The next repair lane must use current inventory, not the old TP goal.
+        c.lifecycle.account = (await c.e._snapshot(include_books=False))[3]
+        controller = OppositeBAController(c.e, c.lifecycle)
+        snapshot = c.feed.snapshot(ba_cfg=controller.ba_config)
+        plans = controller.candidates(snapshot, D(5), D(0), "after-topup-close")
+        quote = plans["NO"][0][0]
+        assert (quote.price, quote.size) == (.149, 6.72)
+        assert D(str(quote.price)) * D(str(quote.size)) >= 1
 
 
 @pytest.mark.parametrize("cached", [False, True])

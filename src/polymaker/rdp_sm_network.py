@@ -141,7 +141,7 @@ class NetworkHealth:
 
     def observe(self, method, duration, success=True, *, operation_id=None, endpoint="/time",
                 started_at=None, started_wall=None, outcome=None, batch_id=None,
-                http_status=None, error_type=None):
+                http_status=None, error_type=None, transport=None):
         now = self.monotonic()
         duration_ms = duration * 1000
         if not math.isfinite(duration_ms) or duration_ms < 0:
@@ -168,6 +168,7 @@ class NetworkHealth:
                 "started_wall": time.time() - duration if started_wall is None else started_wall,
                 "completed_wall": time.time(), "duration_ms": duration_ms, "outcome": outcome,
                 "http_status": http_status, "error_type": error_type,
+                **({"transport": transport} if transport is not None else {}),
             }, now)
             if method in {"POST", "DELETE"}:
                 status = "FAST" if fast else "SLOW" if outcome == "SUCCESS" else outcome

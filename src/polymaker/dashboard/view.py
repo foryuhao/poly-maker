@@ -24,8 +24,14 @@ from rich.text import Text
 from polymaker.dashboard.archive import clock
 from polymaker.dashboard.model import Record
 
-COLORS = {"TOTAL": "cyan", "MAKER": "green", "TAKER": "yellow", "OTHER": "magenta"}
+COLORS = {"TOTAL": "cyan", "TP": "green", "BA": "yellow", "OTHER": "magenta"}
 HISTORY_PERIODS = (4, 12, 24)
+
+
+def archive_pagination(count: int, height: int | None, page: int) -> tuple[int, int, int]:
+    limit = min(20, max(1, (height - 12) // 2)) if height else 20
+    pages = max(1, (count + limit - 1) // limit)
+    return limit, pages, min(max(0, page), pages - 1)
 
 
 def fmt(value: object, places: int = 3) -> str:
@@ -49,12 +55,13 @@ def read_snapshot(output: Path) -> Record:
 
 def history_chart(sessions: list[Record], width: int, height: int = 9) -> Text:
     width = max(12, width - 12)
-    points: list[tuple[float, ...]] = [(0., 0., 0.)]
-    totals = [Decimal(0), Decimal(0), Decimal(0)]
+    points: list[tuple[float, ...]] = [(0., 0., 0., 0.)]
+    totals = [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
     for s in sessions:
-        totals[0] += Decimal(s["pair_pnl"])
-        totals[1] += Decimal(s["pnl_by_role"]["MAKER"])
-        totals[2] += Decimal(s["pnl_by_role"]["TAKER"])
+        totals[0] += sum((Decimal(v) for v in s["pnl_by_role"].values()), Decimal(0))
+        totals[1] += Decimal(s["pnl_by_role"]["TP"])
+        totals[2] += Decimal(s["pnl_by_role"]["BA"])
+        totals[3] += Decimal(s["pnl_by_role"]["OTHER"])
         points.append(tuple(float(v) for v in totals))
     low, high = min(v for p in points for v in p), max(v for p in points for v in p)
     if high - low < 1e-9:
@@ -66,7 +73,7 @@ def history_chart(sessions: list[Record], width: int, height: int = 9) -> Text:
     if 0 <= zero_y < height:
         grid[zero_y] = [("─", "dim") for _ in range(width)]
     # Text-only projection; Decimal ledger values never depend on chart rounding.
-    for series, color, char in [(1, "green", "·"), (2, "yellow", ":"), (0, "cyan", "●")]:
+    for series, color, char in [(1, "green", "·"), (2, "yellow", ":"), (3, "magenta", "+"), (0, "cyan", "●")]:
         for x in range(width):
             index = x / (width - 1) * (len(points) - 1)
             a = min(int(index), len(points) - 2)
@@ -110,9 +117,33 @@ def signal_table(current: Record, now: float) -> Table:
     return table
 
 
+def post_panel(current: Record) -> Panel:
+    table = Table(box=None, expand=True, padding=(0, 1))
+    table.add_column("类型")
+    for side in ("YES", "NO"):
+        table.add_column(side, justify="right")
+    counts = current.get("post_counts", {})
+    for role in ("CA", "TP", "BA"):
+        table.add_row(role, *(str(counts.get(role, {}).get(side, 0)) for side in ("YES", "NO")))
+    return Panel(Group(table, Text("实际发单笔数 · 含拒单/未知\n不含发送前放弃；不代表成交", style="dim")),
+                 title="POST", box=box.SQUARE)
+
+
+def signal_post_row(signal: RenderableType, current: Record, width: int) -> Table:
+    row = Table.grid(expand=True, padding=0)
+    row.add_column(ratio=3)
+    if width >= 95:
+        row.add_column(ratio=2)
+        row.add_row(signal, post_panel(current))
+    else:
+        row.add_row(signal)
+        row.add_row(post_panel(current))
+    return row
+
+
 def distribution(sessions: list[Record]) -> Group:
-    pairs = [p for s in sessions for p in s["pairs"]]
-    roles = ("MAKER", "TAKER", "OTHER")
+    pairs = [p for s in sessions for p in s.get("pnl_events", s["pairs"])]
+    roles = ("TP", "BA", "OTHER")
     table = Table(box=None, expand=True, padding=(0, 1))
     table.add_column("退出归因")
     table.add_column("批次", justify="right")
@@ -121,7 +152,7 @@ def distribution(sessions: list[Record]) -> Group:
         values = [Decimal(p["pnl"]) for p in pairs if p["category"] == role]
         table.add_row(Text(role, style=COLORS[role]), str(len(values)), fmt(sum(values, Decimal(0))))
     hist = Table(box=None, expand=True, padding=(0, 1))
-    for heading in ("PnL / 批", "Maker", "Taker", "OTHER"):
+    for heading in ("PnL / 批", "TP", "BA", "OTHER"):
         hist.add_column(heading)
     # Descending, lower-exclusive / upper-inclusive; both tails stay visible.
     bins = [("P>1.0", Decimal("1"), None), ("0.5<P≤1", Decimal(".5"), Decimal("1")),
@@ -136,12 +167,12 @@ def distribution(sessions: list[Record]) -> Group:
     for label, count in counts:
         hist.add_row(Text(label), *(Text(f"{'━' * round(count[role] / maximum * 6)} {count[role]}", style=COLORS[role])
                                    for role in roles))
-    return Group(table, Text(""), hist, Text("样本：FIFO 配对批次；费用已分摊", style="dim"))
+    return Group(table, Text(""), hist, Text("样本：FIFO 配对批次 + 残仓结算（每场1笔）；费用已分摊", style="dim"))
 
 
 def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
            hours: float = 24, archive_view: bool = False, now: float | None = None,
-           height: int | None = None) -> Group:
+           height: int | None = None, archive_page: int = 0) -> Group:
     now = time.time() if now is None else now
     sessions = [s for s in snapshot["sessions"] if (s.get("market_start") or 0) >= now - hours * 3600]
     selected = session_id or snapshot.get("current_session_id")
@@ -167,13 +198,17 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
         table = Table(box=box.SIMPLE, expand=True, title="市场归档索引 / 已观察状态")
         for name in ("市场", "session", "状态", "配对 PnL", "结算 PnL", "数据"):
             table.add_column(name)
-        limit = min(20, max(1, (height - 11) // 2)) if height else 20
-        for s in sessions[-limit:]:
+        limit, pages, page = archive_pagination(len(sessions), height, archive_page)
+        start = page * limit
+        for s in sessions[start:start + limit]:
             market = clock(s["market_start"])[5:16] if s["market_start"] else s["slug"]
             table.add_row(Text(market), s["session_id"][:8], Text(s["phase"]),
                           fmt(s["pair_pnl"]), fmt(s["residual_pnl"]),
                           Text(f"{len(s['issues'])} issues" if s["issues"] else "OK"))
         parts.append(table)
+        parts.append(Text(f"第 {page + 1}/{pages} 页 · 第 {start + 1 if sessions else 0}–"
+                          f"{min(start + limit, len(sessions))} 场 / 共 {len(sessions)} 场"
+                          " · [p] 上一页 [n] 下一页 · 按时间从早到晚", style="dim"))
     else:
         live = current.get("market_start") is not None and current["market_start"] <= now < current["market_end"]
         status = f"SESSION {current['session_id']}\n{current['slug']}\n{current['phase']}\n"
@@ -193,7 +228,9 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
                          f"{sum((Decimal(r['quantity']) for r in current['residual']), Decimal(0))} sh")
         for order in current["orders"][-2:]:
             quote = order["quote"]
-            execution.append(f"\n{order['role']} {quote.get('outcome', quote.get('side', '?'))} "
+            entry_mode = current.get("normal_entry_mode", current.get("header", {}).get("normal_entry_mode"))
+            role = "CA" if order["role"] == "NORMAL" and entry_mode == "ca_v1" else order["role"]
+            execution.append(f"\n{role} {quote.get('outcome', quote.get('side', '?'))} "
                              f"@ {quote.get('price', quote.get('limit', '?'))} "
                              f"成交 {order['confirmed_quantity']} / {quote.get('size', quote.get('quantity', '?'))} · {order['status']}")
         top = Table.grid(expand=True, padding=0)
@@ -207,16 +244,18 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
             top.add_row(Panel(execution, title="EXECUTION / INVENTORY", box=box.SQUARE))
         parts.append(top)
         counts = current["signal_counts"]
-        parts.append(Panel(signal_table(current, now), title=f"SIGNALS · CA {counts['CA']} / BA {counts['BA']} 确认",
-                           subtitle="确认 ≠ 准入 ≠ 发单 ≠ 成交", box=box.SQUARE))
+        signals = Panel(signal_table(current, now), title=f"SIGNALS · CA {counts['CA']} / BA {counts['BA']} 确认",
+                        subtitle="确认 ≠ 准入 ≠ 发单 ≠ 成交", box=box.SQUARE)
+        parts.append(signal_post_row(signals, current, width))
         totals = {role: sum((Decimal(s["pnl_by_role"][role]) for s in sessions), Decimal(0))
-                  for role in ("MAKER", "TAKER", "OTHER")}
+                  for role in ("TP", "BA", "OTHER")}
         total = sum(totals.values(), Decimal(0))
-        headline = Text(f"Total {fmt(total)}   Maker {fmt(totals['MAKER'])}   Taker {fmt(totals['TAKER'])}   Other {fmt(totals['OTHER'])}\n")
-        headline.append("Total 为已确认配对 PnL；残仓、待确认成交、返佣与 gas 分列。", style="dim")
+        headline = Text(f"Total {fmt(total)}   TP {fmt(totals['TP'])}   BA {fmt(totals['BA'])}   OTHER {fmt(totals['OTHER'])}\n")
+        headline.append("Total 为已确认 PnL；OTHER 含已核实残仓结算，待结算部分未计入。", style="dim")
+        headline.append(f"\n残仓结算待定：{sum(bool(s.get('other_pending')) for s in sessions)} 场", style="dim")
         chart_width = width // 2 - 6 if width >= 95 else width - 6
-        curve = Panel(Group(headline, history_chart(sessions, chart_width)), title="HISTORY / 累计配对 PnL", box=box.SQUARE)
-        dist = Panel(distribution(sessions), title="Maker / Taker 分布", box=box.SQUARE)
+        curve = Panel(Group(headline, history_chart(sessions, chart_width)), title="HISTORY / 累计已确认 PnL", box=box.SQUARE)
+        dist = Panel(distribution(sessions), title="TP / BA / OTHER 分布", box=box.SQUARE)
         row = Table.grid(expand=True)
         row.add_column(ratio=1)
         if width >= 95:
@@ -255,21 +294,33 @@ def watch(output: Path, *, once: bool = False, json_output: bool = False,
         return 2 if snapshot.get("error") else 0
     previous = termios.tcgetattr(sys.stdin) if sys.stdin.isatty() else None
     archive_view = False
+    archive_page = 0
     try:
         if previous:
             tty.setcbreak(sys.stdin.fileno())
         with Live(console=console, screen=True, auto_refresh=False, vertical_overflow="visible") as live:
             while True:
-                live.update(render(read_snapshot(output), width=console.width, session_id=session_id,
-                                   hours=hours, archive_view=archive_view, height=console.height), refresh=True)
+                snapshot = read_snapshot(output)
+                count = sum((s.get("market_start") or 0) >= time.time() - hours * 3600
+                            for s in snapshot["sessions"])
+                _, pages, archive_page = archive_pagination(count, console.height, archive_page)
+                live.update(render(snapshot, width=console.width, session_id=session_id,
+                                   hours=hours, archive_view=archive_view, height=console.height,
+                                   archive_page=archive_page), refresh=True)
                 if previous and select.select([sys.stdin], [], [], refresh)[0]:
                     key = os.read(sys.stdin.fileno(), 1).decode(errors="ignore")
                     if key.lower() == "q":
                         break
                     if key.lower() == "a":
                         archive_view = not archive_view
+                        archive_page = 0
                     if key.lower() == "h":
                         hours = next((period for period in HISTORY_PERIODS if period > hours), HISTORY_PERIODS[0])
+                        archive_page = 0
+                    if archive_view and key.lower() == "n":
+                        archive_page = min(archive_page + 1, pages - 1)
+                    if archive_view and key.lower() == "p":
+                        archive_page = max(0, archive_page - 1)
                 elif not previous:
                     time.sleep(refresh)
     except KeyboardInterrupt:
@@ -298,13 +349,13 @@ def compact_view(snapshot: Record, current: Record, sessions: list[Record], now:
         if latest.get("wall_deadline") and now >= latest["wall_deadline"] and not latest.get("end_reason") and not latest.get("invalid_reason"):
             state = "EXPIRED"
         signal.append(f"{detector} {current['signal_counts'][detector]}次 / {latest.get('outcome','—')} {state}\n")
-    total = sum((Decimal(s["pair_pnl"]) for s in sessions), Decimal(0))
-    maker = sum((Decimal(s["pnl_by_role"]["MAKER"]) for s in sessions), Decimal(0))
-    taker = sum((Decimal(s["pnl_by_role"]["TAKER"]) for s in sessions), Decimal(0))
-    other = total - maker - taker
-    pnl = Text(f"已确认配对 USDC: Total {fmt(total)} / M {fmt(maker)} / T {fmt(taker)} / Other {fmt(other)}\n")
-    pnl.append(f"本场残仓结算 {fmt(current['residual_pnl'])}；[h] 历史周期 [a] 归档索引 [q] 退出（归档继续）", style="dim")
-    pieces = [title, top, signal, pnl]
+    total = sum((sum((Decimal(v) for v in s["pnl_by_role"].values()), Decimal(0)) for s in sessions), Decimal(0))
+    tp = sum((Decimal(s["pnl_by_role"]["TP"]) for s in sessions), Decimal(0))
+    ba = sum((Decimal(s["pnl_by_role"]["BA"]) for s in sessions), Decimal(0))
+    other = total - tp - ba
+    pnl = Text(f"已确认 PnL USDC: Total {fmt(total)} / TP {fmt(tp)} / BA {fmt(ba)} / OTHER {fmt(other)}\n")
+    pnl.append(f"OTHER 含已核实残仓结算；待定 {sum(bool(s.get('other_pending')) for s in sessions)} 场；[h] 历史周期 [a] 归档索引 [q] 退出（归档继续）", style="dim")
+    pieces = [title, top, signal_post_row(Panel(signal, title="SIGNALS", box=box.SQUARE), current, width), pnl]
     if height >= 22:
         if width >= 95:
             row = Table.grid(expand=True)

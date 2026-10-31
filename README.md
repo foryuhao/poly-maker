@@ -50,6 +50,40 @@ Everything else is TOML under [`config/`](config/):
 
 ### RDP opposite BA exit
 
+`[rdp_sm.repair] ba_enabled` independently enables BA repair orders. The current
+configuration sets it to `false`: CA entry, its initial TP and restored TP remain
+enabled, while both TP-to-BA handoff and ordinary BA REPAIR submission are blocked.
+Set it to `true` before starting a new trading process to re-enable BA repair.
+BA detection/logging continues in either mode. This is separate from
+`opposite_ba_execution.enabled`, which only selects the BA execution algorithm.
+
+`[rdp_sm.ca_matched_tp] ttl_sec` defaults to `15.0` seconds, measured from the
+initial TP's native POST start. Unfilled TP quantity is canceled at expiry with
+the normal order/fill close proofs. TP restoration for the same CA residual
+inherits this deadline, so retries or BA handoffs cannot restart the timer.
+New CA openings and residual lots created by a reverse BA fill have independent
+ownership; the CA TP timer does not cancel BA orders already accepted.
+
+CA NORMAL entry requires confirmation formation time `tC - t0 > 100ms`.
+`t0` is the first SELL starting the CA episode, and `tC` is the first BUY
+confirmation that reaches the threshold. Faster confirmations remain in the
+observation log but never become eligible by waiting. Signal-age, observation
+deadline and native POST admission checks still apply independently.
+
+`[rdp_sm] ca_entry_direction = "higher_bid"` makes either side's valid CA
+trigger a maker BUY on the side with the higher current best bid. Equal bids
+skip entry. The native POST guard rechecks the side and quote; the original
+CA episode still owns confirmation, one-shot consumption, invalidation and
+the t0+3s deadline. TP and repair follow the actual opening inventory.
+Set `"signal"` to restore same-side entry (the backward-compatible default).
+
+`CA_BOOK_UNPROVEN` events in the session's CA `events.jsonl` include
+`payload.book_validation.failed_checks` and the matching BBO/depth prices,
+reported and verified ticks, generations, source/receipt ages and limits.
+`payload.trigger` distinguishes timer/snapshot checks (`tick`) from book updates
+(`book_updated`). Evidence is recorded once when the episode ends; trading
+admission and cancellation rules are unchanged.
+
 `config/config.toml` selects `rdp_sm.repair.policy = "opposite_ba_v1"`.
 `livecfg/config.toml` retains `hd_tp_sl_v1`; both files contain settings for both
 policies. Select one policy when starting a new session; no hot reload applies.
@@ -64,9 +98,12 @@ the opening fill can submit a BUY at that BA's anchor Bid. The BA deadline start
 at its first SELL and is never extended by preparation, submission or retries.
 
 Invalid/expired BA orders are cancelled and reconciled before another independent
-opposite BA can submit. BA and the price policy share repair sizing: round up to
-the legal quantity/minimum notional, require smaller absolute net exposure after
-the proposed BUY, and enforce the same capital, Delta and maximum-order limits.
+opposite BA can submit. BA exits round up to the share minimum and **1 USDC**
+notional on the 0.01-share grid, while requiring smaller absolute net exposure
+and enforcing capital, Delta and maximum-order limits. A proposed BUY that
+would create more than **2.5 reverse shares** is skipped. A dollar top-up during
+TP handoff first cancels and fully reconciles the TP, then recalculates the BA
+against remaining inventory and a still-valid signal; its deadline is not extended.
 This can produce a smaller opposite-side residual. Residuals of **at most 2.5
 shares**, inclusive, end the round once the existing order/fill/account close
 barrier is safe; their exact quantities and costs remain in the ledger. Larger

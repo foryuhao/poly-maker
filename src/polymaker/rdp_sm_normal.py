@@ -1,6 +1,6 @@
 """Single-sided NORMAL entry, with configurable confirmations in each time band."""
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from decimal import Decimal
 
 from polymaker.rdp_sm_quotes import QuoteUnavailable, make_quotes
@@ -196,7 +196,7 @@ class BANormalController(NormalController):
 
 
 class CANormalController(BANormalController):
-    """CA direction/first-SELL lease, with the unchanged anchored Bid order path."""
+    """CA trigger/first-SELL lease, with an independently selected opening side."""
 
     @property
     def episodes(self):
@@ -204,5 +204,16 @@ class CANormalController(BANormalController):
 
     def select(self, snapshot):
         signal = self.episodes.evaluate(snapshot)
-        self.signal_block_reason = "CA_NO_SIGNAL" if signal.direction is None else None
+        self.signal_block_reason = (self.episodes.block_reason or "CA_NO_SIGNAL"
+                                    if signal.direction is None else None)
+        if signal.direction and self.executor.cfg.rdp_sm.ca_entry_direction == "higher_bid":
+            # Preserve the selected CA episode, its anchor, claim and t0 lease.
+            # Only the executable order side changes. matches() repeats this
+            # choice under the native POST guard, against the current books.
+            if snapshot.yes.best_bid == snapshot.no.best_bid:
+                self.signal_block_reason = "CA_ENTRY_PRICE_TIE"
+                signal = replace(signal, label="NONE")
+            else:
+                direction = "YES" if snapshot.yes.best_bid > snapshot.no.best_bid else "NO"
+                signal = replace(signal, label="VALID_" + direction)
         return signal.direction, signal

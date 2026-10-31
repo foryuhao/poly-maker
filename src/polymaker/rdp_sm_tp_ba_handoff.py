@@ -14,7 +14,8 @@ from decimal import Decimal
 
 from polymaker.domain import Side, TradeState
 from polymaker.rdp_sm_ba import entry_admission
-from polymaker.rdp_sm_execution import Placement, WindowQuote, repair_buy_quantity
+from polymaker.rdp_sm_execution import Placement, WindowQuote
+from polymaker.rdp_sm_execution import ba_repair_buy_quantity as repair_buy_quantity
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.rdp_sm_sl_ledger import SMALL, exposure, fifo_paired_quantities, fifo_pairs
 
@@ -86,8 +87,12 @@ class TPMakerHandoff(SLExecution):
     def admission_reason(self, goal, *, reserved=None):
         e = self.e
         side, price, qty, original = goal
+        if not self.controller.ba_enabled:
+            return "BA_REPAIR_DISABLED"
         if self.closed or self.owner.closed or e.closed or e.fatal:
             return e.fatal or "TP_BA_HANDOFF_CLOSED"
+        if self.owner.tp_expired():
+            return "CA_MATCHED_TP_EXPIRED"
         direction_prover = getattr(self.owner, "prove_ba_direction", None)
         if direction_prover is not None and not direction_prover():
             return "CA_TP_DIRECTION_UNPROVEN"
@@ -312,6 +317,8 @@ class TPMakerHandoff(SLExecution):
         snapshot = self.snapshot(active=True)
         if e.fatal or e.closed or self.owner.closed or not e.journal.ready:
             return e.fatal or "TP_BA_EXECUTION_CLOSED"
+        if not self.accepted and self.owner.tp_expired():
+            return "CA_MATCHED_TP_EXPIRED"
         if self.elapsed() >= self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.check_repair_abandonment():
@@ -343,6 +350,8 @@ class TPMakerHandoff(SLExecution):
 
     def close_reason(self, a):
         e = self.e
+        if not self.controller.ba_enabled:
+            return "BA_REPAIR_DISABLED"
         snapshot = self.snapshot(active=True)
         safety = self.safety_reason()
         if safety:
@@ -466,7 +475,8 @@ class TPMakerHandoff(SLExecution):
                     self.cancel_marked()
                 if self.post_done(a):
                     if a.outcome in {"REJECTED", "ABORTED"}:
-                        self.reason = "BA_POST_" + a.outcome
+                        if not self.stop_owner:
+                            self.reason = "BA_POST_" + a.outcome
                         break
                     if a.outcome != "ACK" and not self.accepted:
                         if not self.stop_owner:
@@ -529,7 +539,7 @@ class TPMakerHandoff(SLExecution):
 
 async def try_ba_before_tp_cancel(owner, controller):
     """Return True only when the TP owner must close/reconcile the whole group."""
-    if not controller.restore_tp_enabled or not owner.created:
+    if not controller.ba_enabled or not controller.restore_tp_enabled or not owner.created:
         return False
     if not hasattr(owner, "ba_attempts"):
         owner.ba_attempts = []
@@ -548,6 +558,24 @@ async def try_ba_before_tp_cancel(owner, controller):
     try:
         goal, reason = actor.goal()
         reason = reason or actor.admission_reason(goal)
+        if goal is not None and reason in {None, "WAIT_DELTA_CAPACITY"}:
+            state = exposure(owner.e, retain_unknown_reservations=True)
+            if goal[2] > abs(state.execution):
+                # A dollar top-up and the old TP must not both fill. Close
+                # through the parent's full proof barrier first; the normal
+                # repair lane then recalculates quantity from actual inventory
+                # and requires a still-valid BA, without extending its deadline.
+                owner.handoff_episode = episode.episode_id
+                owner.handoff_reason = "OPPOSITE_BA_HANDOFF"
+                owner.record("ba_handoff", {
+                    "episode_id": episode.episode_id,
+                    "policy": "CANCEL_TP_PROVE_THEN_REPLAN_BA",
+                    "stage": "MINIMUM_NOTIONAL_TOPUP",
+                    "quantity": str(goal[2]),
+                    "max_reverse_residual_shares": "2.5",
+                    **owner.evidence(),
+                })
+                return True
         if reason:
             owner.wait("KEEP_TP_" + reason, goal)
             return False

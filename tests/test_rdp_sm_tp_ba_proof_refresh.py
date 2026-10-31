@@ -9,8 +9,8 @@ import pytest
 import test_rdp_sm_cached_reads as cached_tests
 from polymaker.execution.gateway import CancelResult
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
-from test_rdp_sm_ba import absorption, trade
-from test_rdp_sm_ca import buy
+from test_rdp_sm_ba import absorption
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_ca_matched_tp import fill, tp_setup
 from test_rdp_sm_m2_execution import journal_records
@@ -105,7 +105,7 @@ async def test_handoff_requests_post_cancel_proof_even_before_repair_episode(
     monkeypatch.setattr(e.gateway._client, "_get", foreground_get)
     v.on_cancel = on_cancel
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         task = asyncio.create_task(normal.enter(D(0), D(0), "tp-ba-proof-refresh"))
         await asyncio.wait_for(ready.wait(), 3)
         assert e.repair_episode is None and not e.confirmed()

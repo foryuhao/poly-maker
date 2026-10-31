@@ -10,9 +10,7 @@ from pydantic import ValidationError
 from polymaker.config import Config, RDPRepairConfig, RDPSMConfig
 from polymaker.rdp_sm_logging import HumanRunLog
 from polymaker.repair_policy import PathPoint, RepairPolicy
-from test_rdp_sm_ba import trade
-from test_rdp_sm_ca import buy
-from test_rdp_sm_ca_entry import ca_setup
+from test_rdp_sm_ca_entry import ca_setup, confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_m2_execution import journal_records
 from test_rdp_sm_obi_execution import cleanup
@@ -84,7 +82,7 @@ async def test_ca_normal_entry_uses_configured_boundary(env, monkeypatch, cutoff
     try:
         e.cfg.rdp_sm.normal_cutoff_sec = cutoff
         await at_elapsed(setup, monkeypatch, elapsed)
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         result = await normal.enter(D(0), D(0), 'configured-normal')
         assert bool(v.post_requests) is allowed
         assert normal.cutoff == cutoff
@@ -113,7 +111,7 @@ async def test_normal_signing_crossing_configured_boundary_aborts_native_post(en
             return signed
 
         monkeypatch.setattr(client, 'create_order', cross)
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         await normal.enter(D(0), D(0), 'normal-cross-signing')
         assert crossed and not v.post_requests
         assert e.attempts and all(a.outcome == 'ABORTED' and not a.post_started for a in e.attempts)
@@ -208,7 +206,7 @@ async def test_matched_default_tp_obeys_repair_cutoff_after_t240(
     try:
         await at_elapsed(setup, monkeypatch, 250)
         monkeypatch.setattr(e.gateway, 'send_prepared', fill_each)
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), 'late-tp'), 5)
         assert result.close_barrier == 'SAFE_TO_CONTINUE'
         assert len(v.post_requests) == expected_posts

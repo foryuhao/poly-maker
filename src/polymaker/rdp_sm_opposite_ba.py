@@ -7,7 +7,8 @@ from decimal import Decimal
 from polymaker.domain import Side
 from polymaker.rdp_sm import repair_required
 from polymaker.rdp_sm_ba import entry_admission
-from polymaker.rdp_sm_execution import WindowQuote, repair_buy_quantity
+from polymaker.rdp_sm_execution import WindowQuote
+from polymaker.rdp_sm_execution import ba_repair_buy_quantity as repair_buy_quantity
 from polymaker.rdp_sm_normal import BANormalController
 from polymaker.rdp_sm_signal import Signal
 
@@ -25,6 +26,10 @@ class OppositeBAController(BANormalController):
         return self.executor.cfg.rdp_sm.repair
 
     @property
+    def ba_enabled(self):
+        return self.cfg.ba_enabled
+
+    @property
     def restore_tp_enabled(self):
         cfg = self.executor.cfg.rdp_sm
         return (cfg.normal_entry_mode == "ca_v1" and cfg.ca_matched_tp.enabled
@@ -36,6 +41,8 @@ class OppositeBAController(BANormalController):
 
     def tp_ba_signal(self, snapshot):
         """Only a fresh, new repair BA may displace a restored TP."""
+        if not self.ba_enabled:
+            return None
         e = self.executor
         with self.lifecycle.feed.lock:
             now = e.monotonic()
@@ -74,6 +81,9 @@ class OppositeBAController(BANormalController):
     def select(self, snapshot):
         e = self.executor
         with self.lifecycle.feed.lock:
+            if not self.ba_enabled:
+                self.signal_block_reason = "BA_REPAIR_DISABLED"
+                return None, Signal("NONE", snapshot.snapshot_id)
             y, n = e.economic_inventory()
             opposite = "NO" if y > n else "YES" if n > y else None
             held = "YES" if y > n else "NO" if n > y else None
@@ -143,6 +153,9 @@ class OppositeBAController(BANormalController):
     def matches_for_submit(self, intent, snapshot, pending_batch):
         with self.lifecycle.feed.lock:
             self.quote_block_reason = None
+            if not self.ba_enabled:
+                self.quote_block_reason = "BA_REPAIR_DISABLED"
+                return False
             if not pending_batch:
                 return self.matches(intent, snapshot)
             e = self.executor
@@ -187,12 +200,19 @@ class OppositeBAController(BANormalController):
 
     async def review_active(self, intent, deadline):
         # Shared residual and direction handling, without price/volatility signals.
+        if not self.ba_enabled:
+            return "BA_REPAIR_DISABLED"
         y, n = self.executor.economic_inventory()
         if not repair_required(y, n):
             return "REPAIR_SMALL_EXPOSURE"
         if (y > n) != (intent.direction == "NO"):
             return "OPPOSITE_BA_DIRECTION_CHANGED"
         return None
+
+    def active_close_reason(self, intent, snapshot):
+        if not self.ba_enabled:
+            return "BA_REPAIR_DISABLED"
+        return super().active_close_reason(intent, snapshot)
 
     def reconcile_episode(self):
         from polymaker.rdp_sm_sl_ledger import install_reverse_episode
@@ -207,6 +227,15 @@ class OppositeBAController(BANormalController):
         e.update_repair_episode()
         self.reconcile_episode()
         if e.repair_episode is None or e.cooldown.active:
+            await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+            return None
+        if not self.ba_enabled:
+            self.lifecycle.drain_ba()
+            if self.restore_tp_enabled:
+                from polymaker.rdp_sm_restored_tp import execute_restored_tp
+
+                return await execute_restored_tp(self, window_id)
+            self.lifecycle.wait("BA_REPAIR_DISABLED", self.lifecycle.snapshot(self, yes, no))
             await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
             return None
         if self.restore_tp_enabled:

@@ -74,6 +74,7 @@ class CounterAttack:
             "max_trade_age_ms": self.cfg.max_sell_age_ms,
             "max_book_age_ms": self.cfg.max_book_age_ms,
             "max_entry_age_ms": self.cfg.max_entry_age_ms,
+            "entry_min_confirmation_duration_ms_exclusive": 100,
             "max_pair_skew_ms": self.cfg.max_pair_skew_ms,
             "out_of_order_tolerance_ms": self.cfg.out_of_order_tolerance_ms,
             "network": self.cfg.network.model_dump()}
@@ -120,15 +121,22 @@ class CounterAttack:
         else:
             self.disable("CA_MEMORY_LOG_OVERFLOW")
 
-    def record(self, ep, event):
+    def record(self, ep, event, **evidence):
         self.counts[event] += 1
-        self.emit(event, {"episode": asdict(ep), "parameters": self.parameters})
+        self.emit(event, {"episode": asdict(ep), "parameters": self.parameters, **evidence})
 
-    def finish(self, ep, reason, now):
+    def finish(self, ep, reason, now, *, trigger=None, book=None):
         if ep.end_reason is None:
             ep.end_reason, ep.ended_monotonic = reason, now
             ep.state = reason
-            self.record(ep, reason)
+            evidence = {}
+            if reason == "CA_BOOK_UNPROVEN":
+                # Depth is validated before SessionFeed commits its shared books.
+                # Preserve the exact book that failed, including intermediate BBO.
+                failed_book = book if book is not None else self.feed.books[ep.token_id]
+                evidence = {"trigger": trigger,
+                            "book_validation": self.book_validation(failed_book, now)}
+            self.record(ep, reason, **evidence)
 
     def invalidate(self, reason, token=None):
         now = self.feed.monotonic()
@@ -158,6 +166,46 @@ class CounterAttack:
             and 0 <= (self.feed.wall()-book.source_time)*1000 <= self.cfg.max_sell_age_ms
             and 0 <= (now-book.received_mono)*1000 <= self.cfg.max_book_age_ms)
 
+    def book_validation(self, book, now):
+        """Failure-only evidence matching legal(); never dump whole depth books."""
+        wall = self.feed.wall()
+        bid, ask, tick = book.best_bid, book.best_ask, book.tick
+        top = self.tops.get(book.token_id, (bid, ask))
+        verified_tick = self.feed.tick_verified.get(book.token_id)
+        source_age = (wall - book.source_time) * 1000
+        receipt_age = (now - book.received_mono) * 1000
+        complete = bid is not None and ask is not None
+        checks = {
+            "WS_DISCONNECTED": not self.feed.connected,
+            "BOOK_GENERATION_MISMATCH": book.snapshot_generation != self.feed.generation,
+            "BOOK_EMPTY": not complete,
+            "TICK_NON_POSITIVE": tick <= 0,
+            "PRICE_RANGE_INVALID": complete and not 0 < bid < ask < 1,
+            "BID_OFF_TICK": bid is not None and tick > 0 and bid % tick != 0,
+            "ASK_OFF_TICK": ask is not None and tick > 0 and ask % tick != 0,
+            "TICK_UNVERIFIED": verified_tick != tick,
+            "REPORTED_BID_MISMATCH": book.reported_bid is not None and book.reported_bid != bid,
+            "REPORTED_ASK_MISMATCH": book.reported_ask is not None and book.reported_ask != ask,
+            "BBO_DEPTH_MISMATCH": top != (bid, ask),
+            "SOURCE_TIME_IN_FUTURE": source_age < 0,
+            "SOURCE_TOO_OLD": source_age > self.cfg.max_sell_age_ms,
+            "RECEIPT_TIME_IN_FUTURE": receipt_age < 0,
+            "RECEIPT_TOO_OLD": receipt_age > self.cfg.max_book_age_ms,
+        }
+        return {"failed_checks": [name for name, failed in checks.items() if failed],
+                "checked_monotonic": now, "checked_wall": wall,
+                "token_id": book.token_id, "connected": self.feed.connected,
+                "feed_generation": self.feed.generation, "book_generation": book.snapshot_generation,
+                "best_bid": bid, "best_ask": ask, "tick": tick, "verified_tick": verified_tick,
+                "reported_bid": book.reported_bid, "reported_ask": book.reported_ask,
+                "ca_top_bid": top[0], "ca_top_ask": top[1],
+                "frame": book.frame, "applied_monotonic": book.applied_mono,
+                "received_wall": book.received_wall,
+                "source_time": book.source_time, "received_monotonic": book.received_mono,
+                "source_age_ms": source_age, "receipt_age_ms": receipt_age,
+                "max_source_age_ms": self.cfg.max_sell_age_ms,
+                "max_receipt_age_ms": self.cfg.max_book_age_ms}
+
     def tick(self):
         """Called by a separate timer AND before a frame can refresh an old book."""
         if not self.healthy():
@@ -175,7 +223,7 @@ class CounterAttack:
                 "CA_BOOK_UNPROVEN" if not self.legal(book, now) else
                 "CA_ANCHOR_CHANGED" if book.best_bid != ep.anchor_bid_price else None)
             if reason:
-                self.finish(ep, reason, now)
+                self.finish(ep, reason, now, trigger="tick", book=book)
 
     def ordered(self, row, book, wall):
         self.ordinal += 1
@@ -303,7 +351,7 @@ class CounterAttack:
         if book.best_bid != ep.anchor_bid_price:
             self.finish(ep, "CA_ANCHOR_CHANGED", now)
         elif not self.legal(book, now):
-            self.finish(ep, "CA_BOOK_UNPROVEN", now)
+            self.finish(ep, "CA_BOOK_UNPROVEN", now, trigger="book_updated", book=book)
 
     def depth(self, book):
         # Like BA, later real depth supersedes a BBO-only observation.
@@ -326,6 +374,8 @@ class CounterAttack:
                         + ep.confirming_buy["received_wall"]-ep.confirming_buy["source_time"])*1000
                        if ep and ep.confirming_buy else None)
             entry_age = (now-ep.t0)*1000 if ep else None
+            confirmation_duration = ((Decimal(str(ep.tC)) - Decimal(str(ep.t0))) * 1000
+                                     if ep and ep.tC is not None else None)
             if not healthy:
                 reason = "CA_OBSERVER_UNAVAILABLE"
             elif self.closed:
@@ -347,11 +397,13 @@ class CounterAttack:
                 "state": ep.state if ep else "NO_EPISODE", "confirmed": bool(ep and ep.tC is not None),
                 "candidate_usable": reason is None, "unavailable_reason": reason,
                 "entry_age_ms": entry_age, "confirmation_buy_age_ms": buy_age,
+                "confirmation_duration_ms": confirmation_duration,
                 "episode": asdict(ep) if ep else None})
         return result
 
-    def post(self, window_id, direction, post_started, snapshot):
+    def post(self, window_id, direction, post_started, snapshot, signal_direction=None):
         self.emit("CA_NORMAL_POST", {"window_id": window_id, "direction": direction,
+            "signal_direction": signal_direction or direction,
             "post_started_monotonic": post_started, "snapshot": snapshot})
 
     def diagnostics(self):

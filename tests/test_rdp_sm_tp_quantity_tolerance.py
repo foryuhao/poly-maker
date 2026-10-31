@@ -6,8 +6,7 @@ from decimal import Decimal as D
 import pytest
 
 from polymaker.rdp_sm_ca_matched_tp import tp_buy_size
-from test_rdp_sm_ba import trade
-from test_rdp_sm_ca import buy
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_ca_matched_tp import fill, tp_setup
 from test_rdp_sm_cached_reads import attach, finish
 from test_rdp_sm_obi_execution import cleanup
@@ -73,7 +72,7 @@ async def test_near_five_matched_posts_five_before_confirmed_and_keeps_real_resi
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        feed.apply([trade(feed, token), buy(feed, token)])
+        await confirm_ca(feed, token)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), "near-five-tp"), 5)
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
         assert len(v.post_requests) == 2
@@ -108,7 +107,7 @@ async def test_initial_tp_does_not_enlarge_beyond_quantity_tolerance(env, monkey
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         result, sizing = await asyncio.wait_for(normal.enter(D(0), D(0), "too-short-tp"), 5)
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
         assert len(v.post_requests) == 1

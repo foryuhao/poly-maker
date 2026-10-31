@@ -22,6 +22,7 @@ KINDS = {
     "sm_ba_maker_closed", "sm_ba_maker_stop_requested", "sm_ca_final_decision",
     "sm_ca_close_requested", "sm_restored_tp_ba_handoff", "sm_tp_ba_handoff_closed",
     "sm_repair_episode", "sm_ba_taker_state", "sm_network_exit_state",
+    "sm_window_result",
 }
 MAX_LINE = 4 * 1024 * 1024
 DIAGNOSTIC_PREFIX = re.compile(rb'^\{"ts": ([0-9.eE+\-]+), "kind": "(sm_sync_cache_read|sm_prepared)", "data": ')
@@ -75,12 +76,23 @@ class Collector:
             CREATE INDEX IF NOT EXISTS events_sid ON events(sid);
             CREATE TABLE IF NOT EXISTS summaries(sid TEXT PRIMARY KEY, snapshot TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS settlements(sid TEXT PRIMARY KEY, evidence TEXT NOT NULL);
         """)
         self.history_hours = history_hours
         self.budget_bytes = budget_bytes
         self.last_discovery = 0.0
         self.round_robin = 0
         self.changed: set[str] = set()
+        row = self.db.execute("SELECT value FROM metadata WHERE key='excluded_session_ids'").fetchone()
+        self.excluded_session_ids = set(json.loads(row[0])) if row else set()
+        # Refresh persisted summaries when the accounting classification changes.
+        for row in self.db.execute("SELECT sid,snapshot FROM summaries").fetchall():
+            cached = json.loads(row["snapshot"])
+            if cached.get("pnl_attribution_version") != 2 or "post_counts" not in cached or "condition_id" not in cached:
+                sid = row["sid"]
+                result = summarize(sid, self.events(sid), self.sources(sid))
+                self.db.execute("UPDATE summaries SET snapshot=? WHERE sid=?", (dumps(result), sid))
+        self.db.commit()
 
     def close(self) -> None:
         self.db.close()
@@ -106,6 +118,8 @@ class Collector:
                 continue
             for path in paths:
                 try:
+                    if path.stem.rsplit("_", 1)[-1] in self.excluded_session_ids:
+                        continue
                     if path.is_symlink() or path.stat().st_mtime < now - self.history_hours * 3600:
                         continue
                     self.add_source(path, path.stem.rsplit("_", 1)[-1], "risk")
@@ -113,7 +127,13 @@ class Collector:
                     continue
 
     def events(self, sid: str) -> list[Record]:
-        return [json.loads(row[0]) for row in self.db.execute("SELECT event FROM events WHERE sid=?", (sid,))]
+        result = [json.loads(row[0]) for row in self.db.execute("SELECT event FROM events WHERE sid=?", (sid,))]
+        row = self.db.execute("SELECT evidence FROM settlements WHERE sid=?", (sid,)).fetchone()
+        if row:
+            evidence = json.loads(row[0])
+            result.append({"kind": "dashboard_market_resolution", "source_kind": "resolution",
+                           "payload": evidence, "ts": (evidence.get("result") or {}).get("observed_at", 0)})
+        return result
 
     def sources(self, sid: str) -> list[Record]:
         return [json.loads(row[0]) for row in self.db.execute("SELECT state FROM sources WHERE sid=?", (sid,))]
@@ -282,6 +302,7 @@ def public_snapshot(snapshot: Record) -> Record:
     """Avoid rewriting every historical config and source manifest every second."""
     sessions = []
     for s in snapshot["sessions"]:
+        s = {**s, "normal_entry_mode": s["header"].get("normal_entry_mode")}
         if s["session_id"] == snapshot.get("current_session_id"):
             sessions.append(s)
         else:

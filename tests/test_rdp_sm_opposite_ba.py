@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from polymaker.config import Config, RDPBAConfig, RDPSMConfig
 from polymaker.rdp_sm import session_capital_limit
 from polymaker.rdp_sm_ba import BidAbsorption
-from polymaker.rdp_sm_execution import SMWindowExecutor
+from polymaker.rdp_sm_execution import SMWindowExecutor, ba_repair_buy_quantity
 from polymaker.rdp_sm_normal import BANormalController
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
 from polymaker.repair_policy import repair_readiness
@@ -121,6 +121,39 @@ def test_shared_repair_sizing_uses_minimums_and_reduces_delta(delta, quantity):
         assert quote.size == quantity
         assert abs(D(delta)-D(str(quote.size))) < abs(D(delta))
         assert quote.price == float(feed.opposite_ba.states["2"].anchor_bid_price)
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+@pytest.mark.parametrize("price,gap,expected", [
+    (".14", "5", "7.15"), (".16", "5", "6.25"),
+    (".20", "5", "5.00"), (".16", "3.75", "6.25"),
+    (".12", "5", None), (".11", "5", None),
+    (".20", "2.499", None), (".1333", "5", None),
+])
+def test_ba_dollar_minimum_caps_reverse_residual_after_rounding(sign, price, gap, expected):
+    c, _, _ = controller_fixture()
+    e = c.executor
+    delta = sign * D(gap)
+    side = "NO" if sign > 0 else "YES"
+    if expected is None:
+        with pytest.raises(ValueError, match="BA_REVERSE_RESIDUAL_EXCEEDS_LIMIT"):
+            ba_repair_buy_quantity(e, side, D(price), delta, D(20))
+    else:
+        qty = ba_repair_buy_quantity(e, side, D(price), delta, D(20))
+        assert qty == D(expected)
+        assert qty * D(price) >= 1
+        assert max(D(0), qty - abs(delta)) <= D("2.5")
+
+
+@pytest.mark.parametrize("cash,maximum,reason", [
+    (".99", "15", "CAPITAL_INSUFFICIENT"),
+    ("20", "7", "MINIMUM_ORDER_EXCEEDS_MAXIMUM"),
+])
+def test_ba_topup_keeps_cash_and_order_limits(cash, maximum, reason):
+    c, _, _ = controller_fixture()
+    c.executor.cfg.rdp_sm.max_order_size = D(maximum)
+    with pytest.raises(ValueError, match=reason):
+        ba_repair_buy_quantity(c.executor, "NO", D(".14"), D(5), D(cash))
 
 
 def test_entry_and_exit_have_independent_claims_and_parameters():
@@ -317,6 +350,34 @@ async def test_minimum_order_can_reverse_into_small_residual_and_end_round(env, 
         await cleanup(setup)
 
 
+async def test_low_price_ba_posts_dollar_topup_and_retains_small_residual(env, monkeypatch):
+    setup, c = await setup_exit(env, monkeypatch)
+    v, e, feed = setup[:3]
+    try:
+        setup[7].update(bid=".84", yes_ask=".86", no_bid=".14", no_ask=".16")
+        await asyncio.sleep(.025)
+        absorption(feed, "2")
+
+        def fill(venue):
+            oid = e.attempts[-1].expected_order_id
+            if venue.rows[oid]["asset_id"] == "2" and not venue.rows[oid]["associate_trades"]:
+                venue.fill(oid, "dollar-topup", 7.15)
+            reflect_positions(venue)
+
+        v.on_cancel = fill
+        result, _ = await c.repair(*e.economic_inventory(), "dollar-exit")
+        assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
+        assert result.requested_quotes[0].size == 7.15
+        assert e.economic_inventory() == (D(5), D("7.15"))
+        assert e.repair_episode is None and e.trading_state == "NORMAL"
+        assert len(v.post_requests) == 2
+        order = v.post_requests[-1][0]
+        assert order["postOnly"] is True
+        assert D(order["order"]["makerAmount"]) >= 1_000_000
+    finally:
+        await cleanup(setup)
+
+
 async def test_large_reverse_residual_reuses_fifo_handoff_and_waits_for_new_ba(env, monkeypatch):
     import polymaker.rdp_sm_opposite_ba as opposite_ba
 
@@ -324,12 +385,13 @@ async def test_large_reverse_residual_reuses_fifo_handoff_and_waits_for_new_ba(e
     v, e, feed, lifecycle, _, _, _, pump, _ = setup
     try:
         # Inject the quantity of an old, dollar-topped-up intent so its fill
-        # and reverse-FIFO recovery remain covered after removing that policy.
-        # Current share-only sizing must independently return exactly five.
+        # and reverse-FIFO recovery remain covered. New sizing rejects this
+        # intent because its reverse residual would exceed 2.5 shares.
         sizing = opposite_ba.repair_buy_quantity
 
         def legacy_quantity(*args):
-            assert sizing(*args) == D(5)
+            with pytest.raises(ValueError, match="BA_REVERSE_RESIDUAL_EXCEEDS_LIMIT"):
+                sizing(*args)
             return D("9.10")
 
         monkeypatch.setattr(opposite_ba, "repair_buy_quantity", legacy_quantity)

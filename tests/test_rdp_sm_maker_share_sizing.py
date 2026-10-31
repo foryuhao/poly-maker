@@ -8,9 +8,7 @@ import pytest
 
 from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm_execution import SMWindowExecutor, repair_buy_quantity
-from test_rdp_sm_ba import trade
-from test_rdp_sm_ca import buy
-from test_rdp_sm_ca_entry import ca_setup
+from test_rdp_sm_ca_entry import ca_setup, confirm_ca
 from test_rdp_sm_obi_execution import cleanup
 from test_rdp_sm_opposite_ba import absorption
 from test_rdp_sm_repair import env as env
@@ -29,7 +27,7 @@ async def test_ca_low_notional_entry_posts_five_shares_once(env, monkeypatch, to
         tick = feed.books[token].tick
         feed.apply([book(feed, p, p + tick, token),
                     book(feed, 1-p-feed.books[other].tick, 1-p, other)])
-        feed.apply([trade(feed, token), buy(feed, token)])
+        await confirm_ca(feed, token)
         episode = feed.ca.states[token]
         result, _ = await normal.enter(D(0), D(0), "low-ca")
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
@@ -51,7 +49,7 @@ async def test_ca_low_notional_entry_posts_five_shares_once(env, monkeypatch, to
 
 @pytest.mark.parametrize("price", [".14", ".10", ".05", ".01"])
 @pytest.mark.parametrize("filled", [2, 5])
-async def test_ba_fixed_low_price_repair_posts_exact_gap_and_tracks_partial_fill(
+async def test_ba_fixed_low_price_repair_respects_dollar_and_residual_limits(
     env, monkeypatch, price, filled
 ):
     setup, controller = await tolerant_setup(env, monkeypatch)
@@ -72,16 +70,22 @@ async def test_ba_fixed_low_price_repair_posts_exact_gap_and_tracks_partial_fill
             reflect_positions(venue)
 
         v.on_cancel = fill
-        result, sizing = await controller.repair(*executor.economic_inventory(), "low-ba")
+        outcome = await controller.repair(*executor.economic_inventory(), "low-ba")
+        if p < D(".14"):
+            assert outcome is None
+            assert controller.quote_block_reason == "BA_REVERSE_RESIDUAL_EXCEEDS_LIMIT"
+            assert len(v.post_requests) == 1
+            return
+        result, sizing = outcome
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
         assert [(q.outcome, D(str(q.price)), q.size) for q in result.requested_quotes] == [
-            ("NO", p, 5)
+            ("NO", p, 7.15)
         ]
         assert len(v.post_requests) == 2
         posted = v.post_requests[-1][0]
         assert posted["postOnly"] is True and posted["orderType"] == "GTC"
-        assert D(posted["order"]["makerAmount"]) == p * 5_000_000 < 1_000_000
-        assert D(posted["order"]["takerAmount"]) == 5_000_000
+        assert D(posted["order"]["makerAmount"]) == p * 7_150_000 >= 1_000_000
+        assert D(posted["order"]["takerAmount"]) == 7_150_000
         assert executor.economic_inventory() == (D(5), D(filled))
         assert executor.repair_episode is None if filled == 5 else executor.repair_episode is not None
         assert sizing["quote_fixed"]

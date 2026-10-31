@@ -3,6 +3,7 @@
 import asyncio
 import json
 from copy import deepcopy
+from dataclasses import replace
 from decimal import Decimal as D
 
 import pytest
@@ -177,6 +178,104 @@ def test_bbo_depth_contradiction_is_not_treated_as_a_proven_new_ask():
              "asset_id": "1", "timestamp": str(f.wall()*1000),
              "best_bid": ".50", "best_ask": ".53"})
     assert f.ca.states["1"].end_reason == "CA_BOOK_UNPROVEN"
+    evidence = events(f, "CA_BOOK_UNPROVEN")[0]["payload"]["book_validation"]
+    assert "BBO_DEPTH_MISMATCH" in evidence["failed_checks"]
+    assert evidence["best_ask"] != evidence["ca_top_ask"]
+    assert evidence["ca_top_ask"] == "0.53"
+
+
+@pytest.mark.parametrize("fault,expected", [
+    ("disconnect", "WS_DISCONNECTED"), ("generation", "BOOK_GENERATION_MISMATCH"),
+    ("empty", "BOOK_EMPTY"), ("zero_tick", "TICK_NON_POSITIVE"),
+    ("crossed", "PRICE_RANGE_INVALID"), ("bid_grid", "BID_OFF_TICK"),
+    ("ask_grid", "ASK_OFF_TICK"), ("unverified_tick", "TICK_UNVERIFIED"),
+    ("reported_bid", "REPORTED_BID_MISMATCH"), ("reported_ask", "REPORTED_ASK_MISMATCH"),
+    ("top", "BBO_DEPTH_MISMATCH"), ("source_future", "SOURCE_TIME_IN_FUTURE"),
+    ("source_old", "SOURCE_TOO_OLD"), ("receipt_future", "RECEIPT_TIME_IN_FUTURE"),
+    ("receipt_old", "RECEIPT_TOO_OLD"),
+])
+def test_book_unproven_logs_specific_failures_once_without_changing_legal_checks(fault, expected):
+    f, clock = ca_feed()
+    clock.now = .01
+    f.apply(trade(f))
+    book = f.books["1"]
+    changes = {
+        "generation": {"snapshot_generation": f.generation + 1},
+        "empty": {"asks": ()}, "zero_tick": {"tick": D(0)},
+        "crossed": {"asks": ((book.best_bid, D(5)),)},
+        "bid_grid": {"tick": D(".03")},
+        "ask_grid": {"asks": ((book.best_ask + book.tick / 2, D(5)),)},
+        "reported_bid": {"reported_bid": book.best_bid - book.tick},
+        "reported_ask": {"reported_ask": book.best_ask + book.tick},
+        "source_future": {"source_time": f.wall() + 1},
+        "source_old": {"source_time": f.wall() - 1},
+        "receipt_future": {"received_mono": clock.now + 1},
+        "receipt_old": {"received_mono": clock.now - 1},
+    }
+    if fault == "disconnect":
+        f.connected = False
+    elif fault == "unverified_tick":
+        f.tick_verified.pop("1")
+    elif fault == "top":
+        f.ca.tops["1"] = (book.best_bid, book.best_ask + book.tick)
+    else:
+        book = replace(book, **changes[fault])
+        f.books["1"] = book
+    assert not f.ca.legal(book, clock.now)
+    f.ca.book_updated(book)
+    row = events(f, "CA_BOOK_UNPROVEN")[0]
+    assert row["payload"]["trigger"] == "book_updated"
+    evidence = row["payload"]["book_validation"]
+    assert expected in evidence["failed_checks"]
+    assert evidence["token_id"] == "1"
+    assert evidence["checked_monotonic"] == clock.now
+    assert evidence["max_source_age_ms"] == f.ca.cfg.max_sell_age_ms
+    assert evidence["max_receipt_age_ms"] == f.ca.cfg.max_book_age_ms
+    json.dumps(row, allow_nan=False)
+    f.ca.book_updated(book)
+    f.ca.tick()
+    assert len(events(f, "CA_BOOK_UNPROVEN")) == 1
+
+
+def test_book_unproven_timer_logs_all_simultaneous_failures():
+    f, _ = ca_feed()
+    f.apply(trade(f))
+    book = f.books["1"]
+    f.tick_verified.pop("1")
+    f.books["1"] = replace(book, reported_bid=book.best_bid - book.tick,
+                           source_time=f.wall() - 1)
+    f.ca.tick()
+    payload = events(f, "CA_BOOK_UNPROVEN")[0]["payload"]
+    assert payload["trigger"] == "tick"
+    evidence = payload["book_validation"]
+    assert set(evidence["failed_checks"]) == {"TICK_UNVERIFIED", "REPORTED_BID_MISMATCH", "SOURCE_TOO_OLD"}
+    assert evidence["source_age_ms"] == 1000
+
+
+@pytest.mark.parametrize("token", ["1", "2"])
+def test_book_unproven_depth_logs_failed_new_book_before_shared_book_is_committed(token):
+    f, clock = ca_feed()
+    f.apply(trade(f, token))
+    old = f.books[token]
+    assert f.ca.legal(old, clock.now)
+    incoming_frame = f.sequence + 1
+    clock.now = .01
+    # CA checks this intermediate depth before SessionFeed commits self.books
+    # and reconciles the reported BBO. The old shared book remains legal.
+    f.apply(depth(f, "30", token, side="SELL", price=str(old.best_ask),
+                  best_ask=str(old.best_ask + old.tick)))
+    payload = events(f, "CA_BOOK_UNPROVEN")[0]["payload"]
+    evidence = payload["book_validation"]
+    assert payload["trigger"] == "book_updated"
+    assert evidence["failed_checks"] == ["REPORTED_ASK_MISMATCH"]
+    assert evidence["token_id"] == token
+    assert evidence["frame"] == incoming_frame
+    assert evidence["frame"] != old.frame
+    assert evidence["received_monotonic"] == clock.now
+    assert evidence["best_ask"] == str(old.best_ask)
+    assert evidence["reported_ask"] == str(old.best_ask + old.tick)
+    assert f.ca.states[token].end_reason == "CA_BOOK_UNPROVEN"
+    json.dumps(payload, allow_nan=False)
 
 
 @pytest.mark.parametrize("when,confirmed", [(.749, True), (.75, False), (.751, False)])

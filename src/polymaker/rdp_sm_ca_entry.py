@@ -5,6 +5,20 @@ from decimal import Decimal
 
 from polymaker.rdp_sm_signal import Signal
 
+MIN_CONFIRMATION_SECONDS = Decimal("0.100")
+
+
+def confirmation_duration_ms(episode):
+    """Formation duration, never the age of an already confirmed signal."""
+    if episode.get("tC") is None:
+        return None
+    return (Decimal(str(episode["tC"])) - Decimal(str(episode["t0"]))) * 1000
+
+
+def confirmation_allowed(episode):
+    duration = confirmation_duration_ms(episode)
+    return duration is not None and duration > MIN_CONFIRMATION_SECONDS * 1000
+
 
 @dataclass(frozen=True)
 class CAEntryEpisode:
@@ -22,11 +36,13 @@ class CounterAttackEntry:
         self.selected = self.claimed = None
         self.episode_id = self.episode_start = None
         self.consumed = set()
+        self.block_reason = None
 
     def evaluate(self, snapshot):
         with self.feed.lock:
             observation = self.feed.observe_ca("snapshot")
             valid = []
+            self.block_reason = None
             if observation and observation.get("data_complete") and observation.get("recording_active"):
                 # Apply BA's conservative conflict policy to both unexpired CA
                 # formations, before filtering candidate age or consumption.
@@ -38,7 +54,9 @@ class CounterAttackEntry:
                     s = active[0]
                     ep = s["episode"]
                     book = self.feed.books[ep["token_id"]]
-                    if (s["candidate_usable"] and ep["episode_id"] not in self.consumed
+                    if not confirmation_allowed(ep):
+                        self.block_reason = "CA_CONFIRMATION_TOO_FAST"
+                    elif (s["candidate_usable"] and ep["episode_id"] not in self.consumed
                             and snapshot.valid and snapshot.generation == ep["generation"]
                             and book.best_bid == Decimal(ep["anchor_bid_price"])):
                         valid.append(CAEntryEpisode(ep["episode_id"], ep["token_id"], ep["outcome"],
@@ -67,6 +85,7 @@ class CounterAttackEntry:
             return bool(observation and observation.get("data_complete")
                         and observation.get("recording_active")
                         and any(s["episode_id"] == claim[0] and s["candidate_usable"]
+                                and confirmation_allowed(s["episode"])
                                 for s in observation["outcomes"].values()))
 
     def consume(self, claim):

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from polymaker.dashboard.archive import Archiver
 from polymaker.dashboard.collector import Collector, atomic_json, public_snapshot
+from polymaker.dashboard.settlement import SettlementObserver
 from polymaker.dashboard.view import watch
 
 
@@ -24,6 +25,7 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
         os.nice(10 - priority)
     collector = Collector(project, output, history_hours=history_hours, journal_dirs=journal_dirs)
     archiver = Archiver(collector)
+    settlement = None if once else SettlementObserver(collector)
     stopping = False
 
     def stop(_signum: int, _frame: object) -> None:
@@ -38,6 +40,9 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
             started = time.monotonic()
             try:
                 snapshot = collector.poll()
+                if settlement is not None:
+                    settlement.tick(snapshot)
+                snapshot["isolation"] = "PUBLIC_GAMMA_RESOLUTION_GET_ONLY; NO_KEYS_SDK_OR_TRADING_DB"
                 archiver.tick(snapshot)
                 atomic_json(collector.output / "latest.json", public_snapshot(snapshot))
                 if archiver.last_error:
@@ -54,6 +59,8 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
             while not stopping and time.monotonic() < until:
                 time.sleep(min(.2, until - time.monotonic()))
     finally:
+        if settlement is not None:
+            settlement.close()
         collector.close()
         for signum, handler in handlers.items():
             signal.signal(signum, handler)

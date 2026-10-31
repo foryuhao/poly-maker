@@ -25,9 +25,19 @@ async def ca_setup(env, monkeypatch):
     _, e, f, lifecycle = setup[:4]
     e.cfg.rdp_sm.normal_entry_mode = f.normal_entry_mode = "ca_v1"
     e.cfg.rdp_sm.ca_observe.enabled = True
+    # CA entry now requires a formation lasting more than 100ms.
+    e.cfg.rdp_sm.ba.observation_sec = .2
+    e.cfg.rdp_sm.ba.max_entry_age_ms = 300
+    e.cfg.rdp_sm.ba.signal_lifetime_sec = .4
     f.ca = CounterAttack(f, e.cfg.rdp_sm.ba, e.cfg.rdp_sm.ca_observe)
     setup[4] = CANormalController(e, lifecycle)
     return setup
+
+
+async def confirm_ca(feed, token="1"):
+    feed.apply(trade(feed, token))
+    await asyncio.sleep(.11)
+    feed.apply(buy(feed, token))
 
 
 @pytest.mark.parametrize("token", ["1", "2"])
@@ -35,7 +45,7 @@ async def test_ca_alone_posts_at_same_bid_size_original_t0_deadline_and_once(env
     setup = await ca_setup(env, monkeypatch)
     v, e, f, _, normal, wire = setup[:6]
     try:
-        f.apply([trade(f, token), buy(f, token)])
+        await confirm_ca(f, token)
         ep = f.ca.states[token]
         assert f.ba.states[token].ba_confirmed_mono is None
         result, sizing = await normal.enter(D(0), D(0), "ca-entry")
@@ -94,12 +104,12 @@ async def test_no_fallback_to_ba_or_obi_without_eligible_ca(env, monkeypatch, ca
         await cleanup(setup)
 
 
-@pytest.mark.parametrize("fault", ["expires_signing", "expires_post", "anchor_post", "generation_post", "book_post", "capital", "network", "T120"])
+@pytest.mark.parametrize("fault", ["expires_signing", "expires_post", "anchor_post", "generation_post", "book_post", "too_fast_post", "capital", "network", "T120"])
 async def test_ca_final_guard_cannot_be_bypassed(env, monkeypatch, fault):
     setup = await ca_setup(env, monkeypatch)
     v, e, f, lifecycle, normal = setup[:5]
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         if fault == "expires_signing":
             native = e.gateway.prepare
             async def slow(*args, **kwargs):
@@ -107,13 +117,16 @@ async def test_ca_final_guard_cannot_be_bypassed(env, monkeypatch, fault):
                 await asyncio.sleep(.26)
                 return signed
             monkeypatch.setattr(e.gateway, "prepare", slow)
-        elif fault in {"expires_post", "anchor_post", "generation_post", "book_post"}:
+        elif fault in {"expires_post", "anchor_post", "generation_post", "book_post", "too_fast_post"}:
             native = e.gateway.send_prepared
             async def delayed(*args, **kwargs):
                 if fault == "expires_post":
                     await asyncio.sleep(.26)
                 elif fault == "anchor_post":
                     f.apply(depth(f, 20, price=".51"))
+                elif fault == "too_fast_post":
+                    ep = f.ca.states["1"]
+                    ep.tC = ep.t0 + .05
                 elif fault == "generation_post":
                     setup[-2]["running"] = False
                     f.connect()
@@ -134,6 +147,47 @@ async def test_ca_final_guard_cannot_be_bypassed(env, monkeypatch, fault):
         assert not v.post_requests
         assert not f.ca_entry.consumed
         assert not any(r["event"] == "CA_NORMAL_POST" for r in f.ca.records)
+    finally:
+        await cleanup(setup)
+
+
+@pytest.mark.parametrize("confirmed_at,allowed", [
+    (.109, False), (.110, False), (.110001, True), (.111, True), (.2, True),
+])
+@pytest.mark.parametrize("token", ["1", "2"])
+def test_ca_requires_strictly_more_than_100ms_formation_and_never_ages_into_eligibility(confirmed_at, allowed, token):
+    f, clock = ca_feed()
+    fresh_at(f, clock, .01)
+    f.apply(trade(f, token))
+    fresh_at(f, clock, confirmed_at)
+    f.apply(buy(f, token))
+    ep = f.ca.states[token]
+    assert ep.tC == confirmed_at
+    observation = f.ca.snapshot()["outcomes"][ep.outcome]
+    assert observation["confirmed"]  # Raw signal evidence remains observable.
+    signal = f.ca_entry.evaluate(f.snapshot())
+    assert (signal.direction is not None) == allowed
+    claim = f.ca_entry.claim(signal)
+    if allowed:
+        assert f.ca_entry.current(claim)
+    else:
+        assert claim is None
+        assert f.ca_entry.block_reason == "CA_CONFIRMATION_TOO_FAST"
+    fresh_at(f, clock, confirmed_at + .15)
+    assert (f.ca_entry.evaluate(f.snapshot()).direction is not None) == allowed
+    assert ep.tC == confirmed_at  # Waiting must not change formation duration.
+
+
+async def test_fast_ca_never_reaches_actual_order_post_even_after_waiting(env, monkeypatch):
+    setup = await ca_setup(env, monkeypatch)
+    v, _, f, _, normal = setup[:5]
+    try:
+        f.apply([trade(f), buy(f)])
+        for _ in range(2):
+            assert await normal.enter(D(0), D(0), "fast-ca") is None
+            assert normal.signal_block_reason == "CA_CONFIRMATION_TOO_FAST"
+            await asyncio.sleep(.11)
+        assert not v.post_requests and not f.ca_entry.consumed
     finally:
         await cleanup(setup)
 
@@ -168,7 +222,7 @@ async def test_ca_snapshot_failure_at_native_post_hook_prevents_actual_post(env,
     setup = await ca_setup(env, monkeypatch)
     v, _, f, _, normal = setup[:5]
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         snapshot = f.ca.snapshot
         def fail_after_consumption():
             if f.ca_entry.consumed:
@@ -202,7 +256,7 @@ async def test_ca_fill_owns_repair_and_opposite_ba_exits_even_if_ca_unavailable(
                 venue.fill(oid, "fill-"+venue.rows[oid]["asset_id"], 5)
             reflect_positions(venue)
         v.on_cancel = fill
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, _ = await normal.enter(D(0), D(0), "ca-filled")
         assert result.close_barrier == "SAFE_TO_CONTINUE"
         assert e.economic_inventory() == (D(5), D(0))
@@ -262,7 +316,11 @@ async def test_real_runner_ca_controller_no_ba_confirmation_and_safe_teardown(en
                         row["asks"][0]["size"] = "20"
             apply(decoded, **clock)
             if feed.connected and feed.books["1"].best_bid is not None:
-                apply([trade(feed), buy(feed)])
+                ep = feed.ca.states.get("1") if feed.ca else None
+                if ep is None or ep.end_reason:
+                    apply(trade(feed))
+                elif ep.tC is None and feed.monotonic() - ep.t0 > .11:
+                    apply(buy(feed))
         feed.apply = causal_prints
         feeds.append(feed)
         return feed

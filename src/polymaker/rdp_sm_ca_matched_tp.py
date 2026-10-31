@@ -48,6 +48,20 @@ def fixed_tp_price(entry, profit, book):
     return price, "BEST_BID" if fallback else "PROFIT_TARGET"
 
 
+async def drain_tp_posts(owner, *, expired):
+    """At expiry DELETE known signed IDs even while a POST response is pending.
+
+    A DELETE before POST returns cannot prove a late acceptance absent. Shared
+    submit clears that provisional cancel ACK; the final close path cancels again.
+    """
+    if expired:
+        for a in owner.created:
+            if a.post_started and owner.unresolved(a):
+                owner.cancel_wanted.add(a.attempt_id)
+                owner.cancels[a.attempt_id] = asyncio.create_task(owner.cancel(a))
+    await asyncio.gather(*owner.posts.values(), *owner.cancels.values(), return_exceptions=True)
+
+
 class CAMatchedTP(SLExecution):
     mode = "CA_MATCHED_TP"
 
@@ -65,6 +79,7 @@ class CAMatchedTP(SLExecution):
         self.initial_cash = max(ZERO, Decimal(str((lifecycle.account or {}).get(
             "basic_spendable_budget_usd", 0))) - sum((a.maximum for a in opening), ZERO))
         self.fill_time = None
+        self.expires_at = None
         self.ba_attempts = []
         self.handoff_episode = None
         self.ba_controller = None
@@ -77,7 +92,25 @@ class CAMatchedTP(SLExecution):
     def evidence(self):
         return {"opening_window": self.window_id, "elapsed_s": self.elapsed(),
                 "profit_per_share": str(self.cfg.profit_per_share),
+                "ttl_sec": self.cfg.ttl_sec, "expires_at_monotonic": self.expires_at,
                 "committed_usdc": str(self.e.committed())}
+
+    def tp_expired(self):
+        return self.expires_at is not None and self.e.monotonic() >= self.expires_at
+
+    def on_post_start(self, attempt, goal):
+        started = self.e.monotonic()
+        self.expires_at = started + self.cfg.ttl_sec
+        for opening in self.opening:
+            oid = self.oid(opening)
+            self.expires_at = min(self.expires_at,
+                                  self.e.ca_tp_deadlines.get(oid, self.expires_at))
+        for opening in self.opening:
+            self.e.ca_tp_deadlines[self.oid(opening)] = self.expires_at
+        self.record("lease_started", {"order_id": self.oid(attempt),
+                    "post_started_monotonic": started,
+                    "opening_order_ids": [self.oid(a) for a in self.opening],
+                    **self.evidence()})
 
     def opening_fills(self):
         ids = {self.oid(a) for a in self.opening}
@@ -196,6 +229,8 @@ class CAMatchedTP(SLExecution):
         e = self.e
         if self.closed or e.closed or e.fatal:
             return e.fatal or "CA_MATCHED_TP_CLOSED"
+        if self.tp_expired():
+            return "CA_MATCHED_TP_EXPIRED"
         if not 15 <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if self.opening_problem():
@@ -279,7 +314,7 @@ class CAMatchedTP(SLExecution):
         self.posts[a.attempt_id] = asyncio.create_task(self.submit(goal, a), name="ca-matched-tp-post")
 
     def ba_handoff(self):
-        if self.fill_time is None:
+        if not self.e.cfg.rdp_sm.repair.ba_enabled or self.fill_time is None:
             return False
         feed = self.lifecycle.feed
         with feed.lock:
@@ -300,8 +335,8 @@ class CAMatchedTP(SLExecution):
         try:
             while reason is None:
                 self.changed.clear()
-                # This lease can last until the repair cutoff, much longer than a CA
-                # opening window. Keep detector audit buffers draining while
+                # The TP has its own lease, separate from the CA opening window.
+                # Keep detector audit buffers draining while
                 # waiting; otherwise valid BA handoff evidence can overflow.
                 self.lifecycle.drain_ba()
                 for a in self.orders:
@@ -312,6 +347,7 @@ class CAMatchedTP(SLExecution):
                     ("CA_MATCHED_TP_CLOSED", self.closed or self.e.closed),
                     ("ASYNC_JOURNAL_NOT_READY", not self.e.journal.ready),
                     ("MARKET_SUBMISSION_CUTOFF", self.elapsed() >= self.cutoff),
+                    ("CA_MATCHED_TP_EXPIRED", self.tp_expired()),
                     ("CA_OPENING_FILL_UNRESOLVED", self.opening_problem()),
                     ("WS_GENERATION_CHANGED", current.generation != self.intent.snapshot.generation),
                     (current.reason, not current.valid and current.reason not in
@@ -358,10 +394,11 @@ class CAMatchedTP(SLExecution):
         finally:
             self.closed = True  # Native POST guards see closure before any await.
             try:
-                await asyncio.gather(*self.posts.values(), return_exceptions=True)
+                await drain_tp_posts(self, expired=reason == "CA_MATCHED_TP_EXPIRED")
                 for a in self.created:
                     self.register(a)
-                    if a.post_started and self.unresolved(a):
+                    if (a.post_started and self.unresolved(a)
+                            and a.attempt_id not in self.cancel_ack):
                         try:
                             if reason == "OPPOSITE_BA_HANDOFF":
                                 async def cancel_handoff(attempt=a):

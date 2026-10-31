@@ -20,8 +20,7 @@ from polymaker.rdp_sm_loop import RunResult, SMTradingLoop
 from polymaker.rdp_sm_normal import CANormalController
 from polymaker.rdp_sm_sync import SyncSnapshot
 from polymaker.rdp_sm_sync_reads import ReadEvidence
-from test_rdp_sm_ba import trade
-from test_rdp_sm_ca import buy
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_ca_matched_tp import fill, prices, tp_setup
 from test_rdp_sm_cached_reads import attach, finish
@@ -53,7 +52,7 @@ async def incident(env, monkeypatch, tmp_path, *, post_delay=0, initial_cash=Non
     cache.timeout_s = 0.3
     try:
         prices(feed, ".64")
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         first, _ = await normal.enter(D(0), D(0), "incident-first-no")
         assert first.close_barrier == "SAFE_TO_CONTINUE", first.block_reason
         assert first.requested_quotes[0].price == 0.35
@@ -72,7 +71,7 @@ async def incident(env, monkeypatch, tmp_path, *, post_delay=0, initial_cash=Non
 
         monkeypatch.setattr(client, "_transport", httpx.MockTransport(failed_post))
         prices(feed, ".68")
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         second, _ = await normal.enter(D(0), D(0), "incident-unknown-yes")
         assert second.close_barrier == "BLOCKED"
         a = e.attempts[-1]
@@ -141,11 +140,11 @@ async def test_1730_new_opposite_ca_can_post_same_direction_still_cannot(
         await ready(e)
         lifecycle.account = (await e._snapshot(include_books=False))[3]
         prices(feed, ".69")
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         assert await normal.enter(D(0), D(0), "same-side-blocked") is None
         assert len(v.post_requests) == 2
         prices(feed, ".60")
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         third = await normal.enter(D(0), D(0), "new-opposite-ca")
         assert third is not None, lifecycle.guard_reason
         assert len(v.post_requests) == 3
@@ -432,7 +431,7 @@ async def test_latest_cache_failure_before_native_post_revokes_permission(
         await ready(e)
         lifecycle.account = (await e._snapshot(include_books=False))[3]
         prices(feed, ".60")
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         monkeypatch.setattr(e.gateway, "send_prepared", changed)
         await normal.enter(D(0), D(0), "cache-changes-before-post")
         assert len(v.post_requests) == 2
@@ -574,7 +573,7 @@ async def test_matched_tp_after_recovery_keeps_original_quote_and_unknown_budget
         await ready(e)
         lifecycle.account = (await e._snapshot(include_books=False))[3]
         prices(feed, ".60")
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         monkeypatch.setattr(e.gateway, "send_prepared", fill_new)
         result, _ = await normal.enter(D(0), D(0), "new-opening-and-tp")
         assert len(v.post_requests) == 4
@@ -599,7 +598,7 @@ async def test_unknown_cash_reservation_can_still_block_new_opposite_order(
         assert lifecycle.account["execution_reserved_usd"] == 3.4
         assert lifecycle.account["basic_spendable_budget_usd"] == pytest.approx(2.6)
         prices(feed, ".39")  # NO 0.60 x5 needs $3, beyond the remaining $2.60.
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         assert await normal.enter(D(0), D(0), "cash-still-reserved") is None
         assert len(v.post_requests) == 2 and e.committed() == D("3.4")
         assert a.outcome == "UNKNOWN"
@@ -676,7 +675,7 @@ async def test_real_session_loop_resumes_new_signal_without_waiving_merge_or_fin
     async def new_signal(controller, *args):
         calls.append(args)
         prices(feed, ".60")
-        feed.apply([trade(feed, "2"), buy(feed, "2")])
+        await confirm_ca(feed, "2")
         result = await enter(controller, *args)
         if result:
             loop.market_deadline = e.monotonic()

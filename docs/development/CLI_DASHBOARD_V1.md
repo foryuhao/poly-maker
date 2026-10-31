@@ -2,7 +2,9 @@
 
 看板读取独立观察器生成的快照。观察器只以只读方式增量打开已有的交易 journal 和
 session 头记录的 CA 文件；不加载 `.env`、`Config`、交易 SDK、交易 SQLite 或账户锁，
-不连接交易所、不发送订单、不启动或重启交易。新文件放在 `research_outputs/dashboard/`。
+不发送订单、不启动或重启交易。持续运行的观察器额外以无鉴权 GET 查询官方 Gamma
+公开市场最终结果，仅用于补齐已结束 session 的残仓结算。新文件放在
+`research_outputs/dashboard/`，不读取账户 API 或交易状态数据库。
 
 ## 启动
 
@@ -13,8 +15,13 @@ bash ops/install_dashboard.sh
 .venv/bin/polymaker dashboard
 ```
 
-安装器只启用用户级 `polymaker-dashboard-archive.service`。观察器独立于终端，按秒采集、
+安装器按脚本所在项目的实际绝对路径生成用户级 `polymaker-dashboard-archive.service`，
+不要求固定目录名；需先创建项目的 `.venv`。移动项目后重新运行安装器即可更新路径并
+重启观察器。`ops/polymaker-dashboard-archive.service` 是安装模板，不要直接复制安装。
+观察器独立于终端，按秒采集、
 按北京时间整五分钟生成运行快照。`q` 或 Ctrl+C 只关闭看板，`a` 切换归档索引。
+归档索引按时间从早到晚分页，首次进入从当前历史范围内最早的场次开始；`n` 下一页、
+`p` 上一页。页面显示页数和场次范围，终端高度只影响每页行数，不再隐藏较早场次。
 `h` 按 **4h → 12h → 24h → 4h** 循环切换历史周期，默认 24h；曲线、PnL 分布和归档索引
 一起按所选周期更新，当前 session 保持独立展示。周期仅影响本次看板显示，不改变采集或归档。
 完整总览建议终端至少 120 列、40 行；小终端使用紧凑总览，宽度足够时同时显示曲线和分布。
@@ -50,9 +57,14 @@ systemctl --user disable --now polymaker-dashboard-archive.service
   CA 使用头信息记录的实际路径，其独立 session_id 可以不同。确认计数不是可交易机会数。
 - 订单、确认份数、YES / NO、Delta、未配残仓、已配未合并份数。
   撤单 ACK 不等于成交核对完成；不会据此提前清空风险。
-- 已确认配对 PnL 的累计 Total / Maker / Taker 曲线，Other 单列。
-  分布按 FIFO 配对批次统计，部分成交可能形成多个批次，不当作不同订单或完整交易链。
-  Maker、Taker、OTHER 共用六桶，自上而下为 `P>1.0`、`0.5<P≤1.0`、`0<P≤0.5`、
+- SIGNALS 右侧的 POST 面板按 CA / TP / BA、YES / NO 展示本场实际发单笔数。
+  仅统计 `post_started=true` 的订单尝试，同一尝试重复日志去重；已发送后拒单或 UNKNOWN
+  仍计入，发送前 ABORTED 与预签名不计入。此处按订单尝试计数，EXECUTION 的 POST
+  按 HTTP 请求计数，批量发单时两者可能不同。窄终端将 POST 排列在 SIGNALS 下方。
+- 已确认 PnL 的累计 Total / TP / BA / OTHER 曲线。Total 为三类已确认收益之和。
+  分布按 FIFO 配对批次统计；已核实残仓结算每场作为一笔 OTHER，部分成交可能形成多个
+  配对批次，不当作不同订单或完整交易链。TP、BA、OTHER 共用六桶，自上而下为
+  `P>1.0`、`0.5<P≤1.0`、`0<P≤0.5`、
   `−0.5<P≤0`、`−1.0<P≤−0.5`、`P≤−1.0`，单位 USDC/批；零收益归入 `−0.5<P≤0`。
   单元格数字是该归因落入桶中的批次数，三列柱长使用相同尺度。
 - 交易日志没有提供完整行情估值，所以 v1 不展示未实现 PnL、实时 WS 延迟或账户净值估计。
@@ -62,11 +74,21 @@ systemctl --user disable --now polymaker-dashboard-archive.service
 使用 Decimal，FIFO 采用首次观察成交的日志顺序，迟到的 CONFIRMED 不改变该顺序。
 Taker 必须同时具备精确 `principal_usdc` 和 `fee_usdc`，不能拿报价或 POST 中的 nominal
 份数代替真实成本。费用按匹配份数分摊，已计入收益，不二次扣除。
-Maker / Taker 按完成配对的退出腿归因；CA 新开仓吸收旧残仓、TP、系统退出记 Other。
+按完成配对的退出腿归因：首次 CA TP 和恢复 TP 归 TP；反向 BA（含普通 REPAIR、
+TP 接管及历史 BA Taker）归 BA。CA 再开仓吸收旧残仓、系统退出及其余配对收益归 OTHER。
+所有已核实残仓结算归 OTHER，不按该残仓的开仓来源分到 TP 或 BA。
 合并确认只改变库存和合并量，不再次增加配对收益。
 
-未配残仓在结果未知时保留 PENDING。仅当最终 run result 有明确胜方及可核对的残仓结算
-分项时计算结算值；不会额外调用交易所或将赎回现金重复计为新收益。
+未配残仓在结果未知时保留 PENDING。最终 run result 提供可核对的胜方和结算分项时直接
+核算；否则持续运行的观察器通过官方 Gamma `/markets/slug/{slug}` 补查。每次最多一个
+后台请求，超时 3 秒，未决或失败每场间隔至少 30 秒重试，不阻塞每秒日志采集。
+仅接受 `closed=true`、最终状态 `resolved`、二元终值 `0/1`，并逐项核对 slug、condition ID
+和两个 token ID；按 token ID 映射本地 YES/NO，不假定 Up/Down 或数组顺序。日志库存核对
+或成交确认未完成时不据此计算结算值。`--once` 仅使用已有本地结算证据，不发起补查。
+结算值按实际残仓份数乘最终赔付减去其 FIFO 成本，计入 OTHER、Total、曲线及分布，
+与残仓大小无关。原始结果证据保存在独立观察器 SQLite 和市场归档，更新生成新版本。
+未结算残仓显示待定场数，未确认部分不计入已确认合计，不以零收益代替。
+这是结果确定后的结算盈亏，不代表已执行赎回；赎回现金不重复计为新收益。
 返佣与 gas 单列，未知项不填零。缺失日志、解析错误、CA 丢弃、成交成本缺失或最终
 库存不一致会保留质量提示；已确认配对部分仍可查看，完整交易 PnL 保持 PENDING。
 风险 writer 的 `flush()` 本身会占用无输出的序号，所以前向序号空洞记录在 manifest，

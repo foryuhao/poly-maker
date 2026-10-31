@@ -14,6 +14,7 @@ DUST = Decimal("0.1")
 def repair_readiness(cfg: RDPRepairConfig) -> dict:
     if cfg.policy == "opposite_ba_v1":
         return {"policy": cfg.policy, "selected_policy": cfg.policy,
+                "ba_enabled": cfg.ba_enabled,
                 "parameters_complete": True, "ready_for_live": True,
                 "scope": "CONFIGURATION_ONLY; NOT_STRATEGY_PERFORMANCE_VALIDATION",
                 "parameters": cfg.opposite_ba.model_dump(mode="json"), "reasons": []}

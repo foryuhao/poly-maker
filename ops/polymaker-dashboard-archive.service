@@ -3,8 +3,8 @@ Description=PolyMaker independent read-only dashboard and five-minute archive
 
 [Service]
 Type=simple
-WorkingDirectory=%h/poly-maker
-ExecStart=%h/poly-maker/.venv/bin/python -m polymaker.dashboard archive --project-dir %h/poly-maker --output-dir %h/poly-maker/research_outputs/dashboard
+WorkingDirectory=@WORKING_DIR@
+ExecStart="@PROJECT_DIR@/.venv/bin/python" -m polymaker.dashboard archive --project-dir "@PROJECT_DIR@" --output-dir "@PROJECT_DIR@/research_outputs/dashboard"
 Restart=on-failure
 RestartSec=5
 Nice=10
@@ -12,7 +12,7 @@ CPUQuota=15%
 MemoryMax=256M
 IOWeight=10
 NoNewPrivileges=true
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0077
 TimeoutStopSec=15
 

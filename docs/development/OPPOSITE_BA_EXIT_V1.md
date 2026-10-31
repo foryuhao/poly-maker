@@ -6,6 +6,22 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
 
 ## Contract
 
+`[rdp_sm.repair] ba_enabled` defaults to `true` for existing configurations.
+The current deployment configuration explicitly sets `false`. When disabled,
+BA detection/auditing continues but selection, ordinary REPAIR preparation,
+native POST validation and both initial/restored TP handoffs reject BA orders
+with `BA_REPAIR_DISABLED`. CA opening and TP pricing/quantity rules are unchanged;
+ordinary REPAIR can still restore its default TP when configured. Existing order,
+fill and account close proofs remain mandatory. Configuration/code is loaded at
+process start; changing the file does not hot-reload an already running process.
+
+`[rdp_sm.ca_matched_tp] ttl_sec` defaults to 15 seconds from the first CA TP's
+native POST start. At expiry, cancel the unfilled TP and retain the full close
+proof barrier, including late/partial fills. The deadline is attached to the
+opening order's FIFO lots; restored TP orders inherit it without resetting it.
+Expired CA lots cannot cause ordinary REPAIR to repost a TP. Reverse BA lots
+remain independent, and an already accepted BA retains its own signal deadline.
+
 1. An opening economic fill creates REPAIR ownership. Both exit policies use
    the existing inclusive 2.5-share completion threshold. Actual quantities and
    acquisition costs remain in the ledger even when the round completes.
@@ -20,11 +36,14 @@ Pre-development checkpoint: `fed28b4`, pushed to `origin/codex/ba-normal-v1`.
    the same outcome scope. Source ordering, age, anchor and reconnect checks
    remain those of BidAbsorption. Old or expired opportunities are not replayed.
 4. Submit one GTC/post-only BUY per BA episode at its anchor Bid. The shared
-   `repair_buy_quantity` function preserves the price policy's rules: round up
-   the residual and legal minimum/notional to 0.01 shares, require reduced
+   `ba_repair_buy_quantity` function adds a 1 USDC minimum to shared repair
+   sizing: round up the residual and legal minimum/notional to 0.01 shares, require reduced
    absolute Delta and the existing Delta/capital/max-order admission. A true
    Delta breach may use a feasible partial recovery. Smaller reverse residuals
-   are allowed; an equal or larger absolute residual is rejected.
+   are allowed up to 2.5 shares inclusive; a larger reverse residual, or an
+   equal or larger absolute residual, is rejected. If a TP handoff requires
+   overbuy, cancel and fully reconcile the old TP before replanning the BA
+   from remaining inventory. No BA deadline is extended by this close barrier.
 5. The deadline is the earlier of the original BA deadline and T240. Recheck
    BA claim, direction, anchor, freshness, POST/live budgets, revision, account,
    capital and Delta immediately before the native POST. Consumption happens

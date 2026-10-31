@@ -197,6 +197,7 @@ class RDPCAMatchedTPConfig(BaseModel):
     enabled: bool = Field(default=False, strict=True)
     restore_after_ba: bool = Field(default=False, strict=True)
     profit_per_share: Decimal = Field(default=Decimal("0.20"), gt=0, lt=1, allow_inf_nan=False)
+    ttl_sec: float = Field(default=15.0, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _restore_requires_tp(self):
@@ -291,6 +292,7 @@ class RDPRepairConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     policy: Literal["ev_legacy", "hd_tp_sl_v1", "opposite_ba_v1"] = "ev_legacy"
+    ba_enabled: bool = Field(default=True, strict=True)
     path: RDPRepairPathConfig = Field(default_factory=RDPRepairPathConfig)
     opposite_ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
     opposite_ba_execution: RDPOppositeBAExecutionConfig = Field(default_factory=RDPOppositeBAExecutionConfig)
@@ -338,6 +340,7 @@ class RDPCooldownConfig(BaseModel):
 
 class RDPSMConfig(BaseModel):
     normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1"] = "legacy"
+    ca_entry_direction: Literal["signal", "higher_bid"] = "signal"
     normal_cutoff_sec: float = Field(default=120.0, gt=0, le=300, allow_inf_nan=False)
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
     ba: RDPBAConfig = Field(default_factory=RDPBAConfig)

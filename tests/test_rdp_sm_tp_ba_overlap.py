@@ -9,6 +9,7 @@ import pytest
 from polymaker.domain import Side, TradeState
 from polymaker.rdp_sm_sl_ledger import exposure
 from polymaker.state.tracker import TradeEvent
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_cached_reads import attach, finish
 from test_rdp_sm_m2_execution import journal_records
 from test_rdp_sm_obi_execution import cleanup
@@ -354,8 +355,6 @@ async def test_ba_final_native_guard_rechecks_after_signing_and_keeps_tp_when_he
 async def test_initial_ca_tp_also_posts_ba_before_cancel_and_reports_ba_fills(
     env, monkeypatch, tmp_path, cached
 ):
-    from test_rdp_sm_ba import trade
-    from test_rdp_sm_ca import buy
     from test_rdp_sm_ca_matched_tp import fill, tp_setup
 
     setup = await tp_setup(env, monkeypatch)
@@ -380,7 +379,7 @@ async def test_initial_ca_tp_also_posts_ba_before_cancel_and_reports_ba_fills(
             return raw
 
         monkeypatch.setattr(e.gateway, "send_prepared", send)
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         task = asyncio.create_task(normal.enter(D(0), D(0), "initial-overlap"))
         await until(lambda: len(v.post_requests) == 2 and e.attempts[-1].outcome == "ACK")
         absorption(feed, "2")

@@ -602,6 +602,12 @@ class BatchLifecycle:
         if signal and claim is None:
             self.wait("SIGNAL_EPISODE_UNAVAILABLE", snapshot)
             return None
+        if self.ca_mode and slot.phase == "NORMAL":
+            candidate = replace(candidate, sizing={**candidate.sizing,
+                "ca_entry_direction": e.cfg.rdp_sm.ca_entry_direction,
+                "ca_signal_side": claim[1], "ca_opening_side": direction,
+                "ca_entry_bids": {"YES": str(snapshot.yes.best_bid),
+                                  "NO": str(snapshot.no.best_bid)}})
         intent = ExecutionIntent(
             slot.window_id,
             slot.slot_id,
@@ -768,7 +774,8 @@ class BatchLifecycle:
             post_start[0] = e.monotonic()
             if ca_observation[0] is not None:
                 self.feed.observe_ca("post", intent.window_id, intent.direction,
-                                     post_start[0], ca_observation[0])
+                                     post_start[0], ca_observation[0],
+                                     intent.claim[1] if self.ca_mode else None)
             elapsed = e.official_time+post_start[0]-e.time_anchor-int(e.slug.rsplit("-", 1)[1])
             for oid in prospective:
                 e.order_post_elapsed[oid] = elapsed

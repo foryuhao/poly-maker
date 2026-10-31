@@ -7,8 +7,8 @@ import pytest
 
 from polymaker.execution.gateway import CancelResult
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
-from test_rdp_sm_ba import absorption, trade
-from test_rdp_sm_ca import buy
+from test_rdp_sm_ba import absorption
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_ca_matched_tp import fill, tp_setup
 from test_rdp_sm_cached_reads import attach, finish
@@ -194,7 +194,7 @@ async def test_real_tp_ba_handoff_shares_delete_but_keeps_full_close_proof(
 
         monkeypatch.setattr(e.gateway, "cancel_detailed", unknown_once)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         task = asyncio.create_task(normal.enter(D(0), D(0), "tp-ba-shared-cancel"))
         await asyncio.wait_for(ready.wait(), 3)
         tp = e.attempts[1].expected_order_id

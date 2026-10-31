@@ -47,6 +47,7 @@ max_orders_per_batch = 15       # exchange batch cap
 
 [rdp_sm]
 normal_entry_mode = "ca_v1"
+ca_entry_direction = "higher_bid" # CA triggers entry; buy the side with the higher current best bid.
 # Seconds from market start; no new NORMAL orders at or after this time.
 normal_cutoff_sec = 150.0
 base_size = "5"
@@ -59,9 +60,10 @@ enabled = true
 restore_after_ba = true # Restore a fixed TP after the BA order is fully reconciled.
 # Opposite fixed maker BUY after the CA opening is MATCHED, before CONFIRMED.
 # Match actual quantity on the BA 0.01-share grid; top up at most 0.01 share.
-# Skip when entry >= 1 - profit_per_share (0.95).
+# Skip when entry >= 1 - profit_per_share (0.90).
 # A crossing TP target falls back to best bid; each submitted quote stays fixed.
 profit_per_share = "0.05"
+ttl_sec = 30.0 # From the first TP POST; restoration of the same CA lots cannot reset it.
 
 [rdp_sm.ba]
 out_of_order_tolerance_ms = 20.0 # Ignore late frames within this gap; 0 is strict.
@@ -82,6 +84,7 @@ max_cancel_rtt_ms = 750.0
 
 [rdp_sm.ca_observe]
 # CA evidence/logging. ca_v1 uses CA for NORMAL; ba_v1 only observes it.
+# CA entry requires tC - t0 > 100ms; faster confirmations never age into eligibility.
 enabled = true
 min_buy_shares = "10"
 output_dir = "research_outputs/ca_observe"
@@ -93,6 +96,7 @@ loss_sec_per_dollar = 100.0
 [rdp_sm.repair]
 # Exit policy: opposite_ba_v1 or hd_tp_sl_v1 (its full parameters remain below).
 policy = "opposite_ba_v1"
+ba_enabled = false # Disable BA orders/TP handoffs; keep CA entry and fixed TP active.
 delta_limit = "5"
 review_sec = 2.0
 cutoff_sec = 240.0 # No new REPAIR orders; cancel active pairing orders at this time.

@@ -68,11 +68,129 @@ def test_exact_taker_fee_dedup_and_no_merge_double_count():
                event("sm_ba_taker_result", {"orders": [{"order_id": "exit", "complete": True}]}, 8)]
     s = summarize(SID, events, [source()])
     assert Decimal(s["pair_pnl"]) == Decimal("-.28")
-    assert s["pnl_by_role"] == {"MAKER": "0", "TAKER": "-0.280", "OTHER": "0"}
+    assert s["pnl_by_role"] == {"TP": "0", "BA": "-0.280", "OTHER": "0"}
     assert s["inventory"] == {"YES": "0", "NO": "0"}
     assert s["filled_orders"] == 2
     assert Decimal(s["fees"]) == Decimal(".03")
     assert s["residual"] == [] and Decimal(s["trading_pnl"]) == Decimal("-.28")
+
+
+@pytest.mark.parametrize("window", ["w3:ba-handoff:3", "w3:ba:3"])
+def test_ba_maker_exit_attributes_partial_fills_without_changing_total(window):
+    events = [event("sm_session", header()),
+              event("sm_placement_result", placement("open", "YES"), 1),
+              event("sm_trade", fill("open", "YES", ".94"), 2),
+              event("sm_placement_result", placement("exit", "NO", window), 3),
+              event("sm_trade", fill("exit", "NO", ".12", quantity=2, trade="part1"), 4),
+              event("sm_trade", fill("exit", "NO", ".12", quantity=3, trade="part2"), 5)]
+    s = summarize(SID, events, [source()])
+    assert Decimal(s["pair_pnl"]) == Decimal("-.30")
+    assert {role: Decimal(pnl) for role, pnl in s["pnl_by_role"].items()} == {
+        "BA": Decimal("-.30"), "TP": Decimal(0), "OTHER": Decimal(0)}
+    assert len(s["pairs"]) == 2
+    assert all(pair["category"] == "BA" for pair in s["pairs"])
+
+
+@pytest.mark.parametrize("phase,policy,role", [
+    ("REPAIR", "opposite_ba_v1", "BA"),
+    ("NORMAL", "opposite_ba_v1", "OTHER"),
+    ("REPAIR", "hd_tp_sl_v1", "OTHER"),
+])
+def test_plain_window_ba_attribution_uses_strategy_evidence(phase, policy, role):
+    events = [event("sm_session", header()),
+              event("sm_placement_result", placement("open", "YES"), 1),
+              event("sm_trade", fill("open", "YES", ".94"), 2),
+              event("sm_placement_result", placement("exit", "NO", "w4"), 3),
+              event("sm_trade", fill("exit", "NO", ".14"), 4),
+              event("sm_strategy_window", {"window_id": SID + ":w4", "state": phase,
+                    "sizing": {"policy": policy}}, 5)]
+    s = summarize(SID, events, [source()])
+    assert Decimal(s["pair_pnl"]) == Decimal("-.40")
+    assert Decimal(s["pnl_by_role"][role]) == Decimal("-.40")
+    assert s["pairs"][0]["category"] == role
+
+
+@pytest.mark.parametrize("window,category", [
+    ("w1:ca-tp", "TP"), ("w2:restored-tp", "TP"), ("w3", "OTHER"),
+])
+@pytest.mark.parametrize("winner,residual_pnl", [("YES", ".6"), ("NO", "-.4"), (None, None)])
+def test_tp_and_other_attribution_includes_only_proven_residual_settlement(window, category, winner, residual_pnl):
+    events = [event("sm_session", header()),
+              event("sm_placement_result", placement("open", "YES"), 1),
+              event("sm_trade", fill("open", "YES", ".4"), 2),
+              event("sm_placement_result", placement("close", "NO", window), 3),
+              event("sm_trade", fill("close", "NO", ".5", quantity=4), 4)]
+    if winner:
+        events.append(event("sm_run_result", {
+            "execution_status": "COMPLETED", "final_close_barrier": "SAFE_TO_CONTINUE",
+            "sizing_report": {"final_winning_outcome": winner,
+                "intentional_residual_pnl": residual_pnl, "unintentional_residual_pnl": "0"}}, 5))
+    s = summarize(SID, events, [source()])
+    assert Decimal(s["pair_pnl"]) == Decimal(".4")
+    expected = {"TP": Decimal(0), "BA": Decimal(0), "OTHER": Decimal(0)}
+    expected[category] += Decimal(".4")
+    if residual_pnl is not None:
+        expected["OTHER"] += Decimal(residual_pnl)
+        assert Decimal(s["trading_pnl"]) == Decimal(".4") + Decimal(residual_pnl)
+    else:
+        assert s["residual_pnl"] is None and s["trading_pnl"] is None
+    assert s["other_pending"] == (winner is None)
+    assert {k: Decimal(v) for k, v in s["pnl_by_role"].items()} == expected
+    assert sum((Decimal(p["pnl"]) for p in s["pnl_events"]), Decimal(0)) == Decimal(s["known_pnl"])
+    for height in (24, 50):
+        import io
+
+        console = Console(width=140, record=True, file=io.StringIO())
+        console.print(render({"observed_at": NOW, "sessions": [s], "current_session_id": SID},
+                             now=NOW, width=140, height=height))
+        text = console.export_text()
+        assert "TP" in text and "BA" in text and "OTHER" in text
+        assert f"Total {Decimal(s['known_pnl']):+.3f}" in text
+        assert "Maker" not in text and "Taker" not in text
+
+
+def test_post_counts_use_sent_attempts_by_direction_and_role_not_fills_or_preparations():
+    events = [event("sm_session", header())]
+    for index, (oid, side, window, status, started) in enumerate([
+        ("ca-y", "YES", "w1", "ACK", True),
+        ("ca-n", "NO", "w2", "REJECTED", True),
+        ("tp-y", "YES", "w3:ca-tp", "ACK", True),
+        ("tp-n", "NO", "w4:restored-tp", "UNKNOWN", True),
+        ("ba-y", "YES", "w5:ba-handoff:1", "REJECTED", True),
+        ("abort", "NO", "w5:ba-handoff:2", "ABORTED", False),
+        ("ba-n", "NO", "w6", "ACK", True),
+    ], 1):
+        p = placement(oid, side, window)
+        p.update(outcome=status, post_started=started, attempt_id=oid)
+        events.append(event("sm_placement_result", p, index))
+    events.append(event("sm_strategy_window", {"window_id": SID + ":w6", "state": "REPAIR",
+                  "sizing": {"policy": "opposite_ba_v1"}}, 8))
+    events.append(event("sm_placement_result", events[1]["payload"], 9))
+    events.append(event("sm_prepared", {"window_id": SID + ":w7"}, 10))
+    s = summarize(SID, events, [source()])
+    assert s["post_counts"] == {role: {"YES": 1, "NO": 1} for role in ("CA", "TP", "BA")}
+    assert s["filled_orders"] == 0  # Rejected/unknown POSTs are still sent orders.
+
+
+@pytest.mark.parametrize("width", [80, 100, 140])
+@pytest.mark.parametrize("height", [24, 50])
+def test_post_panel_sits_beside_signals_and_stacks_on_narrow_terminals(width, height):
+    import io
+
+    s = summarize(SID, ledger_events(), [source()])
+    s["post_counts"] = {"CA": {"YES": 2, "NO": 3}, "TP": {"YES": 4, "NO": 5},
+                        "BA": {"YES": 6, "NO": 7}}
+    console = Console(width=width, record=True, file=io.StringIO())
+    console.print(render({"observed_at": NOW, "sessions": [s], "current_session_id": SID},
+                         now=NOW, width=width, height=height))
+    text = console.export_text()
+    shared = [line for line in text.splitlines() if "SIGNALS" in line and "POST" in line]
+    assert bool(shared) == (width >= 95)
+    if shared:
+        assert shared[0].index("SIGNALS") < shared[0].index("POST")
+    assert "实际发单笔数" in text and "YES" in text and "NO" in text
+    for role, yes, no in [("CA", 2, 3), ("TP", 4, 5), ("BA", 6, 7)]:
+        assert any(role in line and str(yes) in line and str(no) in line for line in text.splitlines())
 
 
 def test_unconfirmed_or_inexact_taker_never_books_pnl():
@@ -133,7 +251,7 @@ def test_fifo_partial_pairs_and_reverse_residual():
     events.extend([event("sm_placement_result", placement("close", "NO", "ba:1:maker:1"), 3),
                    event("sm_trade", fill("close", "NO", ".5", quantity=6), 4)])
     s = summarize(SID, events, [source()])
-    assert Decimal(s["pnl_by_role"]["MAKER"]) == Decimal(".5")
+    assert Decimal(s["pnl_by_role"]["BA"]) == Decimal(".5")
     assert s["residual"] == [{"outcome": "NO", "quantity": "1", "cost": "0.5"}]
     assert s["delta"] == "-1" and s["trading_pnl"] is None
 
@@ -143,7 +261,7 @@ def test_late_status_retains_first_observed_fifo_order():
     # NO confirms before YES; economic FIFO still follows first observation.
     events[4]["offset"] = 8
     s = summarize(SID, events, [source()])
-    assert s["pairs"][0]["category"] == "TAKER"
+    assert s["pairs"][0]["category"] == "BA"
 
 
 def test_final_inventory_mismatch_is_pending():
@@ -151,6 +269,43 @@ def test_final_inventory_mismatch_is_pending():
                 confirmed_yes=7, confirmed_no=5, merged_pairs=0, final_close_barrier="SAFE"), 7)]
     s = summarize(SID, events, [source()])
     assert "FINAL_INVENTORY_MISMATCH" in s["issues"] and s["trading_pnl"] is None
+
+
+@pytest.mark.parametrize("resolved", ["REJECTED", "VERIFIED", "ACK"])
+def test_window_result_resolves_only_its_own_unknown_order_before_session_end(resolved):
+    first = placement("first", "NO")
+    first.update(outcome="UNKNOWN", attempt_id="attempt-first")
+    other = placement("other", "YES", "w2")
+    other.update(outcome="UNKNOWN", attempt_id="attempt-other")
+    events = [event("sm_session", header()),
+              event("sm_placement_result", first, 1),
+              event("sm_placement_result", other, 2),
+              event("sm_cancel_ack", {"ids": ["first"], "result": {"canceled": ["first"]}}, 3)]
+    assert summarize(SID, events, [source()])["pending_orders"] == 2
+    final_attempt = {**first, "outcome": resolved}
+    window = compact("sm_window_result", {"window_id": first["quote"]["window_id"],
+        "close_barrier": "SAFE_TO_CONTINUE", "placement_results": [final_attempt]})
+    events.append(event("sm_window_result", window, 4))
+    s = summarize(SID, events, [source()])
+    assert not s["ended"] and s["pending_orders"] == 1
+    expected = "CANCEL_ACK / FILL_RECONCILE" if resolved == "ACK" else resolved
+    assert next(o for o in s["orders"] if o["order_id"] == "first")["status"] == expected
+    assert s["post_counts"]["CA"] == {"YES": 1, "NO": 1}
+    assert "EXECUTION_CONFIRMATION_PENDING" in s["issues"]
+    events.append(event("sm_window_result", {"placement_results": [{**other, "outcome": "REJECTED"}]}, 5))
+    s = summarize(SID, events, [source()])
+    assert s["pending_orders"] == 0 and "EXECUTION_CONFIRMATION_PENDING" not in s["issues"]
+
+
+def test_window_resolution_does_not_hide_unconfirmed_fill():
+    p = placement("open", "YES")
+    p["outcome"] = "UNKNOWN"
+    events = [event("sm_session", header()), event("sm_placement_result", p, 1),
+              event("sm_trade", fill("open", "YES", ".4", status="MATCHED"), 2),
+              event("sm_window_result", {"placement_results": [{**p, "outcome": "VERIFIED"}]}, 3)]
+    s = summarize(SID, events, [source()])
+    assert s["pending_orders"] == 0 and s["pending_fills"] == 1
+    assert "EXECUTION_CONFIRMATION_PENDING" in s["issues"] and s["trading_pnl"] is None
 
 
 def test_ca_final_drain_does_not_mark_archive_complete_early():
@@ -184,6 +339,74 @@ def files(tmp_path):
     path = journal / f"rdp_sm_wallet_{SID}.jsonl"
     output = tmp_path / "derived"
     return tmp_path, path, output
+
+
+def test_reset_exclusions_survive_restart_without_blocking_new_sessions(files):
+    root, path, output = files
+    write_risk(path, ledger_events())
+    c = Collector(root, output)
+    c.db.execute("INSERT INTO metadata VALUES('excluded_session_ids', ?)", (json.dumps([SID]),))
+    c.db.commit()
+    c.close()
+    new_path = path.with_name("rdp_sm_wallet_new-session.jsonl")
+    new_path.write_text(path.read_text().replace(SID, "new-session"))
+    for _ in range(2):
+        c = Collector(root, output)
+        try:
+            snapshot = c.poll()
+            assert [s["session_id"] for s in snapshot["sessions"]] == ["new-session"]
+            assert not c.events(SID)
+        finally:
+            c.close()
+
+
+def test_collector_keeps_window_resolution_and_no_longer_shows_stale_unknown(files):
+    root, path, output = files
+    p = placement("unknown-order", "NO")
+    p.update(outcome="UNKNOWN", attempt_id="unknown-attempt")
+    write_risk(path, [event("sm_session", header()), event("sm_placement_result", p, 1)])
+    c = Collector(root, output)
+    try:
+        assert c.poll()["sessions"][0]["pending_orders"] == 1
+        write_risk(path, [event("sm_window_result", {
+            "window_id": p["quote"]["window_id"], "close_barrier": "SAFE_TO_CONTINUE",
+            "placement_results": [{**p, "outcome": "REJECTED", "raw_response": "not public"}]}, 2)], mode="a")
+        s = c.poll()["sessions"][0]
+        assert s["pending_orders"] == 0 and not s["ended"]
+        assert "EXECUTION_CONFIRMATION_PENDING" not in s["issues"]
+        assert s["orders"][0]["status"] == "REJECTED"
+        assert s["post_counts"]["CA"]["NO"] == 1
+        windows = [e for e in c.events(SID) if e["kind"] == "sm_window_result"]
+        assert len(windows) == 1
+        assert "raw_response" not in windows[0]["payload"]["placement_results"][0]
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("missing", ["pnl_attribution_version", "post_counts"])
+def test_restart_migrates_cached_pnl_categories(files, missing):
+    root, path, output = files
+    write_risk(path, ledger_events())
+    c = Collector(root, output)
+    try:
+        c.poll()
+        old = c.snapshots()[0]
+        old.pop(missing)
+        if missing == "pnl_attribution_version":
+            old["pnl_by_role"] = {"MAKER": "0", "TAKER": "-0.280", "OTHER": "0"}
+        c.db.execute("UPDATE summaries SET snapshot=? WHERE sid=?", (json.dumps(old), SID))
+        c.db.commit()
+    finally:
+        c.close()
+    c = Collector(root, output)
+    try:
+        s = c.snapshots()[0]
+        assert s["pnl_attribution_version"] == 2
+        assert set(s["pnl_by_role"]) == {"TP", "BA", "OTHER"}
+        assert Decimal(s["pnl_by_role"]["BA"]) == Decimal("-.280")
+        assert s["post_counts"]["CA"] == {"YES": 1, "NO": 0}
+    finally:
+        c.close()
 
 
 def test_partial_line_restart_and_exactly_once(files):
@@ -329,7 +552,7 @@ def test_snapshot_staleness_and_render_without_demo_data(files):
     console.print(render(snapshot, now=NOW, width=100))
     text = console.export_text()
     assert "STALE" in text and SID in text and "demo-" not in text
-    assert "Taker" in text and "-0.280" in text
+    assert "BA" in text and "-0.280" in text
 
 
 def test_compaction_removes_secrets_and_raw_responses():
@@ -437,8 +660,9 @@ def test_history_period_filters_pnl_distribution_and_archive_together(height):
         s = copy.deepcopy(current)
         s.update(session_id=f"history-{age}h", market_start=NOW - age * 3600,
                  market_end=NOW - age * 3600 + 300, pair_pnl=pnl,
-                 pnl_by_role={"MAKER": pnl, "TAKER": "0", "OTHER": "0"},
-                 pairs=[{"category": "MAKER", "pnl": pnl}])
+                 pnl_by_role={"TP": "0", "BA": pnl, "OTHER": "0"},
+                 pnl_events=[{"category": "BA", "pnl": pnl}],
+                 pairs=[{"category": "BA", "pnl": pnl}])
         sessions.append(s)
     snapshot = {"observed_at": NOW, "sessions": sessions, "current_session_id": "history-1h"}
     for hours, total in [(4, "+1.000"), (12, "+11.000"), (24, "+111.000")]:
@@ -446,7 +670,7 @@ def test_history_period_filters_pnl_distribution_and_archive_together(height):
         console.print(render(snapshot, now=NOW, width=140, height=height, hours=hours))
         text = console.export_text()
         assert f"{hours}h" in text and f"Total {total}" in text
-        assert f"M {total}" in text or f"Maker {total}" in text
+        assert f"BA {total}" in text
         assert "history-1h" in text  # Current session stays visible.
         console.print(render(snapshot, now=NOW, width=140, height=height, hours=hours, archive_view=True))
         archive = console.export_text()
@@ -464,7 +688,7 @@ def test_pnl_histogram_six_descending_buckets_include_other_and_exact_edges(pnl,
 
     from polymaker.dashboard.view import distribution
 
-    roles = [("MAKER", 2), ("TAKER", 3), ("OTHER", 5)]
+    roles = [("TP", 2), ("BA", 3), ("OTHER", 5)]
     pairs = [{"category": role, "pnl": pnl} for role, count in roles for _ in range(count)]
     console = Console(width=120, record=True, file=io.StringIO())
     console.print(distribution([{"pairs": pairs[:4]}, {"pairs": pairs[4:]}]))

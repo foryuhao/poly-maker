@@ -58,6 +58,7 @@ from polymaker.rdp_sm import (
     repair_required,
     run_preflight,
 )
+from polymaker.rdp_sm_http_trace import sdk_write_timing
 from polymaker.rdp_sm_recovery import pause_reason, reason_code, retry_read
 from polymaker.rdp_sm_volatility import sigma_specification
 from polymaker.state.store import StateStore
@@ -107,17 +108,24 @@ def maker_buy_size(price: Decimal, inventory_gap: Decimal,
 
 
 def repair_buy_quantity(executor, side: str, price: Decimal, delta: Decimal,
-                        cash: Decimal) -> Decimal:
+                        cash: Decimal, *, minimum_notional: Decimal = Decimal(0),
+                        max_reverse_residual: Decimal | None = None) -> Decimal:
     """Shared repair sizing: legal minimums, decreasing exposure and capital limits."""
-    qty = maker_buy_size(price, abs(delta), Decimal(str(executor.meta.min_order_size)))
+    minimum = maker_buy_size(price, minimum_notional / price,
+                             Decimal(str(executor.meta.min_order_size)))
+    qty = max(minimum, maker_buy_size(price, abs(delta),
+                                     Decimal(str(executor.meta.min_order_size))))
     if abs(delta) > executor.cfg.rdp_sm.repair.delta_limit:
         qty = min(qty, executor.cfg.rdp_sm.max_order_size,
                   (cash/price).quantize(Decimal(".01"), rounding=ROUND_FLOOR))
-        if qty < maker_buy_size(price, Decimal(0), Decimal(str(executor.meta.min_order_size))):
+        if qty < minimum:
             raise ValueError("LIMIT_RECOVERY_MINIMUM_NOT_FEASIBLE")
     if qty > executor.cfg.rdp_sm.max_order_size:
         raise ValueError("MINIMUM_ORDER_EXCEEDS_MAXIMUM")
     after = delta+(qty if side == "YES" else -qty)
+    if (max_reverse_residual is not None and delta * after < 0
+            and abs(after) > max_reverse_residual):
+        raise ValueError("BA_REVERSE_RESIDUAL_EXCEEDS_LIMIT")
     if abs(after) >= abs(delta):
         raise ValueError("REPAIR_WOULD_NOT_REDUCE_DELTA")
     if not executor.delta_candidate_allowed(delta, side, qty):
@@ -125,6 +133,14 @@ def repair_buy_quantity(executor, side: str, price: Decimal, delta: Decimal,
     if price*qty > cash:
         raise ValueError("OFFICIAL_OR_SESSION_CAPITAL_INSUFFICIENT")
     return qty
+
+
+def ba_repair_buy_quantity(executor, side: str, price: Decimal, delta: Decimal,
+                           cash: Decimal) -> Decimal:
+    """BA exits cover $1 without planning more than 2.5 reverse shares."""
+    return repair_buy_quantity(executor, side, price, delta, cash,
+                               minimum_notional=MIN_MARKETABLE_BUY_NOTIONAL,
+                               max_reverse_residual=Decimal("2.5"))
 
 
 def _explicit_maker_rejection(item, notional) -> bool:
@@ -304,7 +320,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
             replace(order_args, size=Decimal(str(order_args.size))), options=options)
 
     def _observe_http(self, method, endpoint, began, started_wall, *, operation_id=None, error=None,
-                      batch_id=None):
+                      batch_id=None, transport=None):
         network = getattr(self, "network", None)
         if network is None:
             return
@@ -330,6 +346,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
             outcome=outcome, batch_id=batch_id,
             http_status=getattr(error, "status_code", None) if error else 200,
             error_type=type(error).__name__ if error else None,
+            **({"transport": transport} if transport is not None else {}),
         )
 
     def _get(self, endpoint, headers=None, params=None):
@@ -501,14 +518,17 @@ class ExecutionClobClient(ReadOnlyClobClient):
         began, started_wall = time.monotonic(), time.time()
         batch_id = self._operation_value("network_batch_id")
         operation_id = "post:" + hashlib.sha256(data.encode()).hexdigest()
-        try:
-            raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
-        except BaseException as exc:
+        with sdk_write_timing() as timing:
+            try:
+                raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
+            except BaseException as exc:
+                self._observe_http("POST", endpoint, began, started_wall,
+                                   operation_id=operation_id, error=exc, batch_id=batch_id,
+                                   transport=timing.snapshot())
+                raise
             self._observe_http("POST", endpoint, began, started_wall,
-                               operation_id=operation_id, error=exc, batch_id=batch_id)
-            raise
-        self._observe_http("POST", endpoint, began, started_wall,
-                           operation_id=operation_id, batch_id=batch_id)
+                               operation_id=operation_id, batch_id=batch_id,
+                               transport=timing.snapshot())
         for current in attempts:
             current.raw_response = raw
         return raw
@@ -529,14 +549,17 @@ class ExecutionClobClient(ReadOnlyClobClient):
             # Later explicit cleanup must retain that same logical identity.
             batch_id = self.network.snapshot().active_batch
         operation_id = "cancel:" + hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
-        try:
-            raw = ClobClient._delete(self, endpoint, headers=headers, data=data, params=params)
-        except BaseException as exc:
+        with sdk_write_timing() as timing:
+            try:
+                raw = ClobClient._delete(self, endpoint, headers=headers, data=data, params=params)
+            except BaseException as exc:
+                self._observe_http("DELETE", endpoint, began, started_wall,
+                                   operation_id=operation_id, error=exc, batch_id=batch_id,
+                                   transport=timing.snapshot())
+                raise
             self._observe_http("DELETE", endpoint, began, started_wall,
-                               operation_id=operation_id, error=exc, batch_id=batch_id)
-            raise
-        self._observe_http("DELETE", endpoint, began, started_wall,
-                           operation_id=operation_id, batch_id=batch_id)
+                               operation_id=operation_id, batch_id=batch_id,
+                               transport=timing.snapshot())
         return raw
 
 
@@ -927,6 +950,9 @@ class SMWindowExecutor:
         self.ba_orders = {}
         self.ba_logged = {}
         self.order_post_elapsed: dict[str, float] = {}
+        # Original CA order IDs retain their TP lease through confirmation,
+        # cancellation and BA/TP restoration; fresh/reverse lots are independent.
+        self.ca_tp_deadlines: dict[str, float] = {}
         self.merged_pairs = Decimal(0)
         self.merged_cost: dict[str, Decimal] = {}
         self.merge_pending = False
@@ -1040,13 +1066,14 @@ class SMWindowExecutor:
                                     "rdp_sm_tp.py", "rdp_sm_sl.py", "rdp_sm_sl_ledger.py", "rdp_sm_cooldown.py", "rdp_sm_abandon.py",
                                     "rdp_sm_lifecycle.py", "rdp_sm_loop.py", "rdp_sm_marketdata.py",
                                     "rdp_sm_unknown_recovery.py", "rdp_sm_inventory_lag.py",
-                                    "rdp_sm_cached_reads.py", "rdp_sm_network.py", "rdp_sm_sync.py",
+                                    "rdp_sm_cached_reads.py", "rdp_sm_network.py", "rdp_sm_http_trace.py", "rdp_sm_sync.py",
                                     "repair_policy.py", "rdp_sm_ba.py", "rdp_sm_opposite_ba.py", "rdp_sm_signal.py", "config.py",
                                     "rdp_sm_normal_unknown.py",
                                     "rdp_sm_ca.py", "rdp_sm_ca_writer.py", "rdp_sm_ca_entry.py", "rdp_sm_repair_ba.py",
                                     "rdp_sm_ca_matched_tp.py", "rdp_sm_restored_tp.py",
                                     "rdp_sm_tp_ba_handoff.py")},
                             "ca_matched_tp": cfg.rdp_sm.ca_matched_tp.model_dump(mode="json"),
+                            "ca_entry_direction": cfg.rdp_sm.ca_entry_direction,
                             "config_dir": str(cfg.config_dir),
                             "normal_unknown_cache_recovery": {
                                 "enabled": cfg.rdp_sm.sync_observe.use_for_execution,

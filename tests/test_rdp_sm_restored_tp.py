@@ -13,6 +13,7 @@ from polymaker.rdp_sm_ba import BidAbsorption
 from polymaker.rdp_sm_ca_matched_tp import fixed_tp_price
 from polymaker.rdp_sm_restored_tp import RestoredTP
 from polymaker.state.tracker import TradeEvent
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_cached_reads import attach, finish
 from test_rdp_sm_m2_execution import journal_records
 from test_rdp_sm_obi_execution import cleanup
@@ -96,8 +97,6 @@ def test_remaining_fifo_cost_excludes_already_paired_lots_and_supports_reverse(r
 
 
 async def test_initial_ca_tp_also_uses_best_bid_fallback(env, monkeypatch):
-    from test_rdp_sm_ba import trade
-    from test_rdp_sm_ca import buy
     from test_rdp_sm_ca_matched_tp import fill, tp_setup
 
     setup = await tp_setup(env, monkeypatch)
@@ -120,7 +119,7 @@ async def test_initial_ca_tp_also_uses_best_bid_fallback(env, monkeypatch):
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), "initial-fallback"), 5)
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
         assert len(v.post_requests) == 2 and e.attempts[-1].quote.price == 0.20
@@ -199,7 +198,7 @@ async def test_tp_ba_tp_cycle_posts_ba_before_cancel_and_does_not_reuse_signal(e
 
         monkeypatch.setattr(e.gateway, "send_prepared", send)
         second = asyncio.create_task(c.repair(*e.economic_inventory(), "restore-two"))
-        await until(lambda: len(v.post_requests) == 4)
+        await until(lambda: len(v.post_requests) == 4 and e.attempts[-1].outcome == "ACK")
         oid = e.attempts[-1].order_id
         filled(v, oid, "second-tp-fill")
         tp, sizing = await asyncio.wait_for(second, 5)
@@ -461,8 +460,6 @@ async def test_ca_main_loop_restores_tp_after_ba_then_finishes_market(
     env, monkeypatch, tmp_path, cached
 ):
     from polymaker.rdp_sm_loop import RunResult, SMTradingLoop
-    from test_rdp_sm_ba import trade
-    from test_rdp_sm_ca import buy
     from test_rdp_sm_ca_matched_tp import fill, tp_setup
 
     setup = await tp_setup(env, monkeypatch)
@@ -487,7 +484,7 @@ async def test_ca_main_loop_restores_tp_after_ba_then_finishes_market(
         return raw
 
     async def market_events():
-        feed.apply([trade(feed), buy(feed)])
+        await confirm_ca(feed)
         await until(lambda: len(v.post_requests) == 2)  # Initial TP is live.
         absorption(feed, "2")
         await until(lambda: result.repair_windows >= 1)

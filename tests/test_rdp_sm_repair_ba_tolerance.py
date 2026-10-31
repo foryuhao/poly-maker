@@ -9,6 +9,7 @@ from polymaker.config import RDPOppositeBAExecutionConfig, RDPRepairConfig
 from polymaker.rdp_sm_repair_ba import RepairBidAbsorption
 from test_rdp_sm_ba import depth, trade
 from test_rdp_sm_ca import fresh_at
+from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_m2_execution import journal_records
 from test_rdp_sm_obi_execution import cleanup
 from test_rdp_sm_opposite_ba import absorption, controller_fixture, setup_exit
@@ -293,7 +294,6 @@ async def test_actual_ca_runner_installs_tolerant_repair_without_changing_normal
 
 async def test_ca_opening_then_tolerant_opposite_ba_fill(env, monkeypatch):
     from polymaker.rdp_sm_opposite_ba import OppositeBAController
-    from test_rdp_sm_ca import buy
     from test_rdp_sm_ca_entry import ca_setup
 
     setup = await ca_setup(env, monkeypatch)
@@ -311,7 +311,7 @@ async def test_ca_opening_then_tolerant_opposite_ba_fill(env, monkeypatch):
             reflect_positions(venue)
 
         v.on_cancel = fill
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         opening, _ = await normal.enter(D(0), D(0), "ca-normal")
         assert opening.close_barrier == "SAFE_TO_CONTINUE"
         assert e.economic_inventory() == (D(5), D(0))

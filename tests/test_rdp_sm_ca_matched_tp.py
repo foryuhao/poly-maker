@@ -8,9 +8,8 @@ from pydantic import ValidationError
 from polymaker.config import RDPCAMatchedTPConfig, RDPSMConfig
 from polymaker.rdp_sm_opposite_ba import OppositeBAController
 from polymaker.rdp_sm_repair_ba import RepairBidAbsorption
-from test_rdp_sm_ba import absorption, trade
-from test_rdp_sm_ca import buy
-from test_rdp_sm_ca_entry import ca_setup
+from test_rdp_sm_ba import absorption
+from test_rdp_sm_ca_entry import ca_setup, confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_cached_reads import attach, finish
 from test_rdp_sm_m1 import ADDRESS, CID
@@ -79,7 +78,7 @@ async def test_matched_posts_same_quantity_before_confirmation_and_pairs(
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        f.apply([trade(f, token), buy(f, token)])
+        await confirm_ca(f, token)
         result, sizing = await asyncio.wait_for(normal.enter(D(0), D(0), "matched-tp"), 5)
         assert observed == [True]
         assert len(v.post_requests) == 2
@@ -117,7 +116,7 @@ async def test_high_price_skips_companion(env, monkeypatch, entry):
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, sizing = await asyncio.wait_for(normal.enter(D(0), D(0), "high-entry"), 5)
         assert len(v.post_requests) == 1
         assert result.close_barrier == "SAFE_TO_CONTINUE"
@@ -131,7 +130,7 @@ async def test_no_opening_fill_does_not_post_companion(env, monkeypatch):
     v, e, f, _, normal = setup[:5]
     e.cfg.rdp_sm.ca_matched_tp.enabled = True
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), "no-fill"), 5)
         assert len(v.post_requests) == 1
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
@@ -164,7 +163,7 @@ async def test_companion_survives_ca_deadline_then_ba_cancels_before_handoff(env
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         task = asyncio.create_task(normal.enter(D(0), D(0), "lease"))
         await asyncio.wait_for(companion_ready.wait(), 3)
         await asyncio.sleep(.35)
@@ -231,7 +230,7 @@ async def test_companion_post_failure_is_not_retried_or_assumed_absent(
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), "post-fault"), 5)
         assert len(v.post_requests) == 2
         assert e.economic_inventory() == (D(5), D(0))
@@ -273,7 +272,7 @@ async def test_partial_opening_accumulates_without_upsize_or_duplicate_post(env,
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     task = None
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         task = asyncio.create_task(normal.enter(D(0), D(0), "partial"))
         await asyncio.wait_for(ready.wait(), 2)
         await asyncio.sleep(.06)
@@ -314,7 +313,7 @@ async def test_failed_opening_after_companion_fill_keeps_reverse_residual_owned(
 
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, _ = await asyncio.wait_for(normal.enter(D(0), D(0), "failed-opening"), 5)
         assert len(v.post_requests) == 2
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason
@@ -354,7 +353,7 @@ async def test_companion_fill_during_ba_cancel_is_counted_before_new_repair(env,
     v.on_cancel = cancel
     task = None
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         task = asyncio.create_task(normal.enter(D(0), D(0), "cancel-race"))
         await asyncio.wait_for(ready.wait(), 2)
         absorption(f, "2")
@@ -403,7 +402,7 @@ async def test_companion_never_bypasses_funding_market_health_or_minimum_shares(
     monkeypatch.setattr(e.gateway, "send_prepared", send)
     monkeypatch.setattr(e.gateway, "prepare", prepare)
     try:
-        f.apply([trade(f), buy(f)])
+        await confirm_ca(f)
         result, sizing = await asyncio.wait_for(normal.enter(D(0), D(0), "safe-skip"), 5)
         assert len(v.post_requests) == 1
         assert result.close_barrier == "SAFE_TO_CONTINUE", result.block_reason

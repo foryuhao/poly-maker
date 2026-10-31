@@ -9,7 +9,7 @@ from dataclasses import asdict
 from decimal import Decimal
 
 from polymaker.domain import Side
-from polymaker.rdp_sm_ca_matched_tp import fixed_tp_price, tp_buy_size
+from polymaker.rdp_sm_ca_matched_tp import drain_tp_posts, fixed_tp_price, tp_buy_size
 from polymaker.rdp_sm_execution import (
     MIN_MAKER_BUY_SHARES,
     RDP_TOLERANCE,
@@ -35,6 +35,11 @@ class RestoredTP(SLExecution):
         self.initial_lots = fifo_residual(
             self.e.economic_fills(), self.e.fill_observed_at, self.e.meta.yes.token_id
         )
+        self.expires_at = min(
+            (self.e.ca_tp_deadlines[f.maker_order_id] for f in self.initial_lots
+             if f.maker_order_id in self.e.ca_tp_deadlines),
+            default=None,
+        )
         self.initial_cash = Decimal(
             str((self.lifecycle.account or {}).get("basic_spendable_budget_usd", 0))
         )
@@ -42,6 +47,12 @@ class RestoredTP(SLExecution):
         self.price_source = None
         self.handoff_episode = None
         self.ba_attempts = []
+
+    def tp_expired(self):
+        return self.expires_at is not None and self.e.monotonic() >= self.expires_at
+
+    def evidence(self):
+        return {**super().evidence(), "ca_tp_expires_at_monotonic": self.expires_at}
 
     def snapshot(self):
         return self.lifecycle.feed.snapshot(ba_cfg=self.controller.ba_config)
@@ -69,6 +80,8 @@ class RestoredTP(SLExecution):
     def goal(self):
         if self.e.repair_episode is not self.episode:
             return None, "REPAIR_EPISODE_CHANGED"
+        if self.tp_expired():
+            return None, "CA_MATCHED_TP_EXPIRED"
         residual = self.residual()
         if residual is None:
             return None, "NO_PROVEN_RESIDUAL"
@@ -95,6 +108,8 @@ class RestoredTP(SLExecution):
         side, price, qty, snapshot = goal
         if self.closed or e.closed or e.fatal:
             return e.fatal or "RESTORED_TP_CLOSED"
+        if self.tp_expired():
+            return "CA_MATCHED_TP_EXPIRED"
         if not self.controller.restore_tp_enabled or not 15 <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.repair_episode is not self.episode or e.cooldown.active:
@@ -253,6 +268,7 @@ class RestoredTP(SLExecution):
                             (self.e.fatal, bool(self.e.fatal)),
                             ("RESTORED_TP_CLOSED", self.closed or self.e.closed),
                             ("MARKET_SUBMISSION_CUTOFF", self.elapsed() >= self.cutoff),
+                            ("CA_MATCHED_TP_EXPIRED", self.tp_expired()),
                             ("ASYNC_JOURNAL_NOT_READY", not self.e.journal.ready),
                             ("REPAIR_EPISODE_CHANGED", self.e.repair_episode is not self.episode),
                             ("WS_GENERATION_CHANGED", current.generation != original.generation),
@@ -320,10 +336,11 @@ class RestoredTP(SLExecution):
         finally:
             self.closed = True
             try:
-                await asyncio.gather(*self.posts.values(), return_exceptions=True)
+                await drain_tp_posts(self, expired=self.reason == "CA_MATCHED_TP_EXPIRED")
                 for a in self.created:
                     self.register(a)
-                    if a.post_started and self.unresolved(a):
+                    if (a.post_started and self.unresolved(a)
+                            and a.attempt_id not in self.cancel_ack):
                         try:
                             await self.cancel(a)
                         except Exception as exc:
