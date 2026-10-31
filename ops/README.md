@@ -1,5 +1,9 @@
 # 交易日志自动清理
 
+独立 CLI 看板和每五分钟市场归档使用另外的用户级服务，安装命令为
+`bash ops/install_dashboard.sh`。它不会修改交易服务或本页的清理服务。
+运行和核算说明见 [CLI Dashboard v1](../docs/development/CLI_DASHBOARD_V1.md)。
+
 `poly-maker-log-retention.timer` 每 5 分钟运行一次，开机后补跑漏掉的检查。每次计算当前时间减去 24 小时的界限，仅删除最后写入时间严格早于界限的日志。正常调度下，过期日志在下次检查时清理，最多约延迟 5 分钟。
 
 清理范围固定为项目 `/home/ubuntu/poly-maker` 内的交易日志，不扫描其他研究数据。数据目录均为项目内的真实目录，不再链接到并列目录：

@@ -205,6 +205,18 @@ uv run polymaker status        # positions / open orders
 uv run polymaker cancel-all    # panic button
 ```
 
+Read-only CLI dashboard and independent five-minute archives:
+
+```bash
+bash ops/install_dashboard.sh  # enable only the observer's user service
+uv run polymaker dashboard     # q closes the view; background archives continue
+```
+
+The observer follows existing session/CA journals without loading trading keys,
+opening the trading database, or restarting the trading process. It shows confirmed
+FIFO Maker/Taker PnL and preserves pending settlement explicitly.
+See [dashboard operation and accounting](docs/development/CLI_DASHBOARD_V1.md).
+
 ## Architecture
 
 ```

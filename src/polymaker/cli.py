@@ -31,6 +31,41 @@ app = typer.Typer(
 console = Console()
 
 
+@app.command("dashboard")
+def dashboard(
+    output_dir: Path = typer.Option(Path("research_outputs/dashboard"), help="observer output directory"),  # noqa: B008
+    session_id: str | None = typer.Option(None, help="select a specific session"),
+    history_hours: float = typer.Option(24, min=.01, help="visible history in hours"),
+    once: bool = typer.Option(False, help="print one snapshot and exit"),
+    json_output: bool = typer.Option(False, "--json", help="print the observer snapshot as JSON"),
+) -> None:
+    """Read the independent observer snapshot; q exits only the dashboard."""
+    from polymaker.dashboard.view import watch
+
+    raise typer.Exit(watch(output_dir, once=once, json_output=json_output,
+                           session_id=session_id, hours=history_hours))
+
+
+@app.command("dashboard-archive")
+def dashboard_archive(
+    project_dir: Path = typer.Option(Path("."), help="project root containing journals"),  # noqa: B008
+    output_dir: Path | None = typer.Option(None, help="separate derived output directory"),  # noqa: B008
+    journal_dir: list[Path] | None = typer.Option(None, help="journal directory; repeat for multiple roots"),  # noqa: B008
+    history_hours: float = typer.Option(24, min=.01, help="initial discovery lookback in hours"),
+    once: bool = typer.Option(False, help="one bounded incremental collection pass"),
+) -> None:
+    """Observe existing sessions and archive every five minutes; never starts trading."""
+    from polymaker.dashboard.__main__ import run_archive
+
+    try:
+        result = run_archive(project_dir, output_dir or project_dir / "research_outputs/dashboard",
+                             once=once, history_hours=history_hours, journal_dirs=journal_dir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        console.print(str(exc), markup=False)
+        raise typer.Exit(2) from exc
+    raise typer.Exit(result)
+
+
 @app.command()
 def version() -> None:
     """Print the polymaker version."""
