@@ -295,7 +295,8 @@ class SLExecution:
             await e.journal.durable("sm_prepared", {"session_id": e.session_id, "payload": {
                 "slot_id": a.attempt_id, "window_id": a.quote.window_id, "phase": "REPAIR",
                 "candidates": [{"direction": outcome, "order_ids": signed.order_ids,
-                    "quotes": [asdict(a.quote)], "body_hash": signed.body_hash}],
+                    "quotes": [asdict(a.quote)], "body_hash": signed.body_hash,
+                    **({'buy_amount_usdc': a.buy_amount_usdc} if a.buy_amount_usdc is not None else {})}],
                 "risk_upper_bound": str(a.maximum), "status": "POSSIBLY_SENT; NOT_AN_ACK"}}, time.time())
             persisted_at = e.monotonic()
             e.gateway._client.known_ids.add(a.expected_order_id)

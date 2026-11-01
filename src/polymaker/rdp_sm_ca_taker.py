@@ -31,15 +31,19 @@ def buy_fee_reserve(quantity, price, params):
 
     For e>=1, fee per dollar is <= rate. Doubling covers per-match rounding.
     """
-    return quantity*price*Decimal(params['rate'])*2+MICRO
+    return buy_amount_fee_reserve(quantity*price, params)
+
+
+def buy_amount_fee_reserve(amount, params):
+    return amount*Decimal(params['rate'])*2+MICRO
 
 
 def validate_buy_fills(fills, spec):
     """Exact-ID callers supply distinct economic fills for one signed BUY."""
-    budget = spec['price']*spec['quantity']
+    budget = spec.get('buy_amount_usdc', spec['price']*spec['quantity'])
     principal = sum((Decimal(f.principal_usdc) for f in fills), Decimal(0))
     cost = sum((Decimal(f.principal_usdc)+Decimal(f.fee_usdc) for f in fills), Decimal(0))
-    maximum = budget+buy_fee_reserve(spec['quantity'], spec['price'], spec['fees'])
+    maximum = budget+buy_amount_fee_reserve(budget, spec['fees'])
     if principal > budget+MICRO or cost > maximum+MICRO:
         raise ValueError('CA_TAKER_FILL_EXCEEDS_LIMIT')
 

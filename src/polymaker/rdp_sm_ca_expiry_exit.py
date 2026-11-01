@@ -13,8 +13,15 @@ from decimal import ROUND_CEILING, Decimal
 from math import gcd
 
 from polymaker.domain import Quote, Side
-from polymaker.rdp_sm_ca_taker import buy_fee_reserve, fee_parameters, fee_reserve
+from polymaker.execution.amounts import market_buy_quantity
+from polymaker.rdp_sm_ca_taker import (
+    buy_amount_fee_reserve,
+    buy_fee_reserve,
+    fee_parameters,
+    fee_reserve,
+)
 from polymaker.rdp_sm_execution import Placement, WindowQuote
+from polymaker.rdp_sm_recovery import PreparationReadRetry, retry_read
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.state.tracker import fill_cost
 
@@ -22,14 +29,17 @@ ZERO = Decimal(0)
 GRID = Decimal('.01')
 
 
-def executable_quantity(remaining, price):
-    """Cover remaining shares and $1 minimum with a cent-exact BUY amount."""
+def executable_amount(remaining, price):
+    """Budget only the remaining exposure, rounded up to cents, at least $1."""
     if remaining <= 0:
         return ZERO
-    scale = 10**max(0, -price.as_tuple().exponent)
-    numerator = int(price*scale)
-    lot = Decimal(scale//gcd(numerator, scale))*GRID
-    return (max(remaining, 1/price)/lot).to_integral_value(rounding=ROUND_CEILING)*lot
+    return max(Decimal(1), (remaining*price).quantize(GRID, rounding=ROUND_CEILING))
+
+
+def executable_quantity(remaining, price):
+    """Nominal shares on the signed budget BUY; actual fills may improve."""
+    amount = executable_amount(remaining, price)
+    return market_buy_quantity(amount, price) if amount else ZERO
 
 
 def exit_fee_reserve(quantity, price, fees):
@@ -37,9 +47,9 @@ def exit_fee_reserve(quantity, price, fees):
 
 
 def exit_budget(quantity, tick, fees):
-    # Before coverage, ordinary fills total <= quantity. Extra shares from the
-    # last order cost at most a minimum marketable order at that Ask. At .001
-    # tick the cent-exact share lot can be TEN shares, even at an expensive Ask.
+    # Preserve the existing conservative pre-entry capital admission bound.
+    # Cent-budget exits cost no more than this legacy share-grid bound; changing
+    # actual exit sizing must not silently change which openings are admitted.
     scale = 10**max(0, -tick.as_tuple().exponent)
     max_lot = Decimal(scale//gcd(int(tick*scale), scale))*GRID
     # Prior actual fills total <= the original quantity. A final signed dollar
@@ -100,6 +110,35 @@ class CAExpiryExit(SLExecution):
                 'original_unhedged_shares': str(uncovered), 'extra_reverse_shares': str(excess),
                 'extra_reverse_cost_usdc': str(excess_cost)}
 
+    def require_active(self):
+        if self.e.closed or self.e.fatal or not 15 <= self.elapsed() < self.cutoff:
+            raise ValueError(self.e.fatal or 'CA_EXPIRY_EXIT_OUTSIDE_WINDOW')
+
+    async def wait_frame(self):
+        self.require_active()
+        self.lifecycle.drain_ba()
+        await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+
+    def release_proven_transport(self):
+        # Logical CA ownership stays here. Release only the drained transport
+        # batch after ALL signed order/fill/account proofs, so the normal
+        # circuit can move PAUSED -> PROBE and admit this owner's next FAK.
+        if self.e.safe_to_continue:
+            self.e.reads.network.complete_batch(self.group, safe=True)
+
+    async def wait_close_proof(self):
+        while not self.e.safe_to_continue:
+            self.require_active()
+            self.wait('CA_EXIT_WAIT_CLOSE_PROOF:'+(self.e.reason or 'UNPROVEN'))
+            try:
+                await self.e._verify_close(cancel=True)
+            except Exception as exc:
+                if not retry_read(exc):
+                    raise
+            if not self.e.safe_to_continue:
+                await self.wait_frame()
+        self.release_proven_transport()
+
     def admission_reason(self, goal, *, reserved=None):
         e = self.e
         side, price, qty, original = goal
@@ -129,18 +168,21 @@ class CAExpiryExit(SLExecution):
         delta = y-n
         remaining = self.remaining()
         if (remaining <= 0 or remaining > abs(delta)
-                or (delta > 0) != (side == 'NO') or qty % GRID
+                or (delta > 0) != (side == 'NO')
                 or qty != executable_quantity(remaining, price)):
             return 'CA_EXPIRY_EXIT_QUANTITY_CHANGED'
+        amount = executable_amount(remaining, price)
+        if reserved is not None and reserved.buy_amount_usdc != str(amount):
+            return 'CA_EXPIRY_EXIT_AMOUNT_CHANGED'
         current = self.snapshot()
         if not current.valid:
             return current.reason
         book = current.no if side == 'NO' else current.yes
         old = original.no if side == 'NO' else original.yes
         if (current.generation != original.generation or book.tick != old.tick
-                or price != book.best_ask or price*qty < 1 or (price*qty)%GRID):
+                or price != book.best_ask):
             return 'CA_EXPIRY_EXIT_QUOTE_INVALID'
-        cost = price*qty+exit_fee_reserve(qty, price, self.fees)
+        cost = amount+buy_amount_fee_reserve(amount, self.fees)
         committed = e.committed()-(reserved.maximum if reserved is not None else ZERO)
         if committed+cost > e.capital_limit or cost > self.initial_cash:
             return 'CA_EXPIRY_EXIT_INSUFFICIENT_FUNDS'
@@ -155,7 +197,7 @@ class CAExpiryExit(SLExecution):
     async def prepare_order(self, attempt, goal, ticks):
         return await self.e.gateway.prepare(
             [Quote(attempt.quote.token_id, Side.BUY, float(goal[1]), float(goal[2]))],
-            self.e.meta, ticks, immediate_order_type='FAK')
+            self.e.meta, ticks, immediate_order_type='FAK', buy_amount_usdc=attempt.buy_amount_usdc)
 
     def register_prepared_order(self, attempt, goal, signed):
         e, q, oid = self.e, attempt.quote, attempt.expected_order_id
@@ -164,7 +206,12 @@ class CAExpiryExit(SLExecution):
         e.processor.taker_orders[oid] = {
             'market_id': e.meta.condition_id, 'token_id': q.token_id,
             'opposite_token': e.meta.no.token_id if q.outcome == 'YES' else e.meta.yes.token_id,
-            'price': Decimal(str(q.price)), 'quantity': Decimal(str(q.size)), 'fees': dict(self.fees)}
+            'price': Decimal(str(q.price)), 'quantity': Decimal(str(q.size)), 'fees': dict(self.fees),
+            'buy_amount_usdc': Decimal(attempt.buy_amount_usdc)}
+        if not hasattr(client, 'expiry_buy_amounts'):
+            client.expiry_buy_amounts = {}
+        client.expiry_buy_amounts[oid] = (q.token_id, Decimal(str(q.price)), Decimal(str(q.size)),
+                                        Decimal(attempt.buy_amount_usdc))
         for name in ('ca_taker_ids', 'ca_expiry_taker_ids'):
             if not hasattr(client, name):
                 setattr(client, name, set())
@@ -174,17 +221,34 @@ class CAExpiryExit(SLExecution):
         e = self.e
         reason = None
         try:
-            if not e.safe_to_continue:
-                raise ValueError('CA_EXPIRY_EXIT_TERMINAL_PROOF_REQUIRED')
-            raw = await self.lifecycle._read_preparation_constraint(
-                e.gateway._client.get_clob_market_info, e.meta.condition_id)
-            self.fees = fee_parameters(raw, (e.meta.yes.token_id, e.meta.no.token_id))
+            await self.wait_close_proof()
+            while e.monotonic() < self.deadline and self.remaining() > GRID:
+                await self.wait_frame()
+            while self.remaining() > GRID and self.fees is None:
+                self.require_active()
+                try:
+                    raw = await self.lifecycle._read_preparation_constraint(
+                        e.gateway._client.get_clob_market_info, e.meta.condition_id)
+                    self.fees = fee_parameters(raw, (e.meta.yes.token_id, e.meta.no.token_id))
+                except Exception as exc:
+                    if not isinstance(exc, PreparationReadRetry) and not retry_read(exc):
+                        raise
+                    self.wait('CA_EXIT_WAIT_CONSTRAINTS:'+str(exc))
+                    await self.wait_frame()
             while self.remaining() > GRID:
-                if e.closed or e.fatal or not 15 <= self.elapsed() < self.cutoff:
-                    raise ValueError(e.fatal or 'CA_EXPIRY_EXIT_OUTSIDE_WINDOW')
-                _, _, _, account = await e._snapshot(include_books=False)
+                self.require_active()
+                try:
+                    _, _, _, account = await e._snapshot(include_books=False)
+                except Exception as exc:
+                    if not retry_read(exc):
+                        raise
+                    self.wait('CA_EXIT_WAIT_ACCOUNT:'+str(exc))
+                    await self.wait_close_proof()
+                    await self.wait_frame()
+                    continue
                 if not e.safe_to_continue:
-                    raise ValueError('CA_EXPIRY_EXIT_CLOSE_PROOF_CHANGED')
+                    await self.wait_close_proof()
+                    continue
                 self.lifecycle.account = account
                 self.initial_cash = Decimal(str(account['basic_spendable_budget_usd']))
                 self.baseline_ids = frozenset(e.known)
@@ -193,12 +257,13 @@ class CAExpiryExit(SLExecution):
                 health = self.health()
                 if not snapshot.valid or not health.allowed:
                     self.wait(snapshot.reason if not snapshot.valid else health.reason)
-                    await self.lifecycle.feed.wait_after(self.lifecycle.feed.sequence, .1)
+                    await self.wait_frame()
                     continue
                 side = 'NO' if self.owner.intent.direction == 'YES' else 'YES'
                 book = snapshot.no if side == 'NO' else snapshot.yes
                 price = book.best_ask
                 qty = executable_quantity(self.remaining(), price)
+                amount = executable_amount(self.remaining(), price)
                 goal = side, price, qty, snapshot
                 reason = self.admission_reason(goal)
                 if reason:
@@ -206,28 +271,26 @@ class CAExpiryExit(SLExecution):
                 quote = WindowQuote(e.meta.condition_id, book.token_id, side, Side.BUY,
                                     float(price), float(qty), self.window_id+':ca-expiry-exit')
                 a = Placement(uuid.uuid4().hex, quote, entry_execution='taker',
-                              fee_reserve_usdc=str(exit_fee_reserve(qty, price, self.fees)))
+                              fee_reserve_usdc=str(buy_amount_fee_reserve(amount, self.fees)),
+                              buy_amount_usdc=str(amount))
                 self.created.append(a)
                 self.orders.append(a)
                 e.attempts.append(a)
                 self.signal_times[a.attempt_id] = self.deadline
                 self.record('signal', {'window_id': quote.window_id, 'price_cap': str(price),
                     'quantity': str(qty), 'original_remaining_shares': str(self.remaining()),
-                    'minimum_topup_shares': str(qty-self.remaining()),
+                    'minimum_topup_shares': str(max(ZERO, qty-self.remaining())),
+                    'budget_roundup_usdc': str(amount-self.remaining()*price),
                     'attempt_number': len(self.created), 'deadline_monotonic': self.deadline,
                     'dispatch_delay_ms': max(0, (e.monotonic()-self.deadline)*1000),
-                    'method': 'OPPOSITE_BUY_FAK', 'cash_limit_usdc': str(price*qty), 'fees': self.fees})
+                    'method': 'OPPOSITE_BUY_FAK', 'cash_limit_usdc': str(amount), 'fees': self.fees})
                 task = asyncio.create_task(self.submit(goal, a), name='ca-expiry-exit-post')
                 self.posts[a.attempt_id] = task
                 async def wait_post(task=task):
                     await asyncio.shield(task)
 
                 await e._await_owned(wait_post(), propagate_cancel=False)
-                safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
-                if not safe and e.pending_confirmations:
-                    await e._await_owned(e._wait_for_confirmation(), propagate_cancel=False)
-                if not e.safe_to_continue:
-                    raise ValueError('CA_EXPIRY_EXIT_UNRESOLVED')
+                await e._await_owned(self.wait_close_proof(), propagate_cancel=False)
                 if self.remaining() > GRID:
                     self.record('retry', {'remaining_shares': str(self.remaining()),
                                 'previous_order_id': self.oid(a), 'previous_outcome': a.outcome,
@@ -261,28 +324,24 @@ class CAExpiryExit(SLExecution):
 
 
 async def exit_expired_ca(owner):
-    """Called after the original TP is canceled and its full close is proved."""
+    """Keep ownership while cancellation/account proof recovers, then exit."""
     e = owner.e
-    if not owner.cfg.taker_exit_on_expiry or not e.safe_to_continue:
+    if not owner.cfg.taker_exit_on_expiry:
         return None
     ids = {owner.oid(a) for a in owner.opening}
-    fills = [f for f in e.economic_fills() if f.maker_order_id in ids]
-    if not fills:
+    fills = [f for f in e.economic_fills() if f.maker_order_id in ids] or owner.opening_fills()
+    if not fills and e.safe_to_continue:
         return None
     y, n = e.economic_inventory()
-    if abs(y-n) <= GRID:
+    if e.safe_to_continue and abs(y-n) <= GRID:
         if y != n:
             e.record('sm_ca_expiry_exit_result', {'reason': 'WITHIN_RESIDUAL_TOLERANCE',
                 'opening_window': owner.window_id, 'orders': [], 'residual_delta': str(y-n),
                 'original_unhedged_shares': str(abs(y-n)), 'tolerance_shares': str(GRID),
                 'safe': e.safe_to_continue})
         return None
-    deadline = owner.expires_at or min(e.fill_observed_at[(f.trade_id, f.maker_order_id)][
-        'observed_monotonic'] for f in fills)+owner.cfg.ttl_sec
-    while e.monotonic() < deadline and not e.fatal and not e.closed:
-        owner.lifecycle.drain_ba()
-        await owner.lifecycle.feed.wait_after(owner.lifecycle.feed.sequence,
-                                             min(.1, deadline-e.monotonic()))
+    deadline = owner.expires_at or min((e.fill_observed_at[(f.trade_id, f.maker_order_id)][
+        'observed_monotonic'] for f in fills), default=owner.started_monotonic)+owner.cfg.ttl_sec
     actor = CAExpiryExit(owner, deadline)
     await actor.run()
     return actor

@@ -123,6 +123,8 @@ async def test_definite_failure_retries_but_unknown_or_insufficient_cash_blocks(
                 wire.reject_index = 0 if len(exits) == 1 else None
             elif fault == 'unknown':
                 wire.fail_ack = True
+                e.cfg.rdp_sm.repair.cutoff_sec = (e.official_time+e.monotonic()-e.time_anchor
+                                                - int(e.slug.rsplit('-', 1)[1])+.3)
         try:
             raw = await native(signed, **kwargs)
         finally:
@@ -372,8 +374,9 @@ async def test_partial_fak_exit_retries_proven_remainder_without_sell(env, monke
             if exits:
                 assert exits[-1] in e.proofs and exits[-1] in e.terminal
             exits.append(signed.order_ids[0])
-            assert signed.quotes[0].size == (3 if len(v.post_requests) == 3 else 2)
-            taker_fill(setup, signed.order_ids[0], quantity=2, price='.51')
+            assert signed.quotes[0].size == (3 if len(v.post_requests) == 3 else 1.9607)
+            taker_fill(setup, signed.order_ids[0],
+                       quantity=2 if len(v.post_requests) == 3 else None, price='.51')
         return raw
 
     monkeypatch.setattr(e.gateway, 'send_prepared', send)
@@ -381,7 +384,7 @@ async def test_partial_fak_exit_retries_proven_remainder_without_sell(env, monke
         await confirm_ca(feed)
         result, sizing = await asyncio.wait_for(normal.enter(D(0), D(0), 'session:w1'), 8)
         assert result.close_barrier == 'SAFE_TO_CONTINUE', result.block_reason
-        assert e.economic_inventory() == (D(5), D(6))
+        assert e.economic_inventory() == (D(5), D('5.9607'))
         assert len(v.post_requests) == 4 and e.fatal is None
         assert all(item['order']['side'] == 'BUY' for request in v.post_requests for item in request)
         assert sizing['ca_matched_tp']['expiry_exit_reason'] == 'HEDGED_WITH_EXCESS'
@@ -391,33 +394,39 @@ async def test_partial_fak_exit_retries_proven_remainder_without_sell(env, monke
         await cleanup(setup)
 
 
-def test_fak_quantity_rounds_up_to_cover_remaining_and_marketable_minimum():
-    from polymaker.rdp_sm_ca_expiry_exit import executable_quantity
+def test_fak_budget_rounds_up_cents_without_whole_share_topup():
+    from polymaker.rdp_sm_ca_expiry_exit import executable_amount, executable_quantity
 
+    assert executable_amount(D('5.069442'), D('.27')) == D('1.37')
+    assert executable_quantity(D('5.069442'), D('.27')) == D('5.0740')
     assert executable_quantity(D('3.99'), D('.51')) == D(4)
     assert executable_quantity(D('3.99'), D('.52')) == D(4)
-    assert executable_quantity(D('.01'), D('.51')) == D(2)
-    assert executable_quantity(D(5), D('.19')) == D(6)
+    assert executable_quantity(D('.01'), D('.51')) == D('1.9607')
+    assert executable_quantity(D(5), D('.19')) == D('5.2631')
     assert executable_quantity(D(5), D('.01')) == D(100)
     assert executable_quantity(D(5), D('.001')) == D(1000)
 
 
 def test_all_legal_mill_prices_cover_quantity_minimum_cent_precision_and_cash_budget():
-    from polymaker.rdp_sm_ca_expiry_exit import executable_quantity, exit_budget, exit_fee_reserve
+    from polymaker.rdp_sm_ca_expiry_exit import executable_amount, executable_quantity, exit_budget
+    from polymaker.rdp_sm_ca_taker import buy_amount_fee_reserve
 
     fees = {'rate': '.07', 'exponent': 1}
     for mill in range(1, 1000):
         price = D(mill)/1000
-        for remaining in [D('.01'), D('3.99'), D(5)]:
+        for remaining in [D('.01'), D('3.99'), D(5), D('5.069442')]:
             qty = executable_quantity(remaining, price)
-            assert qty >= remaining and price*qty >= 1
-            assert (price*qty) % D('.01') == 0
-            reserve = exit_fee_reserve(qty, price, fees)
+            amount = executable_amount(remaining, price)
+            assert amount >= max(D(1), remaining*price)
+            assert amount < max(D(1), remaining*price)+D('.01')
+            assert amount % D('.01') == 0 and qty % D('.0001') == 0
+            assert 0 <= amount/price-qty < D('.0001')
+            reserve = buy_amount_fee_reserve(amount, fees)
             assert reserve >= (qty*D('.07')*price*(1-price)).quantize(D('.00001'))
-            assert price*qty+reserve <= exit_budget(D(5), D('.001'), fees)
-            prior = D(5)-remaining
+            assert amount+reserve <= exit_budget(D('5.069442'), D('.001'), fees)
+            prior = D('5.069442')-remaining
             prior_fee = prior*D('.035')+D('.000001')
-            assert prior*D('.999')+prior_fee+price*qty+reserve <= exit_budget(D(5), D('.001'), fees)
+            assert prior*D('.999')+prior_fee+amount+reserve <= exit_budget(D('5.069442'), D('.001'), fees)
 
 
 def test_exit_budget_keeps_89_entry_fundable_and_bounds_price_improvement_cost():
@@ -476,7 +485,7 @@ async def test_ask_only_exit_does_not_bypass_market_evidence(env, monkeypatch, f
 
 @pytest.mark.parametrize('cached', [False, True])
 @pytest.mark.parametrize('token', ['1', '2'])
-@pytest.mark.parametrize('price,quantity', [('.19', 6), ('.01', 100), ('.001', 1000), ('.99', 5)])
+@pytest.mark.parametrize('price,quantity', [('.19', D('5.2631')), ('.01', 100), ('.001', 1000), ('.99', 5)])
 async def test_exit_tops_up_minimum_even_above_size_limit_and_keeps_excess_cost(
     env, monkeypatch, tmp_path, cached, token, price, quantity
 ):
@@ -525,10 +534,11 @@ async def test_exit_tops_up_minimum_even_above_size_limit_and_keeps_excess_cost(
                         'bids': [] if price in {'.01', '.001'} else [{'price': str(D(price)-D('.001')), 'size': '80'}],
                         'asks': [{'price': price, 'size': '200'}]})
         else:
-            assert signed.quotes[0].size == quantity
-            assert signed.quotes[0].size*float(price) >= 1
+            assert D(str(signed.quotes[0].size)) == quantity
+            amount = D(signed.orders[0].order.makerAmount)/1_000_000
+            assert amount >= 1 and amount % D('.01') == 0
             assert signed.orders[0].orderType == 'FAK'
-            assert e.attempts[-1].maximum <= D(quantity)*D(price)*D('1.14')+D('.000001')
+            assert e.attempts[-1].maximum == amount*D('1.14')+D('.000001')
             taker_fill(setup, signed.order_ids[0])
         return raw
 

@@ -92,6 +92,11 @@ async def test_expiry_fak_miss_retries_only_after_full_rejection_or_actual_fill_
                 reply = fak_reply(oid)
                 if fault == 'ambiguous':
                     reply['takingAmount'] = '0'
+                if fault in {'orders_failed', 'trades_failed', 'ambiguous'}:
+                    # Persistent uncertainty holds the same owner until the
+                    # market cutoff; keep that wait short in this fixture.
+                    e.cfg.rdp_sm.repair.cutoff_sec = (e.official_time+e.monotonic()-e.time_anchor
+                                                    - int(e.slug.rsplit('-', 1)[1])+.3)
                 if fault == 'multiple_kills_reprice':
                     set_ask(feed, '2', '.16')
                 return httpx.Response(200, json=[reply], request=request)
@@ -133,8 +138,8 @@ async def test_expiry_fak_miss_retries_only_after_full_rejection_or_actual_fill_
             assert not e.canceled_submission_proofs
             assert e.committed() > D('5.15')
         else:
-            expected_no = (D('8') if fault == 'contradictory_fill' else
-                           D('6.25') if fault == 'multiple_kills_reprice' else D('7.5'))
+            expected_no = (D('7.6428') if fault == 'contradictory_fill' else
+                           D('6.25') if fault == 'multiple_kills_reprice' else D('7.1428'))
             assert e.economic_inventory() == (D(5), expected_no)
             if fault == 'multiple_kills_reprice':
                 assert len(set(state['killed_ids'])) == 3

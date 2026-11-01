@@ -45,3 +45,20 @@ def test_pending_or_missing_market_cannot_be_counted_as_zero_profit():
 def test_no_estimated_fills_is_not_positive_evidence():
     text = reporter()(state([row(1, "0", 0), row(2, "0", 0)]))
     assert "尚无明确的模型成交" in text and "收益为正" not in text
+
+
+def test_ideal_signal_hold_is_separate_from_zero_queue_fills_and_respects_budget():
+    path = Path(__file__).resolve().parents[1]/"ops/m1_study_report.py"
+    spec = importlib.util.spec_from_file_location("ideal_report", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    r = row(1, "0", 0)
+    r["paper"]["signals"] = [{"price": ".1", "size": "50", "outcome": "YES"}]*5
+    r["settlement"]["resolution"] = {"winner": "YES", "closed": True, "resolution_status": "resolved"}
+    pending = row(2, "0", 0)
+    missing = {**row(3, "0", 0), "complete_window": False}
+    ideal = module.ideal_hold([r, pending, missing])
+    assert ideal["markets"] == 1 and ideal["pending"] == 1 and ideal["incomplete"] == 1
+    assert ideal["signals"] == 4 and ideal["budget_skipped"] == 1
+    assert ideal["cost"] == 20 and ideal["payout"] == 200 and ideal["pnl"] == 180
+    assert r["paper"]["filled_orders"] == 0

@@ -581,8 +581,9 @@ async def test_rebalance_has_independent_three_second_lease_without_obi(
 
 @pytest.mark.parametrize("signature_type", [0, 1, 2])
 @pytest.mark.parametrize("neg_risk", [False, True])
+@pytest.mark.parametrize("cash_buy", [False, True])
 async def test_v2_signed_identity_matches_independent_official_contract_hash(
-    env, signature_type, neg_risk
+    env, signature_type, neg_risk, cash_buy
 ):
     _, e = await open_executor(env)
     from py_clob_client_v2.config import get_contract_config
@@ -592,7 +593,10 @@ async def test_v2_signed_identity_matches_independent_official_contract_hash(
     meta, _, books, _ = await e._snapshot(include_books=False)
     e.gateway._client.builder.signature_type = signature_type
     meta = replace(meta, neg_risk=neg_risk)
-    prepared = await e.gateway.prepare([Quote("1", Side.BUY, 0.49, 5)], meta, {"1": 0.01})
+    prepared = await e.gateway.prepare(
+        [Quote("1", Side.BUY, .27 if cash_buy else .49, 5.074 if cash_buy else 5)],
+        meta, {"1": .01},
+        **({'immediate_order_type': 'FAK', 'buy_amount_usdc': '1.37'} if cash_buy else {}))
     order = prepared.orders[0].order
     contracts = get_contract_config(137)
     exchange = contracts.neg_risk_exchange_v2 if neg_risk else contracts.exchange_v2

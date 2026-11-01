@@ -250,10 +250,16 @@ class Placement:
     entry_execution: str = "maker"
     fee_reserve_usdc: str = "0"
     order_type: str = "GTC"
+    buy_amount_usdc: str | None = None
+
+    @property
+    def principal_limit(self) -> Decimal:
+        return (Decimal(self.buy_amount_usdc) if self.buy_amount_usdc is not None else
+                Decimal(str(self.quote.price))*Decimal(str(self.quote.size)))
 
     @property
     def maximum(self) -> Decimal:
-        return Decimal(str(self.quote.price)) * Decimal(str(self.quote.size)) + Decimal(self.fee_reserve_usdc)
+        return self.principal_limit + Decimal(self.fee_reserve_usdc)
 
 
 @dataclass
@@ -558,6 +564,19 @@ class ExecutionClobClient(ReadOnlyClobClient):
         )
         for row, current in zip(rows, attempts, strict=True):
             signed, quote = row["order"], current.quote
+            if current.buy_amount_usdc is not None:
+                from polymaker.execution.amounts import market_buy_quantity
+
+                amount = Decimal(current.buy_amount_usdc)
+                spec = getattr(self, 'expiry_buy_amounts', {}).get(current.expected_order_id)
+                _require(current.entry_execution == 'taker' and row.get('orderType') == 'FAK'
+                         and row.get('postOnly') is False
+                         and current.expected_order_id in getattr(self, 'ca_expiry_taker_ids', set())
+                         and spec == (quote.token_id, Decimal(str(quote.price)),
+                                      Decimal(str(quote.size)), amount)
+                         and amount >= 1
+                         and Decimal(str(quote.size)) == market_buy_quantity(amount, Decimal(str(quote.price))),
+                         'SIGNED_BUY_AMOUNT_IDENTITY_CHANGED')
             _require(
                 signed["side"] == "BUY"
                 and signed["signatureType"] == self.builder.signature_type
@@ -565,7 +584,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
                 and signed["maker"].lower() == self.builder.funder.lower()
                 and signed["signer"].lower() == self.get_address().lower()
                 and Decimal(str(signed["takerAmount"])) == Decimal(str(quote.size)) * 1_000_000
-                and Decimal(str(signed["makerAmount"])) == Decimal(str(quote.price))*Decimal(str(quote.size))*1_000_000,
+                and Decimal(str(signed["makerAmount"])) == current.principal_limit*1_000_000,
                 "SIGNED_QUOTE_ECONOMICS_CHANGED",
             )
         expected = self._operation_value("expected_body_hash")
@@ -811,6 +830,10 @@ class _SMProcessor(UserEventProcessor):
     def taker_spec(self, oid):
         spec = getattr(self, 'taker_orders', {}).get(oid)
         owned = self.owned_record(oid)
+        if spec is not None and 'buy_amount_usdc' in spec:
+            expected = (spec['token_id'], spec['price'], spec['quantity'], spec['buy_amount_usdc'])
+            if getattr(self.executor.gateway._client, 'expiry_buy_amounts', {}).get(oid) != expected:
+                return None
         if (spec is not None and owned is not None and owned['side'] == 'BUY'
                 and spec['market_id'] == owned['condition_id']
                 and spec['token_id'] == owned['token_id']

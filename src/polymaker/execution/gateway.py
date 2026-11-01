@@ -22,12 +22,14 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 from typing import Any, TypeVar
 
 import httpx
 
 from polymaker.config import Config
 from polymaker.domain import MarketMeta, OpenOrder, OrderState, Quote, Side
+from polymaker.execution.amounts import market_buy_quantity
 from polymaker.execution.ratelimit import TokenBucket
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
@@ -210,7 +212,8 @@ class ExecutionGateway:
             ensure_ascii=False,
         )
 
-    async def prepare(self, quotes, meta, tick_sizes, *, immediate_order_type=None):
+    async def prepare(self, quotes, meta, tick_sizes, *, immediate_order_type=None,
+                      buy_amount_usdc=None):
         """Sign once outside the operation segment; never submit here."""
 
         def build():
@@ -224,6 +227,8 @@ class ExecutionGateway:
             from py_clob_client_v2.order_utils.exchange_order_builder_v2 import (
                 ExchangeOrderBuilderV2,
             )
+            from py_clob_client_v2.order_utils.model.order_data_v2 import OrderDataV2
+            from py_clob_client_v2.order_utils.model.side import Side as SignedSide
 
             client = self._client
             if client._ClobClient__resolve_version() != 2 or client.builder.signature_type not in (
@@ -235,14 +240,38 @@ class ExecutionGateway:
             contracts = get_contract_config(client.chain_id)
             exchange = contracts.neg_risk_exchange_v2 if meta.neg_risk else contracts.exchange_v2
             builder = ExchangeOrderBuilderV2(exchange, client.chain_id, client.signer)
+            if buy_amount_usdc is not None and (len(quotes) != 1
+                    or quotes[0].side is not Side.BUY or immediate_order_type != 'FAK'):
+                raise ValueError('PREPARED_BUY_AMOUNT_MODE_INVALID')
             args, ids = [], []
             for q in quotes:
-                signed = client.create_order(
-                    OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
-                    options=PartialCreateOrderOptions(
-                        tick_size=_tick_str(tick_sizes[q.token_id]), neg_risk=meta.neg_risk
-                    ),
-                )
+                if buy_amount_usdc is None:
+                    signed = client.create_order(
+                        OrderArgsV2(token_id=q.token_id, price=q.price, size=q.size, side=q.side.value),
+                        options=PartialCreateOrderOptions(
+                            tick_size=_tick_str(tick_sizes[q.token_id]), neg_risk=meta.neg_risk
+                        ),
+                    )
+                else:
+                    amount, price = Decimal(str(buy_amount_usdc)), Decimal(str(q.price))
+                    quantity = market_buy_quantity(amount, price)
+                    tick = Decimal(str(tick_sizes[q.token_id]))
+                    if (quantity != Decimal(str(q.size)) or price % tick
+                            or not tick <= price <= 1-tick):
+                        raise ValueError('PREPARED_BUY_AMOUNT_QUOTE_INVALID')
+                    # Use the SDK's V2 signer with exact market-order units.
+                    # Its default fine-tick rounding can produce five or six
+                    # share decimals, which immediate BUY validation rejects.
+                    signed = builder.build_signed_order(OrderDataV2(
+                        maker=client.builder.funder, signer=client.get_address(),
+                        tokenId=q.token_id, makerAmount=str(int(amount*1_000_000)),
+                        takerAmount=str(int(quantity*1_000_000)), side=SignedSide.BUY,
+                        signatureType=client.builder.signature_type,
+                        timestamp=str(time.time_ns()//1_000_000),
+                        metadata=OrderArgsV2(token_id=q.token_id, price=q.price,
+                                             size=q.size, side=q.side.value).metadata,
+                        builder=(client.builder_config.builder_code if client.builder_config
+                                 and client.builder_config.builder_code else None)))
                 ids.append(builder.build_order_hash(builder.build_order_typed_data(signed)))
                 order_type = (OrderType.GTC if immediate_order_type is None else
                               OrderType.FOK if immediate_order_type == "FOK" else

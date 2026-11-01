@@ -12,6 +12,38 @@ from decimal import Decimal as D
 from pathlib import Path
 
 
+def ideal_hold(rows):
+    result = {"markets": 0, "pending": 0, "incomplete": 0, "signals": 0,
+              "budget_skipped": 0, "cost": D(0), "payout": D(0), "wins": 0, "losses": 0}
+    for row in rows:
+        if not row.get("complete_window") or not row.get("audit_valid") or not row.get("paper"):
+            result["incomplete"] += 1
+            continue
+        resolution = row.get("settlement", {}).get("resolution")
+        if not resolution or resolution.get("resolution_status") != "resolved" or resolution.get("closed") is not True:
+            result["pending"] += 1
+            continue
+        spent = D(0)
+        result["markets"] += 1
+        for signal in row["paper"].get("signals", []):
+            price, quantity = D(signal["price"]), D(signal["size"])
+            cost = price*quantity
+            if not price.is_finite() or not quantity.is_finite() or not 0 < price < 1 or quantity <= 0 or cost > 5:
+                raise ValueError("REPORT_IDEAL_QUOTE_INVALID")
+            if spent+cost > 20:
+                result["budget_skipped"] += 1
+                continue
+            spent += cost
+            payout = quantity if signal["outcome"] == resolution["winner"] else D(0)
+            result["signals"] += 1
+            result["wins"] += payout > 0
+            result["losses"] += payout == 0
+            result["cost"] += cost
+            result["payout"] += payout
+    result["pnl"] = result["payout"]-result["cost"]
+    return result
+
+
 def report(state):
     evaluation = sorted((r for r in state["sessions"] if r["phase"] == "EVALUATION"), key=lambda r: r.get("epoch", 0))
     calibration = [r for r in state["sessions"] if r["phase"] == "CALIBRATION"]
@@ -28,6 +60,13 @@ def report(state):
               f"模拟提交={sum(r.get('paper', {}).get('post_attempts', 0) for r in rows)}，"
                   f"估计有成交订单={sum(r.get('paper', {}).get('filled_orders', 0) for r in rows)}；"
                   f"数据或审计不完整={len(missing)}场"]
+    ideal = ideal_hold(rows)
+    lines += ["信号价全额成交假设（不代表可实现成交，单笔最多5/单场最多20 USDC）：",
+              f"完整且已官方结算={ideal['markets']}场，待结算={ideal['pending']}场，数据不完整={ideal['incomplete']}场；"
+              f"计入信号={ideal['signals']}笔，预算限制跳过={ideal['budget_skipped']}笔。",
+              f"上述已核对场次的理想买入={ideal['cost']} USDC，结算回款={ideal['payout']} USDC，盈亏小计={ideal['pnl']} USDC。",
+              "该小计不将待结算或缺失场次记为零，不代表全部目标场次的最终收益。",
+              "以下实际队列模型统计继续与信号价全额成交假设分开。"]
     if len(evaluation) != state["evaluation_target"] or not state["status"].startswith("COMPLETE"):
         return "\n".join([*lines, "尚未完成固定参数评估，不判断策略是否有收益。"])+"\n"
     settled = [r for r in evaluation if r.get("settlement", {}).get("status", "").startswith("RESOLVED")]
