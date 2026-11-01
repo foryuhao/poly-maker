@@ -40,8 +40,9 @@ Taker 与 `ca_pullback.enabled=true` 不兼容，配置加载时会拒绝。
   只有未实际提交的候选可以沿原有规则重新准备。
 - 在发送前持久化签名订单 ID 和含费用的风险上界。超时后按同一 ID 核对，
   UNKNOWN 不当作未成交，不依赖空持仓或取消回执释放风险。
-- 交易所的 FOK 未全成回包可能同时带 `success=true`、签名订单 ID 和明确的
-  `order couldn't be fully filled` 错误。仅在原生 POST 记录确为 FOK、ID 精确一致、
+- 交易所的 FOK 未全成或 FAK 无撮合回包可能同时带 `success=true`、签名订单 ID 和
+  明确的 `order couldn't be fully filled`／`no orders found to match with FAK order` 错误。
+  仅在原生 POST 记录的 FOK／FAK 类型与该错误完整匹配、ID 精确一致、
   成交金额／状态／成交及交易哈希均无接受证据，并且后续完整订单页、成交页无矛盾时，
   才记为 `REJECTED`、释放本笔预留。不会等待一个被 FOK kill 的订单永久出现在详情接口。
   页面失败或缺页仍保留 UNKNOWN；迟到的真实订单或成交会撤销拒绝证明，重新核对。
@@ -123,6 +124,9 @@ tick 已核验的卖盘才下单；该侧缺少买盘不阻止 BUY，空卖盘�
 深度仍可能延迟或阻止退出。每次 FAK 后先完成订单终态、完整成交集合和实际库存核对；
 明确拒绝、未成或部分成交后，只对未覆盖的原仓数量重新按当前卖一准备，最小重试间隔
 为 `max(0.1, repair.review_sec)`，直到覆盖原仓或遇到不可执行条件／市场提交截止。
+单次 FAK 无撮合不是整轮退出的终点：严格 kill 证明通过后，释放该单预留，以新的
+签名 ID、最新卖一与最低金额要求继续退出。失败的完整订单／成交页、真实迟到成交、
+金额或状态字段不明时，仍不允许把旧单当成未成而直接补第二笔。
 不会为了消除补量产生的反向仓位，再次反向对冲而形成来回补量。
 完全覆盖且无多余仓位记 `PAIRED`；有额外反向仓位记 `HEDGED_WITH_EXCESS`，同时记录
 `original_unhedged_shares`、`hedged_shares`、`extra_reverse_shares` 和

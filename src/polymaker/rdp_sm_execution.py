@@ -171,21 +171,26 @@ def _explicit_maker_rejection(item, notional) -> bool:
     )
 
 
-def _fok_not_filled_response(attempt: Placement) -> bool:
-    """Observed FOK kill, bound to the validated wire type and signed ID."""
+def _immediate_buy_not_filled_response(attempt: Placement) -> bool:
+    """Observed FOK/FAK kill, bound to the validated wire type and signed ID."""
     raw = attempt.raw_response
     if isinstance(raw, list) and len(raw) == 1:
         raw = raw[0]
     oid = attempt.expected_order_id
+    errors = {
+        'FOK': "order couldn't be fully filled. FOK orders are fully filled or killed.",
+        'FAK': 'no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.',
+    }
+    order_type = getattr(attempt, 'order_type', None)
     return (
         isinstance(raw, dict) and attempt.post_started
         and getattr(attempt, "entry_execution", None) == "taker"
-        and getattr(attempt, "order_type", None) == "FOK"
+        and order_type in errors
         and attempt.quote.side is Side.BUY
         and isinstance(oid, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", oid) is not None
         and raw.get("orderID") == oid == attempt.order_id
         and raw.get("success") is True
-        and raw.get("errorMsg") == "order couldn't be fully filled. FOK orders are fully filled or killed."
+        and raw.get("errorMsg") == errors[order_type]
         and all(raw.get(k) == "" for k in ("status", "makingAmount", "takingAmount"))
         and all(raw.get(k) in (None, "") for k in ("order_id", "orderId", "id"))
         and all(raw.get(k) in (None, []) for k in (
@@ -196,7 +201,7 @@ def _fok_not_filled_response(attempt: Placement) -> bool:
 
 def _canceled_submission_response(attempt: Placement) -> bool:
     """An exact, identity-bound POST rejection, never a DELETE not-found reply."""
-    if _fok_not_filled_response(attempt):
+    if _immediate_buy_not_filled_response(attempt):
         return True
     raw = attempt.raw_response
     if isinstance(raw, list) and len(raw) == 1:
@@ -1041,7 +1046,7 @@ class SMWindowExecutor:
         # Keep rejected signed IDs observable, without inventing exchange orders
         # or terminal OrderEvents for submissions the venue declared invalid.
         self.canceled_submission_proofs: dict[str, dict[str, Any]] = {}
-        self.fok_rejection_proven_ids: set[str] = set()
+        self.immediate_rejection_proven_ids: set[str] = set()
         self.observed_order_events: set[str] = set()
         self.pending_confirmations: set[str] = set()
         self.position_reconciled: dict[tuple[str, str], TradeEvent] = {}
@@ -2646,12 +2651,12 @@ class SMWindowExecutor:
         )
         # The identity-bound POST error is the positive rejection evidence.
         # Empty collections only establish that no conflicting fact was seen.
-        if oid not in self.fok_rejection_proven_ids and _fok_not_filled_response(attempt):
+        if oid not in self.immediate_rejection_proven_ids and _immediate_buy_not_filled_response(attempt):
             self.record("sm_order_rejection_proven", {"order_id": oid,
-                "reason": "FOK_NOT_FILLED", "order_type": attempt.order_type,
+                "reason": attempt.order_type+"_NOT_FILLED", "order_type": attempt.order_type,
                 "source": "IDENTITY_BOUND_POST_RESPONSE_AND_COMPLETE_COLLECTIONS",
                 "risk_released": True})
-            self.fok_rejection_proven_ids.add(oid)
+            self.immediate_rejection_proven_ids.add(oid)
         self.canceled_submission_proofs[oid] = {
             "response": attempt.raw_response, "open_orders": open_rows, "trades": trades,
         }
