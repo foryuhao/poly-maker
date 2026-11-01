@@ -196,6 +196,7 @@ class RDPCAMatchedTPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = Field(default=False, strict=True)
     restore_after_ba: bool = Field(default=False, strict=True)
+    taker_exit_on_expiry: bool = Field(default=False, strict=True)
     profit_per_share: Decimal = Field(default=Decimal("0.20"), gt=0, lt=1, allow_inf_nan=False)
     ttl_sec: float = Field(default=15.0, gt=0, allow_inf_nan=False)
 
@@ -203,6 +204,39 @@ class RDPCAMatchedTPConfig(BaseModel):
     def _restore_requires_tp(self):
         if self.restore_after_ba and not self.enabled:
             raise ValueError("restore_after_ba requires ca_matched_tp.enabled")
+        if self.taker_exit_on_expiry and not self.enabled:
+            raise ValueError("taker_exit_on_expiry requires ca_matched_tp.enabled")
+        return self
+
+
+class RDPCATakerConfig(BaseModel):
+    """Price-capped immediate CA entry; never leaves a resting order."""
+
+    model_config = ConfigDict(extra="forbid")
+    order_type: Literal["FOK", "FAK"] = "FOK"
+    max_slippage_ticks: int = Field(default=0, ge=0, le=100, strict=True)
+    max_price: Decimal = Field(default=Decimal("0.99"), gt=0, lt=1, allow_inf_nan=False)
+    entry_price_ceiling_enabled: bool = Field(default=True, strict=True)
+    entry_price_ceiling: Decimal = Field(default=Decimal("0.90"), gt=0, lt=1, allow_inf_nan=False)
+
+
+class RDPCAPullbackConfig(BaseModel):
+    """Opt-in CA -> price advance -> fixed-price maker pullback entry.
+
+    Defaults are development starting values, not calibrated trading parameters.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = Field(default=False, strict=True)
+    advance_ticks: int = Field(default=2, ge=1, strict=True)
+    entry_offset_ticks: int = Field(default=1, ge=0, strict=True)
+    advance_timeout_sec: float = Field(default=2., gt=0, allow_inf_nan=False)
+    order_ttl_sec: float = Field(default=3., gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _pullback_below_advance(self):
+        if self.entry_offset_ticks >= self.advance_ticks:
+            raise ValueError("CA pullback entry must be below the required advance")
         return self
 
 
@@ -338,14 +372,75 @@ class RDPCooldownConfig(BaseModel):
     loss_sec_per_dollar: float = Field(default=100.0, ge=0, allow_inf_nan=False)
 
 
+class RDPM1SignalConfig(BaseModel):
+    """Recorded observation calibration; defaults preserve the v1 thresholds."""
+
+    model_config = ConfigDict(extra="forbid")
+    profile: str = "baseline"
+    min_round_shares: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    min_round_depth_fraction: Decimal = Field(default=Decimal(".1"), gt=0, le=1)
+    round_window_sec: float = Field(default=.75, ge=.25, le=.75, allow_inf_nan=False)
+    ap_min_shares: Decimal = Field(default=Decimal("10"), gt=0, allow_inf_nan=False)
+    ap_min_depth_fraction: Decimal = Field(default=Decimal(".1"), gt=0, le=1)
+    ap_min_share: Decimal = Field(default=Decimal(".8"), ge=Decimal(".6"), le=1)
+    ap_min_records: int = Field(default=3, ge=2)
+    ap_max_concentration: Decimal = Field(default=Decimal(".8"), gt=0, lt=1)
+    ap_window_sec: float = Field(default=.75, ge=.25, le=3., allow_inf_nan=False)
+    rf_rounds: int = Field(default=3, ge=2, le=10)
+    rf_sequence_span_sec: float = Field(default=5., ge=2., le=30., allow_inf_nan=False)
+    rf_min_median_recovery: Decimal = Field(default=Decimal(".7"), ge=Decimal(".5"), le=1)
+    rf_ttl_sec: float = Field(default=1., ge=.75, le=15., allow_inf_nan=False)
+    combination_span_sec: float = Field(default=5., ge=3., le=20., allow_inf_nan=False)
+    ex_ttl_sec: float = Field(default=.75, ge=.75, le=3., allow_inf_nan=False)
+    track_visible_anchor: bool = False
+    flow_requires_top_match: bool = True
+    mirror_complement_flow: bool = False
+
+
+class RDPM1Config(BaseModel):
+    """Fixed M1 trading contract; execution budgets are independent of BA."""
+
+    model_config = ConfigDict(extra="forbid")
+    observation_only: bool = True
+    signal: RDPM1SignalConfig = Field(default_factory=RDPM1SignalConfig)
+    # Same ignore-without-reordering rule as CA. This is not a longer TTL.
+    out_of_order_tolerance_ms: float = Field(default=20., ge=0, allow_inf_nan=False)
+    order_budget_usdc: Literal[5] = 5
+    session_budget_usdc: Literal[20] = 20
+    start_sec: Literal[100] = 100
+    observation_start_sec: int = Field(default=100, ge=15, lt=240)
+    cutoff_sec: Literal[240] = 240
+    # Historical native POST 307ms; 400ms includes startup headroom. Recent
+    # actual writes may increase this floor; public GETs never lower it.
+    post_budget_floor_ms: float = Field(default=400., gt=0, allow_inf_nan=False)
+    min_live_budget_ms: float = Field(default=50., gt=0, allow_inf_nan=False)
+    max_cancel_rtt_ms: float = Field(default=1500., gt=0, allow_inf_nan=False)
+    record_events: bool = True
+    output_dir: str = "research_outputs/m1"
+
+    @property
+    def entry_start_sec(self):
+        return self.observation_start_sec if self.observation_only else self.start_sec
+
+    @model_validator(mode="after")
+    def _lease(self):
+        if self.post_budget_floor_ms + self.min_live_budget_ms >= 750:
+            raise ValueError("M1 execution budget must fit strict EX lifetime")
+        return self
+
+
 class RDPSMConfig(BaseModel):
-    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1"] = "legacy"
+    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1", "m1_v1"] = "legacy"
+    m1: RDPM1Config = Field(default_factory=RDPM1Config)
     ca_entry_direction: Literal["signal", "higher_bid"] = "signal"
+    ca_entry_execution: Literal["maker", "taker"] = "maker"
+    ca_taker: RDPCATakerConfig = Field(default_factory=RDPCATakerConfig)
     normal_cutoff_sec: float = Field(default=120.0, gt=0, le=300, allow_inf_nan=False)
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
     ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
     ca_observe: RDPCAObserveConfig = Field(default_factory=RDPCAObserveConfig)
     ca_matched_tp: RDPCAMatchedTPConfig = Field(default_factory=RDPCAMatchedTPConfig)
+    ca_pullback: RDPCAPullbackConfig = Field(default_factory=RDPCAPullbackConfig)
     repair: RDPRepairConfig = Field(default_factory=RDPRepairConfig)
     cooldown: RDPCooldownConfig = Field(default_factory=RDPCooldownConfig)
     sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
@@ -361,6 +456,20 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
+        if self.ca_matched_tp.taker_exit_on_expiry and self.repair.ba_enabled:
+            raise ValueError("CA expiry Taker exit requires repair.ba_enabled=false")
+        if self.ca_entry_execution == "taker":
+            if self.normal_entry_mode != "ca_v1":
+                raise ValueError("ca_entry_execution=taker requires normal_entry_mode=ca_v1")
+            if self.ca_pullback.enabled:
+                raise ValueError("CA pullback requires maker execution")
+        if self.ca_pullback.enabled:
+            if self.normal_entry_mode != "ca_v1" or self.ca_entry_direction != "signal":
+                raise ValueError("ca_pullback requires ca_v1 and ca_entry_direction=signal")
+            if self.ca_pullback.order_ttl_sec*1000 <= (
+                self.ba.network.post_budget_floor_ms+self.ba.network.min_live_budget_ms
+            ):
+                raise ValueError("CA pullback order TTL must fit the execution budget")
         if self.ca_matched_tp.enabled and (
             self.normal_entry_mode != "ca_v1" or self.repair.policy != "opposite_ba_v1"
         ):
@@ -369,7 +478,7 @@ class RDPSMConfig(BaseModel):
             raise ValueError("CA observation requires normal_entry_mode=ba_v1 or ca_v1")
         if self.normal_entry_mode == "ca_v1" and not self.ca_observe.enabled:
             raise ValueError("normal_entry_mode=ca_v1 requires ca_observe.enabled=true")
-        if self.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} and self.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1"}:
+        if self.repair.policy in {"hd_tp_sl_v1", "opposite_ba_v1"} and self.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"}:
             raise ValueError(f"{self.repair.policy} requires normal_entry_mode=obi_v1, ba_v1 or ca_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")

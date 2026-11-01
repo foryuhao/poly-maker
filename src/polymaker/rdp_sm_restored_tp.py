@@ -19,6 +19,7 @@ from polymaker.rdp_sm_execution import (
 )
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.rdp_sm_sl_ledger import exposure, fifo_residual
+from polymaker.state.tracker import fill_unit_cost
 
 ZERO = Decimal(0)
 
@@ -71,7 +72,7 @@ class RestoredTP(SLExecution):
         left, cost = selected, ZERO
         for fill in lots:
             used = min(left, Decimal(str(fill.size)))
-            cost += used * Decimal(str(fill.price))
+            cost += used * fill_unit_cost(fill)
             left -= used
             if not left:
                 break

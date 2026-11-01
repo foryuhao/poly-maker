@@ -154,6 +154,7 @@ class BANormalController(NormalController):
                 # volatility readiness gate; 0 uses the same legal bid/sizing.
                 quotes = normal_quotes(self.executor.meta, snapshot, yes, no, window_id,
                     self.executor.cfg.rdp_sm, direction, sigma=0, evidence=evidence,
+                    normal_taker=getattr(self, "taker", False),
                     **self.lifecycle.clock(normal=True))
                 evidence.pop("normal_sigma", None)
                 evidence.pop("sigma_window_seconds", None)
@@ -201,6 +202,80 @@ class CANormalController(BANormalController):
     @property
     def episodes(self):
         return self.lifecycle.feed.ca_entry
+
+    @property
+    def taker(self):
+        return self.executor.cfg.rdp_sm.ca_entry_execution == "taker"
+
+    @property
+    def quote_after_constraints(self):
+        return self.taker or self.executor.cfg.rdp_sm.ca_matched_tp.taker_exit_on_expiry
+
+    @property
+    def ba_config(self):
+        return self.executor.cfg.rdp_sm.ba
+
+    async def prepare_execution_constraints(self):
+        if (not (self.taker or self.executor.cfg.rdp_sm.ca_matched_tp.taker_exit_on_expiry)
+                or getattr(self, "taker_fees", None) is not None):
+            return
+        from polymaker.rdp_sm_ca_taker import fee_parameters
+
+        e = self.executor
+        raw = await self.lifecycle._read_preparation_constraint(
+            e.gateway._client.get_clob_market_info, e.meta.condition_id)
+        self.taker_fees = fee_parameters(raw, (e.meta.yes.token_id, e.meta.no.token_id))
+        e.record("sm_ca_taker_fee_parameters", {"market_id": e.meta.condition_id,
+                 **self.taker_fees, "source": "OFFICIAL_CLOB_MARKET_INFO"})
+
+    def candidates(self, snapshot, yes, no, window_id):
+        if not self.executor.cfg.rdp_sm.ca_pullback.enabled:
+            result = super().candidates(snapshot, yes, no, window_id)
+            if self.taker:
+                if getattr(self, "taker_fees", None) is None:
+                    self.quote_block_reason = "CA_TAKER_FEE_PARAMETERS_UNAVAILABLE"
+                    return {}
+                for direction, (quotes, evidence) in list(result.items()):
+                    if any(Decimal(str(q.price))*Decimal(str(q.size)) < 1 for q in quotes):
+                        self.quote_block_reason = "CA_TAKER_MIN_NOTIONAL"
+                        del result[direction]
+                        continue
+                    evidence.update(ca_entry_execution="taker", ca_taker_fees=self.taker_fees,
+                                    ca_taker=self.executor.cfg.rdp_sm.ca_taker.model_dump(mode="json"))
+            return result
+        self.quote_block_reason = None
+        direction, _ = self.select(snapshot)
+        ep = self.episodes.selected
+        if direction is None or ep is None:
+            return {}
+        evidence = {}
+        try:
+            quotes = normal_quotes(
+                self.executor.meta, snapshot, yes, no, window_id,
+                self.executor.cfg.rdp_sm, direction, sigma=0, evidence=evidence,
+                normal_entry_price=ep.entry_price, **self.lifecycle.clock(normal=True))
+        except QuoteUnavailable as exc:
+            self.quote_block_reason = str(exc)
+            return {}
+        evidence.pop("normal_sigma", None)
+        evidence.pop("sigma_window_seconds", None)
+        evidence.update(normal_entry_mode="ca_v1", ca_pullback=self.episodes.diagnostics())
+        return {direction: (tuple(quotes), evidence)}
+
+    def matches(self, intent, snapshot):
+        if not self.taker:
+            return super().matches(intent, snapshot)
+        with self.lifecycle.feed.lock:
+            direction, _ = self.select(snapshot)
+            if (direction != intent.direction or self.episodes.selected is None
+                    or intent.claim is not None and self.episodes.selected.episode_id != intent.claim[0]):
+                return False
+            # Keep the signed cap and size; a better Ask is allowed, never chase.
+            return all(Decimal(str(q.price)) >= (snapshot.yes if q.outcome == "YES" else snapshot.no).best_ask
+                       and Decimal(str(q.price)) <= self.executor.cfg.rdp_sm.ca_taker.max_price
+                       and (not self.executor.cfg.rdp_sm.ca_taker.entry_price_ceiling_enabled
+                            or Decimal(str(q.price)) < self.executor.cfg.rdp_sm.ca_taker.entry_price_ceiling)
+                       for q in intent.quotes)
 
     def select(self, snapshot):
         signal = self.episodes.evaluate(snapshot)

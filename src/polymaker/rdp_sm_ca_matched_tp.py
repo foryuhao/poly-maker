@@ -10,7 +10,7 @@ import asyncio
 import math
 import uuid
 from dataclasses import asdict
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from types import SimpleNamespace
 
 from polymaker.domain import Side, TradeState
@@ -23,6 +23,7 @@ from polymaker.rdp_sm_execution import (
 )
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.rdp_sm_sl_ledger import fifo_residual
+from polymaker.state.tracker import fill_cost
 
 ZERO = Decimal(0)
 
@@ -176,7 +177,7 @@ class CAMatchedTP(SLExecution):
             return False
         first = min(stamps, key=lambda s: s["fill_monotonic"])
         qty = sum((Decimal(str(f.size)) for f in owned), ZERO)
-        cost = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in owned), ZERO)
+        cost = sum((fill_cost(f) for f in owned), ZERO)
         ep.update(side=side, normal_entry_side=side, ca_tp_direction_owner=self.window_id,
                   first_fill_monotonic=first["fill_monotonic"], first_fill_elapsed=first["elapsed"],
                   first_fill_time_source=first["source"], opening_monotonic=first["fill_monotonic"],
@@ -204,12 +205,13 @@ class CAMatchedTP(SLExecution):
         if self.fill_time is None:
             self.fill_time = min(self.e.fill_observed_at[(f.trade_id, f.maker_order_id)][
                 "observed_monotonic"] for f in fills)
-        entry = sum((Decimal(str(f.price))*Decimal(str(f.size)) for f in fills), ZERO)/quantity
+        entry = sum((fill_cost(f) for f in fills), ZERO)/quantity
         if entry >= 1-self.cfg.profit_per_share:
             return None, "ENTRY_PRICE_TOO_HIGH"
         minimum = max(MIN_MAKER_BUY_SHARES, Decimal(str(self.e.meta.min_order_size)))
         maximum = min(self.e.cfg.rdp_sm.max_order_size,
-                      sum((Decimal(str(a.quote.size)) for a in self.opening), ZERO))
+                      max(sum((Decimal(str(a.quote.size)) for a in self.opening), ZERO),
+                          quantity.quantize(Decimal('.01'), rounding=ROUND_CEILING)))
         qty = tp_buy_size(quantity, minimum, maximum)
         if qty is None:
             return None, "WAIT_MINIMUM_MATCHED_QUANTITY"
@@ -241,7 +243,7 @@ class CAMatchedTP(SLExecution):
             return e.gateway._client.pagination_failure
         if self.lifecycle.feed.opposite_ba is None:
             return "OPPOSITE_BA_UNAVAILABLE"
-        if any(a.outcome != "ACK" for a in self.opening) or not self.parent_done.is_set():
+        if any(a.outcome not in {"ACK", "VERIFIED"} for a in self.opening) or not self.parent_done.is_set():
             return "CA_OPENING_POST_UNRESOLVED"
         if not self.health().allowed:
             return self.health().reason
@@ -258,10 +260,9 @@ class CAMatchedTP(SLExecution):
         quantity = sum((Decimal(str(f.size)) for f in fills), ZERO)
         minimum = max(MIN_MAKER_BUY_SHARES, Decimal(str(e.meta.min_order_size)))
         if (qty - quantity > RDP_TOLERANCE or qty < minimum or qty % Decimal(".01")
-                or qty > e.cfg.rdp_sm.max_order_size
-                or qty > sum((Decimal(str(a.quote.size)) for a in self.opening), ZERO)):
+                or qty > e.cfg.rdp_sm.max_order_size):
             return "CA_MATCHED_QUANTITY_CHANGED"
-        cost = sum((Decimal(str(f.price))*Decimal(str(f.size)) for f in fills), ZERO)
+        cost = sum((fill_cost(f) for f in fills), ZERO)
         if quantity <= 0 or price > 1-cost/quantity-self.cfg.profit_per_share:
             return "CA_MATCHED_PRICE_CHANGED"
         # Only this owner's exact unsent INTENT receives its reservation back.

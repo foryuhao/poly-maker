@@ -42,7 +42,7 @@ def session_report(s: Record) -> str:
         f"待确认成交: {s['pending_fills']}；待核实订单: {s['pending_orders']}。\n\n"
         f"YES / NO: {s['inventory']['YES']} / {s['inventory']['NO']} sh；Δ: {s['delta']}。\n\n"
         f"已确认配对 PnL: {s['pair_pnl']} USDC；"
-        f"TP: {s['pnl_by_role']['TP']}；BA: {s['pnl_by_role']['BA']}；"
+        f"TP: {s['pnl_by_role']['TP']}；SL: {s['pnl_by_role']['SL']}；"
         f"OTHER: {s['pnl_by_role']['OTHER']}；已确认合计: {s['known_pnl']}。\n\n"
         f"残仓结算 PnL: {residual}；交易 PnL: {total}。\n\n"
         f"{evidence}"
@@ -52,7 +52,7 @@ def session_report(s: Record) -> str:
         f"已配未合并: {s['unmerged_pairs']}。\n\n"
         f"数据问题: {', '.join(s['issues']) or '无已知问题'}。\n\n"
         "PnL 按已确认成交逐笔 FIFO 配对，费用按份数分摊；完成配对的退出腿决定归因。"
-        "首次与恢复 TP 退出归 TP，反向 BA 退出归 BA；其余配对及已核实残仓结算归 OTHER。合并与赎回现金不重复计收益。"
+        "首次与恢复 TP 退出归 TP，TP 到期后的 Taker 退出归 SL；BA、其余配对及已核实残仓结算归 OTHER。合并与赎回现金不重复计收益。"
         "分布样本为 FIFO 配对批次和每场已核实残仓结算；待结算残仓不填零。日志未提供的估值与结算不推算。\n"
     )
 

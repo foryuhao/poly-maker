@@ -16,8 +16,9 @@ from decimal import Decimal
 from polymaker.domain import OpenOrder, OrderState, Side
 from polymaker.execution.gateway import GatewayReadError
 from polymaker.rdp_sm import SessionStatus, _Issue
+from polymaker.rdp_sm_ca_taker import cache_trade_legs
 from polymaker.state.tracker import TradeEvent
-from polymaker.userstream.parse import normalize_order, parse_trade
+from polymaker.userstream.parse import parse_trade
 
 
 def order_raw(row):
@@ -36,7 +37,8 @@ def trade_raw(row):
     return {"id": row["trade_id"], "market": row["market"], "status": row["status"],
             "timestamp": row["timestamp"], "maker_orders": row["maker_legs"],
             "trader_side": row.get("trader_side"), "taker_order_id": row.get("taker_order_id"),
-            "asset_id": row.get("taker_asset_id"), "side": row.get("taker_side")}
+            "asset_id": row.get("taker_asset_id"), "side": row.get("taker_side"),
+            **{k: row[k] for k in ("size", "price", "fee_usdc") if k in row}}
 
 
 class CachedExecutionReads:
@@ -175,12 +177,13 @@ class CachedExecutionReads:
             if ("maker_address" in raw
                     and raw["maker_address"].lower() != self.e.gateway.funder.lower()):
                 return False
-            ev = normalize_order(raw)
+            ev = self.e.processor.normalize_owned_order(raw)
             if not (ev and ev.order_id == oid and ev.market_id == self.meta.condition_id
                     and ev.token_id == owned["token_id"] and ev.side.value == owned["side"]
                     and Decimal(str(ev.original_size)) == Decimal(str(owned["submitted_qty"]))
                     and Decimal(str(ev.price)) == Decimal(str(owned["submitted_price"]))
-                    and _terminal(ev, self.e.matched_remaining_tolerance_shares)):
+                    and _terminal(ev, self.e.matched_remaining_tolerance_shares,
+                                  taker_buy=self.e.processor.taker_spec(oid) is not None)):
                 return False
         return True
 
@@ -235,6 +238,10 @@ class CachedExecutionReads:
                                 TradeEvent(leg.asset_id, leg.side, leg.price, leg.matched_amount,
                                            parsed.trade_id, parsed.status, parsed.timestamp,
                                            leg.order_id, parsed.market), parsed.market, source="REST")
+                    if parsed.taker_order_id in getattr(self.e.processor, "taker_orders", {}):
+                        for fill in self.e.processor.events_from_trade(parsed):
+                            if fill.liquidity_role == "TAKER":
+                                self.e.processor.on_trade(fill, parsed.market, source="REST")
             key = ("get_open_orders" if r.name == "open_orders" else "get_trades", ("sync",))
             if not r.complete:
                 if key not in client._pagination_failures:
@@ -419,7 +426,7 @@ class CachedExecutionReads:
                 requirements[oid] = max(after, good["open_orders"].completed_monotonic)
                 continue
             legs = {(t["trade_id"], leg["order_id"]): leg for t in trades
-                    for leg in t["maker_legs"] if leg["order_id"] == oid}
+                    for leg in cache_trade_legs(t) if leg["order_id"] == oid}
             qty = sum((Decimal(str(leg["matched_amount"])) for leg in legs.values()), Decimal(0))
             if (abs(qty - Decimal(str(row["size_matched"]))) > Decimal(".000001")
                     or not row.get("associate_trades_present")

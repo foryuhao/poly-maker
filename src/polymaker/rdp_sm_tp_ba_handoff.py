@@ -18,6 +18,7 @@ from polymaker.rdp_sm_execution import Placement, WindowQuote
 from polymaker.rdp_sm_execution import ba_repair_buy_quantity as repair_buy_quantity
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.rdp_sm_sl_ledger import SMALL, exposure, fifo_paired_quantities, fifo_pairs
+from polymaker.state.tracker import fill_unit_cost
 
 ZERO = Decimal(0)
 
@@ -615,7 +616,7 @@ def role_result(executor, attempts, safe):
     )
     pnl = sum(
         (
-            qty * (1 - Decimal(str(old.price)) - Decimal(str(close.price)))
+            qty * (1 - fill_unit_cost(old) - fill_unit_cost(close))
             for old, close, qty in pairs
         ),
         ZERO,

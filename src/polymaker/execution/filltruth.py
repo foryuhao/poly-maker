@@ -10,11 +10,10 @@ from typing import Any
 from polymaker.execution.gateway import GatewayReadError
 from polymaker.logging import get_logger
 from polymaker.research.capture import clock
-from polymaker.state.tracker import TradeEvent, UserEventProcessor, within_tolerance
+from polymaker.state.tracker import UserEventProcessor, within_tolerance
 from polymaker.userstream.parse import (
     MalformedMakerLeg,
     maker_order_id_evidence,
-    normalize_order,
     parse_trade,
 )
 
@@ -80,7 +79,7 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
         trades = await gateway.get_trades(market=str(owned["condition_id"]))
         research_receipt = clock() if processor._research is not None else (None, None)
         _check_active_order_deadline(active_order_deadline)
-        order_ev = normalize_order(row)
+        order_ev = processor.normalize_owned_order(row)
         _check_active_order_deadline(active_order_deadline)
         if order_ev is None or order_ev.order_id != order_id:
             raise GatewayReadError("order snapshot malformed or mismatched")
@@ -103,6 +102,7 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                 # A malformed row is ignorable only if every maker identity is
                 # present and proves this row cannot belong to the target order.
                 if (isinstance(maker_rows, list) and maker_rows
+                        and raw.get("taker_order_id") != order_id
                         and all(isinstance(m, dict) for m in maker_rows)
                         and all(_proven_foreign_maker(m, order_id) for m in maker_rows)):
                     continue
@@ -110,9 +110,9 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                 processor.quarantine_order(order_id,
                     f"trade history contains unknown relevant shape: {exc}", notify=False)
                 return ReconciliationOutcome.UNRESOLVED
-            for leg_index, leg in enumerate(parsed.maker_legs):
+            for leg_index, fill_event in enumerate(processor.events_from_trade(parsed)):
                 await _processing_checkpoint(active_order_deadline, leg_index)
-                if leg.order_id != order_id:
+                if fill_event.maker_order_id != order_id:
                     continue
                 # A market supplied by REST is observed source evidence. The
                 # registry remains the expected value; never substitute it.
@@ -123,12 +123,10 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                     return ReconciliationOutcome.UNRESOLVED
                 before_qty = processor.tracked_trade_qty(order_id)
                 _check_active_order_deadline(active_order_deadline)
-                key = (parsed.trade_id, leg.order_id)
-                rest_fills[key] = leg.matched_amount
+                key = (parsed.trade_id, order_id)
+                rest_fills[key] = fill_event.size
                 _check_active_order_deadline(active_order_deadline)
-                processor.on_trade(TradeEvent(leg.asset_id, leg.side, leg.price,
-                    leg.matched_amount, parsed.trade_id, parsed.status,
-                    parsed.timestamp, leg.order_id, parsed.market or None),
+                processor.on_trade(fill_event,
                     parsed.market or str(owned["condition_id"]), source="REST",
                     received_at_us=research_receipt[0],
                     received_monotonic_ns=research_receipt[1])
@@ -137,9 +135,9 @@ async def reconcile_owned_order_once(order_id: str, gateway: Any,
                 _check_active_order_deadline(active_order_deadline)
                 if after_qty > before_qty:
                     log.info("order_reconcile_fill_recovered", order_id=order_id,
-                        trade_id=parsed.trade_id, token=leg.asset_id[:12],
-                        side=leg.side.value, qty=leg.matched_amount,
-                        price=leg.price, source="REST", status=parsed.status.value)
+                        trade_id=parsed.trade_id, token=fill_event.token_id[:12],
+                        side=fill_event.our_side.value, qty=fill_event.size,
+                        price=fill_event.price, source="REST", status=parsed.status.value)
         qty = processor.tracked_trade_qty(order_id)
         _check_active_order_deadline(active_order_deadline)
         failed_fill = processor.has_failed_fill(order_id)

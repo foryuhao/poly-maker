@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from polymaker.domain import TradeState
 from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
+from polymaker.state.tracker import fill_cost
 
 ZERO = Decimal(0)
 SMALL = MIN_REPAIR_EXPOSURE
@@ -60,7 +61,7 @@ def exposure(executor, *, retain_unknown_reservations=False):
         if ((fill.trade_id, fill.maker_order_id) not in proved
                 and fill.status in {TradeState.MATCHED, TradeState.MINED, TradeState.RETRYING}):
             execution += Decimal(str(fill.size)) * (1 if fill.token_id == executor.meta.yes.token_id else -1)
-    spent = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in actual_fills), ZERO)
+    spent = sum((fill_cost(f) for f in actual_fills), ZERO)
     pending = {"YES": ZERO, "NO": ZERO}
     reserved = ZERO
     releases = getattr(executor, "sl_terminal_quantities", {})
@@ -81,6 +82,8 @@ def exposure(executor, *, retain_unknown_reservations=False):
             possible = max(ZERO, ceiling-filled)
         pending[a.quote.outcome] += possible
         reserved += possible*Decimal(str(a.quote.price))
+        if possible:
+            reserved += Decimal(getattr(a, "fee_reserve_usdc", "0"))*possible/Decimal(str(a.quote.size))
     return Exposure(y-n, execution, pending["YES"], pending["NO"], spent, reserved)
 
 
@@ -132,7 +135,16 @@ def fifo_pairs(fills, stamps, yes_token):
 def fifo_residual(fills, stamps, yes_token):
     """Return the unpaired actual fill lots, retaining their identity and time."""
     queues, _ = _fifo(fills, stamps, yes_token)
-    return [replace(fill, size=float(qty)) for q in queues.values() for fill, qty in q]
+    result = []
+    for q in queues.values():
+        for fill, qty in q:
+            changes = {"size": float(qty)}
+            for name in ("principal_usdc", "fee_usdc"):
+                value = getattr(fill, name, None)
+                if value is not None:
+                    changes[name] = str(Decimal(str(value))*qty/Decimal(str(fill.size)))
+            result.append(replace(fill, **changes))
+    return result
 
 
 def install_reverse_episode(executor, *, mode="HD"):
@@ -166,7 +178,7 @@ def install_reverse_episode(executor, *, mode="HD"):
                              +int(executor.slug.rsplit("-", 1)[1])-executor.official_time,
         "path_clock_offset": ep.get("path_clock_offset", 0),
         "original_qty": str(qty), "original_cost": str(sum(
-            (Decimal(str(f.size))*Decimal(str(f.price)) for f in lots), ZERO)),
+            (fill_cost(f) for f in lots), ZERO)),
         "source_lots": lots, "first_fill_elapsed": first["elapsed"],
         "first_fill_time_source": first["source"], "windows": [], "submissions": 0,
     }

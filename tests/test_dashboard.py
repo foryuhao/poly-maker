@@ -68,7 +68,7 @@ def test_exact_taker_fee_dedup_and_no_merge_double_count():
                event("sm_ba_taker_result", {"orders": [{"order_id": "exit", "complete": True}]}, 8)]
     s = summarize(SID, events, [source()])
     assert Decimal(s["pair_pnl"]) == Decimal("-.28")
-    assert s["pnl_by_role"] == {"TP": "0", "BA": "-0.280", "OTHER": "0"}
+    assert s["pnl_by_role"] == {"TP": "0", "SL": "0", "OTHER": "-0.280"}
     assert s["inventory"] == {"YES": "0", "NO": "0"}
     assert s["filled_orders"] == 2
     assert Decimal(s["fees"]) == Decimal(".03")
@@ -86,13 +86,13 @@ def test_ba_maker_exit_attributes_partial_fills_without_changing_total(window):
     s = summarize(SID, events, [source()])
     assert Decimal(s["pair_pnl"]) == Decimal("-.30")
     assert {role: Decimal(pnl) for role, pnl in s["pnl_by_role"].items()} == {
-        "BA": Decimal("-.30"), "TP": Decimal(0), "OTHER": Decimal(0)}
+        "SL": Decimal(0), "TP": Decimal(0), "OTHER": Decimal("-.30")}
     assert len(s["pairs"]) == 2
-    assert all(pair["category"] == "BA" for pair in s["pairs"])
+    assert all(pair["category"] == "OTHER" for pair in s["pairs"])
 
 
 @pytest.mark.parametrize("phase,policy,role", [
-    ("REPAIR", "opposite_ba_v1", "BA"),
+    ("REPAIR", "opposite_ba_v1", "OTHER"),
     ("NORMAL", "opposite_ba_v1", "OTHER"),
     ("REPAIR", "hd_tp_sl_v1", "OTHER"),
 ])
@@ -127,7 +127,7 @@ def test_tp_and_other_attribution_includes_only_proven_residual_settlement(windo
                 "intentional_residual_pnl": residual_pnl, "unintentional_residual_pnl": "0"}}, 5))
     s = summarize(SID, events, [source()])
     assert Decimal(s["pair_pnl"]) == Decimal(".4")
-    expected = {"TP": Decimal(0), "BA": Decimal(0), "OTHER": Decimal(0)}
+    expected = {"TP": Decimal(0), "SL": Decimal(0), "OTHER": Decimal(0)}
     expected[category] += Decimal(".4")
     if residual_pnl is not None:
         expected["OTHER"] += Decimal(residual_pnl)
@@ -144,7 +144,7 @@ def test_tp_and_other_attribution_includes_only_proven_residual_settlement(windo
         console.print(render({"observed_at": NOW, "sessions": [s], "current_session_id": SID},
                              now=NOW, width=140, height=height))
         text = console.export_text()
-        assert "TP" in text and "BA" in text and "OTHER" in text
+        assert "TP" in text and "SL" in text and "OTHER" in text
         assert f"Total {Decimal(s['known_pnl']):+.3f}" in text
         assert "Maker" not in text and "Taker" not in text
 
@@ -251,7 +251,7 @@ def test_fifo_partial_pairs_and_reverse_residual():
     events.extend([event("sm_placement_result", placement("close", "NO", "ba:1:maker:1"), 3),
                    event("sm_trade", fill("close", "NO", ".5", quantity=6), 4)])
     s = summarize(SID, events, [source()])
-    assert Decimal(s["pnl_by_role"]["BA"]) == Decimal(".5")
+    assert Decimal(s["pnl_by_role"]["OTHER"]) == Decimal(".5")
     assert s["residual"] == [{"outcome": "NO", "quantity": "1", "cost": "0.5"}]
     assert s["delta"] == "-1" and s["trading_pnl"] is None
 
@@ -261,7 +261,7 @@ def test_late_status_retains_first_observed_fifo_order():
     # NO confirms before YES; economic FIFO still follows first observation.
     events[4]["offset"] = 8
     s = summarize(SID, events, [source()])
-    assert s["pairs"][0]["category"] == "BA"
+    assert s["pairs"][0]["category"] == "OTHER"
 
 
 def test_final_inventory_mismatch_is_pending():
@@ -401,9 +401,9 @@ def test_restart_migrates_cached_pnl_categories(files, missing):
     c = Collector(root, output)
     try:
         s = c.snapshots()[0]
-        assert s["pnl_attribution_version"] == 2
-        assert set(s["pnl_by_role"]) == {"TP", "BA", "OTHER"}
-        assert Decimal(s["pnl_by_role"]["BA"]) == Decimal("-.280")
+        assert s["pnl_attribution_version"] == 3
+        assert set(s["pnl_by_role"]) == {"TP", "SL", "OTHER"}
+        assert Decimal(s["pnl_by_role"]["OTHER"]) == Decimal("-.280")
         assert s["post_counts"]["CA"] == {"YES": 1, "NO": 0}
     finally:
         c.close()
@@ -448,6 +448,44 @@ def test_ca_path_is_read_from_header_not_guessed_session_id(files):
         c.poll()
         assert c.snapshots()[0]["signal_counts"]["CA"] == 1
         assert len(c.sources(SID)) == 2
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("observation", [None, {}, {"runtime": None},
+    {"runtime": {"writer": None, "snapshot": None}}])
+def test_collector_keeps_current_m1_session_when_ca_is_disabled(files, observation):
+    root, path, output = files
+    h = header()
+    h.update(normal_entry_mode="m1_v1", ca_observation=observation)
+    write_risk(path, [event("sm_session", h),
+        event("sm_m1_state", {"state": "ENTRY_WORKING"}, 1),
+        event("sm_m1_wait", {"reason": "M1_ENTRY_LIVE"}, 2),
+        event("sm_placement_result", placement("m1-order", "YES"), 3)])
+    c = Collector(root, output)
+    try:
+        snapshot = c.poll(now=NOW + 10)
+        assert snapshot["current_session_id"] == SID
+        s = snapshot["sessions"][0]
+        assert s["phase"] == "M1 / ENTRY_WORKING" and s["reason"] == "M1_ENTRY_LIVE"
+        assert not s["ended"] and s["post_counts"]["M1"]["YES"] == 1
+        import io
+
+        from polymaker.dashboard.view import post_panel
+
+        console = Console(width=60, record=True, file=io.StringIO())
+        console.print(post_panel(s))
+        assert "M1" in console.export_text()
+        assert len(c.sources(SID)) == 1
+        assert c.sources(SID)[0]["caught_up"] and c.sources(SID)[0]["errors"] == 0
+        # Catch both the live poll and the persisted restart path: a disabled
+        # optional detector must not poison this session or later discoveries.
+        c.poll(now=NOW + 11)
+    finally:
+        c.close()
+    c = Collector(root, output)
+    try:
+        assert c.poll(now=NOW + 12)["current_session_id"] == SID
     finally:
         c.close()
 
@@ -552,7 +590,7 @@ def test_snapshot_staleness_and_render_without_demo_data(files):
     console.print(render(snapshot, now=NOW, width=100))
     text = console.export_text()
     assert "STALE" in text and SID in text and "demo-" not in text
-    assert "BA" in text and "-0.280" in text
+    assert "SL" in text and "-0.280" in text
 
 
 def test_compaction_removes_secrets_and_raw_responses():
@@ -660,9 +698,9 @@ def test_history_period_filters_pnl_distribution_and_archive_together(height):
         s = copy.deepcopy(current)
         s.update(session_id=f"history-{age}h", market_start=NOW - age * 3600,
                  market_end=NOW - age * 3600 + 300, pair_pnl=pnl,
-                 pnl_by_role={"TP": "0", "BA": pnl, "OTHER": "0"},
-                 pnl_events=[{"category": "BA", "pnl": pnl}],
-                 pairs=[{"category": "BA", "pnl": pnl}])
+                 pnl_by_role={"TP": "0", "SL": pnl, "OTHER": "0"},
+                 pnl_events=[{"category": "SL", "pnl": pnl}],
+                 pairs=[{"category": "SL", "pnl": pnl}])
         sessions.append(s)
     snapshot = {"observed_at": NOW, "sessions": sessions, "current_session_id": "history-1h"}
     for hours, total in [(4, "+1.000"), (12, "+11.000"), (24, "+111.000")]:
@@ -670,7 +708,7 @@ def test_history_period_filters_pnl_distribution_and_archive_together(height):
         console.print(render(snapshot, now=NOW, width=140, height=height, hours=hours))
         text = console.export_text()
         assert f"{hours}h" in text and f"Total {total}" in text
-        assert f"BA {total}" in text
+        assert f"SL {total}" in text
         assert "history-1h" in text  # Current session stays visible.
         console.print(render(snapshot, now=NOW, width=140, height=height, hours=hours, archive_view=True))
         archive = console.export_text()
@@ -688,7 +726,7 @@ def test_pnl_histogram_six_descending_buckets_include_other_and_exact_edges(pnl,
 
     from polymaker.dashboard.view import distribution
 
-    roles = [("TP", 2), ("BA", 3), ("OTHER", 5)]
+    roles = [("TP", 2), ("SL", 3), ("OTHER", 5)]
     pairs = [{"category": role, "pnl": pnl} for role, count in roles for _ in range(count)]
     console = Console(width=120, record=True, file=io.StringIO())
     console.print(distribution([{"pairs": pairs[:4]}, {"pairs": pairs[4:]}]))

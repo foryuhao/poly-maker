@@ -6,9 +6,9 @@ later by exact order ID membership, never by wallet or taker fields.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
-import math
 from typing import Any
 
 from polymaker.domain import Side, TradeState
@@ -197,7 +197,7 @@ def normalize_trade(
     return out
 
 
-def normalize_order(msg: dict[str, Any]) -> OrderEvent | None:
+def normalize_order(msg: dict[str, Any], *, allow_taker_buy_overfill=False) -> OrderEvent | None:
     """Map an `order` event to remaining-size tracking for the reconciler."""
     try:
         oid = msg.get("id", msg.get("order_id"))
@@ -215,9 +215,9 @@ def normalize_order(msg: dict[str, Any]) -> OrderEvent | None:
                                     strict_number(raw_price))
         if not all(math.isfinite(x) for x in (original, matched, price)) or original < 0 or matched < 0:
             return None
-        if original <= 0 or matched > original or not 0 < price <= 1:
+        if original <= 0 or (matched > original and not (allow_taker_buy_overfill and side is Side.BUY)) or not 0 < price <= 1:
             return None
-        remaining = original - matched
+        remaining = max(0, original - matched)
         status = str(msg.get("status", "")).upper()
         is_cancel = status in ("CANCELED", "CANCELLED") or msg.get("type") == "CANCELLATION"
         associate_trades: tuple[str, ...] = ()

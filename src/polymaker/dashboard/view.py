@@ -24,7 +24,7 @@ from rich.text import Text
 from polymaker.dashboard.archive import clock
 from polymaker.dashboard.model import Record
 
-COLORS = {"TOTAL": "cyan", "TP": "green", "BA": "yellow", "OTHER": "magenta"}
+COLORS = {"TOTAL": "cyan", "TP": "green", "SL": "yellow", "OTHER": "magenta"}
 HISTORY_PERIODS = (4, 12, 24)
 
 
@@ -48,6 +48,17 @@ def read_snapshot(output: Path) -> Record:
         value = json.loads((output / "latest.json").read_text(encoding="utf-8"))
         if not isinstance(value.get("sessions"), list):
             raise ValueError("invalid snapshot")
+        # A view can start while the observer is still migrating a v2 cache.
+        # Legacy BA is OTHER, never evidence of a TP-expiry SL.
+        for session in value["sessions"]:
+            pnl = session.get("pnl_by_role", {})
+            if "SL" not in pnl and "BA" in pnl:
+                session["pnl_by_role"] = {"TP": pnl.get("TP", "0"), "SL": "0",
+                    "OTHER": str(Decimal(pnl.get("OTHER", "0")) + Decimal(pnl["BA"]))}
+                for field in ("pairs", "pnl_events"):
+                    if field in session:
+                        session[field] = [{**p, "category": "OTHER"} if p.get("category") == "BA" else p
+                                          for p in session[field]]
         return cast(Record, value)
     except (OSError, ValueError, TypeError, AttributeError):
         return {"observed_at": 0, "sessions": [], "error": "尚无可读取快照；请先启动 dashboard-archive"}
@@ -60,7 +71,7 @@ def history_chart(sessions: list[Record], width: int, height: int = 9) -> Text:
     for s in sessions:
         totals[0] += sum((Decimal(v) for v in s["pnl_by_role"].values()), Decimal(0))
         totals[1] += Decimal(s["pnl_by_role"]["TP"])
-        totals[2] += Decimal(s["pnl_by_role"]["BA"])
+        totals[2] += Decimal(s["pnl_by_role"]["SL"])
         totals[3] += Decimal(s["pnl_by_role"]["OTHER"])
         points.append(tuple(float(v) for v in totals))
     low, high = min(v for p in points for v in p), max(v for p in points for v in p)
@@ -123,7 +134,8 @@ def post_panel(current: Record) -> Panel:
     for side in ("YES", "NO"):
         table.add_column(side, justify="right")
     counts = current.get("post_counts", {})
-    for role in ("CA", "TP", "BA"):
+    roles = ("M1", "CA", "TP", "BA") if "M1" in counts else ("CA", "TP", "BA")
+    for role in roles:
         table.add_row(role, *(str(counts.get(role, {}).get(side, 0)) for side in ("YES", "NO")))
     return Panel(Group(table, Text("实际发单笔数 · 含拒单/未知\n不含发送前放弃；不代表成交", style="dim")),
                  title="POST", box=box.SQUARE)
@@ -143,7 +155,7 @@ def signal_post_row(signal: RenderableType, current: Record, width: int) -> Tabl
 
 def distribution(sessions: list[Record]) -> Group:
     pairs = [p for s in sessions for p in s.get("pnl_events", s["pairs"])]
-    roles = ("TP", "BA", "OTHER")
+    roles = ("TP", "SL", "OTHER")
     table = Table(box=None, expand=True, padding=(0, 1))
     table.add_column("退出归因")
     table.add_column("批次", justify="right")
@@ -152,7 +164,7 @@ def distribution(sessions: list[Record]) -> Group:
         values = [Decimal(p["pnl"]) for p in pairs if p["category"] == role]
         table.add_row(Text(role, style=COLORS[role]), str(len(values)), fmt(sum(values, Decimal(0))))
     hist = Table(box=None, expand=True, padding=(0, 1))
-    for heading in ("PnL / 批", "TP", "BA", "OTHER"):
+    for heading in ("PnL / 批", "TP", "SL", "OTHER"):
         hist.add_column(heading)
     # Descending, lower-exclusive / upper-inclusive; both tails stay visible.
     bins = [("P>1.0", Decimal("1"), None), ("0.5<P≤1", Decimal(".5"), Decimal("1")),
@@ -230,6 +242,8 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
             quote = order["quote"]
             entry_mode = current.get("normal_entry_mode", current.get("header", {}).get("normal_entry_mode"))
             role = "CA" if order["role"] == "NORMAL" and entry_mode == "ca_v1" else order["role"]
+            if role == "EXIT" and quote.get("window_id", "").endswith(":ca-expiry-exit"):
+                role = "SL"
             execution.append(f"\n{role} {quote.get('outcome', quote.get('side', '?'))} "
                              f"@ {quote.get('price', quote.get('limit', '?'))} "
                              f"成交 {order['confirmed_quantity']} / {quote.get('size', quote.get('quantity', '?'))} · {order['status']}")
@@ -248,14 +262,14 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
                         subtitle="确认 ≠ 准入 ≠ 发单 ≠ 成交", box=box.SQUARE)
         parts.append(signal_post_row(signals, current, width))
         totals = {role: sum((Decimal(s["pnl_by_role"][role]) for s in sessions), Decimal(0))
-                  for role in ("TP", "BA", "OTHER")}
+                  for role in ("TP", "SL", "OTHER")}
         total = sum(totals.values(), Decimal(0))
-        headline = Text(f"Total {fmt(total)}   TP {fmt(totals['TP'])}   BA {fmt(totals['BA'])}   OTHER {fmt(totals['OTHER'])}\n")
+        headline = Text(f"Total {fmt(total)}   TP {fmt(totals['TP'])}   SL {fmt(totals['SL'])}   OTHER {fmt(totals['OTHER'])}\n")
         headline.append("Total 为已确认 PnL；OTHER 含已核实残仓结算，待结算部分未计入。", style="dim")
         headline.append(f"\n残仓结算待定：{sum(bool(s.get('other_pending')) for s in sessions)} 场", style="dim")
         chart_width = width // 2 - 6 if width >= 95 else width - 6
         curve = Panel(Group(headline, history_chart(sessions, chart_width)), title="HISTORY / 累计已确认 PnL", box=box.SQUARE)
-        dist = Panel(distribution(sessions), title="TP / BA / OTHER 分布", box=box.SQUARE)
+        dist = Panel(distribution(sessions), title="TP / SL / OTHER 分布", box=box.SQUARE)
         row = Table.grid(expand=True)
         row.add_column(ratio=1)
         if width >= 95:
@@ -351,9 +365,9 @@ def compact_view(snapshot: Record, current: Record, sessions: list[Record], now:
         signal.append(f"{detector} {current['signal_counts'][detector]}次 / {latest.get('outcome','—')} {state}\n")
     total = sum((sum((Decimal(v) for v in s["pnl_by_role"].values()), Decimal(0)) for s in sessions), Decimal(0))
     tp = sum((Decimal(s["pnl_by_role"]["TP"]) for s in sessions), Decimal(0))
-    ba = sum((Decimal(s["pnl_by_role"]["BA"]) for s in sessions), Decimal(0))
-    other = total - tp - ba
-    pnl = Text(f"已确认 PnL USDC: Total {fmt(total)} / TP {fmt(tp)} / BA {fmt(ba)} / OTHER {fmt(other)}\n")
+    sl = sum((Decimal(s["pnl_by_role"]["SL"]) for s in sessions), Decimal(0))
+    other = total - tp - sl
+    pnl = Text(f"已确认 PnL USDC: Total {fmt(total)} / TP {fmt(tp)} / SL {fmt(sl)} / OTHER {fmt(other)}\n")
     pnl.append(f"OTHER 含已核实残仓结算；待定 {sum(bool(s.get('other_pending')) for s in sessions)} 场；[h] 历史周期 [a] 归档索引 [q] 退出（归档继续）", style="dim")
     pieces = [title, top, signal_post_row(Panel(signal, title="SIGNALS", box=box.SQUARE), current, width), pnl]
     if height >= 22:

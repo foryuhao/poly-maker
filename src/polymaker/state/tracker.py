@@ -7,7 +7,8 @@ state machine from the README:
     Trade:  MATCHED -> MINED -> CONFIRMED
                  └──────────-> FAILED (roll back the optimistic fill, reconcile)
 
-Because we quote post-only, we are always the maker; `our_side` is our side of
+Maker events are normalized from our maker legs. Explicitly registered CA taker
+orders use their own signed order ID and cash costs; `our_side` is our side of
 each match. We apply the fill optimistically at MATCHED and reverse it on FAILED.
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from types import SimpleNamespace
 
 from polymaker.domain import Fill, OpenOrder, OrderState, Side, TradeState
 from polymaker.logging import get_logger
@@ -47,6 +49,33 @@ class TradeEvent:
     ts: float
     maker_order_id: str | None = None
     market_id: str | None = None
+    liquidity_role: str = "MAKER"
+    principal_usdc: str | None = None
+    fee_usdc: str | None = None
+
+
+def fill_cost(fill) -> Decimal:
+    """Cash basis; old maker records retain exactly their original arithmetic."""
+    principal = getattr(fill, "principal_usdc", None)
+    fee = getattr(fill, "fee_usdc", None)
+    if getattr(fill, "liquidity_role", "MAKER") == "TAKER" and (principal is None or fee is None):
+        raise ValueError("TAKER_COST_UNAVAILABLE")
+    principal = Decimal(str(principal)) if principal is not None else Decimal(str(fill.size))*Decimal(str(fill.price))
+    fee = Decimal(str(fee)) if fee is not None else Decimal(0)
+    if not principal.is_finite() or not fee.is_finite() or principal < 0 or fee < 0:
+        raise ValueError("FILL_COST_INVALID")
+    return principal + fee
+
+
+def fill_unit_cost(fill) -> Decimal:
+    if getattr(fill, "principal_usdc", None) is None and getattr(fill, "fee_usdc", None) is None:
+        return Decimal(str(fill.price))
+    return fill_cost(fill)/Decimal(str(fill.size))
+
+
+def fill_record_cost(record) -> Decimal:
+    """The same cash basis when reading journal/result fill dictionaries."""
+    return fill_cost(SimpleNamespace(**record))
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +148,24 @@ class UserEventProcessor:
 
     def owned_record(self, order_id: str) -> dict[str, object] | None:
         return self._store.owned_order(order_id)
+
+    def events_from_trade(self, trade):
+        return [TradeEvent(leg.asset_id, leg.side, leg.price, leg.matched_amount,
+                          trade.trade_id, trade.status, trade.timestamp, leg.order_id,
+                          trade.market or None) for leg in trade.maker_legs]
+
+    def normalize_owned_order(self, row):
+        from polymaker.userstream.parse import normalize_order
+
+        return normalize_order(row)
+
+    def fill_quantity_mismatch(self, event, owned, observed_prior):
+        try:
+            expected = float(owned['submitted_qty'])
+        except (ValueError, TypeError, KeyError):
+            return True
+        return (exceeds_tolerance(event.size, expected, self.single_fill_tolerance)
+                or exceeds_tolerance(observed_prior+Decimal(str(event.size)), expected, self.quantity_tolerance))
 
     def owned_candidates(self, token_id: str, side: Side) -> list[str]:
         return [str(r["order_id"]) for r in self._store.owned_orders()
@@ -239,10 +286,9 @@ class UserEventProcessor:
         assert owned is not None
         try:
             expected_side = Side(str(owned["side"]))
-            expected_qty = float(owned["submitted_qty"])
             expected_price = float(owned["submitted_price"])
         except (ValueError, TypeError, KeyError):
-            expected_side, expected_qty, expected_price = None, -1.0, float("nan")
+            expected_side, expected_price = None, float("nan")
         observed_prior = sum(Decimal(str(event.size)) for prior_key, event in self.fill_records.items()
                              if prior_key[1] == oid and prior_key in self.applied_fill_keys
                              and prior_key not in self.quarantined_fill_keys
@@ -252,15 +298,23 @@ class UserEventProcessor:
             or ev.our_side is not expected_side
             or condition_id != owned["condition_id"]
             or (ev.market_id is not None and ev.market_id != owned["condition_id"])
-            or ev.size < 0 or exceeds_tolerance(ev.size, expected_qty, self.single_fill_tolerance)
+            or ev.size < 0 or self.fill_quantity_mismatch(ev, owned, observed_prior)
             or (ev.our_side is Side.BUY and exceeds_tolerance(ev.price, expected_price, self.price_tolerance))
             or (ev.our_side is Side.SELL and exceeds_tolerance(expected_price, ev.price, self.price_tolerance))
-            or exceeds_tolerance(observed_prior + Decimal(str(ev.size)), expected_qty, self.quantity_tolerance)
         )
         prior = self.fill_records.get(key)
         if prior is not None and (prior.token_id != ev.token_id or prior.our_side is not ev.our_side
                                   or not within_tolerance(prior.price, ev.price, self.price_tolerance)
                                   or not within_tolerance(prior.size, ev.size, self.quantity_tolerance)):
+            mismatch = True
+        if ev.liquidity_role not in {"MAKER", "TAKER"}:
+            mismatch = True
+        try:
+            fill_cost(ev)
+            if prior is not None and (prior.liquidity_role != ev.liquidity_role
+                    or ev.liquidity_role == "TAKER" and fill_cost(prior) != fill_cost(ev)):
+                mismatch = True
+        except (ValueError, ArithmeticError):
             mismatch = True
         if mismatch:
             self.fill_records.setdefault(key, ev)
@@ -276,7 +330,7 @@ class UserEventProcessor:
             return
         if ev.size == 0:
             return
-        log.info("owned_maker_fill_seen", trade_id=ev.trade_id, order_id=oid,
+        log.info("owned_taker_fill_seen" if ev.liquidity_role == "TAKER" else "owned_maker_fill_seen", trade_id=ev.trade_id, order_id=oid,
                  token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
                  price=ev.price, source=source, status=ev.status.value)
         if source == "REST" and ev.status in (TradeState.MINED, TradeState.CONFIRMED) and key not in self.applied_fill_keys:
@@ -296,8 +350,9 @@ class UserEventProcessor:
                 self._fill_observe(ev, condition_id, source, received_at_us,
                     connection_generation, "DUPLICATE", received_monotonic_ns)
                 return
-            fill = Fill(ev.token_id, ev.our_side, ev.price, ev.size,
-                        f"{len(ev.trade_id)}:{ev.trade_id}{oid}", ev.ts, is_maker=True)
+            fill = Fill(ev.token_id, ev.our_side, float(fill_unit_cost(ev)), ev.size,
+                        f"{len(ev.trade_id)}:{ev.trade_id}{oid}", ev.ts,
+                        is_maker=ev.liquidity_role == "MAKER")
             if not self._store.apply_fill(fill):
                 # duplicate at the persistent layer (replay after CONFIRMED or
                 # across restarts): restore evidence in this session but apply
@@ -314,11 +369,12 @@ class UserEventProcessor:
             self.applied_fill_keys.add(key)
             self._fill_observe(ev, condition_id, source, received_at_us,
                 connection_generation, "ACCEPTED", received_monotonic_ns)
-            log.info("owned_maker_fill_applied", trade_id=ev.trade_id, order_id=oid,
+            log.info("owned_taker_fill_applied" if ev.liquidity_role == "TAKER" else "owned_maker_fill_applied", trade_id=ev.trade_id, order_id=oid,
                      token=ev.token_id[:12], side=ev.our_side.value, qty=ev.size,
                      price=ev.price, source=source, status=ev.status.value)
             self._on_fill(fill)
-            self._on_maker_fill(ev)
+            if ev.liquidity_role == "MAKER":
+                self._on_maker_fill(ev)
             self._on_change(condition_id)
 
         elif ev.status in (TradeState.CONFIRMED, TradeState.MINED):

@@ -17,7 +17,7 @@ from polymaker.settlement_sweep import (
     Position,
     resolve_settlement_context,
 )
-from polymaker.state.tracker import exceeds_tolerance
+from polymaker.state.tracker import exceeds_tolerance, fill_cost, fill_record_cost
 
 MERGE_START_S = 240
 
@@ -211,7 +211,7 @@ async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
             released = {}
             if result["status"] == "CONFIRMED":
                 for token, size in before.items():
-                    cost = sum((Decimal(str(f.price)) * Decimal(str(f.size)) for f in executor.economic_fills()
+                    cost = sum((fill_cost(f) for f in executor.economic_fills()
                                 if f.token_id == token), Decimal(0)) - executor.merged_cost.get(token, Decimal(0))
                     released[token] = cost * qty / size
                 result["released_cost_usdc"] = str(sum(released.values(), Decimal(0)))
@@ -311,7 +311,7 @@ def validate_merge_history(group, session, summary, check):
                     released = Decimal(0)
                     for token, _field in ((p["yes_token_id"], "before_yes_raw"),
                                          (p["no_token_id"], "before_no_raw")):
-                        gross_cost = sum((Decimal(str(f["size"])) * Decimal(str(f["price"]))
+                        gross_cost = sum((fill_record_cost(f)
                                           for f in close["confirmed_fills"] if f["token_id"] == token), Decimal(0))
                         owned_qty_raw = sum((Decimal(str(f["size"])) * SCALE
                                              for f in close["confirmed_fills"] if f["token_id"] == token), Decimal(0)) - merged

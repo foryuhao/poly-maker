@@ -56,6 +56,33 @@ def test_ws_preflight_failure_renders_original_cause():
         observer.close()
 
 
+def test_m1_heartbeat_reports_waits_data_quality_and_execution_without_wait_spam():
+    observer = HumanRunLog(m1_mode=True)
+    try:
+        lines = observer.render("events", [
+            ("sm_m1_wait", {"reason": "M1_INPUT_PENDING"}),
+            ("sm_m1_heartbeat", {
+                "elapsed_s": 130, "state": "TRADING", "status": "DATA_UNAVAILABLE",
+                "reason": "M1_BOOK_UNAVAILABLE", "ws_connected": True, "ws_updates": 0,
+                "transport_age_ms": 1200, "usable_books": {"YES": False, "NO": False},
+                "pending_frames": 2, "signal_counts": {"AP_CONFIRMED": 3},
+                "unavailable_since_last": 12, "signal_reason": "M1_PROCESSING_GAP",
+                "submitted_orders": 0, "confirmed_fills": 0, "own_active": False,
+                "inventory_yes": "0", "inventory_no": "0", "capital_committed_usdc": "0",
+                "capital_limit_usdc": "20",
+            }),
+        ])
+        text = "\n".join(lines)
+        for expected in ("M1 Heartbeat | T+130s", "Status=DATA_UNAVAILABLE", "Updates=0",
+                         "YES=UNAVAILABLE NO=UNAVAILABLE", "AP=3 RF=0 EX=0",
+                         "UnavailableSinceLast=12", "SignalReason=M1_PROCESSING_GAP",
+                         "Submitted=0", "ConfirmedFills=0", "Spend+Reserved=0/20 USDC"):
+            assert expected in text
+        assert "M1 Wait:" not in text
+    finally:
+        observer.close()
+
+
 def test_obi_fill_side_and_structured_cancel_ack_render_actual_facts():
     observer = HumanRunLog()
     quote = dict(outcome='YES', token_id='up', side='BUY', price=.26, size=5)

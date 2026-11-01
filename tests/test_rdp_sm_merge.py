@@ -71,6 +71,19 @@ async def test_merge_preserves_unpaired_shares_and_releases_only_verified_cost(e
     assert account["yes_inventory"] == 2 and account["no_inventory"] == 0
 
 
+async def test_m1_reuses_t240_merge_with_natural_residual(env):
+    v, ex = await paired(env, no=3)
+    ex.cfg.rdp_sm.normal_entry_mode = "m1_v1"
+    assert ex.capital_limit == 20
+    v.time = START + 239
+    assert not await merge_confirmed_pairs(ex)
+    v.time = START + 240
+    assert await merge_confirmed_pairs(ex)
+    assert ex.merged_pairs == 3
+    assert ex.economic_inventory() == (Decimal(2), Decimal(0))
+    assert ex.safe_to_continue and ex.repair_episode is None
+
+
 @pytest.mark.parametrize("quantity,merged", [(0.099999, False), (0.1, True)])
 async def test_dust_pairs_skip_chain_reads_and_exact_threshold_merges(env, quantity, merged):
     v, ex = await paired(env, no=quantity)

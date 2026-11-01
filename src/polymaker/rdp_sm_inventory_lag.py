@@ -14,6 +14,7 @@ from threading import RLock
 
 from polymaker.domain import Side, TradeState
 from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
+from polymaker.state.tracker import fill_cost
 
 ZERO = Decimal(0)
 EPS = Decimal(".000001")
@@ -22,7 +23,9 @@ NAMES = ("time", "open_orders", "trades", "positions", "capital")
 
 def fill_signature(fills):
     return tuple(sorted((f.trade_id, f.maker_order_id, f.token_id, f.our_side.value,
-                         str(Decimal(str(f.size))), str(Decimal(str(f.price)))) for f in fills))
+                         str(Decimal(str(f.size))), str(Decimal(str(f.price))))
+                        + ((str(fill_cost(f)),) if getattr(f, "liquidity_role", "MAKER") == "TAKER" else ())
+                        for f in fills))
 
 
 class InventoryLagAdmission:
@@ -172,10 +175,16 @@ class InventoryLagAdmission:
         for trade in good["trades"].data:
             ours = [leg for leg in trade["maker_legs"]
                     if str(leg.get("maker_address", "")).lower() == e.gateway.funder.lower()]
+            if trade["trader_side"] == "TAKER":
+                spec = getattr(e.processor, "taker_orders", {}).get(trade.get("taker_order_id"))
+                if (spec is None or trade["taker_order_id"] not in e.known or ours
+                        or trade.get("taker_side") != "BUY" or trade.get("taker_asset_id") != spec["token_id"]):
+                    return "INVENTORY_LAG_EXTERNAL_TRADE"
+                continue
             if (trade["trader_side"] != "MAKER" or not ours
                     or any(leg["order_id"] not in e.known or leg["side"] != "BUY" for leg in ours)):
                 return "INVENTORY_LAG_EXTERNAL_TRADE"
-        spent = sum((Decimal(str(f.size))*Decimal(str(f.price)) for f in fills), ZERO)
+        spent = sum((fill_cost(f) for f in fills), ZERO)
         official = Decimal(str(account["official_balance_usd"]))
         if (e.starting_collateral is None
                 or abs(e.starting_collateral-spent+e.merged_pairs-official) > EPS

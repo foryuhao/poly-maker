@@ -1,0 +1,71 @@
+# Dedicated public observer: python -m polymaker.rdp_sm_m1_observe
+# Do not run this observation profile through the account-bound rdp-sm-run CLI.
+[wallet]
+chain_id = 137
+signature_type = 2
+clob_host = "https://clob.polymarket.com"
+gamma_host = "https://gamma-api.polymarket.com"
+data_api_host = "https://data-api.polymarket.com"
+polygon_rpc = "https://polygon-bor-rpc.publicnode.com"
+
+[execution]
+post_only = true
+
+[rdp_sm]
+normal_entry_mode = "m1_v1"
+normal_cutoff_sec = 240
+target_delta = "0"
+
+[rdp_sm.m1]
+observation_only = true
+out_of_order_tolerance_ms = 20
+order_budget_usdc = 5
+session_budget_usdc = 20
+start_sec = 100
+observation_start_sec = 15
+cutoff_sec = 240
+# Startup reference: native POST 307.334ms in 20261031 live-write-traces.json.
+# Floor adds headroom; recent real POSTs may raise it, GETs never lower it.
+post_budget_floor_ms = 400
+min_live_budget_ms = 50
+max_cancel_rtt_ms = 1500
+record_events = true
+output_dir = "research_outputs/m1_isolated/events"
+
+[rdp_sm.m1.signal]
+profile = "cal-16"
+min_round_shares = "0.5"
+min_round_depth_fraction = "0.0001"
+round_window_sec = 0.5
+ap_min_shares = "1"
+ap_min_depth_fraction = "0.0001"
+ap_min_share = "0.65"
+ap_min_records = 2
+ap_max_concentration = "0.95"
+ap_window_sec = 0.75
+rf_rounds = 2
+rf_sequence_span_sec = 15
+rf_min_median_recovery = "0.50"
+rf_ttl_sec = 8
+combination_span_sec = 20
+track_visible_anchor = true
+flow_requires_top_match = false
+mirror_complement_flow = true
+
+[rdp_sm.ba]
+max_book_age_ms = 200
+max_pair_skew_ms = 200
+
+[rdp_sm.sync_observe]
+enabled = false
+use_for_execution = false
+order_interval_s = 1
+account_interval_s = 2
+output_dir = "research_outputs/m1_isolated/unused_private_sync"
+
+[paths]
+db = "research_outputs/m1_isolated/unused_state.db"
+# The public observer never reads [paths] or acquires this account lease.
+# Keep the common account guard if this profile is accidentally used by the trading CLI.
+journal_dir = "journal"
+log_dir = "research_outputs/m1_isolated/logs"

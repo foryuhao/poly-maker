@@ -12,6 +12,7 @@ from polymaker.rdp_sm import repair_required
 from polymaker.rdp_sm_execution import WindowQuote
 from polymaker.rdp_sm_quotes import QuoteUnavailable
 from polymaker.repair_model import RepairOrder, RepairPlanner, RepairState
+from polymaker.state.tracker import fill_cost
 
 
 class RepairController:
@@ -54,7 +55,7 @@ class RepairController:
         no_p = 1-float((snapshot.no.best_bid+snapshot.no.best_ask)/2)
         if abs(p-no_p) > .02000000001:
             raise QuoteUnavailable("REPAIR_PROBABILITY_INCONSISTENT")
-        spent = sum((Decimal(str(f.price))*Decimal(str(f.size)) for f in e.economic_fills()), Decimal(0))
+        spent = sum((fill_cost(f) for f in e.economic_fills()), Decimal(0))
         cash = max(Decimal(0), Decimal(15)-e.committed())
         if active is None and self.lifecycle.account:
             cash = min(cash, Decimal(str(self.lifecycle.account["basic_spendable_budget_usd"])))

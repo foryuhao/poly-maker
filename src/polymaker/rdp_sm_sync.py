@@ -14,6 +14,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 
+from polymaker.rdp_sm_ca_taker import cache_trade_legs
 from polymaker.rdp_sm_recovery import retry_read
 from polymaker.rdp_sm_sync_reads import ObservedMarket, ReadEvidence
 
@@ -115,7 +116,7 @@ class SyncObserver:
     @staticmethod
     def position_proof_signature(oid, order, trades, capital, positions):
         legs = sorted(((t["trade_id"], t["status"], leg) for t in trades
-                       for leg in t["maker_legs"] if leg["order_id"] == oid), key=lambda x: x[0])
+                       for leg in cache_trade_legs(t) if leg["order_id"] == oid), key=lambda x: x[0])
         return json.dumps([order, legs, capital, positions], sort_keys=True)
 
     def accept_position_proofs(self, snapshot, ids):
@@ -472,7 +473,7 @@ class SyncObserver:
         trades = (trade_evidence.data if trade_evidence.complete
                   else json.loads(trade_evidence.partial_json))
         for trade in trades:
-            for leg in trade["maker_legs"]:
+            for leg in cache_trade_legs(trade):
                 oid = leg["order_id"]
                 if (oid not in self._pending and oid not in self._details
                         and oid not in retired
@@ -575,7 +576,7 @@ class SyncObserver:
             agrees = False
             if trades.complete:
                 legs = {(trade["trade_id"], leg["order_id"]): leg
-                        for trade in trades.data for leg in trade["maker_legs"] if leg["order_id"] == oid}
+                        for trade in trades.data for leg in cache_trade_legs(trade) if leg["order_id"] == oid}
                 quantity = sum((Decimal(str(leg["matched_amount"])) for leg in legs.values()), Decimal(0))
                 delta = Decimal(str(row["size_matched"])) - quantity
                 refs_match = (set(row["associate_trades"]) == {key[0] for key in legs}

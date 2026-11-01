@@ -1,0 +1,92 @@
+{
+  "version": "orderbook-toolbox-v1",
+  "date_beijing": "2026-11-01",
+  "status": "RESEARCH_PROPOSAL_NOT_CALIBRATED_NOT_IMPLEMENTED",
+  "price_usage": "LEVEL_IDENTITY_ONLY_NO_PRICE_RETURN_FEATURES",
+  "common": {
+    "window_ms": 750,
+    "subwindow_ms": 250,
+    "closed_window_processing_budget_ms": 50,
+    "min_round_shares": 5,
+    "min_round_depth_fraction": 0.1,
+    "refill_cross_fraction": 0.5,
+    "refill_hold_fraction": 0.4,
+    "refill_hold_ms": 100,
+    "round_remains_open_until_fixed_window_end": true,
+    "stable_success_min_end_recovery": 0.5,
+    "round_sequence_span_ms": 5000,
+    "max_book_local_age_ms": 200,
+    "max_trade_source_age_ms": 500,
+    "primary_sample_excludes_self_contamination": true,
+    "unknown_is_zero": false,
+    "source_time_reordering": false
+  },
+  "AP": {
+    "depth_levels": 3,
+    "min_direction_shares": 10,
+    "min_direction_opposite_depth_fraction": 0.1,
+    "min_direction_share": 0.8,
+    "min_direction_trade_records": 3,
+    "min_occupied_subwindows": 2,
+    "last_subwindow_must_be_occupied": true,
+    "max_single_record_volume_fraction": 0.8,
+    "exit_direction_share_below": 0.6,
+    "exit_volume_minimum_fraction_below": 0.5,
+    "exit_on_empty_last_subwindow": true,
+    "post_confirmation_ttl_ms": 750
+  },
+  "AA": {
+    "book_side": "ASK",
+    "aggressor_side": "BUY",
+    "recovery_measure": "NET_FROM_RUNNING_TROUGH_CAPPED_AT_VISIBLE_DEFICIT",
+    "exit_recovery_fraction_below": 0.2,
+    "post_confirmation_ttl_ms": 750
+  },
+  "RF": {
+    "required_consecutive_successful_rounds": 3,
+    "min_median_end_recovery": 0.7,
+    "new_failed_round_ends_signal": true,
+    "post_confirmation_ttl_ms": 1000
+  },
+  "LW": {
+    "frozen_depth_levels": 3,
+    "preceding_trade_buffer_ms": 500,
+    "min_visible_loss_fraction": 0.3,
+    "min_unexplained_loss_fraction": 0.2,
+    "min_unexplained_share_of_loss": 0.5,
+    "hold_ms": 100,
+    "exit_unexplained_loss_fraction_below": 0.1,
+    "exit_unexplained_share_of_loss_below": 0.25,
+    "semantic_status": "VISIBLE_WITHDRAWAL_SUSPECTED_NOT_EXACT_CANCELLATIONS",
+    "post_confirmation_ttl_ms": 750
+  },
+  "EX": {
+    "requires_confirmed_AP": true,
+    "max_each_subwindow_rate_reference_fraction": 0.5,
+    "max_total_volume_reference_fraction": 0.25,
+    "min_accepted_depth_or_BBO_events_per_subwindow": 1,
+    "exit_resumed_volume_reference_fraction_at_least": 0.5,
+    "post_confirmation_ttl_ms": 750
+  },
+  "DF": {
+    "reference_successful_rounds": 2,
+    "reference_rounds_must_be_consecutive": true,
+    "min_reference_median_recovery": 0.7,
+    "required_consecutive_failed_rounds": 2,
+    "comparable_relative_shock_ratio_min": 0.5,
+    "comparable_relative_shock_ratio_max": 2.0,
+    "max_failed_round_end_recovery": 0.3,
+    "max_failed_round_recovery_reference_fraction": 0.5,
+    "end_on_new_successful_round_recovery_at_least": 0.7,
+    "post_confirmation_ttl_ms": 1000
+  },
+  "combinations": {
+    "same_token_and_generation": true,
+    "ordered_max_A_confirmation_to_B_start_ms": 1000,
+    "max_first_evidence_to_final_confirmation_ms": 5000,
+    "simultaneous_requires_live_overlap": true,
+    "ordered_A_must_be_live_at_B_start": true,
+    "shared_evidence_is_independent_confirmation": false,
+    "extend_existing_CA_BA_deadlines": false
+  }
+}

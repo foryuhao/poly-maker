@@ -83,7 +83,7 @@ class ExecutionVenue(Venue):
             self.post_requests.append(deepcopy(body))
             attempts = self.executor.gateway._client.batch_attempts
             assert len(attempts) == len(body)
-            assert self.executor.committed() <= Decimal("15")
+            assert self.executor.committed() <= self.executor.capital_limit
             lines = journal_records(self.executor.journal.path)
             replies = []
             for row, attempt in zip(body, attempts, strict=True):

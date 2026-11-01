@@ -15,6 +15,7 @@ from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
 from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, repair_buy_quantity
 from polymaker.rdp_sm_repair import RepairController
 from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
+from polymaker.state.tracker import fill_cost
 
 
 class PathRepairController(RepairController):
@@ -134,7 +135,7 @@ class PathRepairController(RepairController):
                      if f.token_id == e.meta.yes.token_id), Decimal(0))
         own_n = sum((Decimal(str(f.size)) for f in own
                      if f.token_id == e.meta.no.token_id), Decimal(0))
-        cost = sum((Decimal(str(f.price))*Decimal(str(f.size)) for f in own), Decimal(0))
+        cost = sum((fill_cost(f) for f in own), Decimal(0))
         return yes, no, own_y, own_n, cost
 
     def _point(self, p, elapsed, sigma, generation, *, historical=False,
@@ -198,6 +199,8 @@ class PathRepairController(RepairController):
         for fill in fills:
             key = fill.trade_id+":"+fill.maker_order_id
             value = (str(fill.size), str(fill.price))
+            if getattr(fill, "liquidity_role", "MAKER") == "TAKER":
+                value += (str(fill_cost(fill)),)
             if tuple(signature.get(key, ())) == value:
                 continue
             stamp = self.executor.fill_observed_at.get((fill.trade_id, fill.maker_order_id), {})

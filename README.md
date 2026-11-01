@@ -77,6 +77,33 @@ CA episode still owns confirmation, one-shot consumption, invalidation and
 the t0+3s deadline. TP and repair follow the actual opening inventory.
 Set `"signal"` to restore same-side entry (the backward-compatible default).
 
+CA opening execution defaults to `ca_entry_execution = "maker"`. Set `"taker"`
+for a price-capped FOK/FAK BUY at the Ask while retaining the same CA signal and
+direction policy. TP remains Maker and includes opening fees in its cost basis.
+Immediate BUY fills are checked against their signed dollar budget; price
+improvement may credit more shares than the nominal order size. Actual credited
+shares drive inventory and TP. Fully proved residuals of at most 0.01 shares
+are accepted as dust and do not trigger another minimum-size exit.
+`[rdp_sm.ca_taker] entry_price_ceiling_enabled = true` skips opening prices at
+or above `entry_price_ceiling` (default `"0.90"`), including allowed slippage.
+Set the switch to false to disable this entry filter; `max_price` still applies.
+See [CA Taker configuration and execution semantics](docs/development/CA_TAKER_ENTRY.md).
+
+`[rdp_sm.ca_matched_tp] taker_exit_on_expiry = true` cancels and reconciles an
+expired TP, then covers the original shares with opposite FAK Taker BUY orders.
+Orders round up to the $1 marketable minimum, even above the ordinary share
+limit; cheap excess reverse shares are held to settlement and costed separately.
+After terminal/trade/account proof, partial or empty fills retry the original
+uncovered quantity. Ambiguous orders or an unhedged exit failure block. It
+requires BA repair disabled. The default is false;
+`config/` explicitly enables it and uses CA same-side Taker entry. Expiry starts
+the exit; cancellation, reconciliation and execution can finish later.
+
+An opt-in `[rdp_sm.ca_pullback]` policy treats CA as a historical observation
+trigger, waits for both quotes to advance, then places one fixed maker order in
+the pullback area. It is disabled by default and requires same-side entry.
+See [the formation, deadlines, configuration and evidence](docs/development/CA_PULLBACK_ENTRY.md).
+
 `CA_BOOK_UNPROVEN` events in the session's CA `events.jsonl` include
 `payload.book_validation.failed_checks` and the matching BBO/depth prices,
 reported and verified ticks, generations, source/receipt ages and limits.
@@ -339,3 +366,63 @@ log directory). Upload `chat_report.md` for routine strategy review. Inspect
 `raw.log` for engineering anomalies. Run `uv run polymaker favorite-first-report
 --last 10` for a structured multi-market summary. Settlement and rebates stay
 `unknown` until an authoritative source supplies them.
+
+### M1 refill/exhaustion Maker strategy
+
+The opt-in M1 configuration observes independent YES/NO RF_BID + EX_SELL opportunities,
+one active maker order, a 5-USDC budget per order and a 20-USDC session spend cap.
+Submission eligibility runs from T100 until T240; T240 retains the existing close-proof
+and Merge path. Existing `config/` and `livecfg/` selections are unchanged.
+
+```bash
+.venv/bin/python -m polymaker.rdp_sm_m1_observe --config-dir config-m1
+```
+
+This dedicated public-data observer keeps CA's long-running live tests independent.
+It reuses the signal/feed modules, prints a heartbeat every 5 seconds, lowers CPU
+and I/O priority, and writes bounded observation logs under
+`research_outputs/m1_isolated/`. It never loads wallet credentials, takes the
+account lock, runs private synchronization or starts the trading engine. Do not
+use the old account-bound `rdp-sm-run --config-dir config-m1` for parallel observation.
+
+`config-m1` requires `observation_only = true`: an eligible public-data opportunity
+records `WOULD_POST` with `account_admission=NOT_CHECKED`; this verifies signal,
+quote and static timing checks, not account eligibility or execution. It records
+AP and RF candidates and their rejection reasons even when no combined opportunity
+forms. Source regressions up to 20ms follow CA's ignore-without-reordering rule;
+excluded sell volume still counts against EX's exhaustion threshold.
+
+This command observes one BTC 5-minute market, with a 360-second run limit.
+Add `--max-seconds 20` for a short connectivity check. See the
+[isolation and validation notes](docs/development/M1_ISOLATED_OBSERVATION.md) and
+[implementation and offline validation notes](docs/development/M1_REFILL_EXHAUSTION_IMPLEMENTATION.md)
+for the fixed signal lifetime, startup latency budget and event logs.
+
+Observation calibration uses the profile recorded under `rdp_sm.m1.signal`.
+The current observation window starts at T15 (`observation_start_sec`); the live
+start remains T100. Each market archives its configuration and results. To
+continue observing independent markets until a public-data `WOULD_POST` is recorded:
+
+```bash
+.venv/bin/python ops/m1_observe_until_marker.py --config-dir config-m1
+```
+
+The runner requires explicit observation mode and stops after completing the
+market that records the marker. Parameter values and interpretation are in the
+[calibration record](docs/development/M1_OBSERVATION_CALIBRATION_20261101.md).
+
+Continuous public-only calibration and paper settlement use a separate runner:
+
+```bash
+.venv/bin/python -m polymaker.rdp_sm_m1_study --study-dir research_outputs/m1_isolated/studies/<new-name>
+```
+
+It retains zero-signal markets, calibrates toward 1–2 signals per market, and
+freezes parameters after five consecutive qualifying calibration markets. The
+next 50 markets form the evaluation sample. Simulated orders use visible queue
+position, modeled POST/cancel latency and the existing M1 opportunity lifecycle;
+a signal alone is never counted as a fill. Official final outcome reads determine
+settlement, and incomplete execution evidence remains uncertain. No private
+client, account lock or exchange write is used. State, per-market records and
+summary are under the selected study directory. See the
+[study assumptions and operation notes](docs/development/M1_ISOLATED_OBSERVATION.md).

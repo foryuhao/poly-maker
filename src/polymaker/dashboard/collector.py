@@ -10,7 +10,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from polymaker.dashboard.model import Record, compact, summarize
+from polymaker.dashboard.model import PNL_ATTRIBUTION_VERSION, Record, compact, summarize
 
 KINDS = {
     "sm_session", "sm_run_result", "sm_placement_result", "sm_trade", "sm_ba_taker_trade",
@@ -23,6 +23,8 @@ KINDS = {
     "sm_ca_close_requested", "sm_restored_tp_ba_handoff", "sm_tp_ba_handoff_closed",
     "sm_repair_episode", "sm_ba_taker_state", "sm_network_exit_state",
     "sm_window_result",
+    "sm_m1_state", "sm_m1_wait",
+    "sm_ca_expiry_exit_result",
 }
 MAX_LINE = 4 * 1024 * 1024
 DIAGNOSTIC_PREFIX = re.compile(rb'^\{"ts": ([0-9.eE+\-]+), "kind": "(sm_sync_cache_read|sm_prepared)", "data": ')
@@ -88,7 +90,7 @@ class Collector:
         # Refresh persisted summaries when the accounting classification changes.
         for row in self.db.execute("SELECT sid,snapshot FROM summaries").fetchall():
             cached = json.loads(row["snapshot"])
-            if cached.get("pnl_attribution_version") != 2 or "post_counts" not in cached or "condition_id" not in cached:
+            if cached.get("pnl_attribution_version") != PNL_ATTRIBUTION_VERSION or "post_counts" not in cached or "condition_id" not in cached:
                 sid = row["sid"]
                 result = summarize(sid, self.events(sid), self.sources(sid))
                 self.db.execute("UPDATE summaries SET snapshot=? WHERE sid=?", (dumps(result), sid))
@@ -143,10 +145,11 @@ class Collector:
         return sorted(result, key=lambda s: (s.get("market_start") or 0, s["session_id"]))
 
     def _ca_source(self, payload: Record, sid: str) -> None:
-        runtime = payload.get("ca_observation", {}).get("runtime", {})
-        path = runtime.get("writer", {}).get("path")
+        # Disabled optional detectors (including M1 sessions) emit runtime=null.
+        runtime = (payload.get("ca_observation") or {}).get("runtime") or {}
+        path = (runtime.get("writer") or {}).get("path")
         if not path:
-            path = runtime.get("snapshot", {}).get("writer", {}).get("path")
+            path = ((runtime.get("snapshot") or {}).get("writer") or {}).get("path")
         if path:
             candidate = Path(path)
             if not candidate.is_absolute():
@@ -303,6 +306,11 @@ def public_snapshot(snapshot: Record) -> Record:
     sessions = []
     for s in snapshot["sessions"]:
         s = {**s, "normal_entry_mode": s["header"].get("normal_entry_mode")}
+        if "SL" in s["pnl_by_role"]:
+            # An already-open v2 terminal still indexes BA. A zero-only legacy
+            # field prevents it crashing while the user reopens the new view;
+            # the ledger, archive and displayed v3 attribution have three roles.
+            s["pnl_by_role"] = {**s["pnl_by_role"], "BA": "0"}
         if s["session_id"] == snapshot.get("current_session_id"):
             sessions.append(s)
         else:

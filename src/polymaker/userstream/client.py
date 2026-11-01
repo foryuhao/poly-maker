@@ -20,8 +20,6 @@ from polymaker.research.capture import CausalCapture, clock
 from polymaker.state.tracker import UserEventProcessor
 from polymaker.userstream.parse import (
     maker_order_id_evidence,
-    normalize_order,
-    normalize_trade,
     parse_trade,
 )
 
@@ -145,10 +143,14 @@ class UserStream:
     def _on_trade(self, msg: dict[str, Any]) -> None:
         self._journal_write("user_trade", msg)
         try:
-            parse_trade(msg)
+            trade = parse_trade(msg)
+            events = self._proc.events_from_trade(trade)
         except ValueError as exc:
             rows = msg.get("maker_orders")
             exact_ids: set[str] = set()
+            taker_id = msg.get("taker_order_id")
+            if taker_id in getattr(self._proc, "taker_orders", {}):
+                exact_ids.add(taker_id)
             if isinstance(rows, list):
                 for row in rows:
                     if not isinstance(row, dict):
@@ -156,7 +158,7 @@ class UserStream:
                     exact_ids.update(maker_order_id_evidence(row).ids)
             self._proc.on_malformed_trade(exact_ids, f"malformed WS trade: {exc}")
             return
-        for ev in normalize_trade(msg, self._address, self._other_token):
+        for ev in events:
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
             self._proc.on_trade(ev, cond, received_at_us=self._receipt_us,
                 received_monotonic_ns=self._receipt_ns,
@@ -164,7 +166,7 @@ class UserStream:
 
     def _on_order(self, msg: dict[str, Any]) -> None:
         self._journal_write("user_order", msg)
-        ev = normalize_order(msg)
+        ev = self._proc.normalize_owned_order(msg)
         if ev is not None:
             cond = self._condition_of_token(ev.token_id) or str(msg.get("market", ""))
             self._proc.on_order(ev, cond, received_at_us=self._receipt_us,

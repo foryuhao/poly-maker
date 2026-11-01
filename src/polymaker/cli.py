@@ -129,6 +129,9 @@ def rdp_sm_run(
         if human:
             observer = HumanRunLog(signature_type=cfg.wallet.signature_type,
                                    repair_mode=cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"},
+                                   m1_mode=cfg.rdp_sm.normal_entry_mode == "m1_v1",
+                                   m1_observation_only=cfg.rdp_sm.m1.observation_only,
+                                   m1_start_sec=cfg.rdp_sm.m1.entry_start_sec,
                                    normal_cutoff_sec=cfg.rdp_sm.normal_cutoff_sec,
                                    repair_cutoff_sec=cfg.rdp_sm.repair.cutoff_sec,
                                    secrets=secrets, console_handlers=logging.getLogger().handlers[:])

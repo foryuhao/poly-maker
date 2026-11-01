@@ -257,7 +257,9 @@ class ObserverReader:
     def order_row(row):
         if not isinstance(row, dict):
             raise ValueError("SYNC_ORDER_INVALID")
-        event = normalize_order(row)
+        # Observation preserves immediate BUY price improvement. Execution
+        # still requires an exact registered Taker ID and signed dollar proof.
+        event = normalize_order(row, allow_taker_buy_overfill=True)
         if (event is None or not event.market_id
                 or re.fullmatch(r"0x[0-9a-fA-F]{64}", event.market_id) is None
                 or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", event.order_id) is None):
@@ -292,7 +294,9 @@ class ObserverReader:
                     "market": parsed.market, "timestamp": parsed.timestamp, "maker_legs": legs,
                     "trader_side": row.get("trader_side"),
                     "taker_order_id": parsed.taker_order_id,
-                    "taker_asset_id": parsed.taker_asset_id, "taker_side": parsed.taker_side}
+                    "taker_asset_id": parsed.taker_asset_id, "taker_side": parsed.taker_side,
+                    **({k: row[k] for k in ("size", "price", "fee_usdc") if k in row}
+                       if row.get("trader_side") == "TAKER" else {})}
         rows = self._collection("/data/trades", {"market": market.condition_id}, convert)
         if len({r["trade_id"] for r in rows}) != len(rows):
             raise IncompleteRead(rows, ValueError("SYNC_DUPLICATE_TRADE"))

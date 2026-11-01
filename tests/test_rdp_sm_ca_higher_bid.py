@@ -33,10 +33,10 @@ async def set_prices(setup, higher, *, tie=False):
                     "asks":[{"price":str(D(bid)+D('.01')),"size":"20"}]})
 
 
-def test_higher_bid_is_configured_and_previous_policy_remains_selectable():
+def test_signal_side_is_configured_and_higher_bid_remains_selectable():
     assert RDPSMConfig().ca_entry_direction == "signal"
     cfg = Config.load("config", load_env=False).rdp_sm
-    assert cfg.normal_entry_mode == "ca_v1" and cfg.ca_entry_direction == "higher_bid"
+    assert cfg.normal_entry_mode == "ca_v1" and cfg.ca_entry_direction == "signal"
     assert cfg.ca_matched_tp.profit_per_share == D('.05') and cfg.ca_matched_tp.ttl_sec == 30
     assert not cfg.repair.ba_enabled
     with pytest.raises(ValidationError):

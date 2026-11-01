@@ -24,7 +24,7 @@ from polymaker.rdp_sm_execution import (
 from polymaker.rdp_sm_recovery import retry_read
 from polymaker.rdp_sm_sl_ledger import SMALL, exposure
 from polymaker.rdp_sm_unknown_recovery import UnknownRepairRecovery
-from polymaker.userstream.parse import normalize_order, parse_trade
+from polymaker.userstream.parse import parse_trade
 
 ZERO = Decimal(0)
 
@@ -106,6 +106,17 @@ class SLExecution:
 
     def on_post_start(self, attempt, goal):
         """Optional mode-specific final admission/claim under the native POST guard."""
+
+    async def prepare_order(self, attempt, goal, ticks):
+        return await self.e.gateway.prepare(
+            [Quote(attempt.quote.token_id, Side.BUY, float(goal[1]), float(goal[2]))],
+            self.e.meta, ticks)
+
+    def register_prepared_order(self, attempt, goal, signed):
+        """Optional exact-ID execution metadata, before any possible POST."""
+
+    def check_abandonment(self):
+        return self.e.check_repair_abandonment()
 
     @staticmethod
     def consistent(snapshot):
@@ -270,8 +281,7 @@ class SLExecution:
         try:
             ticks = {snapshot.yes.token_id: float(snapshot.yes.tick),
                      snapshot.no.token_id: float(snapshot.no.tick)}
-            signed = await e.gateway.prepare([Quote(a.quote.token_id, Side.BUY,
-                                                    float(price), float(qty))], e.meta, ticks)
+            signed = await self.prepare_order(a, goal, ticks)
             prepared_at = e.monotonic()
             a.expected_order_id = signed.order_ids[0]
             if (a.expected_order_id in self.lifecycle.prepared_ids
@@ -279,6 +289,7 @@ class SLExecution:
                 e.fatal = "PREPARED_ID_ALREADY_USED"
                 raise ValueError("PREPARED_ID_ALREADY_USED")
             self.lifecycle.prepared_ids.add(a.expected_order_id)
+            self.register_prepared_order(a, goal, signed)
             e.sl_order_ids.add(a.expected_order_id)
             e.preparation_started = True
             await e.journal.durable("sm_prepared", {"session_id": e.session_id, "payload": {
@@ -302,7 +313,7 @@ class SLExecution:
                 return reason is None
 
             def started():
-                if e.check_repair_abandonment():
+                if self.check_abandonment():
                     raise ValueError("HIGH_ENTRY_REPAIR_ABANDONED")
                 network = e.reads.network
                 if network.snapshot().active_batch is None and not network.begin_batch(self.group):
@@ -455,7 +466,7 @@ class SLExecution:
 
     def observe_order(self, a, row, trades, read_started):
         e, oid = self.e, self.oid(a)
-        ev = normalize_order(row)
+        ev = e.processor.normalize_owned_order(row)
         if ev is None:
             return
         if not (ev.order_id == oid and ev.market_id == e.meta.condition_id
@@ -466,7 +477,8 @@ class SLExecution:
             e.processor.quarantine_order(oid, e.fatal, notify=False)
             return
         previous = e.sl_terminal_quantities.get(oid)
-        if previous is not None and (not _terminal(ev, e.matched_remaining_tolerance_shares)
+        if previous is not None and (not _terminal(ev, e.matched_remaining_tolerance_shares,
+                taker_buy=e.processor.taker_spec(oid) is not None)
                 or Decimal(str(ev.size_matched)) != previous):
             e.sl_terminal_quantities.pop(oid, None)
             e.fatal = self.mode+"_TERMINAL_EVIDENCE_CONTRADICTION"
@@ -476,17 +488,14 @@ class SLExecution:
             parsed = parse_trade(raw)
             if parsed.market != e.meta.condition_id:
                 continue
-            for leg in parsed.maker_legs:
-                if leg.order_id != oid:
+            for fill in e.processor.events_from_trade(parsed):
+                if fill.maker_order_id != oid:
                     continue
-                from polymaker.state.tracker import TradeEvent
-
-                fill = TradeEvent(leg.asset_id, leg.side, leg.price, leg.matched_amount,
-                                  parsed.trade_id, parsed.status, parsed.timestamp, oid, parsed.market)
                 e.processor.on_trade(fill, parsed.market, source="REST")
                 legs[(parsed.trade_id, oid)] = fill
         qty = sum((Decimal(str(f.size)) for f in legs.values()), ZERO)
-        if (not self.post_done(a) or not _terminal(ev, e.matched_remaining_tolerance_shares)
+        if (not self.post_done(a) or not _terminal(ev, e.matched_remaining_tolerance_shares,
+                taker_buy=e.processor.taker_spec(oid) is not None)
                 or "associate_trades" not in row
                 or set(ev.associate_trades) != {k[0] for k in legs}
                 or abs(Decimal(str(ev.size_matched))-qty) > Decimal(".000001")
@@ -503,7 +512,8 @@ class SLExecution:
             self.last_progress = e.monotonic()
             self.changed.set()
             self.record("order_release", {"order_id": oid, "matched_quantity": str(qty),
-                "unfilled_released": str(Decimal(str(a.quote.size))-qty),
+                "unfilled_released": str(max(ZERO, Decimal(str(a.quote.size))-qty)),
+                "extra_filled_shares": str(max(ZERO, qty-Decimal(str(a.quote.size)))),
                 "source": "OWNED_TERMINAL_AND_COMPLETE_TRADE_SET", **self.evidence()})
 
     async def run(self):

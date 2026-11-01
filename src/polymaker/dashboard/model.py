@@ -10,6 +10,8 @@ Record = dict[str, Any]
 
 ZERO = Decimal(0)
 MICRO = Decimal("0.000001")
+PNL_ATTRIBUTION_VERSION = 3
+PNL_ROLES = ("TP", "SL", "OTHER")
 TRADE_KINDS = {"sm_trade", "sm_ba_taker_trade", "sm_network_exit_trade"}
 
 
@@ -25,7 +27,7 @@ def compact(kind: str, payload: Record) -> Record:
     """Keep useful evidence, never copy raw API responses or credentials."""
     if kind == "sm_session":
         fields = {"session_id", "slug", "normal_entry_mode", "runtime_source_sha256",
-                  "ca_entry_direction",
+                  "ca_entry_direction", "ca_entry_execution", "ca_taker", "ca_matched_tp", "ca_pullback", "m1", "m1_signal_spec", "m1_execution_policy",
                   "repair", "ca_observation", "ba", "ba_flow", "cooldown",
                   "normal_max_entry_price", "test_capital_limit_usdc"}
         payload = {k: v for k, v in payload.items() if k in fields}
@@ -34,7 +36,7 @@ def compact(kind: str, payload: Record) -> Record:
     elif kind == "sm_window_result":
         payload = {k: v for k, v in payload.items()
                    if k in {"window_id", "close_barrier", "block_reason", "placement_results"}}
-    elif kind in {"sm_ca_wait", "sm_obi_wait", "sm_quote_skipped"}:
+    elif kind in {"sm_ca_wait", "sm_obi_wait", "sm_m1_wait", "sm_quote_skipped"}:
         payload = {k: v for k, v in payload.items()
                    if k in {"reason", "state", "elapsed_s", "ws_diagnostics"}}
         if isinstance(payload.get("ws_diagnostics"), dict):
@@ -104,8 +106,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
             problems.append(f"{s['kind'].upper()}_PARTIAL_LINE")
         if s.get("diagnostics_dropped"):
             problems.append(f"{s['kind'].upper()}_DIAGNOSTICS_DROPPED")
-    ca_runtime = header.get("ca_observation", {}).get("runtime", {})
-    outcomes = ca_runtime.get("snapshot", {}).get("outcomes", {})
+    ca_runtime = (header.get("ca_observation") or {}).get("runtime") or {}
+    outcomes = (ca_runtime.get("snapshot") or {}).get("outcomes") or {}
     tokens = {str(p["token_id"]): side for side, p in outcomes.items() if p.get("token_id")}
     roles, orders, pending_orders = {}, {}, set()
     ba_windows = {
@@ -133,9 +135,10 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
             quote = p.get("quote", {})
             oid = p.get("order_id") or p.get("expected_order_id")
             wid = quote.get("window_id", "")
-            role = ("TP" if wid.endswith((":ca-tp", ":restored-tp")) else
+            role = ("EXIT" if wid.endswith(":ca-expiry-exit") else
+                    "TP" if wid.endswith((":ca-tp", ":restored-tp")) else
                     "BA" if wid in ba_windows or any(marker in wid for marker in (":ba:", ":ba-handoff:"))
-                    else "NORMAL")
+                    else "M1" if header.get("normal_entry_mode") == "m1_v1" else "NORMAL")
             if p.get("post_started"):
                 attempt_key = p.get("attempt_id") or oid
                 if attempt_key:
@@ -178,6 +181,10 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                     problems.append("CONFLICTING_CONFIRMED_FILL")
                 if old is None or k != "sm_trade":
                     confirmed[key] = e
+        elif k == "sm_m1_state":
+            phase = "M1 / " + str(p.get("state", "UNKNOWN"))
+        elif k == "sm_m1_wait":
+            reason = p.get("reason")
         elif k == "sm_strategy_window":
             phase = p.get("state", phase)
             for quote in p.get("quotes", []):
@@ -191,7 +198,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                 phase = "REPAIR / WAIT_BA"
             elif p.get("event") == "COMPLETE_WITH_RESIDUAL_TOLERANCE":
                 phase = "NORMAL / RESIDUAL_RETAINED"
-        elif k in {"sm_ba_taker_result", "sm_network_exit_result"}:
+        elif k in {"sm_ba_taker_result", "sm_network_exit_result", "sm_ca_expiry_exit_result"}:
             for order in p.get("orders", []):
                 if order.get("complete"):
                     resolved_taker.add(order.get("order_id"))
@@ -256,8 +263,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                 and any(number(p.get(field)) is None for field in ("principal_usdc", "fee_usdc"))):
             problems.append("TAKER_EXACT_COST_PENDING")
             continue
-        principal = number(p.get("principal_usdc", qty * price))
-        fee = number(p.get("fee_usdc", 0))
+        principal = number(p["principal_usdc"] if p.get("principal_usdc") is not None else qty * price)
+        fee = number(p["fee_usdc"] if p.get("fee_usdc") is not None else 0)
         if principal is None or fee is None or principal < 0 or fee < 0:
             problems.append("INVALID_FILL_COST")
             continue
@@ -270,6 +277,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
         if role not in {"TAKER", "EXIT"} or key[1] in resolved_taker:
             pending_orders.discard(key[1])
     fills.sort(key=lambda f: f["offset"])
+    expiry_exit_orders = {oid for oid, order in orders.items()
+                          if order["quote"].get("window_id", "").endswith(":ca-expiry-exit")}
     queues: dict[str, deque[Record]] = {"YES": deque(), "NO": deque()}
     pairs = []
     for fill in fills:
@@ -278,8 +287,11 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
         while remaining > 0 and opposite:
             old = opposite[0]
             qty = min(remaining, old["remaining"])
-            category = ("BA" if fill["role"] == "TAKER" else
-                        fill["role"] if fill["role"] in {"TP", "BA"} else "OTHER")
+            # SL is the explicit TP-expiry Taker path, not every Taker or
+            # generic EXIT. Legacy BA and all other pairing stay in OTHER.
+            category = ("TP" if fill["role"] == "TP" else
+                        "SL" if fill["role"] == "EXIT" and fill["order_id"] in expiry_exit_orders
+                        else "OTHER")
             pairs.append({"category": category, "exit_role": fill["role"], "quantity": str(qty),
                           "pnl": str(qty * (1 - old["fill"]["unit_cost"] - fill["unit_cost"])),
                           "opening_order_id": old["fill"]["order_id"], "closing_order_id": fill["order_id"],
@@ -297,7 +309,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                  "cost": str(lot["remaining"] * lot["fill"]["unit_cost"])}
                 for side in queues for lot in queues[side]]
     by_role = {role: sum((Decimal(p["pnl"]) for p in pairs if p["category"] == role), ZERO)
-               for role in ("TP", "BA", "OTHER")}
+               for role in PNL_ROLES}
     pair_pnl = sum(by_role.values(), ZERO)
     paired_qty = sum((Decimal(p["quantity"]) for p in pairs), ZERO)
     if merged_qty > paired_qty + MICRO:
@@ -320,7 +332,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
     if pending_fills or pending_orders:
         problems.append("EXECUTION_CONFIRMATION_PENDING")
     ca_report = final.get("ca_observation") or ca_runtime
-    ca_writer = ca_report.get("writer", ca_report.get("snapshot", {}).get("writer", {}))
+    ca_writer = ca_report.get("writer") or (ca_report.get("snapshot") or {}).get("writer") or {}
     if ca_writer.get("failure") or ca_writer.get("dropped"):
         problems.append("CA_WRITER_INCOMPLETE")
     ca_sequence = max((s.get("seq", 0) for s in sources if s["kind"] == "ca"), default=0)
@@ -374,6 +386,10 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
     last_ts = max((s.get("last_ts", 0) for s in sources if s["kind"] == "risk"), default=0)
     total_pnl = pair_pnl + residual_pnl if residual_pnl is not None and not problems else None
     post_counts = {role: {side: 0 for side in ("YES", "NO")} for role in ("CA", "TP", "BA")}
+    if header.get("normal_entry_mode") == "m1_v1":
+        post_counts["M1"] = {side: 0 for side in ("YES", "NO")}
+    if any(role == "EXIT" for _, role in post_attempts.values()):
+        post_counts["EXIT"] = {side: 0 for side in ("YES", "NO")}
     for side, role in post_attempts.values():
         category = ("CA" if role == "NORMAL" and header.get("normal_entry_mode") == "ca_v1"
                     else role)
@@ -397,7 +413,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
         "paired_quantity": str(paired_qty), "merged_pairs": str(merged_qty),
         "unmerged_pairs": str(max(ZERO, paired_qty - merged_qty)), "residual": residual,
         "pair_pnl": str(pair_pnl), "pnl_by_role": {k: str(v) for k, v in by_role.items()},
-        "pnl_attribution_version": 2, "pnl_events": pnl_events,
+        "pnl_attribution_version": PNL_ATTRIBUTION_VERSION, "pnl_events": pnl_events,
         "known_pnl": str(sum(by_role.values(), ZERO)),
         "other_pending": residual_pnl is None,
         "pairs": pairs, "fees": str(sum((f["fee"] for f in fills), ZERO)),

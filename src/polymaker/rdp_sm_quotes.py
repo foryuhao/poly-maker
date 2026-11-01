@@ -37,6 +37,8 @@ def make_quotes(
     official_time_read_duration_s=0,
     signal_side=None,
     normal_sigma=None,
+    normal_entry_price=None,
+    normal_taker=False,
 ):
     cfg = sizing if sizing is not None else RDPSMConfig()
     validate_market_sizing(cfg, Decimal(str(meta.min_order_size)))
@@ -99,12 +101,25 @@ def make_quotes(
         book = books[token]
         tick, bid, ask = (Decimal(str(book[k])) for k in ("tick", "best_bid", "best_ask"))
         price = (bid if signal_side == outcome else bid-tick) if state == "NORMAL" else bid
+        taking = normal_taker and state == "NORMAL" and signal_side == outcome
+        if taking:
+            if cfg.normal_entry_mode != "ca_v1" or cfg.ca_entry_execution != "taker":
+                raise QuoteUnavailable("CA_TAKER_NOT_CONFIGURED")
+            price = ask + cfg.ca_taker.max_slippage_ticks*tick
+            if price > cfg.ca_taker.max_price:
+                raise QuoteUnavailable("CA_TAKER_MAX_PRICE")
+            if cfg.ca_taker.entry_price_ceiling_enabled and price >= cfg.ca_taker.entry_price_ceiling:
+                raise QuoteUnavailable("CA_TAKER_ENTRY_PRICE_CEILING")
+        if state == "NORMAL" and signal_side == outcome and normal_entry_price is not None:
+            price = Decimal(str(normal_entry_price))
+            if price > bid:
+                raise QuoteUnavailable("NORMAL_PULLBACK_ABOVE_BID")
         if (
             not all(n.is_finite() for n in (tick, bid, ask, price, size))
             or tick <= 0
             or not tick <= price <= 1 - tick
             or price % tick != 0
-            or price >= ask
+            or (not taking and price >= ask)
         ):
             raise QuoteUnavailable("QUOTE_PRICE_TICK_OR_SIZE_INVALID")
         if state == "REBALANCE":

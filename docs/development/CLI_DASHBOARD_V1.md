@@ -61,9 +61,9 @@ systemctl --user disable --now polymaker-dashboard-archive.service
   仅统计 `post_started=true` 的订单尝试，同一尝试重复日志去重；已发送后拒单或 UNKNOWN
   仍计入，发送前 ABORTED 与预签名不计入。此处按订单尝试计数，EXECUTION 的 POST
   按 HTTP 请求计数，批量发单时两者可能不同。窄终端将 POST 排列在 SIGNALS 下方。
-- 已确认 PnL 的累计 Total / TP / BA / OTHER 曲线。Total 为三类已确认收益之和。
+- 已确认 PnL 的累计 Total / TP / SL / OTHER 曲线。Total 为三类已确认收益之和。
   分布按 FIFO 配对批次统计；已核实残仓结算每场作为一笔 OTHER，部分成交可能形成多个
-  配对批次，不当作不同订单或完整交易链。TP、BA、OTHER 共用六桶，自上而下为
+  配对批次，不当作不同订单或完整交易链。TP、SL、OTHER 共用六桶，自上而下为
   `P>1.0`、`0.5<P≤1.0`、`0<P≤0.5`、
   `−0.5<P≤0`、`−1.0<P≤−0.5`、`P≤−1.0`，单位 USDC/批；零收益归入 `−0.5<P≤0`。
   单元格数字是该归因落入桶中的批次数，三列柱长使用相同尺度。
@@ -74,9 +74,11 @@ systemctl --user disable --now polymaker-dashboard-archive.service
 使用 Decimal，FIFO 采用首次观察成交的日志顺序，迟到的 CONFIRMED 不改变该顺序。
 Taker 必须同时具备精确 `principal_usdc` 和 `fee_usdc`，不能拿报价或 POST 中的 nominal
 份数代替真实成本。费用按匹配份数分摊，已计入收益，不二次扣除。
-按完成配对的退出腿归因：首次 CA TP 和恢复 TP 归 TP；反向 BA（含普通 REPAIR、
-TP 接管及历史 BA Taker）归 BA。CA 再开仓吸收旧残仓、系统退出及其余配对收益归 OTHER。
-所有已核实残仓结算归 OTHER，不按该残仓的开仓来源分到 TP 或 BA。
+按完成配对的退出腿归因：首次 CA TP 和恢复 TP 归 TP；带 `:ca-expiry-exit` 标识的
+TP 到期 Taker 退出归 SL。反向 BA（含普通 REPAIR、TP 接管及历史 BA Taker）、
+CA 再开仓吸收旧残仓、系统退出及其余配对收益归 OTHER。
+所有已核实残仓结算归 OTHER，不按该残仓的开仓来源分到 TP 或 SL。
+归因版本为 3；观察器重启时用已有成交证据重算历史缓存，归档生成新版本，原版本保留。
 合并确认只改变库存和合并量，不再次增加配对收益。
 
 未配残仓在结果未知时保留 PENDING。最终 run result 提供可核对的胜方和结算分项时直接

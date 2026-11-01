@@ -15,6 +15,8 @@ def validate_market_sizing(cfg: RDPSMConfig, minimum: Decimal) -> None:
     RDPSMConfig.model_validate(cfg.model_dump())
     if not minimum.is_finite() or minimum <= 0:
         raise ValueError("SIZING_MARKET_MINIMUM_UNKNOWN")
+    if cfg.normal_entry_mode == "m1_v1":
+        return  # Quantity is computed from the 5-USDC budget at an actual anchor.
     if cfg.base_size < max(MIN_MAKER_BUY_SHARES, minimum):
         raise ValueError("SIZING_BASE_BELOW_MARKET_MINIMUM")
 
@@ -166,9 +168,14 @@ def summarize_sizing(executor, windows, delta, barrier):
     """
     report = empty_sizing_report()
     fills = executor.economic_fills()
+    makers = [f for f in fills if getattr(f, "liquidity_role", "MAKER") == "MAKER"]
+    takers = [f for f in fills if getattr(f, "liquidity_role", "MAKER") == "TAKER"]
     report.update(final_actual_delta=float(delta), unintentional_residual_shares=float(abs(delta)),
-                  maker_filled_shares=float(sum((Decimal(str(f.size)) for f in fills), Decimal(0))),
-                  maker_fill_count=len(fills), safe_exit_status=barrier)
+                  maker_filled_shares=float(sum((Decimal(str(f.size)) for f in makers), Decimal(0))),
+                  maker_fill_count=len(makers), safe_exit_status=barrier)
+    if takers:
+        report.update(taker_filled_shares=float(sum((Decimal(str(f.size)) for f in takers), Decimal(0))),
+                      taker_fill_count=len(takers), taker_fee_usdc=str(sum((Decimal(str(f.fee_usdc)) for f in takers), Decimal(0))))
     certified, certified_sign, certificate = Decimal(0), 0, {}
     for w in windows:
         e = w["sizing"]

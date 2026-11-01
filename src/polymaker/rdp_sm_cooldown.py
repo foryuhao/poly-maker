@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from polymaker.domain import Side
 from polymaker.rdp_sm_sl_ledger import fifo_paired_quantities
+from polymaker.state.tracker import fill_unit_cost
 
 ZERO = Decimal(0)
 
@@ -14,10 +15,10 @@ def pair_snapshot(fills, stamps, yes_token, no_token):
     facts = {}
     for fill in fills:
         key = (fill.trade_id, fill.maker_order_id)
-        price, size = Decimal(str(fill.price)), Decimal(str(fill.size))
+        price, size = fill_unit_cost(fill), Decimal(str(fill.size))
         if (not all(key) or key in facts or fill.our_side is not Side.BUY
                 or fill.token_id not in {yes_token, no_token}
-                or not price.is_finite() or not ZERO < price < 1
+                or not price.is_finite() or price <= ZERO
                 or not size.is_finite() or size <= 0):
             raise ValueError("COOLDOWN_FILL_NOT_VERIFIED")
         facts[key] = (fill.token_id, price, size)

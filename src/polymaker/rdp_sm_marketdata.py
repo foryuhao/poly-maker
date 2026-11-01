@@ -126,7 +126,7 @@ class RepairPricePoint:
 class SessionFeed:
     def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None,
                  ca_config=None, ca_log_path=None, ca_session_id=None, normal_entry_mode="ba_v1",
-                 opposite_ba_execution=None):
+                 opposite_ba_execution=None, ca_pullback_config=None, m1_config=None, m1_log_path=None):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
         self.normal_entry_mode = normal_entry_mode
         self.proxy = proxy
@@ -181,6 +181,22 @@ class SessionFeed:
         self.notices = Counter()
         self.last_notice = None
         self.ca = None
+        self.m1 = self.m1_writer = None
+        self.m1_frame = 0
+        self.m1_pending_received = deque()
+        self.m1_processing_received = None
+        if normal_entry_mode == "m1_v1":
+            from polymaker.rdp_sm_ca import plain
+            from polymaker.rdp_sm_ca_writer import CAWriter
+            from polymaker.rdp_sm_m1_signal import M1Signals
+
+            if m1_config is not None and m1_config.record_events and m1_log_path is not None:
+                self.m1_writer = CAWriter(m1_log_path, capacity=16384)
+            def record_m1(row):
+                return self.m1_writer.submit(plain(row)) if self.m1_writer else True
+            self.m1 = M1Signals(self, record=record_m1,
+                out_of_order_tolerance_ms=(m1_config.out_of_order_tolerance_ms if m1_config else 20),
+                signal_config=m1_config.signal if m1_config else None)
         self.ca_start_failure = None
         if ca_config is not None and ca_config.enabled and ba_cfg is not None:
             writer = None
@@ -197,6 +213,10 @@ class SessionFeed:
         from polymaker.rdp_sm_ca_entry import CounterAttackEntry
 
         self.ca_entry = CounterAttackEntry(self)
+        if ca_pullback_config is not None and ca_pullback_config.enabled:
+            from polymaker.rdp_sm_ca_pullback import CAPullbackEntry
+
+            self.ca_entry = CAPullbackEntry(self, ca_pullback_config)
 
     def observe_ca(self, method, *args):
         # Keep CA outside ba_detectors(): BA ordering/depth filtering and REPAIR
@@ -206,6 +226,17 @@ class SessionFeed:
                 if self.ca.closed and method not in {"diagnostics", "snapshot", "disable", "stop"}:
                     return None
                 result = self.ca.safe(method, *args)
+                if hasattr(self.ca_entry, "capture_confirmations"):
+                    if method == "before_event":
+                        self.ca_entry.capture_confirmations()
+                        if args[0] == "tick_size_change":
+                            self.ca_entry.invalidate("CA_PULLBACK_TICK_CHANGED")
+                    elif method in {"depth", "book_updated"}:
+                        self.ca_entry.book_updated(args[0])
+                    elif method == "tick":
+                        self.ca_entry.tick()
+                    elif method in {"reset", "invalidate", "disable", "stop"}:
+                        self.ca_entry.invalidate("CA_PULLBACK_"+method.upper())
                 if method != "snapshot" or result is not None:
                     return result
             if method == "snapshot" and (self.ca is not None or self.ca_start_failure):
@@ -216,7 +247,10 @@ class SessionFeed:
 
     def ca_diagnostics(self):
         if self.ca is not None:
-            return self.observe_ca("diagnostics") or {"failure": self.ca.failure, "data_complete": False}
+            result = self.observe_ca("diagnostics") or {"failure": self.ca.failure, "data_complete": False}
+            if hasattr(self.ca_entry, "diagnostics"):
+                result["pullback"] = self.ca_entry.diagnostics()
+            return result
         return {"failure": self.ca_start_failure, "data_complete": False} if self.ca_start_failure else None
 
     def record_failure(self, exc, context=None):
@@ -260,6 +294,7 @@ class SessionFeed:
                 **({"opposite_ba": self.opposite_ba.diagnostics()} if self.opposite_ba is not None else {}),
                 **({"ca_observation": self.ca_diagnostics()}
                    if self.ca is not None or self.ca_start_failure else {}),
+                **({"m1": self.m1.diagnostics()} if self.m1 is not None else {}),
             }
 
     def _track_signal(self, signal, event_mono):
@@ -307,6 +342,9 @@ class SessionFeed:
 
     def connect(self):
         with self.lock:
+            if self.m1 is not None:
+                self.m1.reset()
+                self.m1_pending_received.clear()
             self.observe_ca("reset")
             for detector in self.ba_detectors():
                 detector.reset()
@@ -330,6 +368,8 @@ class SessionFeed:
 
     def invalidate(self, reason):
         with self.lock:
+            if self.m1 is not None:
+                self.m1.invalidate(reason)
             self.observe_ca("invalidate", "CA_"+reason)
             for detector in self.ba_detectors():
                 detector.invalidate(reason)
@@ -351,7 +391,8 @@ class SessionFeed:
                 self.books[token] = replace(b, tick=tick)
                 self.tick_verified[token] = tick
 
-    def snapshot(self, *, repair_token=None, repair=False, ba_cfg=None, allow_pending_top=False):
+    def snapshot(self, *, repair_token=None, repair=False, ba_cfg=None, allow_pending_top=False,
+                 taker_buy_token=None):
         now = self.monotonic()
         with self.lock:
             yes, no = (self.books[t] for t in (self.meta.yes.token_id, self.meta.no.token_id))
@@ -359,9 +400,12 @@ class SessionFeed:
             if any(b.snapshot_generation != self.generation for b in (yes, no)):
                 reason = reason or "WS_REBUILD_REQUIRED"
             signal_cfg = ba_cfg or (self.ba.cfg if self.ba is not None else None)
-            needed = (self.books[repair_token],) if repair_token and not repair else (yes, no)
+            needed = ((self.books[taker_buy_token],) if taker_buy_token is not None else
+                      (self.books[repair_token],) if repair_token and not repair else (yes, no))
             for b in needed:
-                if not b.bids or not b.asks:
+                # An immediate BUY needs a current Ask. At .01 there may be no
+                # legal Bid; keep this exception explicit and target-specific.
+                if not b.asks or (not b.bids and b.token_id != taker_buy_token):
                     reason = reason or "WS_EMPTY_BOOK"
                 if b.best_bid is not None and b.best_ask is not None and b.best_bid >= b.best_ask:
                     reason = reason or "WS_CROSSED_BOOK"
@@ -371,7 +415,7 @@ class SessionFeed:
                 ):
                     reason = reason or "WS_TOP_PENDING"
                 book_age = (signal_cfg.max_book_age_ms if signal_cfg is not None
-                            and not repair_token else self.cfg.max_book_age_ms)
+                            and (not repair_token or self.m1 is not None) else self.cfg.max_book_age_ms)
                 if not repair and not 0 <= (now - b.received_mono) * 1000 <= book_age:
                     reason = reason or "WS_BOOK_STALE"
                 if self.tick_verified.get(b.token_id) != b.tick:
@@ -379,7 +423,7 @@ class SessionFeed:
             if repair and (self.last_transport_receipt is None or
                            not 0 <= now-self.last_transport_receipt <= 2*WS_HEARTBEAT_SEC):
                 reason = reason or "WS_TRANSPORT_STALE"
-            if not repair and not repair_token:
+            if not repair and not repair_token and taker_buy_token is None:
                 if signal_cfg is not None:
                     pair_skew = signal_cfg.max_pair_skew_ms
                     source_skew_ms = abs(number(yes.source_time)-number(no.source_time))*1000
@@ -418,10 +462,60 @@ class SessionFeed:
             values[p] = q
         return values
 
+    def _reconcile_top(self, book):
+        token = book.token_id
+        bids = (book.bids if book.reported_bid is None or not book.bids
+                or book.best_bid <= book.reported_bid else
+                tuple(level for level in book.bids if level[0] <= book.reported_bid))
+        asks = (book.asks if book.reported_ask is None or not book.asks
+                or book.best_ask >= book.reported_ask else
+                tuple(level for level in book.asks if level[0] >= book.reported_ask))
+        if (bids, asks) != (book.bids, book.asks):
+            self.notice("WS_TOP_RECONCILED", token_id=token,
+                        cached_bid=str(book.best_bid), cached_ask=str(book.best_ask),
+                        reported_bid=str(book.reported_bid), reported_ask=str(book.reported_ask))
+        if ((book.reported_bid is not None and book.reported_bid != (bids[0][0] if bids else Decimal(0)))
+                or (book.reported_ask is not None and book.reported_ask != (asks[0][0] if asks else Decimal(1)))):
+            self.notice("WS_TOP_PENDING", token_id=token,
+                        available_bid=str(bids[0][0]) if bids else None,
+                        available_ask=str(asks[0][0]) if asks else None,
+                        reported_bid=str(book.reported_bid), reported_ask=str(book.reported_ask))
+        if bids and asks and bids[0][0] >= asks[0][0]:
+            self.notice("WS_CROSSED_BOOK", token_id=token,
+                        best_bid=str(bids[0][0]), best_ask=str(asks[0][0]))
+        return book if bids is book.bids and asks is book.asks else replace(book, bids=bids, asks=asks)
+
+    def m1_watermark(self):
+        values = [self.monotonic()]
+        if self.m1_pending_received:
+            values.append(self.m1_pending_received[0])
+        if self.m1_processing_received is not None:
+            values.append(self.m1_processing_received)
+        return min(values)
+
     def apply(self, raw, *, received_mono=None, received_wall=None):
+        if self.m1 is None:
+            return self._apply(raw, received_mono=received_mono, received_wall=received_wall)
+        with self.lock:
+            self.m1_processing_received = self.monotonic() if received_mono is None else received_mono
+            try:
+                return self._apply(raw, received_mono=received_mono, received_wall=received_wall)
+            finally:
+                self.m1_processing_received = None
+
+    def _apply(self, raw, *, received_mono=None, received_wall=None):
         """Only the consumer calls apply; SDK workers only call snapshot()."""
         received_mono = self.monotonic() if received_mono is None else received_mono
         received_wall = self.wall() if received_wall is None else received_wall
+        if self.m1 is not None:
+            self.m1_frame += 1
+            if self.m1_writer is not None and not self.m1_writer.submit({
+                    "event": "RAW_FRAME", "frame": self.m1_frame, "generation": self.generation,
+                    "received_monotonic": received_mono, "received_wall": received_wall,
+                    "processed_monotonic": self.monotonic(),
+                    "raw": raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw}):
+                self.m1.failure = "M1_EVENT_RECORDING_FAILED"
+                self.m1.invalidate(self.m1.failure)
         with self.lock:
             if (self.last_transport_receipt is not None
                     and received_mono-self.last_transport_receipt > 2*WS_HEARTBEAT_SEC):
@@ -457,7 +551,7 @@ class SessionFeed:
                 updated, touched, tick_changed = dict(self.books), set(), False
                 # Before any depth can refresh receipts: stale gaps stay latched.
                 self.observe_ca("tick")
-                for row in rows:
+                for row_index, row in enumerate(rows):
                     if not isinstance(row, dict):
                         raise ValueError("WS_FRAME_INVALID")
                     kind = row.get("event_type")
@@ -476,11 +570,34 @@ class SessionFeed:
                             raise ValueError("WS_DELTA_INVALID")
                     else:
                         changes = [row]
-                    for ch in changes:
+                    m1_decisions, row_touched = {}, set()
+                    if self.m1 is not None:
+                        # Validate against coherent pre-message books. Reported
+                        # BBO describes the whole delta message, not each of its
+                        # transient intermediate level mutations.
+                        for ch in changes:
+                            token = ch["asset_id"]
+                            if token not in updated:
+                                raise ValueError("WS_TOKEN_IDENTITY")
+                            if token not in m1_decisions:
+                                accepted = self.m1.before_event(kind, row, updated[token],
+                                    received_mono, received_wall, books=updated)
+                                m1_decisions[token] = accepted, self.m1.decision_reason
+                    for change_index, ch in enumerate(changes):
                         token = ch["asset_id"]
                         if token not in updated:
                             raise ValueError("WS_TOKEN_IDENTITY")
                         b = updated[token]
+                        m1_ordered, m1_reason = m1_decisions.get(token, (False, None))
+                        if self.m1 is not None:
+                            self.m1.emit("EVENT_DECISION", frame=self.m1_frame, token_id=token,
+                                row_index=row_index, change_index=change_index,
+                                kind=kind, received_monotonic=received_mono,
+                                accepted=m1_ordered, reason=m1_reason if not m1_ordered else None)
+                            if not m1_ordered and kind in {"book", "price_change"} and m1_reason in {
+                                    "M1_SOURCE_REGRESSION", "M1_SOURCE_AGE", "M1_PROCESSING_GAP",
+                                    "M1_EVENT_OUT_OF_ORDER_IGNORED"}:
+                                continue  # Rejected old depth must not mutate the shared live book.
                         ca_ordered = self.observe_ca("before_event", kind, row, b,
                                                      received_mono, received_wall)
                         if kind == "last_trade_price":
@@ -579,32 +696,25 @@ class SessionFeed:
                             reported_ask=reported_ask,
                         )
                         touched.add(token)
+                        row_touched.add(token)
                         for detector in self.ba_detectors():
                             detector.depth(row, b, updated[token], received_mono, received_wall)
                         if ca_ordered:
                             self.observe_ca("depth", updated[token])
+                        if m1_ordered:
+                            self.m1.depth_quantity(updated[token])
+                    if (self.m1 is not None and kind == "last_trade_price"
+                            and getattr(self.m1.cfg, "mirror_complement_flow", False)):
+                        self.m1.mirror_trade(row, updated, received_mono, received_wall)
+                    if self.m1 is not None:
+                        for token in row_touched:
+                            updated[token] = self._reconcile_top(updated[token])
+                            self.m1.depth(updated[token], received_mono)
                 # Explicit venue BBO bounds supersede cached contradictory depth.
                 # Do this after every change in the frame; never invent top quantities.
-                for token in touched:
-                    b = updated[token]
-                    bids = tuple(level for level in b.bids
-                                 if b.reported_bid is None or level[0] <= b.reported_bid)
-                    asks = tuple(level for level in b.asks
-                                 if b.reported_ask is None or level[0] >= b.reported_ask)
-                    if (bids, asks) != (b.bids, b.asks):
-                        self.notice("WS_TOP_RECONCILED", token_id=token,
-                                    cached_bid=str(b.best_bid), cached_ask=str(b.best_ask),
-                                    reported_bid=str(b.reported_bid), reported_ask=str(b.reported_ask))
-                    updated[token] = replace(b, bids=bids, asks=asks)
-                    if ((b.reported_bid is not None and b.reported_bid != (bids[0][0] if bids else Decimal(0)))
-                            or (b.reported_ask is not None and b.reported_ask != (asks[0][0] if asks else Decimal(1)))):
-                        self.notice("WS_TOP_PENDING", token_id=token,
-                                    available_bid=str(bids[0][0]) if bids else None,
-                                    available_ask=str(asks[0][0]) if asks else None,
-                                    reported_bid=str(b.reported_bid), reported_ask=str(b.reported_ask))
-                    if bids and asks and bids[0][0] >= asks[0][0]:
-                        self.notice("WS_CROSSED_BOOK", token_id=token,
-                                    best_bid=str(bids[0][0]), best_ask=str(asks[0][0]))
+                if self.m1 is None:
+                    for token in touched:
+                        updated[token] = self._reconcile_top(updated[token])
                 depth_changed = any((updated[t].bids, updated[t].asks) !=
                                     (self.books[t].bids, self.books[t].asks) for t in touched)
                 self.last_receipt = received_mono
@@ -613,6 +723,16 @@ class SessionFeed:
                 self.books = updated
                 for token in touched:
                     self.observe_ca("book_updated", updated[token])
+                if self.m1 is not None:
+                    # M1 never consumes sigma, OBI or the REPAIR price path.
+                    # Keep its socket consumer free of these unrelated scans.
+                    self.sequence += 1
+                    self.tick_revision += tick_changed
+                    if depth_changed:
+                        self.signal_event = received_mono
+                    self.reason = ""
+                    self.changed.set()
+                    return
                 y = updated[self.meta.yes.token_id]
                 if (self.meta.yes.token_id in touched and y.best_bid is not None
                         and y.best_ask is not None and y.best_bid < y.best_ask):
@@ -622,7 +742,7 @@ class SessionFeed:
                         self.probability_points[-1] = point
                     else:
                         self.probability_points.append(point)
-                if touched or tick_changed or self.ba_detectors():
+                if touched or tick_changed or self.ba_detectors() or self.m1 is not None:
                     self.sequence += 1
                     self.tick_revision += tick_changed
                     if depth_changed:
@@ -683,7 +803,11 @@ class SessionFeed:
             async def reader():
                 async for raw in ws:
                     try:
-                        queue.put_nowait((raw, self.monotonic(), self.wall()))
+                        with self.lock:
+                            receipt = self.monotonic()
+                            queue.put_nowait((raw, receipt, self.wall()))
+                            if self.m1 is not None:
+                                self.m1_pending_received.append(receipt)
                     except asyncio.QueueFull as exc:
                         self.invalidate("WS_QUEUE_OVERFLOW")
                         raise ValueError("WS_QUEUE_OVERFLOW") from exc
@@ -691,7 +815,12 @@ class SessionFeed:
             async def consumer():
                 while True:
                     raw, mono, wall = await queue.get()
-                    self.apply(raw, received_mono=mono, received_wall=wall)
+                    try:
+                        self.apply(raw, received_mono=mono, received_wall=wall)
+                    finally:
+                        if self.m1 is not None:
+                            with self.lock:
+                                self.m1_pending_received.popleft()
                     await asyncio.sleep(0)
 
             async def heartbeat():
@@ -717,9 +846,12 @@ class SessionFeed:
         async def ca_maintenance():
             while not self.stop_event.is_set():
                 self.observe_ca("tick")
+                if self.m1 is not None:
+                    with self.lock:
+                        self.m1.tick()
                 await asyncio.sleep(.025)
 
-        maintenance = asyncio.create_task(ca_maintenance(), name="ca-observe-timer") if self.ca else None
+        maintenance = asyncio.create_task(ca_maintenance(), name="signal-observe-timer") if self.ca or self.m1 else None
         try:
             while not self.stop_event.is_set():
                 try:
@@ -743,6 +875,8 @@ class SessionFeed:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
         await self.close_ca()
+        if self.m1_writer is not None:
+            await asyncio.to_thread(self.m1_writer.close)
 
     async def close_ca(self):
         if self.ca is not None:

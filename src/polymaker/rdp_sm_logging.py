@@ -11,6 +11,7 @@ import re
 import traceback
 from copy import copy
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from logging.handlers import QueueHandler
 from queue import SimpleQueue
@@ -23,6 +24,7 @@ from polymaker.rdp_sm import (
     inventory_trading_state,
     repair_required,
 )
+from polymaker.state.tracker import fill_record_cost
 
 NA = "NOT_AVAILABLE"
 
@@ -118,9 +120,13 @@ class HumanRunLog:
     """One CLI invocation, one FIFO writer; emit is an O(1) memory handoff."""
 
     def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False,
-                 normal_cutoff_sec=NORMAL_END_S, repair_cutoff_sec=240):
+                 normal_cutoff_sec=NORMAL_END_S, repair_cutoff_sec=240, m1_mode=False,
+                 m1_observation_only=True, m1_start_sec=100):
         self.signature_type = signature_type
         self.repair_mode = repair_mode
+        self.m1_mode = m1_mode
+        self.m1_observation_only = m1_observation_only
+        self.m1_start_sec = m1_start_sec
         self.normal_cutoff_sec = normal_cutoff_sec
         self.repair_cutoff_sec = repair_cutoff_sec
         self.cooldown_active = False
@@ -200,6 +206,15 @@ class HumanRunLog:
             self._output(logger.makeRecord(logger.name, level, __file__, 0, message, (), None))
 
     def _market_lines(self, market):
+        if self.m1_mode:
+            return ["BTC Up/Down 5m | M1 single engine",
+                    "M1 Mode: OBSERVATION_ONLY | WOULD_POST markers; native POST disabled"
+                    if self.m1_observation_only else "M1 Mode: LIVE",
+                    f"Market Slug: {value(market.get('slug'))}",
+                    f"Market Elapsed Seconds: {value(market.get('elapsed_s'))}",
+                    f"Trading Window: M1 {self.m1_start_sec} <= T < 240s | Merge at T >= 240s",
+                    "Per-order Budget: 5 USDC | Session Spend + Reservations: 20 USDC",
+                    "M1 Heartbeat: every 10s and on phase changes | Data issues are reported explicitly"]
         elapsed = market.get("elapsed_s")
         remaining = max(0, 300 - elapsed) if isinstance(elapsed, (int, float)) else None
         repair_window = (f"REPAIR 15 <= T < {self.repair_cutoff_sec:g}s" if self.repair_mode
@@ -285,10 +300,12 @@ class HumanRunLog:
                          f"Best Ask={value(book.get('best_ask'))} | Bid Levels Count={value(book.get('bid_levels_count'))} "
                          f"Ask Levels Count={value(book.get('ask_levels_count'))} | Dynamic Tick={value(book.get('tick'))} "
                          f"Snapshot Timestamp={value(book.get('timestamp'))}")
-        for q in plan.get("quotes", []):
-            lines.append(f"Planned Quote: {q['outcome']} | Side={value(q['side'])} Price={value(q['price'])} "
-                         f"Size={value(q['size'])} Maker/Post-only=YES")
         attempts = w.get("placement_results", [])
+        for q in plan.get("quotes", []):
+            maker = "NO" if any(a.get("entry_execution") == "taker" and a["quote"] == q
+                                for a in attempts) else "YES"
+            lines.append(f"Planned Quote: {q['outcome']} | Side={value(q['side'])} Price={value(q['price'])} "
+                         f"Size={value(q['size'])} Maker/Post-only={maker}")
         posted = [a for a in attempts if a.get("post_started") is True]
         if (len(posted) == 2 and posted[0].get("request_hash")
                 and posted[0]["request_hash"] == posted[1].get("request_hash")):
@@ -297,10 +314,11 @@ class HumanRunLog:
             lines.append(f"Order Submission: {posted[0]['quote']['outcome']} (single order request)")
         for a in attempts:
             q, posted = a["quote"], a.get("post_started") is True
+            maker = "NO" if a.get("entry_execution") == "taker" else "YES"
             self.submitted += posted
             label = "Actually Submitted Order" if posted else "NOT SUBMITTED"
             lines.append(f"{label}: {q['outcome']} | Side={value(q['side'])} Price={value(q['price'])} Size={value(q['size'])} "
-                         f"Maker/Post-only=YES | Order Submission Result={a['outcome']} | Order ID={shortened(a.get('order_id'))}")
+                         f"Maker/Post-only={maker} | Order Submission Result={a['outcome']} | Order ID={shortened(a.get('order_id'))}")
             if a["outcome"] == "UNKNOWN":
                 lines.append("UNKNOWN order result | BLOCKED | retained capital; no confirmed-fill inference")
         if not attempts:
@@ -315,7 +333,7 @@ class HumanRunLog:
             self.fills[key] = f
         deadline, t0 = w.get("fill_deadline_monotonic"), w.get("t0_monotonic")
         duration = deadline - t0 if deadline is not None and t0 is not None else None
-        used = sum(f["price"] * f["size"] for f in self.fills.values()) - self.merged_cost
+        used = sum((fill_record_cost(f) for f in self.fills.values()), Decimal(0)) - Decimal(str(self.merged_cost))
         barrier = w.get("close_barrier", "BLOCKED")
         reason_label = ("Quote Skip Reason" if barrier == "SAFE_TO_CONTINUE" and not attempts
                         and w.get("block_reason") in {"QUOTE_WOULD_TAKE", "QUOTE_PRICE_TICK_INVALID", "QUOTE_PRICE_TICK_OR_SIZE_INVALID",
@@ -341,6 +359,8 @@ class HumanRunLog:
         next_state = inventory_trading_state(inventory_delta(w.get("yes_inventory", 0), w.get("no_inventory", 0)))
         if self.repair_mode:
             next_state = "REPAIR" if repair_required(w.get("yes_inventory", 0), w.get("no_inventory", 0)) else "NORMAL"
+        if self.m1_mode:
+            next_state = "M1 / CHECK_NEW_OPPORTUNITY"
         if self.cooldown_active:
             next_state = "COOLDOWN"
         if self.repair_abandoned:
@@ -472,6 +492,47 @@ class HumanRunLog:
                     lines.append("Position Reconciled: actual inventory and collateral agree; native trade status retained")
                 elif name == "sm_decision_book":
                     self.decision = p
+                elif name == "sm_m1_state":
+                    lines.append(f"M1 State: {value(p.get('state'))}")
+                elif name == "sm_m1_wait":
+                    # Frequent alternating waits stay in the journal; heartbeat
+                    # reports the latest reason without flooding the terminal.
+                    pass
+                elif name == "sm_m1_would_post":
+                    for q in p.get("quotes", []):
+                        lines.append(f"M1 WOULD_POST | T+{value(p.get('elapsed_s'))}s | "
+                                     f"{q['outcome']} BUY {q['size']}@{q['price']} | "
+                                     "OBSERVATION_ONLY | NOT SUBMITTED")
+                elif name == "sm_m1_heartbeat":
+                    counts = p.get("signal_counts", {})
+                    books = p.get("usable_books", {})
+                    lines.extend([
+                        f"M1 Heartbeat | T+{value(p.get('elapsed_s'))}s | "
+                        f"Mode={value(p.get('mode'))} | "
+                        f"Profile={value(p.get('signal_profile'))} | "
+                        f"State={value(p.get('state'))} | Status={value(p.get('status'))} | "
+                        f"Reason={value(p.get('reason'))}",
+                        f"  WS={'CONNECTED' if p.get('ws_connected') else 'DISCONNECTED'} | "
+                        f"Updates={value(p.get('ws_updates'))} | "
+                        f"LastFrameAge={value(p.get('transport_age_ms'))}ms | "
+                        f"Books: YES={'OK' if books.get('YES') else 'UNAVAILABLE'} "
+                        f"NO={'OK' if books.get('NO') else 'UNAVAILABLE'} | "
+                        f"PendingFrames={value(p.get('pending_frames'))}",
+                        f"  Signals: AP={counts.get('AP_CONFIRMED', 0)} "
+                        f"RF={counts.get('RF_CONFIRMED', 0)} EX={counts.get('EX_CONFIRMED', 0)} | "
+                        f"UnavailableSinceLast={value(p.get('unavailable_since_last'))} | "
+                        f"SignalReason={value(p.get('signal_reason'))}",
+                        f"  AP_BUY={counts.get('AP_CONFIRMED_BUY', 0)} "
+                        f"AP_SELL={counts.get('AP_CONFIRMED_SELL', 0)} | "
+                        f"WouldPost={p.get('would_post', 0)} | "
+                        f"IgnoredLateEvents={counts.get('EVENT_IGNORED', 0)}",
+                        f"  Submitted={value(p.get('submitted_orders'))} | "
+                        f"ConfirmedFills={value(p.get('confirmed_fills'))} | "
+                        f"OrderActive={value(p.get('own_active'))} | "
+                        f"Inventory: YES={value(p.get('inventory_yes'))} NO={value(p.get('inventory_no'))} | "
+                        f"Spend+Reserved={value(p.get('capital_committed_usdc'))}/"
+                        f"{value(p.get('capital_limit_usdc'))} USDC",
+                    ])
                 elif name == "sm_strategy_window":
                     self.planned = {**p, **self.decision}
                 elif name == "sm_quote_refreshed":
@@ -526,8 +587,10 @@ class HumanRunLog:
             return ["RDP-SM Exit Summary", f"Local Timestamp: {local_time()}", *self._market_lines(market),
                     f"Start Time: {local_time(r['start_time'])} | Stop Time: {local_time(r['stop_time']) if r.get('stop_time') is not None else NA}",
                     f"Stop Reason: {value(r.get('stop_reason'))} | Execution Status: {value(r.get('execution_status'))}",
-                    f"Total Windows: {r['total_windows']} | NORMAL Windows: {r['normal_windows']} | "
-                    f"{'REPAIR' if self.repair_mode else 'REBALANCE'} Windows: {r.get('repair_windows', 0) if self.repair_mode else r['rebalance_windows']}",
+                    (f"Total Windows: {r['total_windows']} | M1 Windows: {r.get('m1_windows', 0)}"
+                     if self.m1_mode else
+                     f"Total Windows: {r['total_windows']} | NORMAL Windows: {r['normal_windows']} | "
+                     f"{'REPAIR' if self.repair_mode else 'REBALANCE'} Windows: {r.get('repair_windows', 0) if self.repair_mode else r['rebalance_windows']}"),
                     f"ActiveCycles: {r['active_cycles']} | Submitted Orders: {self.submitted} | Confirmed Fills: {r['confirmed_fills']} (records)",
                     f"YES Inventory: {value(yes)} | NO Inventory: {value(no)} | Delta: {value(delta)}",
                     f"Completed Pairs: {value(r.get('completed_pairs') if delta is not None else None)} | Residual Shares: {value(abs(delta) if delta is not None else None)}",

@@ -47,7 +47,8 @@ max_orders_per_batch = 15       # exchange batch cap
 
 [rdp_sm]
 normal_entry_mode = "ca_v1"
-ca_entry_direction = "higher_bid" # CA triggers entry; buy the side with the higher current best bid.
+ca_entry_execution = "taker"
+ca_entry_direction = "signal" # Buy the side that produced the eligible CA signal.
 # Seconds from market start; no new NORMAL orders at or after this time.
 normal_cutoff_sec = 150.0
 base_size = "5"
@@ -55,8 +56,13 @@ target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
 
+[rdp_sm.ca_taker]
+entry_price_ceiling_enabled = true # Skip CA Taker opening prices at or above the ceiling.
+entry_price_ceiling = "0.90" # Exclusive: do not open a Taker position at or above 0.90.
+
 [rdp_sm.ca_matched_tp]
 enabled = true
+taker_exit_on_expiry = true # Cover original shares after expiry; top up to $1, reconcile before retry.
 restore_after_ba = true # Restore a fixed TP after the BA order is fully reconciled.
 # Opposite fixed maker BUY after the CA opening is MATCHED, before CONFIRMED.
 # Match actual quantity on the BA 0.01-share grid; top up at most 0.01 share.

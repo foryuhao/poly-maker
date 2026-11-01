@@ -100,13 +100,16 @@ class BatchLifecycle:
         return self.executor.cfg.rdp_sm.normal_entry_mode == "ca_v1"
 
     def normal_event(self, suffix):
+        if self.executor.cfg.rdp_sm.normal_entry_mode == "m1_v1":
+            return "sm_m1_" + suffix
         return "sm_"+("ca" if self.ca_mode else "ba" if self.ba_mode else "obi")+"_"+suffix
 
     def episodes(self, controller):
         return getattr(controller, "episodes", self.feed.episodes)
 
     def uses_ba(self, controller):
-        return (self.ba_mode and controller.phase == "NORMAL") or getattr(controller, "ba_signal", False)
+        return ((self.ba_mode and controller.phase == "NORMAL")
+                or getattr(controller, "ba_signal", False) or getattr(controller, "m1_mode", False))
 
     def drain_ba(self):
         if self.ba_mode:
@@ -124,7 +127,8 @@ class BatchLifecycle:
         diagnostics = self.feed.diagnostics()
         opposite_exit = (self.executor.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
                          and self.executor.repair_episode is not None)
-        detector = (self.feed.opposite_ba if opposite_exit else self.feed.ca_entry if self.ca_mode
+        detector = (self.feed.m1 if self.executor.cfg.rdp_sm.normal_entry_mode == "m1_v1" else
+                    self.feed.opposite_ba if opposite_exit else self.feed.ca_entry if self.ca_mode
                     else self.feed.ba if self.ba_mode else None)
         key = (reason, snapshot.generation, diagnostics["failure_count"], opposite_exit)
         if key == self.wait_reason:
@@ -183,6 +187,8 @@ class BatchLifecycle:
                                                   -Decimal(str(snapshot.no.source_time)))*1000)}
 
     def snapshot(self, controller, yes, no):
+        if getattr(controller, "m1_mode", False):
+            return controller.snapshot()
         if getattr(controller, "ba_signal", False):
             return self.feed.snapshot(ba_cfg=controller.ba_config)
         meta = self.executor.meta
@@ -222,6 +228,8 @@ class BatchLifecycle:
 
     async def prepare(self, controller, yes, no, window_id):
         e = self.executor
+        if getattr(controller, "m1_mode", False):
+            return await controller.prepare(yes, no, window_id)
         admission_ready = not e.attempts or e.admission_ready
         if not admission_ready and e.normal_unknown.unknowns():
             reason = ("BA_REPAIR_UNKNOWN_CACHE_NOT_READY" if getattr(controller, "ba_signal", False)
@@ -315,7 +323,8 @@ class BatchLifecycle:
                 for c in cached.candidates
             ):
                 return cached
-        quote_after_constraints = getattr(controller, "ba_signal", False)
+        quote_after_constraints = (getattr(controller, "ba_signal", False)
+                                   or getattr(controller, "quote_after_constraints", False))
         if quote_after_constraints:
             if not direction:
                 self.wait(getattr(controller, "signal_block_reason", None) or "NO_LEGAL_CANDIDATE", snapshot)
@@ -352,6 +361,8 @@ class BatchLifecycle:
                 await self._read_preparation_constraint(client._ClobClient__resolve_version) == 2,
                 "M2_ORDER_VERSION_UNSUPPORTED",
             )
+        if hasattr(controller, "prepare_execution_constraints"):
+            await controller.prepare_execution_constraints()
         if quote_after_constraints:
             # SDK preparation may have awaited workers/HTTP. Price only the
             # latest book, without retiming or replacing the admitted BA.
@@ -394,27 +405,55 @@ class BatchLifecycle:
             if any(not e.delta_candidate_allowed(yes-no, q.outcome, Decimal(str(q.size))) for q in quotes):
                 continue
             for q in quotes:
-                e._validate(q, window_id, snapshot.books(), e.meta)
+                e._validate(q, window_id, snapshot.books(), e.meta,
+                            **({"allow_taker": True} if getattr(controller, "taker", False) else {}))
                 _require(f"{ticks[q.token_id]:g}" in ROUNDING_CONFIG, "SDK_TICK_UNSUPPORTED")
             commitment = sum(
                 (Decimal(str(q.price)) * Decimal(str(q.size)) for q in quotes), Decimal(0)
             )
+            taking = getattr(controller, "taker", False)
+            if taking:
+                from polymaker.rdp_sm_ca_taker import buy_fee_reserve
+
+                reserve = sum((buy_fee_reserve(Decimal(str(q.size)), Decimal(str(q.price)), controller.taker_fees)
+                               for q in quotes), Decimal(0))
+                sizing = {**sizing, "fee_reserve_usdc": str(reserve)}
+                commitment += reserve
             # NORMAL budgets a full dollar per submitted share for the cycle.
             capital_required = (
-                sum((Decimal(str(q.size)) * Decimal("1.00") for q in quotes), Decimal(0))
+                max(commitment, sum((Decimal(str(q.size)) * Decimal("1.00") for q in quotes), Decimal(0)))
                 if controller.phase == "NORMAL" else commitment
             )
-            if capital_required + e.committed() > e.capital_limit or commitment > Decimal(
+            timed_exit = (self.ca_mode and controller.phase == "NORMAL"
+                          and e.cfg.rdp_sm.ca_matched_tp.taker_exit_on_expiry)
+            if timed_exit:
+                from polymaker.rdp_sm_ca_expiry_exit import exit_budget as expiry_exit_budget
+
+                exit_budget = sum((expiry_exit_budget(Decimal(str(q.size)),
+                                  (snapshot.no if q.outcome == 'YES' else snapshot.yes).tick,
+                                  controller.taker_fees)
+                                  for q in quotes), Decimal(0))
+                capital_required = max(capital_required, commitment+exit_budget)
+                sizing = {**sizing, "expiry_exit_budget_usdc": str(exit_budget),
+                          "cycle_capital_required_usdc": str(capital_required)}
+            wallet_required = capital_required if timed_exit else commitment
+            if capital_required + e.committed() > e.capital_limit or wallet_required > Decimal(
                 str(self.account["basic_spendable_budget_usd"])
             ):
                 continue
             signed = await e.gateway.prepare(
-                [Quote(q.token_id, q.side, q.price, q.size) for q in quotes], e.meta, ticks
+                [Quote(q.token_id, q.side, q.price, q.size) for q in quotes], e.meta, ticks,
+                **({"immediate_order_type": e.cfg.rdp_sm.ca_taker.order_type} if taking else {}),
             )
             candidates.append(Candidate(direction, quotes, signed, dict(sizing)))
         if not candidates:
             self.wait("OFFICIAL_OR_SESSION_CAPITAL_INSUFFICIENT", snapshot)
             return None
+        return await self.persist_slot(controller, snapshot, yes, no, window_id, candidates)
+
+    async def persist_slot(self, controller, snapshot, yes, no, window_id, candidates):
+        """Shared WAL and signed-ID ownership for all entry controllers."""
+        e = self.executor
         ids = [oid for c in candidates for oid in c.signed.order_ids]
         _require(
             len(ids) == len(set(ids))
@@ -464,7 +503,7 @@ class BatchLifecycle:
                             sum(
                                 (Decimal(str(q.price)) * Decimal(str(q.size)) for q in c.quotes),
                                 Decimal(0),
-                            )
+                            ) + Decimal(c.sizing.get("fee_reserve_usdc", "0"))
                             for c in candidates
                         )
                     ),
@@ -481,6 +520,8 @@ class BatchLifecycle:
 
     def guard(self, controller, intent, revision, deadline, *, pending_batch=(), diagnostics=True):
         e, cfg = self.executor, self.executor.cfg.rdp_sm.obi
+        if getattr(controller, "m1_mode", False):
+            return controller.guard(intent, revision, deadline, pending_batch=pending_batch)
         self.ba_admission = None
         if e.check_repair_abandonment():
             self.guard_reason = "HIGH_ENTRY_REPAIR_ABANDONED"
@@ -618,7 +659,7 @@ class BatchLifecycle:
             slot.no,
             slot.revision,
             candidate.quotes,
-            controller.deadline(snapshot) if slot.phase in {"NORMAL", "REPAIR"} else None,
+            controller.deadline(snapshot) if slot.phase in {"NORMAL", "REPAIR", "M1"} else None,
             claim,
             slot.prepared_at,
             slot.persisted_at,
@@ -633,7 +674,8 @@ class BatchLifecycle:
                     ("BATCH_ALREADY_ACTIVE", self.busy),
                     ("CAPITAL_EVIDENCE_CHANGED_BEFORE_SUBMIT", e.revision != slot.revision),
                     ("ASYNC_JOURNAL_NOT_READY", not e.journal.ready),
-                    ("PREVIOUS_WINDOW_UNRESOLVED", bool(e.attempts and not e.admission_ready)),
+                    ("PREVIOUS_WINDOW_UNRESOLVED", bool(e.attempts and not (
+                        e.safe_to_continue if getattr(controller, "m1_mode", False) else e.admission_ready))),
                     ("FINAL_QUOTES_OR_DIRECTION_CHANGED", not controller.matches(intent, snapshot)),
                 ) if failed), None)
                 if reason:
@@ -671,9 +713,26 @@ class BatchLifecycle:
             Placement(uuid.uuid4().hex, q, expected_order_id=oid)
             for q, oid in zip(intent.quotes, candidate.signed.order_ids, strict=True)
         ]
+        taking = getattr(controller, "taker", False)
+        if taking:
+            from polymaker.rdp_sm_ca_taker import buy_fee_reserve
+
+            e.processor.taker_orders = getattr(e.processor, "taker_orders", {})
+            client.ca_taker_ids = getattr(client, "ca_taker_ids", set())
+            for attempt in batch:
+                q, oid = attempt.quote, attempt.expected_order_id
+                attempt.entry_execution = "taker"
+                attempt.fee_reserve_usdc = str(buy_fee_reserve(Decimal(str(q.size)), Decimal(str(q.price)), controller.taker_fees))
+                e.processor.taker_orders[oid] = {
+                    "market_id": e.meta.condition_id, "token_id": q.token_id,
+                    "opposite_token": e.meta.no.token_id if q.outcome == "YES" else e.meta.yes.token_id,
+                    "price": Decimal(str(q.price)), "quantity": Decimal(str(q.size)),
+                    "fees": dict(controller.taker_fees)}
+                client.ca_taker_ids.add(oid)
+            e.processor.arm_pending_many([(q.token_id, q.side) for q in intent.quotes])
         e.attempts.extend(batch)
         ba_repair = intent.phase == "REPAIR" and getattr(controller, "ba_signal", False)
-        if intent.phase == "NORMAL":
+        if intent.phase in {"NORMAL", "M1"}:
             e.normal_unknown.track(batch, self.account)
         elif ba_repair:
             e.normal_unknown.track(batch, self.account, repair=True)
@@ -710,6 +769,7 @@ class BatchLifecycle:
         sl_actor = [None]
         matched_tp = None
         matched_tp_task = None
+        expiry_exit = None
 
         async def drain_review():
             task = active_review[0]
@@ -766,11 +826,18 @@ class BatchLifecycle:
                 ca_observation[0] = self.feed.observe_ca("snapshot")
                 if self.ca_mode:
                     observation = ca_observation[0]
-                    _require(observation is not None and observation.get("data_complete")
-                             and observation.get("recording_active")
-                             and any(s["episode_id"] == intent.claim[0] and s["candidate_usable"]
-                                     for s in observation["outcomes"].values()),
-                             "CA_FINAL_EVIDENCE_UNAVAILABLE")
+                    if e.cfg.rdp_sm.ca_pullback.enabled:
+                        proof = self.episodes(controller).evidence(intent.claim)
+                        _require(observation is not None and observation.get("data_complete")
+                                 and observation.get("recording_active") and proof is not None,
+                                 "CA_PULLBACK_FINAL_EVIDENCE_UNAVAILABLE")
+                        observation["pullback"] = proof
+                    else:
+                        _require(observation is not None and observation.get("data_complete")
+                                 and observation.get("recording_active")
+                                 and any(s["episode_id"] == intent.claim[0] and s["candidate_usable"]
+                                         for s in observation["outcomes"].values()),
+                                 "CA_FINAL_EVIDENCE_UNAVAILABLE")
             post_start[0] = e.monotonic()
             if ca_observation[0] is not None:
                 self.feed.observe_ca("post", intent.window_id, intent.direction,
@@ -871,6 +938,7 @@ class BatchLifecycle:
                     f.maker_order_id in prospective for f in e.economic_fills()))
                 reason = next((name for name, failed in (
                     (boundary_reason, boundary_reason is not None),
+                    ("CA_TAKER_IMMEDIATE_ORDER_RETURNED", taking and post_done.is_set()),
                     ("ORDER_DEADLINE", deadline[0] is not None and now >= deadline[0]),
                     ("CA_CONFIRMED_FILL" if self.ca_mode else "BA_CONFIRMED_FILL", ba_filled),
                     (ba_reason, ba_reason is not None),
@@ -954,7 +1022,7 @@ class BatchLifecycle:
                 )
             except Exception as exc:
                 error = type(exc).__name__
-                if intent.phase == "NORMAL" or ba_repair:
+                if intent.phase in {"NORMAL", "M1"} or ba_repair:
                     e.normal_unknown.post_failed(batch, exc)
             finally:
                 if write is not None:
@@ -1074,7 +1142,8 @@ class BatchLifecycle:
                         "signal": asdict(signal) if signal else None,
                         "normal_signal_confirmation": normal_confirmation[0],
                         **({"ca_observation": ca_observation[0]} if ca_observation[0] is not None else {}),
-                        **({"ca_admission" if self.ca_mode and intent.phase == "NORMAL" else "ba_admission": ba_admission_evidence[0]}
+                        **({"m1_admission" if intent.phase == "M1" else
+                            "ca_admission" if self.ca_mode and intent.phase == "NORMAL" else "ba_admission": ba_admission_evidence[0]}
                            if self.uses_ba(controller) else {}),
                         "claim": intent.claim,
                         **({"normal_unknown_admission": unknown_admission} if unknown_admission else {}),
@@ -1144,6 +1213,33 @@ class BatchLifecycle:
             safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
             if not safe and e.pending_confirmations:
                 await e._await_owned(e._wait_for_confirmation(), propagate_cancel=False)
+            if (matched_tp is None and taking and self.ca_mode and intent.phase == "NORMAL"
+                    and e.cfg.rdp_sm.ca_matched_tp.enabled and e.safe_to_continue
+                    and all(a.outcome in {"ACK", "VERIFIED"} and a.post_started for a in batch)):
+                # Lost ACK can be recovered by the exact signed ID. Route its
+                # real fill back into the same TP/expiry owner, never a new CA.
+                from polymaker.rdp_sm_ca_matched_tp import CAMatchedTP
+
+                opening_ids = {a.order_id for a in batch}
+                recovered_fills = [f for f in e.economic_fills() if f.maker_order_id in opening_ids]
+                if recovered_fills:
+                    matched_tp = CAMatchedTP(self, intent, batch, post_done)
+                    recovered_deadline = min(e.fill_observed_at[(f.trade_id, f.maker_order_id)][
+                        "observed_monotonic"] for f in recovered_fills)+matched_tp.cfg.ttl_sec
+                    matched_tp.expires_at = recovered_deadline
+                    for oid in opening_ids:
+                        e.ca_tp_deadlines[oid] = recovered_deadline
+                    e.record("sm_ca_taker_recovered_routing", {"opening_ids": sorted(opening_ids),
+                             "deadline_monotonic": recovered_deadline, "duplicate_opening": False})
+                    matched_tp_task = asyncio.create_task(matched_tp.run(), name="ca-recovered-matched-tp")
+                    await e._await_owned(_drain_task(matched_tp_task), propagate_cancel=False)
+                    safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
+                    if not safe and e.pending_confirmations:
+                        await e._await_owned(e._wait_for_confirmation(), propagate_cancel=False)
+            if matched_tp is not None and matched_tp.cfg.taker_exit_on_expiry:
+                from polymaker.rdp_sm_ca_expiry_exit import exit_expired_ca
+
+                expiry_exit = await e._await_owned(exit_expired_ca(matched_tp), propagate_cancel=False)
             verification_done.set()
             await e.journal.flush()
             e.update_repair_episode()
@@ -1153,6 +1249,8 @@ class BatchLifecycle:
             if hasattr(controller, "reconcile_episode"):
                 controller.reconcile_episode()
         finally:
+            if taking:
+                e.processor.discard_pending()
             if matched_tp_task is not None and not matched_tp_task.done():
                 matched_tp.closed = True
                 await e._await_owned(_drain_task(matched_tp_task), propagate_cancel=False)
@@ -1187,7 +1285,8 @@ class BatchLifecycle:
         result.close_monotonic = e.monotonic()
         result.end_time = time.time()
         reported = (batch + (sl_actor[0].created if sl_actor[0] is not None else [])
-                    + (matched_tp.created+matched_tp.ba_attempts if matched_tp is not None else []))
+                    + (matched_tp.created+matched_tp.ba_attempts if matched_tp is not None else [])
+                    + (expiry_exit.created if expiry_exit is not None else []))
         if matched_tp is not None:
             from polymaker.rdp_sm_tp_ba_handoff import record_ba_handoff_result
 
@@ -1197,6 +1296,8 @@ class BatchLifecycle:
                 "reason": matched_tp.reason,
                 "orders": [asdict(a) for a in matched_tp.created],
                 "ba_handoff_orders": [asdict(a) for a in matched_tp.ba_attempts],
+                "taker_exit_on_expiry": matched_tp.cfg.taker_exit_on_expiry,
+                "expiry_exit_reason": expiry_exit.reason if expiry_exit is not None else None,
                 "handoff_policy": ("POST_BA_ACK_THEN_CANCEL_TP"
                                    if matched_tp.ba_controller is not None else "CANCEL_TP_THEN_BA"),
             }
@@ -1225,11 +1326,15 @@ class BatchLifecycle:
             {
                 "window_id": intent.window_id,
                 "policy": (
+                    "M1_STRICT_RF_EX_OVERLAP; fixed anchor; no reprice, top-up, Taker or repair"
+                    if intent.phase == "M1" else
                     "FIXED_DEADLINE; fresh valid opposite signal cancels; "
                     "NONE or WS_BOOK_STALE keeps active order; no reprice or automatic flip"
                     if intent.phase == "NORMAL" and not self.ba_mode
-                    else ("CA_FIXED_T0_DEADLINE" if self.ca_mode else "BA_FIXED_T0_DEADLINE")
-                    +"; cancel on anchor/data invalidation or actual fill"
+                    else ("CA_PULLBACK_FIXED_ADVANCE_DEADLINE; cancel on floor/data invalidation or actual fill"
+                          if self.ca_mode and e.cfg.rdp_sm.ca_pullback.enabled else
+                          ("CA_FIXED_T0_DEADLINE" if self.ca_mode else "BA_FIXED_T0_DEADLINE")
+                          +"; cancel on anchor/data invalidation or actual fill")
                     if intent.phase == "NORMAL"
                     else "OPPOSITE_BA_FIXED_T0_DEADLINE; retain submitted quote on book consistency failure"
                     if getattr(self.episodes(controller), "fixed_ask_quote", False)

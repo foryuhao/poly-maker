@@ -2,8 +2,9 @@
 
 Wraps the synchronous py-clob-client-v2 (which owns the hard V2 EIP-712 signing,
 pUSD balance adjustment, and tick/fee caching) and offloads its blocking network
-calls to a thread pool so the asyncio hot path never stalls. Every quote goes out
-**post-only** (the maker-only mandate, enforced at the exchange).
+calls to a thread pool so the asyncio hot path never stalls. Quotes default to
+post-only. The CA state machine can explicitly prepare an immediate FOK/FAK
+opening; its native POST guard separately verifies that permission.
 
 A `paper=True` gateway shares the same path but fabricates order ids instead of
 posting — so paper mode exercises the full pipeline.
@@ -51,6 +52,7 @@ class PreparedOrders:
     quotes: tuple
     order_ids: tuple[str, ...]
     body_hash: str
+    post_only: bool = True
 
 
 @dataclass(frozen=True)
@@ -194,13 +196,13 @@ class ExecutionGateway:
             log.warning("clock_check_failed", err=str(exc))
 
     # ── placement ───────────────────────────────────────────────────────
-    def _prepared_body(self, orders):
+    def _prepared_body(self, orders, post_only=True):
         from py_clob_client_v2.order_utils.model.order_data_v2 import order_to_json_v2
 
         return json.dumps(
             [
                 order_to_json_v2(
-                    a.order, self._client.creds.api_key or "", a.orderType, True, False
+                    a.order, self._client.creds.api_key or "", a.orderType, post_only, False
                 )
                 for a in orders
             ],
@@ -208,7 +210,7 @@ class ExecutionGateway:
             ensure_ascii=False,
         )
 
-    async def prepare(self, quotes, meta, tick_sizes):
+    async def prepare(self, quotes, meta, tick_sizes, *, immediate_order_type=None):
         """Sign once outside the operation segment; never submit here."""
 
         def build():
@@ -242,12 +244,18 @@ class ExecutionGateway:
                     ),
                 )
                 ids.append(builder.build_order_hash(builder.build_order_typed_data(signed)))
-                args.append(PostOrdersV2Args(order=signed, orderType=OrderType.GTC))
+                order_type = (OrderType.GTC if immediate_order_type is None else
+                              OrderType.FOK if immediate_order_type == "FOK" else
+                              OrderType.FAK if immediate_order_type == "FAK" else None)
+                if order_type is None:
+                    raise ValueError("IMMEDIATE_ORDER_TYPE_INVALID")
+                args.append(PostOrdersV2Args(order=signed, orderType=order_type))
             return PreparedOrders(
                 tuple(args),
                 tuple(quotes),
                 tuple(ids),
-                hashlib.sha256(self._prepared_body(args).encode()).hexdigest(),
+                hashlib.sha256(self._prepared_body(args, immediate_order_type is None).encode()).hexdigest(),
+                immediate_order_type is None,
             )
 
         return await self._io(build)
@@ -261,7 +269,7 @@ class ExecutionGateway:
 
             client = self._client
             if (
-                hashlib.sha256(self._prepared_body(prepared.orders).encode()).hexdigest()
+                hashlib.sha256(self._prepared_body(prepared.orders, prepared.post_only).encode()).hexdigest()
                 != prepared.body_hash
             ):
                 raise ValueError("PREPARED_BODY_CHANGED")
@@ -277,7 +285,7 @@ class ExecutionGateway:
             client.operation_local.context = context
             client.operation_local.no_get = True
             try:
-                return client.post_orders(list(prepared.orders), post_only=True)
+                return client.post_orders(list(prepared.orders), post_only=prepared.post_only)
             finally:
                 client.operation_local.no_get = False
                 client.operation_local.context = previous_context
@@ -874,7 +882,7 @@ class ExecutionGateway:
             if not isinstance(oid, str) or oid.strip() != order_id:
                 raise GatewayReadError("order read returned a different order")
             from polymaker.userstream.parse import normalize_order
-            if normalize_order(row) is None:
+            if normalize_order(row, allow_taker_buy_overfill=order_id in getattr(self._client, 'ca_taker_ids', set())) is None:
                 raise GatewayReadError("order read omitted valid cumulative order fields")
             return row
         try:

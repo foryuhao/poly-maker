@@ -71,7 +71,7 @@ async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotoni
         observer.emit("discovery", {"slug": meta.slug, "condition_id": meta.condition_id,
                                      "start": start, "end": start + 300,
                                      "elapsed_s": elapsed, "official_time": now})
-    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"} or not TRADING_START_S <= elapsed < cfg.rdp_sm.normal_cutoff_sec:
+    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"} or not TRADING_START_S <= elapsed < cfg.rdp_sm.normal_cutoff_sec:
         return meta, start, now, {}
     books = {}
     for token in (meta.yes.token_id, meta.no.token_id):
@@ -115,6 +115,7 @@ class AccountRiskPolicy:
         def identity(value):
             return (value.market, value.raw.get("trader_side"), value.taker_order_id,
                     value.taker_asset_id, value.taker_side,
+                    tuple(value.raw.get(k) for k in ("size", "price", "fee_usdc")),
                     tuple(sorted(value.maker_legs, key=lambda leg: leg.order_id)))
 
         if trade.trade_id in self.pending:
@@ -123,6 +124,8 @@ class AccountRiskPolicy:
         if trade.status in (TradeState.CONFIRMED, TradeState.FAILED):
             return
         ids = {leg.order_id for leg in trade.maker_legs}
+        if trade.taker_order_id in known_ids:
+            ids.add(trade.taker_order_id)
         if ids & known_ids:
             return
         self.pending.setdefault(trade.trade_id, trade.raw)
@@ -146,6 +149,8 @@ class AccountRiskPolicy:
             self.observe_trade(trade, client.known_ids)
             if trade.status in (TradeState.CONFIRMED, TradeState.FAILED):
                 resolved.add(trade.trade_id)
+            elif trade.taker_order_id in getattr(client, "ca_taker_ids", set()):
+                _require(row.get("trader_side") == "TAKER", "OWNED_TRADE_ROLE_UNKNOWN")
             elif {leg.order_id for leg in trade.maker_legs} & client.known_ids:
                 ours = {
                     leg.order_id for leg in trade.maker_legs

@@ -4,7 +4,9 @@ from decimal import Decimal
 
 from polymaker.domain import TradeState
 from polymaker.favorite_live import collateral_readiness
+from polymaker.rdp_sm_ca_taker import cache_trade_legs
 from polymaker.rdp_sm_recovery import retry_read
+from polymaker.state.tracker import fill_cost
 
 WAIT_SEC = 10.0
 DETAIL_MAX_AGE_SEC = 10.0  # The existing detail retry backoff reaches eight seconds.
@@ -104,7 +106,7 @@ class NormalUnknownRecovery:
             or not 0 <= now - opened.started_monotonic <= cache.timeout_s
             or not 0 <= now - trades.started_monotonic <= cache.timeout_s
             or any(row["order_id"] == oid for row in opened.data)
-            or any(leg["order_id"] == oid for row in trades.data for leg in row["maker_legs"])
+            or any(leg["order_id"] == oid for row in trades.data for leg in cache_trade_legs(row))
             or oid in e.observed_order_events
             or oid in e.gateway._client.observed_open_rows
             or any(key[1] == oid for key in e.gateway._client.observed_trade_legs)
@@ -237,9 +239,7 @@ class NormalUnknownRecovery:
         if len({str(k).lower() for k in raw["allowances"]}) != len(raw["allowances"]):
             return None
         balance, allowance = collateral_readiness(raw, self.spenders)
-        spent = sum(
-            (Decimal(str(f.price)) * Decimal(str(f.size)) for f in e.economic_fills()), ZERO
-        )
+        spent = sum((fill_cost(f) for f in e.economic_fills()), ZERO)
         if (
             balance is None
             or allowance is None

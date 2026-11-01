@@ -45,6 +45,7 @@ from polymaker.rdp_sm_sizing import (
     summarize_sizing,
     validate_market_sizing,
 )
+from polymaker.state.tracker import fill_cost
 
 
 @dataclass
@@ -55,6 +56,7 @@ class RunResult:
     stop_time: float | None = None
     stop_reason: str | None = None
     total_windows: int = 0
+    m1_windows: int = 0
     normal_windows: int = 0
     rebalance_windows: int = 0
     repair_windows: int = 0
@@ -83,6 +85,7 @@ class RunResult:
     repair_readiness: dict | None = None
     repair_abandonment: dict | None = None
     ca_observation: dict | None = None
+    m1_observation: dict | None = None
 
     def to_dict(self):
         result = asdict(self)
@@ -192,10 +195,17 @@ class SMTradingLoop:
             self._resume("capital")
         return merged
 
-    def _display_events(self, decision=None, window=None):
+    def _display_events(self, decision=None, window=None, *, status_only=False):
         if self.observer is not None and self.executor is not None:
             events = self.executor.display_events
-            self.executor.display_events = []
+            if status_only:
+                # The timer must not publish a window result before the order
+                # coordinator finishes its close proof and displays it once.
+                kinds = {"sm_m1_state", "sm_m1_wait", "sm_m1_heartbeat", "sm_m1_would_post"}
+                self.executor.display_events = [(k, p) for k, p in events if k not in kinds]
+                events = [(k, p) for k, p in events if k in kinds]
+            else:
+                self.executor.display_events = []
             if decision is not None:
                 events.insert(0, ("sm_decision_book", decision))
             if window is not None:
@@ -204,6 +214,62 @@ class SMTradingLoop:
                 events = [(kind, data) for kind, data in events if kind != "sm_window_result"]
                 events.append(("sm_window_result", window))
             self.observer.emit("events", events)
+
+    def _m1_heartbeat(self, engine, lifecycle, clock):
+        """Memory-only status on the existing timer, including quiet/blocked periods."""
+        executor, feed = self.executor, lifecycle.feed
+        now = executor.monotonic()
+        if now < clock.get("next", 0) and engine.state == clock.get("state"):
+            return
+        # Account refresh temporarily clears its authority clock. Presentation
+        # uses the session's pinned deadline rather than that in-flight value.
+        elapsed = (self._estimated_elapsed() if self.market_deadline is not None else
+                   executor.official_time + now - executor.time_anchor - int(self.slug.rsplit("-", 1)[1]))
+        with feed.lock:
+            detector = feed.m1
+            counts = dict(detector.counts)
+            sequence = feed.sequence
+            books = {side: detector.legal(feed.books[token], now)
+                     for side, token in (("YES", executor.meta.yes.token_id),
+                                         ("NO", executor.meta.no.token_id))}
+            transport_age = (max(0, now-feed.last_transport_receipt)*1000
+                             if feed.last_transport_receipt is not None else None)
+            signal_reason = detector.failure or detector.block_reason
+            own_active = detector.own_active
+            pending = len(feed.m1_pending_received)
+        if executor.fatal or self.pause_reason or detector.failure:
+            status, reason = "BLOCKED", executor.fatal or self.pause_reason or detector.failure
+        elif not any(books.values()):
+            status, reason = "DATA_UNAVAILABLE", signal_reason or "M1_BOOK_UNAVAILABLE"
+        elif elapsed < executor.cfg.rdp_sm.m1.entry_start_sec:
+            status, reason = "OBSERVING", f"WAIT_T{executor.cfg.rdp_sm.m1.entry_start_sec}"
+        elif elapsed >= 240:
+            status, reason = "NO_NEW_ORDERS", engine.state
+        else:
+            status = "ORDER_ACTIVE" if own_active else "OBSERVING"
+            reason = lifecycle.wait_reason[0] if lifecycle.wait_reason else "M1_NO_OPPORTUNITY"
+        yes, no = executor.economic_inventory()
+        payload = {
+            "mode": "OBSERVATION_ONLY" if executor.cfg.rdp_sm.m1.observation_only else "LIVE",
+            "signal_profile": feed.m1.cfg.profile, "parameter_hash": feed.m1.parameter_hash,
+            "would_post": counts.get("WOULD_POST", 0),
+            "elapsed_s": round(elapsed, 1), "state": engine.state, "status": status,
+            "reason": reason, "signal_reason": signal_reason,
+            "ws_connected": feed.connected, "ws_sequence": sequence,
+            "ws_updates": None if clock.get("sequence") is None else sequence-clock["sequence"],
+            "transport_age_ms": transport_age, "usable_books": books, "pending_frames": pending,
+            "signal_counts": counts,
+            "unavailable_since_last": counts.get("UNAVAILABLE", 0)-clock.get("unavailable", 0),
+            "submitted_orders": sum(a.post_started for a in executor.attempts),
+            "confirmed_fills": len(executor.confirmed()), "own_active": own_active,
+            "inventory_yes": str(yes), "inventory_no": str(no),
+            "capital_committed_usdc": str(executor.committed()),
+            "capital_limit_usdc": str(executor.capital_limit),
+        }
+        executor.record("sm_m1_heartbeat", payload)
+        clock.update(next=now+10, state=engine.state, sequence=sequence,
+                     unavailable=counts.get("UNAVAILABLE", 0))
+        self._display_events(status_only=True)
 
     async def _offline_boundary(self):
         _require(
@@ -241,7 +307,7 @@ class SMTradingLoop:
             if not all(math.isfinite(f.price) and f.price > 0 and f.size > 0 for f in legs):
                 costs.append(None)
             else:
-                cost = sum((Decimal(str(f.price)) * Decimal(str(f.size)) for f in legs), Decimal(0))
+                cost = sum((fill_cost(f) for f in legs), Decimal(0))
                 cost -= executor.merged_cost.get(token, Decimal(0))
                 costs.append(cost / qty if qty else None)
         result.average_yes_cost, result.average_no_cost = (
@@ -264,13 +330,17 @@ class SMTradingLoop:
         )
         result.sizing_report = summarize_sizing(executor, result.windows, yes - no,
                                                 result.final_close_barrier)
+        if self.cfg.rdp_sm.normal_entry_mode == "m1_v1":
+            result.sizing_report.update(residual_policy="NATURAL_M1_ACCUMULATION",
+                natural_residual_side="YES" if yes > no else "NO" if no > yes else "NONE",
+                natural_residual_shares=float(abs(yes-no)), unintentional_residual_shares=0)
         if (executor.merged_pairs > 0 and min(yes, no) == 0
                 and result.final_close_barrier == "SAFE_TO_CONTINUE"):
             result.sizing_report["pair_pnl"] = result.realized_merge_pnl
         return yes, no
 
     async def _run_session(self, result, fill_window_sec):
-        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1"}:
+        if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"}:
             return await self._run_obi_session(result)
         executor = self.executor
         failed = False
@@ -473,16 +543,23 @@ class SMTradingLoop:
 
         executor = self.executor
         lifecycle = BatchLifecycle(executor)
-        normal = (CANormalController(executor, lifecycle)
+        m1 = self.cfg.rdp_sm.normal_entry_mode == "m1_v1"
+        engine = None
+        normal = (None if m1 else CANormalController(executor, lifecycle)
                   if self.cfg.rdp_sm.normal_entry_mode == "ca_v1"
                   else BANormalController(executor, lifecycle)
                   if self.cfg.rdp_sm.normal_entry_mode in {"ba_v1", "ca_v1"}
                   else NormalController(executor, lifecycle))
-        rebalance = (PathRepairController(executor, lifecycle)
+        rebalance = (None if m1 else PathRepairController(executor, lifecycle)
                      if self.cfg.rdp_sm.repair.policy == "hd_tp_sl_v1"
                      else OppositeBAController(executor, lifecycle)
                      if self.cfg.rdp_sm.repair.policy == "opposite_ba_v1"
                      else RepairController(executor, lifecycle))
+        if m1:
+            from polymaker.rdp_sm_m1 import M1Engine
+
+            engine = M1Engine(executor, lifecycle)
+            normal, rebalance = engine.controller, None
         if isinstance(rebalance, (PathRepairController, OppositeBAController)):
             from polymaker.repair_policy import repair_readiness
 
@@ -509,9 +586,13 @@ class SMTradingLoop:
 
         warmer = (None if executor.shared_reads is not None else
                   asyncio.create_task(warm_network(), name="rdp-network-warmup"))
+        heartbeat_clock = {}
+
         async def watch_abandonment():
             while True:
                 executor.check_repair_abandonment()
+                if engine is not None and executor.meta is not None:
+                    self._m1_heartbeat(engine, lifecycle, heartbeat_clock)
                 await asyncio.sleep(.05)
 
         boundaries = asyncio.create_task(
@@ -540,6 +621,8 @@ class SMTradingLoop:
                     - start
                 )
                 result.stop_elapsed_s = elapsed
+                if engine is not None:
+                    engine.advance(elapsed)
                 executor.check_repair_abandonment()
                 if elapsed >= TRADING_END_S:
                     result.stop_reason = "MARKET_CUTOFF"
@@ -552,9 +635,9 @@ class SMTradingLoop:
                 executor.normal_unknown.observe()
                 if (
                     executor.attempts
-                    and not executor.admission_ready
+                    and not (executor.safe_to_continue if m1 else executor.admission_ready)
                     and not await executor.verify_close(cancel=True)
-                    and not executor.normal_unknown.observe()
+                    and (m1 or not executor.normal_unknown.observe())
                 ):
                     await self._pause(
                         result, executor.reason or "PREVIOUS_WINDOW_UNRESOLVED", "close"
@@ -590,8 +673,16 @@ class SMTradingLoop:
                     continue
                 if isinstance(rebalance, PathRepairController):
                     rebalance.reconcile_episode()
+                if engine is not None and elapsed >= 240 and executor.safe_to_continue:
+                    engine.transition("MERGING" if self.production
+                        and min(executor.economic_inventory()) >= Decimal(".1")
+                        and self.merge_disabled_reason is None else "HOLD_SETTLEMENT")
                 if await self._merge(result, elapsed):
+                    if engine is not None:
+                        engine.transition("HOLD_SETTLEMENT")
                     continue
+                if engine is not None and elapsed >= 240 and not executor.merge_pending:
+                    engine.transition("HOLD_SETTLEMENT")
                 if executor.merge_pending or executor.fatal:
                     continue
                 if executor.cooldown.active:
@@ -618,14 +709,14 @@ class SMTradingLoop:
                             wait = min(wait, remaining)
                         await self.sleep(min(wait, max(.001, TRADING_END_S-cooldown_elapsed)))
                         continue
-                controller = normal if not repair_required(yes, no) and executor.repair_episode is None else rebalance
+                controller = normal if m1 or (not repair_required(yes, no) and executor.repair_episode is None) else rebalance
                 elapsed = (
                     executor.official_time + executor.monotonic() - executor.time_anchor - start
                 )
                 if elapsed >= TRADING_END_S:
                     result.stop_reason = "MARKET_CUTOFF"
                     break
-                if elapsed < TRADING_START_S or elapsed >= controller.cutoff:
+                if elapsed < (executor.cfg.rdp_sm.m1.entry_start_sec if m1 else TRADING_START_S) or elapsed >= controller.cutoff:
                     await self.sleep(min(1, max(0.01, TRADING_END_S - elapsed)))
                     continue
                 snapshot = lifecycle.snapshot(controller, yes, no)
@@ -669,7 +760,8 @@ class SMTradingLoop:
                     continue
                 window, sizing = outcome
                 result.total_windows += 1
-                result.normal_windows += controller is normal
+                result.m1_windows += m1
+                result.normal_windows += controller is normal and not m1
                 result.rebalance_windows += controller is rebalance
                 result.repair_windows += controller is rebalance
                 result.windows.append(
@@ -710,7 +802,7 @@ class SMTradingLoop:
                 if isinstance(rebalance, PathRepairController):
                     rebalance.flush_blocked("SESSION_END")
             lifecycle.drain_ba()
-            executor.record("sm_ba_metrics" if lifecycle.ba_mode else "sm_obi_metrics", dict(lifecycle.metrics))
+            executor.record("sm_m1_metrics" if m1 else "sm_ba_metrics" if lifecycle.ba_mode else "sm_obi_metrics", dict(lifecycle.metrics))
             executor.record("sm_ws_diagnostics", feed.diagnostics())
             if warmer is not None:
                 warmer.cancel()
@@ -905,6 +997,11 @@ class SMTradingLoop:
             result.sizing_report["safe_exit_status"] = result.final_close_barrier
             if self.executor is not None:
                 ca_feed = getattr(self.executor.reads, "feed", None)
+                if ca_feed is not None and getattr(ca_feed, "m1", None) is not None:
+                    await ca_feed.close()
+                    result.m1_observation = ca_feed.m1.diagnostics()
+                    if ca_feed.m1_writer is not None:
+                        result.m1_observation["writer"] = ca_feed.m1_writer.status()
                 if ca_feed is not None and (ca_feed.ca is not None or ca_feed.ca_start_failure):
                     # Required order close has already run. CA drain is bounded
                     # and its failure becomes observation metadata, never a gate.
