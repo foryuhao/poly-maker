@@ -52,8 +52,12 @@ M4 测试使用隔离配置，避免与根测试目录的同名辅助模块混�
 
 ```bash
 bash ops/test_m4.sh -q
-python -m pytest -q --ignore=tests/m4
+PYTHONPATH=src:tests:ops:research python -m pytest -q --ignore=tests/m4
 ```
 
-最终离线验证结果随本次发布提交记录；测试不得开启真实交易集成选项。
+本次 M4 完整离线测试为 **789 passed、6 skipped**；跳过项需要独立报表运行环境和 CJK 字体。
+格式整理后的相关复验为 **78 passed、6 skipped**；M4 Ruff 及源码编译检查通过。
+额外全仓测试未完成，其中 5 个 M1234 模拟器测试失败；此快照不声称全仓验收通过。
+另有历史研究测试依赖未入库的本机研究产物。
+测试未开启真实交易集成选项；此次发布按用户要求保存当前完整代码，不扩展修复历史研究测试。
 基线、M1 和旧 Maker 巡检的历史文件保留，发布操作不恢复已停用服务。
