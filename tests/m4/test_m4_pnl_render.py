@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 PLOT_PYTHON = ROOT / ".venv-m4-report/bin/python"
 FONT = ROOT / "research_outputs/shared_assets/NotoSansCJKsc-Regular.otf"

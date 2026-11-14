@@ -9,7 +9,7 @@ from m4_helpers import close
 from test_m4_live_startup import EPOCH, FUNDER, harness
 from test_m4_live_task import evidence, serve
 
-from polymaker.m4_config import M4Config, STRATEGY
+from polymaker.m4_config import STRATEGY, M4Config
 from polymaker.m4_live_config import M4LiveSettings, all_in_cost
 from polymaker.m4_live_taker import M4LiveLedger
 

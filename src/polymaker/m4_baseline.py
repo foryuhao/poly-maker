@@ -7,7 +7,13 @@ from decimal import Decimal
 
 from polymaker.m4_config import STRATEGY, M4Config
 from polymaker.m4_control import atomic_json
-from polymaker.m4_fill_model import EVIDENCE_POLICY, INSTANT_MODEL, LEGACY_POLICY, POLICY, recover_observations
+from polymaker.m4_fill_model import (
+    EVIDENCE_POLICY,
+    INSTANT_MODEL,
+    LEGACY_POLICY,
+    POLICY,
+    recover_observations,
+)
 from polymaker.m4_state import M4Ledger
 
 

@@ -1,13 +1,10 @@
 """Production backlog and FAK cent rejection regressions; synthetic HTTP only."""
-import asyncio
 import json
 from dataclasses import replace
 from decimal import Decimal as D
 
-import httpx
 import pytest
 from m4_helpers import close
-from py_clob_client_v2.http_helpers import helpers
 from test_m4_live_budget import fixture
 
 from polymaker.m4_live_config import all_in_cost
@@ -50,7 +47,8 @@ async def test_durable_task_posts_once_despite_local_depth(tmp_path, monkeypatch
     original = m.ledger.post_start
     if at_native:
         def after_commit(key, **kwargs):
-            original(key, **kwargs);change()
+            original(key, **kwargs)
+            change()
         monkeypatch.setattr(m.ledger, 'post_start', after_commit)
     else:
         change()
@@ -66,7 +64,8 @@ async def test_durable_task_posts_once_despite_local_depth(tmp_path, monkeypatch
         await m.submit(opportunity)
         assert len(calls) == 1
     finally:
-        await close(m, e);transport.close()
+        await close(m, e)
+        transport.close()
 
 
 @pytest.mark.parametrize('conflict', [
@@ -110,10 +109,12 @@ async def test_precision_rejection_recovered_after_restart_and_t240_without_post
         m.ledger.reserve(key,spendable=40)
         m.ledger.set('next_plan:'+key,{**plan,'prior_spent_usdc':'0','prior_filled':'0','budget_basis':[]})
         oid='0x'+'a'*64
-        m.ledger.prepare(key,oid,quote);m.ledger.post_start(key)
+        m.ledger.prepare(key,oid,quote)
+        m.ledger.post_start(key)
         m.ledger.post_receipt(oid,[{'success':True,'errorMsg':FAK_AMOUNT_PRECISION_ERROR,
                                 'orderID':'','status':'','makingAmount':'','takingAmount':''}])
-        e.official_time=int(e.meta.slug.rsplit('-',1)[1])+240;e.time_anchor=c.now
+        e.official_time=int(e.meta.slug.rsplit('-',1)[1])+240
+        e.time_anchor=c.now
         m.ledger.set('buy_closed',True)
         m.ledger.validate_recovery()
         await m.read_order(oid)
@@ -122,4 +123,5 @@ async def test_precision_rejection_recovered_after_restart_and_t240_without_post
         assert not calls
         m.ledger.validate_recovery()
     finally:
-        await close(m,e);transport.close()
+        await close(m,e)
+        transport.close()

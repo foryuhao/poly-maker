@@ -8,7 +8,14 @@ import pytest
 from m4_helpers import close, op, queue_hit, setup
 
 from polymaker.m4_baseline import settle
-from polymaker.m4_fill_model import EVIDENCE_POLICY, LEGACY_MODEL, LEGACY_POLICY, MODEL, POLICY, TouchFillModel, finish_observation
+from polymaker.m4_fill_model import (
+    EVIDENCE_POLICY,
+    LEGACY_MODEL,
+    LEGACY_POLICY,
+    POLICY,
+    TouchFillModel,
+    finish_observation,
+)
 from polymaker.m4_state import M4Ledger
 
 
