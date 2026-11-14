@@ -1,0 +1,12 @@
+[Unit]
+Description=Inspect M1234 simulation and request repair in its authorized chat
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python /home/ubuntu/polymaker/ops/m1234_sim_watch.py
+Nice=15
+CPUWeight=10
+MemoryMax=384M
+TimeoutStartSec=120

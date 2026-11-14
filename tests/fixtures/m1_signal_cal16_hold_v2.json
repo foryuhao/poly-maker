@@ -1,0 +1,40 @@
+{
+  "provenance": {
+    "kind": "ARCHIVED_SIGNAL_REFERENCE_NOT_RESTORED_RUNTIME_LOG",
+    "archive_sha256": "a99b1edaf4a3f40e72747090b50cf87a5be86aa9b49bdac00a08b239c63089a7",
+    "archive_member": "rework-contracts/strategy-contract.json",
+    "contract_sha256": "93dceabce4b21b5bd976c60bebc386fb3ca9116ef9cd7cf6c7e20ba19f1979cb",
+    "profile_fields": [
+      "profiles.config.signal",
+      "profiles.config/m1-live.signal"
+    ],
+    "historical_equivalence": "Independent v3 regression passed the original historical-configuration equality assertion.",
+    "independent_review_result": "astra-20261106-rework-03/regression.xml",
+    "signal_sha256": "fc25d8b6fcfc4088c7c3f728fc7b771de64ceca977aa49866fcf1d862ca3b8c0"
+  },
+  "rdp_sm": {
+    "m1": {
+      "signal": {
+        "profile": "cal-16",
+        "min_round_shares": "0.5",
+        "min_round_depth_fraction": "0.0001",
+        "round_window_sec": 0.5,
+        "ap_min_shares": "1",
+        "ap_min_depth_fraction": "0.0001",
+        "ap_min_share": "0.65",
+        "ap_min_records": 2,
+        "ap_max_concentration": "0.95",
+        "ap_window_sec": 0.75,
+        "rf_rounds": 2,
+        "rf_sequence_span_sec": 15.0,
+        "rf_min_median_recovery": "0.50",
+        "rf_ttl_sec": 8.0,
+        "combination_span_sec": 20.0,
+        "ex_ttl_sec": 0.75,
+        "track_visible_anchor": true,
+        "flow_requires_top_match": false,
+        "mirror_complement_flow": true
+      }
+    }
+  }
+}

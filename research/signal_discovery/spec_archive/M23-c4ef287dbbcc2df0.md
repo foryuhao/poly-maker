@@ -1,0 +1,319 @@
+# M23 加托扛卖
+
+版本：`m23-preloaded-bid-buffer-test-v1`。状态：**SPEC_ONLY**，2026-11-11提出，未测试。价格只识别原档；本版研究先增量、后受卖的可见数量顺序，不使用价格推进、外部BTC或未来结算信息。
+
+```json
+{
+  "document_type": "signal_sop",
+  "strategy_id": "M23",
+  "version": "m23-preloaded-bid-buffer-test-v1",
+  "status": "SPEC_ONLY",
+  "common_contract": "maker-discovery-common-v1",
+  "common_overrides": ["RF_ROUND_NOT_USED", "PRELOAD_BUFFER_FLOOR_INSTEAD_OF_RF_FLOOR", "RF_STABILITY_EXIT_NOT_USED"],
+  "adapter": null,
+  "priority": 12,
+  "family": "preloaded_demand_then_executed_sell_test",
+  "direct_trades_only": true,
+  "preload_min_net_add_shares": "5",
+  "preload_min_net_add_fraction": "0.20",
+  "preload_hold_ms": 100,
+  "preload_retained_add_fraction_min": "0.80",
+  "pre_seed_sell_presence_before_lossy_normalization": true,
+  "first_sell_after_seed_max_ms": 750,
+  "first_sell_gate_exclusive": true,
+  "test_window_ms": 500,
+  "test_min_sell_shares": "5",
+  "test_min_sell_to_preload": "0.50",
+  "test_min_depth_loss_to_preload": "0.50",
+  "test_sell_covers_depth_loss": true,
+  "retained_preload_fraction_min": "0.20",
+  "test_terminal_preload_fraction_max": "0.50",
+  "test_terminal_hold_ms": 100,
+  "seed_hard_ttl_ms": 3000,
+  "deadline": "SEED_CONFIRMED_PLUS_3000MS",
+  "explicit_terminal_P_quantity_after_last_sell_required": true,
+  "publication_requires_complete_original_batch": true,
+  "execution": "guarded-maker-v1",
+  "execution_owner": "USER_SIGNAL_TEST_MODULE"
+}
+```
+
+## 1. 完整交易语意与反面解释
+
+原最佳Bid P先出现明显净增量，至少100ms保留增量的80%，且没有观察到该档新的直接SELL；这形成加托种子。种子之后的第一笔新SELL开启500ms验证：实际卖量和可见减损都达到增量的一半，末100ms仍保留原增量的20%至50%。随后在剩余缓冲有效、原期限未过时，以P Maker等待后续卖盘成交。
+
+待检验的信息是：**可见需求先于这次新卖压出现；经过真实成交与数量回落后，部分增厚仍在。** 它不要求先打出低谷再恢复，也不把单纯加厚当成承接。若剩余需求反映继续接货的意愿，这种成交组可能带有方向信息；这仍是假说，不能称已经提高最终结算概率。
+
+反面解释包括：新增需求只是短暂报价，后续会撤走；卖盘正在击穿防守，只是尚未越线；厚队列筛掉了胜出但未成交的机会，最终成交集中在继续恶化时。L2也不能辨认新增订单是否被卖盘消耗，原有订单可能排在前面。本版只描述可见缓冲，不识别参与者、订单身份或交易意图。
+
+## 2. 固定原档、增量与种子
+
+token空闲时，按冻结输入顺序处理一份明确携带原最佳Bid P数量的健康深度更新。P在更新前已经存在，前量为B>0，后量为B+Δ，要求`Δ>=max(5,0.20*B)`。P取更新前best_bid，不能把新出现的更高价档或更新后的新best_bid作为本root起点。
+
+前量必须来自连续、可追溯的同档数量链，后量必须是本事件明确报出的新总量；其他档更新、BBO回调或刷新时间不能代替。冻结P、B、Δ、前后数量来源、generation和事件键。price_change.size是新总量，Δ由前后相减取得，不是把size当新增量。后续增量不放大Δ、不移动基线、不重启root。
+
+设增量事件received为t0，种子观察窗为`[t0,t0+100ms)`。从t0到第一笔合格验证SELL之前，持续要求：
+
+`Q(P)>=Fpre=B+0.80*Δ`，原P存在、深度链和质量有效。
+
+种子发布必须等待窗口水位和当前原始输入批次完成，确认可得时刻cS满足`t0+100ms<=cS<=t0+150ms`。检查窗口终点到发布边界的全部已知路径，中间跌破不能由后来恢复遮盖。
+
+从t0到cS（包含边界），该档直接SELL存在性须为零。此项在直接来源没有被镜像去重或过滤丢失前判断；同接收时刻、本批中排在增量事件之前的SELL也必须纳入核对，不能仅从增量之后的回调开始计零。仅已证明的原始事件重发按首次直接接收归属；无法辨认首次接收或成交覆盖时UNKNOWN。深度/BBO有更新不证明SELL完整，见[零记录证据说明](ABSENCE_EVIDENCE_REVIEW.md)。
+
+若后来才发现received属于`[t0,cS]`的直接SELL，在发现时结束root；不倒填过去的撤单或删除已发生成交。received等于cS不能当成种子后的新卖盘。种子只是形成证据，此时不下单。
+
+## 3. 首笔新SELL与底线切换
+
+种子后第一笔P上的直接SELL必须同时满足：received严格晚于cS，输入键严格晚于种子确认键，received和available都严格早于`cS+750ms`。第一笔不满足质量、来源或新阶段条件，就结束root；不得跳过它再挑后面的SELL。到截止仍没有首笔也结束。
+
+在处理这笔SELL前，Fpre持续有效。确认这笔可作为验证起点时，才将底线切换为`F=B+0.20*Δ`；这次因果处理之前已观察到的Fpre跌破不能被较低F追认。若深度先跌破Fpre、SELL后可得，即使其source可能更早，也不回写处理顺序救活root。无法建立可靠顺序时UNKNOWN。
+
+冻结首笔前P数量`Q0R`：数量来源输入键在首笔之前、received不晚于首笔、source timestamp严格早于首笔，且连续链有效。缺少前量来源不得借用B或B+Δ替代。设首笔received=tR，验证窗`[tR,e)`，`e=tR+500ms`。此后直到root结束，始终要求Q(P)>=F及原档存在。
+
+## 4. 真实受卖、减损及末段留存
+
+窗口内P上的去重直接SELL累计为H，已知最小量为QminR，`L=Q0R-QminR`。确认需要同时满足：
+
+- `H>=max(5,0.50*Δ)`。
+- `L>=0.50*Δ`。
+- `H>=L`。
+- 最后完整100ms `[e-100ms,e)`始终有`B+0.20*Δ<=Q(P)<=B+0.50*Δ`。
+
+所有数量边界包含等号。H>=L只是成交与损失的量级筛选，不证明全部损失均来自成交或没有撤单。形成H不能给之后的Maker订单抵扣前置队列。
+
+本版不计算RF作为通过门槛；末段可停在低谷、没有任何回补。末段上界证明加托后确实出现了可见回落；它只约束形成窗的末100ms。窗口结束e之后，进一步增厚可以接受，但不能重置B、Δ、F或截止。窗口内尚未进入末段时允许高于此上界；F始终有效。
+
+每个明确P数量事件按原始输入顺序更新QminR和持续区间。完整健康book快照是一份完整状态，内部清空/赋值不算P消失；price_change按原数组顺序逐项检查。批次后发布不等于只检查批次末态。无法保留这些语意就不能声称精确复现本版，见[深度批次语意](DEPTH_BATCH_SEMANTICS.md)。健康延续快照与断线后的generation重建必须区分，后者结束旧root。
+
+## 5. 数量可行性、确认与固定期限
+
+由于首笔前仍满足Fpre，`Q0R>=B+0.80*Δ`。在F不破条件下，减损空间为：
+
+`0.50*Δ <= L <= Q0R-(B+0.20*Δ)`。
+
+右端至少为0.60Δ，因此两项不必然冲突；实际还须H>=max(5,0.50Δ,L)、末段量处于指定区间、QminR不高于末段量。这个推导只证明存在数量解，不代表市场会产生该路径。若实际H不够，不能调低L或改选窗口。
+
+另设Q0R=B+kΔ，末段上界还推出`L>=max(0.50,k-0.50)*Δ`，H也须覆盖该值；首笔前继续增厚不会重置Δ或降低所需卖量。例如B=100、Δ=50但Q0R已到200，末段最多125，故L/H均至少75。仅为原规则推导，详见[输入顺序审查](PRELOAD_SEQUENCE_REVIEW.md)。
+
+窗口内必须有明确P数量事件，输入键晚于全部计量SELL，source timestamp严格晚于这些SELL的最大来源时间，received仍在`[tR,e)`内，关闭时已可得。其他档/BBO的刷新不够。缺少末端来源标UNKNOWN，不延长窗口等下一条深度。
+
+水位越过e且当前原始输入批次完成后，候选确认可得时刻c须`e<=c<=e+50ms`。发布前核对e至发布之间全部已知F路径、原档、质量和迟到的前种子SELL；任何失效先处理。received仍属形成窗的事件按形成规则处理；封窗后迟到按COMMON标UNKNOWN，不偷偷当成等待阶段新事件。
+
+固定`signal_deadline=ds=cS+3000ms`，从种子确认计时。首笔SELL、候选确认、订单回执或新的增厚均不续期。因为`tR∈(cS,cS+750ms)`，本版正常候选确认的派生时间区间为`c-cS∈(500ms,1300ms)`，名义剩余为`ds-c∈(1700ms,2500ms)`；后续处理、提交延迟、T240和硬失效仍会缩短实际可用时间。这不是固定确认耗时或频次预测。
+
+## 6. Maker等待、失效与新root
+
+按[COMMON](COMMON.md) guarded-maker-v1在原P下post-only买单：P存在、P<=best_bid且P<best_ask、预算最多5USDC、精度/最小量合法、T15至T240准入、发送时离ds和T240均至少400ms。每版本/市场/token最多一次实际提交，拒单也占次数；不改价、不补单。
+
+等待条件只有本版固定F、原档存在、质量/generation/tick及COMMON合法执行边界；不要求再次满足末段上界、形成H或RF恢复率，也没有“后续合格但不稳定RF”退出。新增挂量可以存在，但F和ds固定。任一硬约束失败即在当前可得时刻结束并请求撤剩余订单，最晚按`min(ds,c+3000ms,T240)`撤单；这里ds早于c+3000ms。
+
+所有取消在途成交保留在全量经济账；不能只留下F有效期间的赢家。时序不可排序标ORDERING_UNKNOWN；晚发现的旧事件不倒删此前订单或成交。初始验证窗口外的新SELL可以带来成交，也可以触发底线失效，两者的先后由冻结输入和订单模型记录，不能由最终结算反推。
+
+每token仅一个形成/等待root。结束后，只能由received及输入键均晚于结束的全新合格P增量另开；以前使用过的加托事件和SELL不得重复利用。新root不能解除市场/token提交额度。其他Ask条件只按COMMON执行合法性和质量要求，不增加Ask方向确认。
+
+**成交可行性限制：**在FIFO假设下，提交前已存在的剩余缓冲仍在本单前面；不能把“保留20%增量”称为本单后方保护。有效期间成交还需要订单生效之后的合格SELL、外部队列更替或后续补给。先加托可能增加排队负担，形成期H不抵扣；不能从缓冲留存直接推出更易成交，见[Maker可行性说明](MAKER_FEASIBILITY.md)和[成交选择审查](MAKER_SELECTION_REVIEW.md)。
+
+## 7. 纸面算例与机制查重
+
+纯定义算例：B=100、Δ=50，增厚后150，前置底线140；t0=0、cS=110ms，首笔新SELL在150ms，验证结束650ms、确认660ms。验证初量150、H=30、最低和末段量均120，F=110、末段上界125；L=30>=25且H>=L，因此数量有解。若末100ms连续为120且来源/质量均满足，可以确认；没有恢复过程。固定ds=3110ms，确认时名义余量2450ms。这里没有任何实际行情、撮合或经济测试。
+
+与M17比较，同一首笔及初量150下，末段120低于其90%初量门槛135；与M20比较，同一首笔后是净减量而非锚档净增。与RF比较，若最低和末量同为120，则r=0。这个共同纸面路径说明本版不是这些条件的简单加过滤；不表示不同窗口/root在全市场互斥。其新信息是先于本次受卖的增厚及剩余缓冲，而不是多加一次恢复检查。
+
+主要反例：
+
+- 增厚后、第一笔验证SELL尚未可得时量已降到139：违反Fpre=140，后来的SELL不能追认。
+- 形成末段仍有140：没有达到本版回落区间，即使看似更强也不确认。
+- H=10而L=30：量级条件失败，不将撤单造成的回落自动视为真实受卖验证。
+- 任一时刻量降到109或原P消失再补回：F失效，不能用末量120救活。
+- 种子前没有SELL仅因直接记录被去重丢失：UNKNOWN，不是有效种子。
+- 候选成立但厚队列始终轮不到本单，或只在失效竞态中成交：不得计成有效期内成功成交，更不能遗漏实际亏损。
+
+## 8. 数据能力与审计交接
+
+最低要求：原档明确前后数量、原始批次/增量顺序、同档直接SELL及身份、received/available/source和有序输入键、零SELL区间的覆盖合同、窗口水位、首笔前量与末笔后量、完整Fpre/F路径。普通top-of-book摘要或旧RF布尔值不能重建本版；现有字段存在不等于录制已支持。 [输入顺序审查](PRELOAD_SEQUENCE_REVIEW.md)进一步区分外层行号和内部改量身份、原始方向与默认BUY，以及同批先SELL/先减量造成的样本差别；没有原始来源不能补造。缺少能力时UNAVAILABLE/UNKNOWN，不能由本任务启动采集或实现适配器补足。
+
+除COMMON字段，需记录`add_event_id, base_quantity_source, add_quantity_source, B, delta, t0, seed_confirmed, seed_key, seed_zero_sell_quality, first_sell_received, first_sell_available, first_sell_key, Q0R_source, Q0R, QminR, H, L, terminal_quantity_source, Fpre, F, terminal_upper, test_end, confirmed, deadline, stage_of_failure, buffer_guard_valid_at_fill`。订单/部分成交按同一order_id汇总，全量结果与有效期内子组分开。
+
+研究优先级暂追加第12。数量与时间阈值是待测试定义，没有数据校准；未验证连续24h的101笔、正PnL、trim3/trim5或同价同剩余时间下的相对胜出概率。测试由用户模块负责，本任务仅交付本SOP。
+
+## 9. 同家族显式备选：攻后加托复验
+
+版本`m23-xr-seeded-sell-test-v1`，**SPEC_ONLY**。先有主动BUY达到XR的规模条件，再有此前平稳、未受SELL消耗的原Bid净增留存；种子之后第一笔新SELL开启复验，真实卖量与减损足够，末段仍留部分缓冲，才在原Bid Maker等待后续卖出。
+
+本分支引用[XR v1](P_XR.md)作为种子来源，并明确增加种子发布交接条件、逐笔100ms数量复核和一次准入政策。它不是主M23的纯种子替换或实际成交子集。上文主版本及首个JSON保持不变，不新增M编号，不自动部署。
+
+```json
+{
+  "document_type": "signal_sop_variant",
+  "strategy_id": "M23",
+  "version": "m23-xr-seeded-sell-test-v1",
+  "name": "攻后加托复验",
+  "status": "SPEC_ONLY",
+  "selection": "EXPLICIT_ONLY_NOT_DEFAULT_OR_DEPLOYED",
+  "research_family_id": "F_PRELOADED_BUFFER",
+  "baseline_definition_sha256": "d02d0a8b5f38f74fec7bd6382427a64e72cef5af74e03fa629da5daac35e51f4",
+  "baseline_snapshot": "../signal_discovery/spec_archive/M23-d02d0a8b5f38f74f.md",
+  "common_contract": "maker-discovery-common-v1",
+  "common_sha256": "c3ec4443e8651e8a6f685309bdd6142166bada3de6c0846d3c18531cdc803645",
+  "common_snapshot": "../signal_discovery/spec_archive/COMMON-c3ec4443e8651e8a.md",
+  "component_specs": [
+    {
+      "primitive_id": "XR", "side": "BID",
+      "version": "xr-cross-side-following-liquidity-v1",
+      "file": "P_XR.md",
+      "sha256": "7c8c3d9d1f2373cfb3e19ccf7396a96cc456103b04e7b4a41655e542da379c8d",
+      "snapshot": "../signal_discovery/spec_archive/P_XR-7c8c3d9d1f2373cf.md"
+    }
+  ],
+  "direct_trades_only": true,
+  "signal_depth_view": "UNMODIFIED_PUBLIC_L2_WITHOUT_SYNTHETIC_ORDER_INSERTION",
+  "seed_uses_XR_attack_baseline_and_net_delta": true,
+  "seed_zero_sell_interval": "XR_T0_MINUS_500MS_THROUGH_XR_CONFIRMATION_INCLUSIVE",
+  "seed_retained_add_fraction_through_publication_min": "0.80",
+  "pre_first_sell_retained_add_fraction_min": "0.80",
+  "first_sell_after_seed_max_ms": 750,
+  "first_sell_received_and_available_before_deadline": true,
+  "first_sell_received_and_key_strictly_after_seed": true,
+  "skip_failed_first_sell": false,
+  "XR_becomes_historical_at": "FIRST_VALID_NEW_SELL_CAUSAL_HANDOFF",
+  "XR_50_percent_current_floor_inherited_after_handoff": false,
+  "test_window_ms": 500,
+  "test_min_sell_shares": "5",
+  "test_min_sell_to_seed_delta": "0.50",
+  "test_min_depth_loss_to_seed_delta": "0.50",
+  "test_sell_covers_depth_loss": true,
+  "test_terminal_retained_fraction": ["0.20", "0.50"],
+  "test_terminal_hold_ms": 100,
+  "post_handoff_retained_add_fraction_min": "0.20",
+  "test_terminal_upper_inherited_after_window": false,
+  "same_level_post_sell_recheck_max_ms": 100,
+  "post_sell_recheck_deadline": "TRADE_RECEIVED_PLUS_100MS_EXCLUSIVE",
+  "forming_trade_recheck_received_before_test_end": true,
+  "recheck_monitor_owned_by_variant_after_handoff": true,
+  "pending_recheck_blocks_first_submission": true,
+  "seed_deadline_ms": 3000,
+  "deadline": "XR_ORIGINAL_CONFIRMATION_PLUS_3000MS",
+  "maximum_tests_per_XR_root": 1,
+  "maximum_submissions_per_version_market_token": 1,
+  "entry_price_interval_inclusive": ["0.20", "0.80"],
+  "execution": "guarded-maker-v1",
+  "admission_policy": "ONE_DECISION_AT_FIRST_READY_BOUNDARY_NO_RETRY",
+  "keep_all_cancel_race_fills": true,
+  "adapter": null,
+  "execution_owner": "USER_SIGNAL_TEST_MODULE"
+}
+```
+
+### A. 为什么必须使用历史交接
+
+若同一B、Delta下同时要求XR继续当前有效和M23式末段留存，则：
+
+`Q(P)>=B+0.50Delta`，同时`Q(P)<=B+0.50Delta`。
+
+末段只能恰好等于50%这一点；若继续施加主M23的80%前置底线，交集更直接为空。不能把这些条件随手相加后声称得到更强策略。
+
+本分支选择明确的阶段交接：首笔合格新SELL到来之前，新增量仍须保有80%；这笔SELL被因果确认可作为复验起点后，XR成为冻结历史种子，当前数量约束改为20%底线。后续XR因自身50%底线结束，不自动否定这个已开始的复验；这不修改或复活原XR，也不允许其他消费者把它继续当当前事实。
+
+XR原版自身只在eXR至发布之间守50%、发布点检查80%，且允许eXR后的目标成交进入复核。为了保留本分支“种子后首次受卖”的语意，还需下述更严格种子检查，不能只读取一个XR confirmed布尔值。
+
+### B. 种子接收、完整发布交接与80%等待
+
+按冻结XR v1独立形成XR_BID。冻结其P、B、Delta、原始BUY前缀、t0XR、首次净增时刻tA、eXR、确认cS及发布键；**B为XR首次BUY之前的Bid初量，Delta为XR相对该B的净增量**，不改成最后一次深度更新的前后差。
+
+在XR原发布边界只作一次本分支种子检查，同时要求：
+
+- XR当前有效、质量正常；从tA至cS包含发布边界的完整已知路径，`Q(P)>=Fpre=B+0.80Delta`。eXR至cS曾低于Fpre而后来恢复，XR原版可能仍发布，本分支不接收该种子。
+- 原P直接SELL在`[t0XR-500ms,cS]`中为零，包含cS。这比XR的原零成交区间延长至发布边界；已经及时复核的eXR后SELL也不能忽略。缺少直接来源、覆盖或历史路径为UNKNOWN，不默认零。
+- 同market/token/generation、原P存在、无未完成的旧目标成交复核；历史受击Ask X按XR要求完整存在到cS，其后只作历史参照。
+
+种子不足即拒绝本XR root，不等待它以后恢复再接收，不重置XR观察器。发布后继续保持Fpre、原档及质量，直到首笔合格新SELL到来；仅有XR自身较低的50%底线仍有效不够。此时不下单。
+
+固定`ds=cS+3000ms`；原攻击Ask X不作为后续当前弱供条件。任何后来发现的种子期禁入SELL、80%路径跌破、历史原档缺失或来源错误，均在发现时结束本分支，不能因种子已成历史而忽略，也不能倒删已经发生的成交。
+
+### C. 首笔新SELL的原子交接
+
+种子后看到的第一笔原P直接SELL必须同时满足：received严格晚于cS、输入键严格晚于种子发布键、received及available严格早于`cS+750ms`，以及冻结输入合同的方向、身份、质量和原档条件。收到旧received的迟到SELL或来源不能解释时结束，不跳过它挑后面更有利的一笔。750ms到期仍无合格首笔也结束。
+
+在处理此笔前，必须已持续通过Fpre及种子质量检查。冻结其前置数量Q0R，来源须明确属于P、输入键在该SELL前、received不晚于SELL、source严格更早且连续链有效。不能用B、B+Delta或成交后的数量替代。
+
+首笔可作为复验起点时，在同一因果处理步骤中记下交接键及可得时刻，将本分支底线切为`F=B+0.20Delta`，并以该笔received=tR开始`[tR,eR)`、`eR=tR+500ms`。**先前已经观察到的Fpre跌破不能由较低F救活。** 同批若深度先跌破、SELL后来才可得，仍失败，不重排输入来取得资格。
+
+首笔SELL本身会让独立XR进入待复核；这不阻止已经基于其前置有效状态启动的观察交接，因为此时没有新订单或最终候选。但不能借此忽略首笔之前就存在的失效。交接后本分支自己维护第E节逐笔复核，不依赖XR继续输出当前状态。
+
+每份XR只允许这一轮复验，失败不再找第二笔开启另一窗口。新XR或其他信号不能替换已有种子或延长ds。
+
+### D. 500ms真实受卖验证
+
+按原P原token的直接SELL计算H、QminR及`L=Q0R-QminR`。从交接起持续守F和原档；确认同时要求：
+
+- `H>=max(5,0.50Delta)`，`L>=0.50Delta`，且`H>=L`。
+- 最后100ms `[eR-100ms,eR)`连续满足`B+0.20Delta<=Q(P)<=B+0.50Delta`。
+- 所有形成窗SELL通过第E节复核；形成窗内有明确P末端报量，输入键和source晚于全部计量SELL，received<eR且关闭时可得。
+
+不要求RF恢复、AP持续、XR的50%当前底线或原Ask保持弱供。形成H不抵扣未来Maker队列。H>=L只作量级限制，不证明全部数量损失来自这些SELL。
+
+Fpre确保`Q0R>=B+0.80Delta`，所以`0.50Delta<=L<=Q0R-(B+0.20Delta)`存在理论空间。若首笔前数量继续增加，令`Q0R=B+kDelta`，还须`L>=max(0.50,k-0.50)Delta`且H覆盖L；不扩大Delta来降低这个门槛。
+
+如果只沿用XR自身50%底线作首笔前等待，则Q0R可能低至B+0.50Delta，而20%底线下最多再减0.30Delta，无法满足至少0.50Delta损失。这也是本分支明确保留80%前置留存的原因，不是对XR原语的修改。
+
+### E. 本分支独立的逐笔复核与候选发布
+
+对首笔及此后每笔原P SELL j，冻结`Dj=received_j+100ms`。需要明确P报量，输入键在成交之后、source严格更晚、received不早于该成交，且received/available均严格早于Dj；形成窗SELL的复核received还须<eR。BBO、其他档或source相等不能复核，一份合格报量可复核多笔先前成交。
+
+available到Dj先处理超时；成交本身可得时已超时也结束，不重给100ms。原XR在P跌破其50%底线时可以结束，但本分支仍须独立跟踪每笔Dj；**停止继承XR数量底线不等于停止数据复核**。这是相对主M23新增的输入筛选，可能降低频次，不能把两版本差异全归因于XR种子。
+
+水位越过eR，在首个完整原始批次/对应计时器边界发布候选c，要求`eR<=c<=eR+50ms`。形成窗任一未复核、窗口条件不足或已知硬失效，均不发布。eR之后仅守F，形成末段50%上界不继续施加；审查eR至c的全部已知F路径，不能只看恢复后的发布快照。
+
+received>=eR的新SELL不回填形成H，但立即进入同样100ms监控。未超时的待复核可以伴随已成立候选，首次提交须等集合清空；已超时则结束。晚处理的形成期输入按原阶段处理，不改成后续流量绕过验证。
+
+候选截止仍为ds。理论`c-cS`在(500ms,1300ms)，确认时名义余量在(1700ms,2500ms)；叠加XR形成后，从其首笔BUY到候选确认理论为(600ms,1950ms)。这些不包括首次提交可能额外等待的复核/调度，也不是实测延迟或频次。
+
+### F. Maker首次准入、等待与完整账本
+
+候选已成立且当前无待复核、原期限/质量有效的第一个完整边界，是本分支唯一首次准入机会。检查COMMON及含端点[0.20,0.80]准入区间，原P合法post-only、预算最多5USDC、T15–T240、精度/最小量/资金及发送时至少400ms剩余。条件不满足即记ADMISSION_SKIP，不等待价格、资金或市场年龄变好重试同root。
+
+通过则按预先冻结的发送政策准备一次提交，实际发送前重新检查原root、无待复核、400ms余量及合法性；若其间受阻则结束为PRE_SEND_ABORT，不重试。每variant/market/token最多一次实际提交，拒单也占额度；原锚不合法不改价，不补单。
+
+信号深度使用未被本实验合成订单改写的公开L2；订单另由冻结的公共成交驱动FIFO、前置队列/撤单归属、延迟、部分成交及费用profile处理。不能把自己的假想挂量计入XR或缓冲，也不把ASSUMED_FILL计作实际模型成交。
+
+发送后继续守F、原P、质量和ds；新SELL在原100ms预算内可维持已发订单等待，已知数量跌破或复核超时则立即撤剩余。撤单决定最晚`min(ds,c+3000ms,T240)`；新XR证据、回补、候选重新引用或ACK均不续期。原攻击Ask X的历史身份不额外施加当前数量条件。
+
+取消在途、待复核期间以及硬失效之后但取消尚未确认的实际模型成交全部进入账本；同order_id合并部分成交，持有到官方结算，不能只保留有效期间赢家。无法排序或来源缺失按UNKNOWN记录，不能把同批成交统一移动到失效前后择优。
+
+每token最多一个本分支campaign。结束后只接收攻击首笔received和输入键均晚于该结束的新XR root；在旧campaign期间已开始的XR不回收利用，也不强制清空独立原语。新root不能解除每市场一次提交额度。任何规格/hash或执行profile变动须另标身份，分支账不能与主M23合并凑101笔。
+
+### G. 纸面可行例、反例与交接
+
+例：XR首次BUY=12、QX=100、B=100；10ms取得攻击资格，50ms目标Bid由100增至150，Delta=50。前置历史和整个种子发布路径无P SELL、目标量保持150，eXR=150ms、cS=160ms。首笔新SELL在200ms，量30；210ms明确P=120，来源晚于SELL并及时复核。其后末100ms仍120，eR=700ms、c=710ms。
+
+此时Fpre=140、F=110，Q0R=150、L=30，满足H=30>=L且L>=25，末段区间为[110,125]。XR自身在P到120时已跌破125的当前底线，但复验在该跌破之前因200ms首笔SELL完成交接，因此本分支可继续，原截止仍3160ms，确认后名义剩2450ms。这只是条件有解，不是市场或撮合测试。
+
+反例：
+
+- 种子在eXR至cS之间曾降到130、随后回150：XR原版可能通过，本分支因80%种子路径失败拒绝。
+- eXR之后、cS之前已有P SELL，即便及时复核、发布时仍150：本分支种子零SELL条件失败。
+- 首笔SELL尚未可得时P先降到139：Fpre先破，不能在SELL到来后改用110追认。
+- Q0R=150、末段P=130：高于125上界，不满足“实际回落后部分留存”的复验，不能因看起来更强而放行。
+- 首笔SELL在200ms，P复核到300ms等号才可得：100ms预算已过，即使500ms末段后来满足也失败。
+- XR新事实后来出现或旧XR结束：都不重置这份历史种子的B、Delta、cS或ds。
+
+额外记录`variant_version, XR_spec_hash, XR_root_id, XR_attack_refs, XR_tA, XR_e, seed_full_zero_sell_interval, seed_80pct_path_valid, seed_admission_reason, cS, ds, first_new_sell_key, handoff_available, handoff_pre_state, Q0R_source, Fpre, F, XR_current_end_reason_separate, pending_recheck_deadlines, candidate_confirmed, first_ready_admission_time, admission_skip_reason, pre_send_abort_reason`，加COMMON和主M23的成交/结算字段。
+
+本分支归F_PRELOADED_BUFFER：比主M23多了BUY之后跟挂的顺序、种子交接筛选和100ms复核，仍不是新统计独立机制或已证实优势。测试模块需按冻结连续24h和准入价格区间评价完整实际Maker账、至少101笔已结算订单、总PnL及trim3/trim5；缺费用或结算不补零。本任务没有实现检测器、模拟适配器或启动测试。
+
+
+## 原语组合与Maker成交语意（统一映射 v1）
+
+本节对应主版本 `m23-preloaded-bid-buffer-test-v1`，只整理既有定义，不改上文参数、执行或备选。`hist/live/→/∥`及旧轮、严格轮的版本区别见[统一映射](STRATEGY_PRIMITIVE_MAP.md)。
+
+**原语组合**：`buffer@M23预加托留存 → 首个新SELL → 缓冲受击后仍部分保留`。主版没有要求先AP_BUY或XR_BID；增量本身不是BA/RF。
+
+**先后顺序**：原Bid单次净增Δ≥max(5,0.20B)，100ms保留≥80%Δ、至种子发布零该档SELL。首笔新SELL须在种子后750ms内received及available可得；合法交接才切20%floor。新500ms需H≥max(5,0.50Δ)、L≥0.50Δ、H≥L，末100ms留20%–50%。
+
+**当前等待与失效**：原锚截止固定cSeed+3s；窗后只守F=B+0.20Δ，末段50%上界不带入等待。无RF恢复退出；不能把形成前80%floor跌破以较低新floor追认。
+
+**Maker成交语意**：买托增量先于新卖压，真实受卖及数量回落后仍有缓冲，再以Maker接后续SELL。已有缓冲可能排在本单前方，不能称为本单后方保护。
+
+**重叠与合并边界**：保留预增缓冲家族，区别M20受卖后前聚及M8失守重建。XR备选增加BUY后跟挂起点与逐笔复核；同复验轮r≤0.50，不默认叠普通RF作双重确认。
+
+形成期流量不抵扣随后Maker订单前置队列；全部实际成交（含失效后及撤单在途）保留经济记录。这里只表达等待政策下的成交阶段，不宣称结算概率或盈利已经提高。

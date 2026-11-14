@@ -1,22 +1,23 @@
 [Unit]
-Description=Retain 24 hours of PolyMaker trading logs and preserve recovery evidence
-RequiresMountsFor=/home/ubuntu/poly-maker
+Description=Retain 24 hours of completed M1 logs and preserve all ledgers and study300
+RequiresMountsFor=@PROJECT_DIR@
 
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/bin/python3 -I -B /usr/local/lib/poly-maker/log_retention.py --data-root /home/ubuntu/poly-maker --state-dir /home/ubuntu/poly-maker/logs/retention --apply
-TimeoutStartSec=4min
-Nice=10
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/poly-maker/ca_log_retention.py --data-root "@PROJECT_DIR@" --state-dir "@PROJECT_DIR@/logs/retention" --apply
+TimeoutStartSec=10min
+Nice=19
 IOSchedulingClass=idle
+CPUQuota=10%
+MemoryMax=128M
 UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/ubuntu/poly-maker/journal /home/ubuntu/poly-maker/logs
-ReadWritePaths=/home/ubuntu/poly-maker/livecfg/journal /home/ubuntu/poly-maker/livecfg/logs
-ReadWritePaths=/home/ubuntu/poly-maker/research_outputs/periodic_sync
-ReadOnlyPaths=/home/ubuntu/poly-maker/research_outputs/rdp_risk_shadow
+ReadWritePaths="@PROJECT_DIR@/journal" "@PROJECT_DIR@/logs/retention"
+ReadWritePaths=-"@PROJECT_DIR@/livecfg/journal"
+ReadWritePaths=-"@PROJECT_DIR@/research_outputs/m1_virtual/sessions"
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true

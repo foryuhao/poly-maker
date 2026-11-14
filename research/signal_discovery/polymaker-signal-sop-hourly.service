@@ -1,0 +1,17 @@
+[Unit]
+Description=This task's bounded SOP research progress report (no signal testing)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+ExecStart=/usr/bin/python3 -B /home/ubuntu/polymaker/research/signal_discovery/hourly.py --wake
+CPUQuota=5%
+MemoryMax=128M
+MemorySwapMax=0
+TasksMax=16
+Nice=19
+IOWeight=10
+TimeoutStartSec=90
+NoNewPrivileges=yes
+StandardOutput=null
+StandardError=null

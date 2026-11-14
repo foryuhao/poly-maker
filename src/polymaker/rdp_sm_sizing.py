@@ -1,6 +1,6 @@
 """Pure sizing helpers for the existing SM quote decision, never execution."""
 
-from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 from polymaker.config import RDPSMConfig
 from polymaker.rdp_sm import decision_quantity
@@ -17,8 +17,24 @@ def validate_market_sizing(cfg: RDPSMConfig, minimum: Decimal) -> None:
         raise ValueError("SIZING_MARKET_MINIMUM_UNKNOWN")
     if cfg.normal_entry_mode == "m1_v1":
         return  # Quantity is computed from the 5-USDC budget at an actual anchor.
+    if cfg.sizing_mode == "fixed_risk":
+        if cfg.max_order_size < max(MIN_MAKER_BUY_SHARES, minimum):
+            raise ValueError("SIZING_MAX_BELOW_MARKET_MINIMUM")
+        return
     if cfg.base_size < max(MIN_MAKER_BUY_SHARES, minimum):
         raise ValueError("SIZING_BASE_BELOW_MARKET_MINIMUM")
+
+
+def fixed_risk_size(price, risk, minimum, maximum):
+    """Cap opening principal, rounding shares down; never upsize to a minimum."""
+    if not price.is_finite() or not 0 < price < 1:
+        raise ValueError("CA_FIXED_RISK_PRICE_INVALID")
+    ideal = risk/price
+    quantity = min(ideal, maximum).quantize(GRID, rounding=ROUND_FLOOR)
+    if quantity < max(MIN_MAKER_BUY_SHARES, minimum):
+        raise ValueError("CA_FIXED_RISK_BELOW_MARKET_MINIMUM")
+    reasons = ["MAX_ORDER_SIZE"] if ideal > maximum else []
+    return ideal, quantity, reasons
 
 
 def resolve_favorite_target(meta, books, cfg: RDPSMConfig, *, now=None, max_age=10, official_time=None,

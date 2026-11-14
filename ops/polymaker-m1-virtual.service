@@ -1,0 +1,18 @@
+[Unit]
+Description=PolyMaker M1 virtual-only acceptance service
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -m polymaker.m1_virtual --config-dir config --output-dir /home/ubuntu/polymaker/research_outputs/m1_virtual --exercise-failover
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

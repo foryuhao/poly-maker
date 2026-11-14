@@ -1,0 +1,158 @@
+{
+  "updated_at": "2026-11-11T16:49:34.592110+00:00",
+  "status": "M6_SYNCHRONOUS_BID_RETENTION_VARIANT_DELIVERED",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "signal_sop_count": 23,
+  "existing_signals_documented": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11"
+  ],
+  "new_candidates": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "work": "交付M6撤供期多档留托显式备选，采用LW形成期间同步三档数量保留，明确否定LW标签和M11延迟移植的局限。",
+  "version_findings": [
+    "M2 主规则不强制买压衰减",
+    "M10 当前两轮版最多 8 秒，7.5 秒只属旧三轮示例",
+    "M11 完整 500ms 与 M4 专用 25ms 分开",
+    "M7/M9/M10 v2 仅显式选择，不自动视为已部署"
+  ],
+  "research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "next": "继续寻找方向及Maker成交阶段不同的新盘口路径；优先审查新观察能否超出现有保量/补量/退量家族，避免靠重复条件增加编号。到既定时点再只读小摘要。",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "tests_started_by_this_task": 0,
+  "profitability": "M12–M23、SR、QR v1.1、XR、LW及M4/M6/M17/M23显式备选均未取得本任务完整经济验证；不声称提高结算概率或完成连续24h目标。",
+  "catalog": "research/signals/catalog.json",
+  "hourly_first_delivery": "2026-11-11T19:00:42+08:00 QUEUED_AND_RESUME_REQUESTED",
+  "hourly_changes": [
+    "新增LW双侧独立规格，进一步交付M6家族的撤供期多档留托完整备选。",
+    "明确M11后置500ms与750ms组件寿命的冲突、逐档/总量重复及不同基线LW共存。",
+    "只修改研究规格和本任务进度；未测试、未实现适配器、未影响其他进程。"
+  ],
+  "open_idea_file": "research/signal_discovery/IDEAS.md",
+  "latest_changes": [
+    "M6同文件新增m6-fixed-bid-retention-v1：新Ask LW root前已有直接成交RF，Bid原三档各守90%，同步形成后Maker。",
+    "假设将完整M11后接M6，750ms寿命扣500ms最多余250ms，不能满足COMMON400ms准入；本分支不增加该后置等待。",
+    "逐档90%推出总量90%，合并重复数量解释；旧基线LW_BID仍可与新基线保留共存，不使用NOT LW_BID。",
+    "原M6主文及首JSON、全部原语参数不变；当前23份M、4份原语、4份显式备选，均无本任务新经济验证。"
+  ],
+  "mechanism_review": "research/signals/MECHANISM_MAP.md",
+  "maker_feasibility": "research/signals/MAKER_FEASIBILITY.md",
+  "feedback_receipt": "research/signal_discovery/feedback_latest.json",
+  "feedback_checked_at": "2026-11-11T16:40:12.367797+00:00",
+  "feedback_next_routine_check_not_before": "2026-11-11T17:40:12.367797+00:00",
+  "complement_provenance": "research/signals/COMPLEMENT_PROVENANCE.md",
+  "trade_timing_capabilities": "research/signals/TRADE_TIMING_CAPABILITIES.md",
+  "causal_handoff_review": "research/signals/CAUSAL_HANDOFF_REVIEW.md",
+  "maker_admission_review": "research/signals/MAKER_ADMISSION_REVIEW.md",
+  "absence_evidence_review": "research/signals/ABSENCE_EVIDENCE_REVIEW.md",
+  "depth_batch_semantics": "research/signals/DEPTH_BATCH_SEMANTICS.md",
+  "maker_selection_review": "research/signals/MAKER_SELECTION_REVIEW.md",
+  "frequency_budget_review": "research/signals/FREQUENCY_BUDGET_REVIEW.md",
+  "preload_sequence_review": "research/signals/PRELOAD_SEQUENCE_REVIEW.md",
+  "family_consolidation": "research/signals/FAMILY_CONSOLIDATION.md",
+  "directional_family_count": 12,
+  "overlay_count": 1,
+  "research_order_policy": "FAMILY_FIRST",
+  "research_family_order": [
+    "F_SUPPORT_WEAK_SUPPLY",
+    "F_WITHDRAWAL_SUPPORT",
+    "F_SELL_ABSORPTION",
+    "F_BUY_RETURN",
+    "F_COUNTERATTACK_HOLD",
+    "F_REPAIR",
+    "F_ABSORPTION_SPEED",
+    "F_RETAINED_DEPTH",
+    "F_STRESS_TOLERANCE",
+    "F_BID_FRONTLOAD",
+    "F_ASK_BACKLOAD",
+    "F_PRELOADED_BUFFER"
+  ],
+  "primitive_sop_count": 4,
+  "primitive_sops": [
+    "SR",
+    "QR",
+    "XR",
+    "LW"
+  ],
+  "primitive_index": "research/signals/PRIMITIVES.md",
+  "new_waiting_variant": {
+    "strategy_id": "M4",
+    "version": "m4-relative-exit-v1",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_composition_review": "research/signals/PRIMITIVE_COMPOSITION_REVIEW.md",
+  "new_combination_variant": {
+    "strategy_id": "M6",
+    "version": "m6-fixed-bid-retention-v1",
+    "name": "撤供期多档留托",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_revisions": {
+    "QR": {
+      "version": "qr-consumed-queue-retention-v1.1",
+      "supersedes": "qr-consumed-queue-retention-v1",
+      "reason": "补回发布点90%保量并冻结首个发布检查点，不能混池"
+    }
+  },
+  "new_primitive": {
+    "primitive_id": "LW",
+    "version": "lw-fixed-side-depth-withdrawal-v1",
+    "name": "疑似退量（Ask撤供/Bid撤托）",
+    "status": "SPEC_ONLY",
+    "origin": "EXISTING_NAME_SIDE_GENERALIZATION"
+  },
+  "documented_combination_variants": [
+    "m17-qr-sr-ask-v1",
+    "m23-xr-seeded-sell-test-v1",
+    "m6-fixed-bid-retention-v1"
+  ],
+  "explicit_variant_count": 4,
+  "new_candidate_ids_this_step": [],
+  "documentation_validation": {
+    "checked_at": "2026-11-11T16:51:07.325677+00:00",
+    "status": "PASS",
+    "scope": "SPEC_IDENTITIES_COMPONENT_SNAPSHOTS_LINKS_AND_PAPER_ARITHMETIC_ONLY",
+    "M_sop_files": 23,
+    "primitive_sop_files": 4,
+    "explicit_variants": 4,
+    "M6_baseline_preserved": true,
+    "other_M_and_all_primitive_specs_unchanged": true,
+    "signal_or_market_tests_run": false
+  }
+}

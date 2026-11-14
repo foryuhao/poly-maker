@@ -183,7 +183,8 @@ class CachedExecutionReads:
                     and Decimal(str(ev.original_size)) == Decimal(str(owned["submitted_qty"]))
                     and Decimal(str(ev.price)) == Decimal(str(owned["submitted_price"]))
                     and _terminal(ev, self.e.matched_remaining_tolerance_shares,
-                                  taker_buy=self.e.processor.taker_spec(oid) is not None)):
+                                  taker_buy=self.e.processor.taker_spec(oid) is not None,
+                                  fak_buy=self.e.processor.is_fak_buy(oid))):
                 return False
         return True
 

@@ -1,0 +1,18 @@
+# Shared M4 live/baseline execution contract.
+strategy = "m4-frequency-v2"
+execution_revision = "m4-maker-v1"
+order_budget_usdc = 5
+session_budget_usdc = 10
+max_opportunities_per_direction = 1
+minimum_price = "0.50"
+maximum_price = "1"
+quantity_step = "0.1"
+start_sec = 15
+cutoff_sec = 240
+close_sec = 300
+account_max_age_sec = 2.0
+account_poll_sec = 0.5
+post_budget_floor_ms = 400
+heartbeat_sec = 10
+retry_initial_sec = 0.1
+retry_max_sec = 2

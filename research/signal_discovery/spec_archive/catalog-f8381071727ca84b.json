@@ -1,0 +1,1398 @@
+{
+  "schema_version": 1,
+  "purpose": "SIGNAL_SOP_HANDOFF_NOT_SIMULATOR_CONFIG",
+  "scope": "SIGNAL_AND_SOP_ONLY_TESTING_OWNED_BY_USER_MODULE",
+  "generated_at": "2026-11-11T14:08:31.043970+00:00",
+  "signals": [
+    {
+      "strategy_id": "M1",
+      "name": "M1 承接后的卖压余波",
+      "file": "M1.md",
+      "sha256": "4ed3ae2c05e843204523ca225f835ec8e13eea27ca0aafe618c2f53816244a48",
+      "version": "m1-hold-v2/cal-16",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M1",
+        "version": "m1-hold-v2/cal-16",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/rdp_sm_m1_signal.py",
+          "src/polymaker/m1_live_config.py"
+        ],
+        "ap_window_ms": 750,
+        "ex_window_ms": 750,
+        "ex_ttl_ms": 750,
+        "round_window_ms": 500,
+        "rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "rf_sequence_span_ms": 15000,
+        "combination_span_ms": 20000,
+        "mirror_complement_flow": true,
+        "flow_requires_top_match": false,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/rdp_sm_m1_signal.py",
+          "sha256": "97ebb3835fe8d1d04e88910f00b12fe9066fcecb6f820691565e72e215abc656"
+        },
+        {
+          "path": "src/polymaker/m1_live_config.py",
+          "sha256": "3e79e527c3df78c635a72e790210de7d3ab8a743071f68ded5b08c1dd2d63c5b"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M2",
+      "name": "M2 买入进攻后的受控回流",
+      "file": "M2.md",
+      "sha256": "b641d2f47c9e5ecbb0277427a15b412b6c8a766cac45e9814c2e3ad880104e8f",
+      "version": "m2-candidates-v1/all_candidates",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M2",
+        "version": "m2-candidates-v1/all_candidates",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m2_signal.py",
+          "src/polymaker/m2_config.py"
+        ],
+        "ap_window_ms": 750,
+        "attack_reference_ttl_ms": 20000,
+        "round_window_ms": 500,
+        "fresh_rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "buy_fade_required": false,
+        "diagnostic_buy_ratio_limits": [
+          "0.25",
+          "0.50",
+          "0.75",
+          "1.00"
+        ],
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m2_signal.py",
+          "sha256": "bb40f570e9bdcbcaa45a039b450e4cf88371b605ca868543a77733b1c827324d"
+        },
+        {
+          "path": "src/polymaker/m2_config.py",
+          "sha256": "566e9ebbc8b913902cb074bc2013882e147d43c5a30402b23d5a081ddc0d1f0d"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M3",
+      "name": "M3 反击后守价",
+      "file": "M3.md",
+      "sha256": "0bda6466d06c81e9805b0a7b203d81468654013ac9ac38d5433986083ed47616",
+      "version": "m3-ca-then-ba-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M3",
+        "version": "m3-ca-then-ba-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m234_signal.py",
+          "src/polymaker/rdp_sm_ca.py",
+          "src/polymaker/rdp_sm_ba.py"
+        ],
+        "direct_trades_only": true,
+        "ca_sell_min": "5",
+        "ca_subsequent_buy_min": "10",
+        "ca_observation_max_ms": 750,
+        "ca_lifetime_from_first_sell_ms": 3000,
+        "ba_sell_min": "5",
+        "ba_depletion_min": "5",
+        "ba_positive_refill_min": "5",
+        "ba_observation_max_ms": 750,
+        "ba_lifetime_from_first_sell_ms": 3000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m234_signal.py",
+          "sha256": "7c9690bef86ab776b56f2108228a9b58fe3c05582cddf25e8413b1d537f4c4ca"
+        },
+        {
+          "path": "src/polymaker/rdp_sm_ca.py",
+          "sha256": "a61b70fea8e752552473da20f2b2ccd53313fb64e53f92ac8c279bfc75caf324"
+        },
+        {
+          "path": "src/polymaker/rdp_sm_ba.py",
+          "sha256": "0808e46c2fddfe73ec0707a24bc4fe5f19f10749fdae8a25a624c3b8481b9ff3"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M4",
+      "name": "M4 守强攻弱",
+      "file": "M4.md",
+      "sha256": "adcbaf309a7a4e2a46c1fc5194634e5fafbce651023aa45e45cc889586c5e947",
+      "version": "m4-frequency-v2",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M4",
+        "version": "m4-frequency-v2",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "sop_revision": "2026-11-11-r2-source-transition-clarification",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m4_frequency_signal.py",
+          "src/polymaker/m4_rounds.py"
+        ],
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "bid_support_rounds": 1,
+        "bid_support_ttl_ms": 8000,
+        "ask_reference_rounds": 1,
+        "ask_reference_min_recovery": "0.50",
+        "ask_reference_ttl_ms": 15000,
+        "weak_rounds": 1,
+        "weak_loss_fraction_min": "0.05",
+        "weak_recovery_max": "0.60",
+        "weak_reference_fraction_max": "0.80",
+        "comparable_ratios": [
+          "0.10",
+          "10.00"
+        ],
+        "ask_weak_ttl_ms": 5000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m4_frequency_signal.py",
+          "sha256": "a02dd229df64924ddca45e4138679fe0f4a65a5668f4a1738617af115378025d"
+        },
+        {
+          "path": "src/polymaker/m4_rounds.py",
+          "sha256": "bee3ff08ffb48395e3a9e575a2f2d3250521f7744a156e5f1710f1a68b6601a3"
+        }
+      ],
+      "previous_document": {
+        "version": "m4-frequency-v2",
+        "sha256": "48df63f7879e3a34e29828e01e5c4587796672521ac72c094c94b2334ecd9842",
+        "archive_file": "research/signal_discovery/spec_archive/M4-48df63f7879e3a34.md"
+      }
+    },
+    {
+      "strategy_id": "M5",
+      "name": "M5 强压稳接",
+      "file": "M5.md",
+      "sha256": "77ef6f852380a1ec2be82e601cc3ed6a3139593ade6cfa55abee1f07e5674701",
+      "version": "m5-overlap-recovery-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M5",
+        "version": "m5-overlap-recovery-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "rf_rounds": 2,
+        "round_window_ms": 500,
+        "second_recovery_fraction_min": "0.80",
+        "ap_second_round_overlap_required": true,
+        "hit_comparability_required": false,
+        "depth_comparability_required": false,
+        "candidate_ttl_upper_ms": 750,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M6",
+      "name": "M6 撤供留托",
+      "file": "M6.md",
+      "sha256": "6f3ae2002225f180e93636e9c089a56e279d3e08b451dff781a56e27904ca9a6",
+      "version": "m6-withdrawal-supported-v1.1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M6",
+        "version": "m6-withdrawal-supported-v1.1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "lw_ttl_ms": 750,
+        "lw_loss_fraction_min": "0.30",
+        "lw_residual_fraction_of_initial_min": "0.20",
+        "lw_residual_fraction_of_loss_min": "0.50",
+        "lw_hold_ms": 100,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M7",
+      "name": "M7 歇后再攻",
+      "file": "M7.md",
+      "sha256": "1cc2e41f611a56f678f9177aa8605a20ad6a2fb2f4985909db16c03bdc2b3441",
+      "version": "m7-short-pause-single-refill-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M7",
+        "version": "m7-short-pause-single-refill-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "ap1_window_ms": 750,
+        "pause_window_ms": 500,
+        "pause_bin_ms": 250,
+        "pause_bin_fraction_max": "0.20",
+        "pause_total_fraction_max": "0.35",
+        "new_bid_rounds": 1,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "pause_and_bid_round_may_overlap": true,
+        "ap2_window_ms": 750,
+        "root_ttl_ms": 20000,
+        "rf_ttl_ms": 8000,
+        "alternative_variant": {
+          "version": "m7-short-pause-single-refill-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "pause_bin_fraction_max": "0.35",
+          "pause_total_fraction_max": "0.50"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M8",
+      "name": "M8 失守后修复",
+      "file": "M8.md",
+      "sha256": "3af50904458b799828c8b3628bbf77ca389a00ed5c1a3b129db98dccbf05760a",
+      "version": "m8-depth-repair-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M8",
+        "version": "m8-depth-repair-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "weak_rounds": 1,
+        "weak_recovery_max": "0.30",
+        "repair_rounds": 1,
+        "repair_recovery_min": "0.60",
+        "round_window_ms": 500,
+        "repair_formation_ms": 5000,
+        "depth_loss_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "hit_ratio_required": false,
+        "post_repair_ttl_ms": 8000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M9",
+      "name": "M9 余波复验",
+      "file": "M9.md",
+      "sha256": "93f1bb5f9a672c24a2f8d60224bef9f89b49de4a02d5179159eb25bf889fcb12",
+      "version": "m9-single-support-weak-retest-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M9",
+        "version": "m9-single-support-weak-retest-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "seed_bid_rounds": 1,
+        "seed_bid_round_ms": 500,
+        "seed_support_ttl_ms": 3000,
+        "retest_rounds": 1,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "formation_ms": 5000,
+        "rolling_sell_ms": 750,
+        "residual_fraction_strict_max": "0.65",
+        "post_retest_rf_ttl_ms": 8000,
+        "original_ap_history_ttl_ms": 20000,
+        "alternative_variant": {
+          "version": "m9-single-support-weak-retest-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "seed_support_ttl_ms": 6000,
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "formation_ms": 8000,
+          "residual_fraction_strict_max": "0.95"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M10",
+      "name": "M10 回流递减",
+      "file": "M10.md",
+      "sha256": "7d94c592e3fcbef6d46c9301a9033d68f51d4690250c03a7474d91c7ae83a18f",
+      "version": "m10-two-return-decay-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M10",
+        "version": "m10-two-return-decay-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "return_rounds": 2,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "volume_ratio_max": "0.90",
+        "normalized_hit_ratio_max": "0.90",
+        "recovery_ratio_min": "0.80",
+        "stable_recovery_min": "0.50",
+        "sequence_span_ms": 15000,
+        "rf_ttl_ms": 8000,
+        "ap_history_ttl_ms": 20000,
+        "post_confirmation_pressure_ratio_max": "1.25",
+        "post_confirmation_recovery_ratio_min": "0.80",
+        "alternative_variant": {
+          "version": "m10-two-return-decay-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "volume_ratio_max": "0.99",
+          "normalized_hit_ratio_max": "0.99",
+          "recovery_ratio_min": "0.60"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M11",
+      "name": "M11 多档续托",
+      "file": "M11.md",
+      "sha256": "ec75802288c298d8b8dee0a3929f3b569a57cdacc756c38f142e8320e8c9f96f",
+      "version": "m11-full-retention-v1.1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M11",
+        "version": "m11-full-retention-v1.1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "PARENT_FILTER_NOT_STANDALONE_DIRECTION",
+        "source": [
+          "research/maker_signals/strategies.py"
+        ],
+        "parents": [
+          "M4",
+          "M9",
+          "M10"
+        ],
+        "lower_bid_levels": 2,
+        "first_joint_cross_window_ms": 500,
+        "retention_after_cross_ms": 500,
+        "net_add_min_shares": "0.5",
+        "net_add_initial_fraction": "0.10",
+        "retention_first_cross_fraction": "0.50",
+        "inherits_parent_deadline": true,
+        "alternative_variant": {
+          "version": "m4-m11-retention-25ms-v1",
+          "selection": "EXPLICIT_ONLY_M4_PARENT",
+          "first_joint_cross_window_ms": 1000,
+          "retention_after_cross_ms": 25,
+          "net_add_min_shares": "1",
+          "net_add_initial_fraction": null
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M12",
+      "name": "M12 买卖恢复差",
+      "file": "M12.md",
+      "sha256": "d9b9a5967eab097c1639a8838626767528a7b223501d6ef385ac4fffa5971607",
+      "version": "m12-response-asymmetry-v1.2",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M12",
+        "version": "m12-response-asymmetry-v1.2",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "supersedes_version": "m12-response-asymmetry-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 1,
+        "family": "two_sided_response",
+        "ask_guard_starts": "ASK_WINDOW_END_CHECKED_AT_PUBLICATION_BEFORE_PAIRING",
+        "round_window_ms": 500,
+        "pair_confirmation_gap_max_ms": 750,
+        "bid_recovery_min": "0.50",
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "normalized_hit_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "component_ttl_ms": 3000,
+        "execution": "guarded-maker-v1",
+        "bid_guard_starts": "BID_WINDOW_END_CHECKED_AT_PUBLICATION"
+      },
+      "source_snapshots": [],
+      "previous_sop_hash": "223b547ce1a853d7fcd46ba12930b481eac42087b229bc68699490b015a4c9f4",
+      "sop_revision": "2026-11-11-r2-clarification-only",
+      "previous_document": {
+        "version": "m12-response-asymmetry-v1",
+        "sha256": "c7c919adcc2868bc413cc62aaa23eb7446c4570deff710307e7fc583747d87a0",
+        "archive_file": "research/signal_discovery/spec_archive/M12-c7c919adcc2868bc.md"
+      }
+    },
+    {
+      "strategy_id": "M13",
+      "name": "M13 撤供后再承接",
+      "file": "M13.md",
+      "sha256": "3c062f6dd219c0522c732d0af44d59e6f9274bd0d71c8f831ef518c708309e73",
+      "version": "m13-withdrawal-retest-v1.2",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M13",
+        "version": "m13-withdrawal-retest-v1.2",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "supersedes_version": "m13-withdrawal-retest-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 2,
+        "family": "withdrawal_then_absorption",
+        "seed_selection": "FIRST_LIVE_LW_SUPPORT_OVERLAP_LATEST_VALID_SUPPORT_KEY",
+        "new_round_gate": "RECEIVED_AND_INPUT_KEY_STRICTLY_AFTER_FROZEN_SEED",
+        "lw_native_ttl_ms": 750,
+        "prior_support_ttl_ms": 8000,
+        "new_round_window_ms": 500,
+        "formation_after_lw_max_ms": 1250,
+        "retest_recovery_min": "0.50",
+        "normalized_hit_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "post_retest_ttl_ms": 3000,
+        "lw_root_hard_ttl_ms": 3000,
+        "execution": "guarded-maker-v1",
+        "support_publication_guard_from": "SUPPORT_WINDOW_END"
+      },
+      "source_snapshots": [],
+      "previous_sop_hash": "3f0d25ef83ea4eb4d326e272954171f94fb98569db52b7c69bdd269f11906351",
+      "sop_revision": "2026-11-11-r2-clarification-only",
+      "previous_document": {
+        "version": "m13-withdrawal-retest-v1",
+        "sha256": "3375b3573129da0784099eb247d98acdf8143918b84290a279606ced332f0946",
+        "archive_file": "research/signal_discovery/spec_archive/M13-3375b3573129da07.md"
+      }
+    },
+    {
+      "strategy_id": "M14",
+      "name": "M14 弱供连续受击",
+      "file": "M14.md",
+      "sha256": "ba4878d9bf4ef230e9347233e629d13ae4cf50e7bbb3cdd672dfb41ba7cf9c36",
+      "version": "m14-repeated-weak-supply-v1.2",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M14",
+        "version": "m14-repeated-weak-supply-v1.2",
+        "supersedes_version": "m14-repeated-weak-supply-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 3,
+        "family": "two_sided_response",
+        "ask_rounds": 2,
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "second_recovery_increase_max": "0.10",
+        "normalized_hit_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "ask_confirmation_gap_max_ms": 2000,
+        "ask_formation_deadline_exclusive": true,
+        "ask_second_guard_starts": "SECOND_WEAK_WINDOW_END_CHECKED_AT_PUBLICATION_BEFORE_PAIRING",
+        "bid_confirmation_gap_max_ms": 1500,
+        "component_ttl_ms": 3000,
+        "execution": "guarded-maker-v1",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "next_round_gate": "RECEIVED_AND_INPUT_KEY_STRICTLY_AFTER_REFERENCE",
+        "ask_first_guard_starts": "FIRST_WEAK_WINDOW_END_CHECKED_AT_PUBLICATION",
+        "bid_guard_starts": "BID_WINDOW_END_CHECKED_AT_PUBLICATION"
+      },
+      "source_snapshots": [],
+      "previous_document": {
+        "version": "m14-repeated-weak-supply-v1",
+        "sha256": "8275f649712c45bccfad01d66789f4b02aa8a9edae671aa793ebc66693a77b51",
+        "archive_file": "research/signal_discovery/spec_archive/M14-8275f649712c45bc.md"
+      }
+    },
+    {
+      "strategy_id": "M15",
+      "name": "M15 撤供后的买入接替",
+      "file": "M15.md",
+      "sha256": "947b39aec3f4db9efce199fe44b8635ade50f1cee048cb91ab430ab6b4334f40",
+      "version": "m15-withdrawal-buy-handoff-v1.2",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M15",
+        "version": "m15-withdrawal-buy-handoff-v1.2",
+        "supersedes_version": "m15-withdrawal-buy-handoff-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 4,
+        "family": "withdrawal_then_buy_test",
+        "seed_selection": "FIRST_LIVE_LW_SUPPORT_OVERLAP_LATEST_VALID_SUPPORT_KEY",
+        "new_round_gate": "RECEIVED_AND_INPUT_KEY_STRICTLY_AFTER_FROZEN_SEED",
+        "lw_native_ttl_ms": 750,
+        "prior_support_ttl_ms": 8000,
+        "ask_round_window_ms": 500,
+        "formation_after_lw_max_ms": 1250,
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "post_test_ttl_ms": 3000,
+        "lw_root_hard_ttl_ms": 3000,
+        "execution": "guarded-maker-v1",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "support_publication_guard_from": "SUPPORT_WINDOW_END",
+        "weak_ask_publication_guard_from": "ASK_WINDOW_END"
+      },
+      "source_snapshots": [],
+      "previous_document": {
+        "version": "m15-withdrawal-buy-handoff-v1",
+        "sha256": "292ef11394e0b3fbdbc257dececa636a2c3aad9e29e6553526e807c57fb8420d",
+        "archive_file": "research/signal_discovery/spec_archive/M15-292ef11394e0b3fb.md"
+      }
+    },
+    {
+      "strategy_id": "M16",
+      "name": "M16 承接提速",
+      "file": "M16.md",
+      "sha256": "62c69caf55a20eed46bd137418e20c50870d07183e1d47d79c076618389d5136",
+      "version": "m16-faster-absorption-v1.2",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M16",
+        "version": "m16-faster-absorption-v1.2",
+        "supersedes_version": "m16-faster-absorption-v1.1",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 5,
+        "family": "response_speed",
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "stable_continuous_hold_ms": 100,
+        "pair_confirmation_gap_max_ms": 2000,
+        "second_absolute_hit_ratio": [
+          "1.00",
+          "2.00"
+        ],
+        "second_normalized_hit_ratio": [
+          "1.00",
+          "2.00"
+        ],
+        "second_normalized_loss_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "second_final_recovery_at_least_first": true,
+        "reference_latency_lower_bound_min_ms": 100,
+        "second_latency_upper_to_first_lower_max": "0.50",
+        "crossing_bracket_max_ms": 50,
+        "receiver_clock_quantum_max_ms": 1,
+        "latency_interval_clock_padding_quanta": 2,
+        "crossing_requires_explicit_anchor_quantity_events": true,
+        "guard_closed_window_to_publication": true,
+        "post_confirmation_ttl_ms": 3000,
+        "post_round_latency_upper_to_reference_lower_max": "1.00",
+        "post_round_recovery_to_second_min": "0.80",
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "ORDERED_RAW_UPDATES_WITH_ONE_RECEIVER_CLOCK",
+        "existing_round_facts_sufficient": false,
+        "next_round_gate": "RECEIVED_AND_INPUT_KEY_STRICTLY_AFTER_REFERENCE"
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/model.py",
+          "sha256": "41a0e8e3c976cd447f58dbe99de2d3407756e60b89e42f163c41e0b3353d7b1e"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        },
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "previous_document": {
+        "version": "m16-faster-absorption-v1",
+        "sha256": "4923f4dc1c5680bc89ec5aa0ad44c2bbbf75a3564e784e1fdcb0bc398b24db67",
+        "archive_file": "research/signal_discovery/spec_archive/M16-4923f4dc1c5680bc.md"
+      }
+    },
+    {
+      "strategy_id": "M17",
+      "name": "M17 卖压打不薄",
+      "file": "M17.md",
+      "sha256": "3b4b4617bff370b12f785faca280bae0f4c17b2e26b1fd8b6d83a587af0e33e1",
+      "version": "m17-retained-depth-under-selling-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M17",
+        "version": "m17-retained-depth-under-selling-v1.1",
+        "supersedes_version": "m17-retained-depth-under-selling-v1",
+        "sop_revision": "2026-11-11-continuous-recheck-and-causal-timeout-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "common_overrides": [
+          "RF_ROUND_NOT_USED",
+          "ABSOLUTE_DEPTH_FLOOR_INSTEAD_OF_RECOVERY_FLOOR"
+        ],
+        "adapter": null,
+        "priority": 6,
+        "family": "executed_turnover_with_retained_depth",
+        "direct_trades_only": true,
+        "window_ms": 750,
+        "subwindow_ms": 250,
+        "minimum_sell_shares": "5",
+        "minimum_sell_to_initial_depth": "0.50",
+        "minimum_distinct_sell_records": 3,
+        "occupied_subwindows_required": 3,
+        "max_single_sell_fraction": "0.80",
+        "minimum_visible_to_initial_depth": "0.70",
+        "terminal_visible_to_initial_depth": "0.90",
+        "terminal_continuous_hold_ms": 100,
+        "same_level_post_trade_recheck_max_ms": 100,
+        "recheck_deadline_clock": "TRADE_RECEIVED_PLUS_100MS",
+        "recheck_available_before_deadline_required": true,
+        "recheck_deadline_exclusive": true,
+        "recheck_monitor_continues_across_publication": true,
+        "pending_recheck_blocks_new_submission": true,
+        "require_strictly_later_recheck_source_timestamp": true,
+        "post_confirmation_ttl_ms": 3000,
+        "wait_floor_to_initial_depth": "0.70",
+        "net_flow_residual_is_trigger": false,
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "DIRECT_RAW_TRADES_AND_FRESH_SAME_LEVEL_QUANTITIES"
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "previous_document": {
+        "version": "m17-retained-depth-under-selling-v1",
+        "sha256": "5e5e28cdbe64d537cd6d354f385ca62160bee6c2747356b9137afdc9515e8de4",
+        "archive_file": "research/signal_discovery/spec_archive/M17-5e5e28cdbe64d537.md"
+      }
+    },
+    {
+      "strategy_id": "M18",
+      "name": "M18 加压不增损",
+      "file": "M18.md",
+      "sha256": "b2bd1c3703762f1bd7d3307365e243888bbb62faeef5ac8579b8cdf233f405c9",
+      "version": "m18-escalating-hit-contained-loss-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M18",
+        "version": "m18-escalating-hit-contained-loss-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 7,
+        "family": "stress_response_amplitude",
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "stable_recovery_min": "0.50",
+        "stable_continuous_hold_ms": 100,
+        "reference_hit_shares_min": "5",
+        "reference_hit_to_initial_depth_min": "0.10",
+        "reference_loss_to_initial_depth_min": "0.05",
+        "second_to_first_initial_depth_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "second_to_first_hit_ratio": [
+          "2.00",
+          "4.00"
+        ],
+        "second_to_first_absolute_loss_ratio_max": "1.00",
+        "second_to_first_normalized_loss_ratio_max": "1.00",
+        "second_final_recovery_at_least_first": true,
+        "pair_confirmation_gap_max_ms": 2000,
+        "pair_confirmation_deadline_exclusive": true,
+        "terminal_anchor_quantity_after_all_round_trades_required": true,
+        "terminal_quantity_source_strictly_after_max_trade_source": true,
+        "first_round_floor_is_active_during_second_round": false,
+        "post_confirmation_ttl_ms": 3000,
+        "guard_closed_window_to_publication": true,
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "DIRECT_RAW_TRADES_AND_ORDERED_ANCHOR_DEPTH_PATH",
+        "supersedes_version": "m18-escalating-hit-contained-loss-v1",
+        "sop_revision": "2026-11-11-causal-handoff-review",
+        "next_round_gate": "RECEIVED_AND_INPUT_KEY_STRICTLY_AFTER_REFERENCE"
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/model.py",
+          "sha256": "41a0e8e3c976cd447f58dbe99de2d3407756e60b89e42f163c41e0b3353d7b1e"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4081425c8268bca004f2d4d448faff14ce67936503196adac28e909a3aa97d3d"
+        },
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "observation_reviewed_at": "2026-11-11T11:58:44.958033+00:00"
+    },
+    {
+      "strategy_id": "M19",
+      "name": "M19 轻攻更薄",
+      "file": "M19.md",
+      "sha256": "2630ea74056c836911ac2c0d90158bd7e3c57a87e6422649def1885c87183047",
+      "version": "m19-lighter-hit-larger-loss-v1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M19",
+        "version": "m19-lighter-hit-larger-loss-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 8,
+        "family": "ask_response_deterioration",
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "ask_rounds": 2,
+        "reference_hit_min_shares": "5",
+        "reference_hit_min_depth_fraction": "0.10",
+        "reference_loss_min_depth_fraction": "0.05",
+        "initial_depth_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "absolute_hit_ratio": [
+          "0.25",
+          "0.50"
+        ],
+        "normalized_hit_ratio": [
+          "0.25",
+          "0.50"
+        ],
+        "absolute_loss_ratio_min": "1.25",
+        "normalized_loss_ratio_min": "1.25",
+        "hit_at_least_loss_each_ask_round": true,
+        "second_recovery_max": "0.30",
+        "second_recovery_not_above_reference": true,
+        "ask_formation_after_reference_max_ms": 2000,
+        "ask_formation_deadline_exclusive": true,
+        "bid_confirmation_gap_max_ms": 1500,
+        "bid_confirmation_gap_exclusive": true,
+        "component_ttl_ms": 3000,
+        "initial_quantity_source": "EXPLICIT_ANCHOR_EVENT_BEFORE_FIRST_TRADE",
+        "terminal_quantity_source": "EXPLICIT_ANCHOR_EVENT_AFTER_ALL_ROUND_TRADES_INSIDE_WINDOW",
+        "first_ask_is_historical_only": true,
+        "execution": "guarded-maker-v1"
+      },
+      "source_reviewed_at": "2026-11-11T12:33:54.073753+00:00",
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "research_sources": [
+        "https://arxiv.org/abs/1602.00731",
+        "https://arxiv.org/abs/1011.6402"
+      ]
+    },
+    {
+      "strategy_id": "M20",
+      "name": "M20 买托前聚",
+      "file": "M20.md",
+      "sha256": "3e074c21f2ac20e1051865ef0794429a7e6a4846e2f5eb6b20bfba89443153da",
+      "version": "m20-front-concentrated-bid-support-v1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M20",
+        "version": "m20-front-concentrated-bid-support-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "common_overrides": [
+          "RF_ROUND_NOT_USED",
+          "THREE_LEVEL_PROFILE_INSTEAD_OF_RF_FLOOR",
+          "RF_STABILITY_EXIT_NOT_USED"
+        ],
+        "adapter": null,
+        "priority": 9,
+        "family": "executed_hit_with_bid_depth_redistribution",
+        "direct_trades_only": true,
+        "observation_window_ms": 500,
+        "terminal_continuous_profile_ms": 100,
+        "fixed_lower_bid_levels": 2,
+        "minimum_anchor_sell_shares": "5",
+        "minimum_anchor_sell_to_initial_depth": "0.25",
+        "minimum_anchor_net_add_shares": "5",
+        "minimum_anchor_net_add_fraction": "0.20",
+        "minimum_rear_net_loss_shares_each": "0.5",
+        "minimum_rear_net_loss_fraction_each": "0.10",
+        "maximum_rear_net_loss_fraction_each": "0.30",
+        "minimum_fixed_three_level_total_ratio": "1.00",
+        "lower_price_direct_sell_invalidates": true,
+        "same_level_post_trade_recheck_max_ms": 100,
+        "recheck_deadline_clock": "TRADE_RECEIVED_PLUS_100MS",
+        "recheck_available_before_deadline_required": true,
+        "pending_recheck_blocks_new_submission": true,
+        "post_confirmation_ttl_ms": 3000,
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_reviewed_at": "2026-11-11T12:50:57.630812+00:00",
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        },
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "0967a056d5e4aae4e1b5ee31c6788c1236d9699cde4dc39a633f1e6b71b3e9ba"
+        }
+      ],
+      "research_sources": [
+        "https://arxiv.org/abs/1907.06230"
+      ],
+      "input_semantics_note_at": "2026-11-11T13:50:46.489381+00:00"
+    },
+    {
+      "strategy_id": "M21",
+      "name": "M21 卖来供退",
+      "file": "M21.md",
+      "sha256": "03b9dc41651e2626eb0c7bffa05b007c74f52ffe8dd954aab4be42cf85db17d5",
+      "version": "m21-supply-retreat-under-selling-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M21",
+        "version": "m21-supply-retreat-under-selling-v1.1",
+        "supersedes": "m21-supply-retreat-under-selling-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "common_overrides": [
+          "ASK_NET_LOSS_GUARD_NOT_ASK_RF",
+          "REFERENCE_BID_HISTORICAL_ONLY"
+        ],
+        "adapter": null,
+        "priority": 10,
+        "family": "repeated_supply_retreat_during_bid_sell_rounds",
+        "direct_trades_only": true,
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "round_window_ms": 500,
+        "rounds_required": 2,
+        "ask_prequiet_ms": 250,
+        "ask_prequiet_max_relative_deviation": "0.05",
+        "bid_round_min_hit_shares": "5",
+        "bid_round_min_hit_fraction": "0.10",
+        "bid_round_min_loss_fraction": "0.05",
+        "bid_initial_quantity_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "bid_hit_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "bid_normalized_hit_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "bid_second_recovery_relative_min": "0.80",
+        "ask_round_min_net_loss_shares": "0.5",
+        "ask_round_min_net_loss_fraction": "0.10",
+        "ask_terminal_hold_ms": 100,
+        "ask_root_direct_buy_max_shares": "0",
+        "direct_buy_presence_before_lossy_normalization_required": true,
+        "publication_requires_complete_original_batch": true,
+        "post_confirmation_buy_received_after_confirmation_required": true,
+        "post_confirmation_buy_input_key_after_confirmation_required": true,
+        "late_formation_buy_action": "END_ON_DISCOVERY_KEEP_ALL_FILLS",
+        "ask_retained_net_loss_fraction": "0.50",
+        "second_confirmation_after_first_max_ms": 2000,
+        "formation_deadline_exclusive": true,
+        "post_confirmation_ttl_ms": 3000,
+        "new_round_received_after_reference_required": true,
+        "new_round_input_key_after_reference_required": true,
+        "explicit_initial_bid_and_ask_quantity_required": true,
+        "explicit_terminal_bid_and_ask_after_last_sell_required": true,
+        "reference_bid_floor_during_second_round": false,
+        "same_ask_guard_during_second_round": true,
+        "new_direct_buy_after_confirmation_invalidates": false,
+        "execution": "guarded-maker-v1"
+      },
+      "definition_reviewed_at": "2026-11-11T13:32:35.051110+00:00",
+      "implementation_status": "NOT_IMPLEMENTED_BY_THIS_TASK",
+      "definition_references": [
+        "COMMON.md",
+        "MAKER_FEASIBILITY.md",
+        "CAUSAL_HANDOFF_REVIEW.md",
+        "MAKER_ADMISSION_REVIEW.md",
+        "ABSENCE_EVIDENCE_REVIEW.md"
+      ],
+      "derived_feasibility_note_at": "2026-11-11T13:42:37.812375+00:00"
+    },
+    {
+      "strategy_id": "M22",
+      "name": "M22 近薄远厚",
+      "file": "M22.md",
+      "sha256": "c76c997670ecbe37b52d7fe84d18503055cfa34a43b2ae2fd3e7bf48e1475875",
+      "version": "m22-ask-depth-backloading-v1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M22",
+        "version": "m22-ask-depth-backloading-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "common_overrides": [
+          "ASK_FIXED_PROFILE_NOT_ASK_RF",
+          "PRIOR_BID_SUPPORT_NOT_RENEWED"
+        ],
+        "adapter": null,
+        "priority": 11,
+        "family": "executed_buy_with_ask_depth_backloading",
+        "direct_trades_only": true,
+        "prior_bid_support_ttl_ms": 8000,
+        "support_selection": "LATEST_KEY_AMONG_VALID_SUPPORTS_KNOWN_BEFORE_FIRST_BUY_RECEIPT",
+        "observation_window_ms": 500,
+        "terminal_profile_hold_ms": 100,
+        "fixed_higher_ask_levels": 2,
+        "minimum_front_buy_shares": "5",
+        "minimum_front_buy_fraction": "0.10",
+        "minimum_front_net_loss_shares": "5",
+        "minimum_front_net_loss_fraction": "0.20",
+        "maximum_front_net_loss_fraction": "0.40",
+        "minimum_rear_net_add_shares_each": "0.5",
+        "minimum_rear_net_add_fraction_each": "0.10",
+        "maximum_rear_net_add_fraction_each": "0.30",
+        "fixed_three_level_total_ratio": [
+          "0.95",
+          "1.05"
+        ],
+        "higher_price_direct_buy_invalidates": true,
+        "explicit_initial_three_ask_quantities_required": true,
+        "explicit_terminal_front_ask_after_last_buy_required": true,
+        "publication_requires_complete_original_batch": true,
+        "post_confirmation_ttl_ms": 3000,
+        "deadline": "MIN_CONFIRM_PLUS_3000MS_PRIOR_SUPPORT_PLUS_8000MS",
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "definition_reviewed_at": "2026-11-11T13:42:37.812375+00:00",
+      "implementation_status": "NOT_IMPLEMENTED_BY_THIS_TASK",
+      "definition_references": [
+        "COMMON.md",
+        "MAKER_FEASIBILITY.md",
+        "MAKER_ADMISSION_REVIEW.md",
+        "INPUT_CAPABILITIES.md",
+        "ABSENCE_EVIDENCE_REVIEW.md"
+      ],
+      "input_semantics_note_at": "2026-11-11T13:50:46.489381+00:00"
+    }
+  ],
+  "common_files": [
+    {
+      "file": "COMMON.md",
+      "sha256": "c3ec4443e8651e8a6f685309bdd6142166bada3de6c0846d3c18531cdc803645"
+    },
+    {
+      "file": "LEGACY_COMMON.md",
+      "sha256": "e3857f08807717ceb24b9530c1a662bafe838b5907b3f2a2c72bcd56fdd0f2a4"
+    },
+    {
+      "file": "RESEARCH_PROTOCOL.md",
+      "sha256": "4bbd911a7a60a5e7f77f1456bb47f90216fa9d7da9a4e3019065da3d292f78f0"
+    }
+  ],
+  "new_signal_research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22"
+  ],
+  "input_capabilities_document": {
+    "file": "INPUT_CAPABILITIES.md",
+    "sha256": "c70e96ca77d224a5cc702288fd5054278535023dfe7ba3aaff3c7ee2a9914952"
+  },
+  "mechanism_review_document": {
+    "file": "MECHANISM_MAP.md",
+    "sha256": "c14ab5aff34601a9e4e92da7ad73d31e1b72c3138458acc1e6929949507f6f3b"
+  },
+  "readme_document": {
+    "file": "README.md",
+    "sha256": "e8d7420dec3c9f8a8ac1ce657b70db6aebe5b1d590d94ec1078614a1cfbb14d2"
+  },
+  "maker_feasibility_document": {
+    "file": "MAKER_FEASIBILITY.md",
+    "sha256": "10a7df5966ed6ee01a86bcdce5d92aa554ace461bcafc25c0b076e9d2503feb9",
+    "status": "LOGIC_ONLY_NOT_EXECUTION_VALIDATION",
+    "source_reviewed_at": "2026-11-11T12:08:58.625235+00:00",
+    "source_snapshots": [
+      {
+        "path": "src/polymaker/m1234_sim/broker.py",
+        "sha256": "1e81df9db148e3e2f6394a4ebf7dd253ddc16c9554093e310fb54382bf3da57d"
+      },
+      {
+        "path": "src/polymaker/m4_fill_model.py",
+        "sha256": "caa75b4663147f9629827785bb2ede44915230244a636b01beec676012c9242e"
+      }
+    ]
+  },
+  "feedback_receipt": {
+    "file": "../signal_discovery/feedback_latest.json",
+    "sha256": "3e9ed924b340e43bbbeedecc1f8eddd6c04dddf4151a5e7f6b3f32e6eb6598f7",
+    "status": "EVIDENCE_SCOPE_CHECK_ONLY"
+  },
+  "complement_provenance_document": {
+    "file": "COMPLEMENT_PROVENANCE.md",
+    "sha256": "0da95fa5d3c21a52fe606bc9d08ee707f74a29e4a2c452f3c09a6579fe624a7e",
+    "status": "DEFERRED_NO_NEW_SIGNAL_ID",
+    "source_reviewed_at": "2026-11-11T12:23:50.207291+00:00",
+    "source_snapshots": [
+      {
+        "path": "research/maker_signals/feed.py",
+        "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+      }
+    ],
+    "external_source_observations": [
+      {
+        "url": "https://github.com/Polymarket/ctf-exchange/blob/main/docs/Overview.md",
+        "git_blob_sha": "b154af487ae3e9ffa3e5b459e1d29c67752a0988"
+      },
+      {
+        "url": "https://github.com/Polymarket/ctf-exchange/blob/main/src/exchange/mixins/Trading.sol",
+        "git_blob_sha": "0a8354f35b3f518684727d1e8b5a725b4bf9fe9f"
+      },
+      {
+        "url": "https://docs.polymarket.com/api-reference/wss/market",
+        "identity_scope": "VIEWED_PUBLIC_MESSAGE_FIELDS_NOT_DEPLOYMENT_PROOF"
+      }
+    ]
+  },
+  "trade_timing_capabilities_document": {
+    "file": "TRADE_TIMING_CAPABILITIES.md",
+    "sha256": "3633d12dd63a112c7b8f19c94ccea42dbde8d64ba1ce42f28e5eab2568ecf465",
+    "status": "RESEARCH_NOTE_NO_NEW_SIGNAL_ID",
+    "source_reviewed_at": "2026-11-11T12:39:49.102280+00:00",
+    "source_snapshots": [
+      {
+        "path": "src/polymaker/marketdata/service.py",
+        "sha256": "d3f9fe1f01ce89a91a7f0bed8eae27e8aa48d1ce1c4f4be0f939364de4442331"
+      },
+      {
+        "path": "src/polymaker/research/capture.py",
+        "sha256": "9160bbd011e86f2ca48cae9db1bb77c81b8afbaed836b4a9478d1249d75d765e"
+      },
+      {
+        "path": "src/polymaker/research/schema.py",
+        "sha256": "73964b37018c28fcb6568bd3792bd9a2c70a53f39e4d9f4507b05fe41f6c17c2"
+      },
+      {
+        "path": "research/maker_signals/feed.py",
+        "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+      },
+      {
+        "path": "research/maker_signals/model.py",
+        "sha256": "41a0e8e3c976cd447f58dbe99de2d3407756e60b89e42f163c41e0b3353d7b1e"
+      }
+    ],
+    "external_source_observations": [
+      {
+        "url": "https://docs.polymarket.com/market-data/realtime-data",
+        "scope": "VIEWED_FIELD_TYPES_NOT_TRANSPORT_TIMING_GUARANTEE"
+      },
+      {
+        "url": "https://arxiv.org/abs/2301.13505",
+        "scope": "ABSTRACT_AND_RESEARCH_SCOPE_NOT_BTC_PARAMETER_CALIBRATION"
+      }
+    ]
+  },
+  "causal_handoff_review_document": {
+    "file": "CAUSAL_HANDOFF_REVIEW.md",
+    "sha256": "7249c10a05495f79552d14c9245f41e61ac8e43c6cd08cfb1be08eaf2e499668",
+    "status": "DOCUMENT_LOGIC_REVIEW_NOT_RUNTIME_VERIFICATION",
+    "reviewed_at": "2026-11-11T13:00:53.582846+00:00",
+    "versioned_sops": [
+      "M12",
+      "M13",
+      "M14",
+      "M15",
+      "M16",
+      "M18"
+    ],
+    "numeric_parameters_changed": false,
+    "common_contract_changed": false
+  },
+  "maker_admission_review_document": {
+    "file": "MAKER_ADMISSION_REVIEW.md",
+    "sha256": "ab6a138b57142b3fbf58dc1a316a9bac03998420e272a38064fdb3477ab186c3",
+    "status": "DOCUMENT_LOGIC_REVIEW_NOT_RUNTIME_VERIFICATION",
+    "reviewed_at": "2026-11-11T13:15:05.911393+00:00",
+    "signal_versions_changed": false,
+    "numeric_parameters_changed": false,
+    "source_snapshots": [
+      {
+        "path": "research/maker_signals/strategies.py",
+        "sha256": "865578a5f4e14acb8f4a76fa137a7356c5709c07876d9ab3086a2f8a166e73a3"
+      }
+    ],
+    "latest_table_extension_at": "2026-11-11T13:42:37.812375+00:00"
+  },
+  "absence_evidence_review_document": {
+    "file": "ABSENCE_EVIDENCE_REVIEW.md",
+    "sha256": "c5ce1286cae97ec1998bcfbb7067e2e1f9c3bbf739aeb276ff4fae910776fd3c",
+    "status": "SOURCE_AND_DOCUMENT_REVIEW_NOT_DATA_VALIDATION",
+    "reviewed_at": "2026-11-11T13:32:35.051110+00:00",
+    "versioned_sops": [
+      "M21"
+    ],
+    "numeric_parameters_changed": false,
+    "common_contract_changed": false,
+    "source_snapshots": [
+      {
+        "path": "research/maker_signals/feed.py",
+        "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+      },
+      {
+        "path": "src/polymaker/marketdata/service.py",
+        "sha256": "d3f9fe1f01ce89a91a7f0bed8eae27e8aa48d1ce1c4f4be0f939364de4442331"
+      }
+    ]
+  },
+  "depth_batch_semantics_document": {
+    "file": "DEPTH_BATCH_SEMANTICS.md",
+    "sha256": "b1bd432214e303016c957882edf9d065b6913442171b59819e29d38b03fac895",
+    "status": "INPUT_SEMANTICS_REVIEW_NOT_EXCHANGE_ORDER_PROOF",
+    "reviewed_at": "2026-11-11T13:50:46.489381+00:00",
+    "signal_versions_changed": false,
+    "parameters_changed": false,
+    "source_snapshots": [
+      {
+        "path": "research/maker_signals/feed.py",
+        "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+      },
+      {
+        "path": "src/polymaker/marketdata/service.py",
+        "sha256": "d3f9fe1f01ce89a91a7f0bed8eae27e8aa48d1ce1c4f4be0f939364de4442331"
+      },
+      {
+        "path": "src/polymaker/marketdata/parse.py",
+        "sha256": "9a5fc3856e973d8a6b78f3606cc3dac06586c2bc6739d8828265ef0c9b9b327e"
+      },
+      {
+        "path": "src/polymaker/marketdata/orderbook.py",
+        "sha256": "fbc95355232a895eab9e9ac6e37932f0275b8721d45110a3ebb999778957e023"
+      },
+      {
+        "path": "src/polymaker/research/capture.py",
+        "sha256": "9160bbd011e86f2ca48cae9db1bb77c81b8afbaed836b4a9478d1249d75d765e"
+      }
+    ],
+    "external_source_observations": [
+      {
+        "url": "https://docs.polymarket.com/api-reference/wss/market",
+        "scope": "VIEWED_MESSAGE_SCHEMA_NOT_BATCH_EXECUTION_ORDER_GUARANTEE"
+      }
+    ]
+  },
+  "maker_selection_review_document": {
+    "file": "MAKER_SELECTION_REVIEW.md",
+    "sha256": "b0cd0af8d81d96132e7283bb6957c7da495de76013c308d1e7b4cb41e19a1aba",
+    "status": "LOGIC_AND_COMPARISON_DESIGN_ONLY",
+    "reviewed_at": "2026-11-11T13:59:10.110782+00:00",
+    "signal_parameters_changed": false,
+    "economic_results_computed": false,
+    "paper_examples_only": true,
+    "comparison_configuration_applied": false
+  },
+  "frequency_budget_review_document": {
+    "file": "FREQUENCY_BUDGET_REVIEW.md",
+    "sha256": "87835d9483701c7b460ce82382ca1bff70ca35ee175022a5ef5e36b09b05396e",
+    "status": "LOGICAL_CAPACITY_REVIEW_NOT_FREQUENCY_MEASUREMENT",
+    "reviewed_at": "2026-11-11T14:08:31.043970+00:00",
+    "signal_parameters_changed": false,
+    "price_filter_changed": false,
+    "execution_policy_changed": false,
+    "market_data_read": false,
+    "nominal_example_assumptions": {
+      "complete_markets": 288,
+      "tokens_per_market": 2,
+      "per_strategy_version_market_token_submissions_max": 1
+    }
+  }
+}

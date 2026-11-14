@@ -1,0 +1,163 @@
+{
+  "updated_at": "2026-11-11T17:32:28.797831+00:00",
+  "status": "RD_REBUILD_BUFFER_BASELINE_OVERLAP_REVIEWED",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "signal_sop_count": 23,
+  "existing_signals_documented": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11"
+  ],
+  "new_candidates": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "work": "审查RD组合的参考量界、同窗形成互斥和重复支撑守护，避免将M8重建与M23缓冲合并为双重确认。",
+  "version_findings": [
+    "M2 主规则不强制买压衰减",
+    "M10 当前两轮版最多 8 秒，7.5 秒只属旧三轮示例",
+    "M11 完整 500ms 与 M4 专用 25ms 分开",
+    "M7/M9/M10 v2 仅显式选择，不自动视为已部署"
+  ],
+  "research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "next": "继续从盘口可观察路径寻找区别于已有恢复/回吐/缓冲的新信息；遇到同轮派生指标先归并而不新增编号。按既定时点只读小反馈，不运行测试。",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "tests_started_by_this_task": 0,
+  "profitability": "新候选、原语及全部显式备选均没有本任务完整经济验证；不称提高结算概率或达成连续24h目标。",
+  "catalog": "research/signals/catalog.json",
+  "hourly_first_delivery": "2026-11-11T19:00:42+08:00 QUEUED_AND_RESUME_REQUESTED",
+  "hourly_changes": [
+    "本小时已交付M12卖补回吐留托和M8回吐后重建。",
+    "最新完成跨家族查重：同窗M8/M23互斥，同轮普通S守护被M8覆盖，恢复率须绑定原轮和阶段。",
+    "仅研究文档和本任务进度变化，未进行测试或影响其他进程。"
+  ],
+  "open_idea_file": "research/signal_discovery/IDEAS.md",
+  "latest_changes": [
+    "组合审查升至v1.3，增加RD/M8/M12与M23的参考基线和阶段对照。",
+    "同一首笔/初量/500ms窗内，M8重建末段Q>q，M23两版末段Q<q；只排除同窗形成，不排除不同root同市场共存。",
+    "M8原量界与较早截止覆盖同轮普通S，反向替代可能丢掉重建约束；普通S不再重复计独立恢复证据。",
+    "新Ask轮稳定恢复甚至100%仍可能低于旧RD上界；新500ms轮若在RD确认后开始，确认时不足250ms，不可据此新开要求400ms余量的当前态组合。",
+    "23份M、5份原语、6份显式备选全部未改；没有新增编号、执行或测试。"
+  ],
+  "mechanism_review": "research/signals/MECHANISM_MAP.md",
+  "maker_feasibility": "research/signals/MAKER_FEASIBILITY.md",
+  "feedback_receipt": "research/signal_discovery/feedback_latest.json",
+  "feedback_checked_at": "2026-11-11T16:40:12.367797+00:00",
+  "feedback_next_routine_check_not_before": "2026-11-11T17:40:12.367797+00:00",
+  "complement_provenance": "research/signals/COMPLEMENT_PROVENANCE.md",
+  "trade_timing_capabilities": "research/signals/TRADE_TIMING_CAPABILITIES.md",
+  "causal_handoff_review": "research/signals/CAUSAL_HANDOFF_REVIEW.md",
+  "maker_admission_review": "research/signals/MAKER_ADMISSION_REVIEW.md",
+  "absence_evidence_review": "research/signals/ABSENCE_EVIDENCE_REVIEW.md",
+  "depth_batch_semantics": "research/signals/DEPTH_BATCH_SEMANTICS.md",
+  "maker_selection_review": "research/signals/MAKER_SELECTION_REVIEW.md",
+  "frequency_budget_review": "research/signals/FREQUENCY_BUDGET_REVIEW.md",
+  "preload_sequence_review": "research/signals/PRELOAD_SEQUENCE_REVIEW.md",
+  "family_consolidation": "research/signals/FAMILY_CONSOLIDATION.md",
+  "directional_family_count": 12,
+  "overlay_count": 1,
+  "research_order_policy": "FAMILY_FIRST",
+  "research_family_order": [
+    "F_SUPPORT_WEAK_SUPPLY",
+    "F_WITHDRAWAL_SUPPORT",
+    "F_SELL_ABSORPTION",
+    "F_BUY_RETURN",
+    "F_COUNTERATTACK_HOLD",
+    "F_REPAIR",
+    "F_ABSORPTION_SPEED",
+    "F_RETAINED_DEPTH",
+    "F_STRESS_TOLERANCE",
+    "F_BID_FRONTLOAD",
+    "F_ASK_BACKLOAD",
+    "F_PRELOADED_BUFFER"
+  ],
+  "primitive_sop_count": 5,
+  "primitive_sops": [
+    "SR",
+    "QR",
+    "XR",
+    "LW",
+    "RD"
+  ],
+  "primitive_index": "research/signals/PRIMITIVES.md",
+  "new_waiting_variant": {
+    "strategy_id": "M4",
+    "version": "m4-relative-exit-v1",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_composition_review": "research/signals/PRIMITIVE_COMPOSITION_REVIEW.md",
+  "new_combination_variant": {
+    "strategy_id": "M8",
+    "version": "m8-rd-level-rebuild-v1",
+    "name": "回吐后重建",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_revisions": {
+    "QR": {
+      "version": "qr-consumed-queue-retention-v1.1",
+      "supersedes": "qr-consumed-queue-retention-v1",
+      "reason": "补回发布点90%保量并冻结首个发布检查点，不能混池"
+    }
+  },
+  "new_primitive": {
+    "primitive_id": "RD",
+    "version": "rd-recovery-decay-without-new-hit-v1",
+    "name": "回补回吐",
+    "status": "SPEC_ONLY",
+    "origin": "STABLE_HIT_RECOVERY_THEN_QUIET_DECAY_PATH_HYPOTHESIS"
+  },
+  "documented_combination_variants": [
+    "m17-qr-sr-ask-v1",
+    "m23-xr-seeded-sell-test-v1",
+    "m6-fixed-bid-retention-v1",
+    "m12-rd-ask-supported-v1",
+    "m8-rd-level-rebuild-v1"
+  ],
+  "explicit_variant_count": 6,
+  "new_candidate_ids_this_step": [],
+  "documentation_validation": {
+    "checked_at": "2026-11-11T17:33:21.293760+00:00",
+    "status": "PASS",
+    "scope": "UNCHANGED_SOP_IDENTITIES_REVIEW_HASHES_LINKS_AND_PAPER_ARITHMETIC_ONLY",
+    "M_sop_files": 23,
+    "primitive_sop_files": 5,
+    "explicit_variants": 6,
+    "all_signal_and_primitive_parameters_unchanged": true,
+    "signal_or_market_tests_run": false
+  },
+  "previous_goal_turn_classification": "PROGRESS",
+  "previous_goal_turn_evidence": "上一研究轮已交付M8回吐后重建完整SOP并解决数量交接与跨期资格的表述冲突。"
+}

@@ -1,0 +1,12 @@
+[Unit]
+Description=Audit the previous M4 market every five minutes in the existing chat
+
+[Timer]
+OnCalendar=*-*-* *:00/5:20 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=polymaker-m4-watch.service
+
+[Install]
+WantedBy=timers.target

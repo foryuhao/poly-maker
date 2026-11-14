@@ -78,7 +78,7 @@ class SettlementObserver:
             c.db.commit()
             self.retry_at[sid] = time.monotonic() + 30
             self.future = self.session = None
-            snapshot["sessions"] = c.snapshots()
+            snapshot["sessions"] = c.snapshots(since=snapshot["observed_at"]-c.history_hours*3600)
         if self.future is None:
             for s in snapshot["sessions"]:
                 if (s["ended"] and s["residual"] and s["residual_pnl"] is None

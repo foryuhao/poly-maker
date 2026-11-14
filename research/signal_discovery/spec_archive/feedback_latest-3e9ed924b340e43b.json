@@ -1,0 +1,111 @@
+{
+  "checked_at_utc": "2026-11-11T13:25:05.806384+00:00",
+  "scope": "BOUNDED_READ_OF_EXISTING_METADATA_NO_TEST_EXECUTION",
+  "claim_boundary": "Only listed summaries assessed; file status does not prove process liveness or absence of other outputs. Hashes identify bytes read, not promises that live files remain unchanged.",
+  "previous_receipt_sha256": "967f95b76d3f01845a4400247484faa4eeae818dad0c6dcec6a12f87871e4f80",
+  "new_signal_feedback": "NO_VERSION_MATCHED_NEW_SIGNAL_ECONOMIC_FEEDBACK_IN_READ_SET",
+  "sources": [
+    {
+      "kind": "legacy_launch",
+      "path": "research_outputs/m511_sim/current.json",
+      "sha256": "3416345e9fce125c08b127863039cab36be019aa2a8dcff22cabc684ba7b8326",
+      "bytes_read": 3152,
+      "file_mtime_utc": "2026-11-10T10:10:55.889915+00:00",
+      "recorded_status": "STARTED",
+      "status_is_launch_record_not_liveness": true,
+      "scope": "m5-m10",
+      "strategy_versions": {
+        "M5": "m5-overlap-recovery-v1",
+        "M6": "m6-withdrawal-supported-v1.1",
+        "M7": "m7-short-pause-single-refill-v1",
+        "M8": "m8-depth-repair-v1",
+        "M9": "m9-single-support-weak-retest-v1",
+        "M10": "m10-two-return-decay-v1"
+      },
+      "run_identity": {
+        "implementation_hash": "2fcadc10527689b26de0e3854f80ef2db84c1f8d16b05381fd5251118520b3b1",
+        "input_schema": 2,
+        "model": "m1234-queue-v5",
+        "run_id": "357342f2-1f55-4add-ae1f-aadbfbfa4f54",
+        "settings_hash": "556fdf20629efe0534abba08981b2a29913288e724aeb882fac77cb6ce9b5d6b"
+      },
+      "has_separate_assumed_fill_output": true
+    },
+    {
+      "kind": "other_research_work_state",
+      "path": "research_outputs/analysis/m510_next_20261111/work-state.json",
+      "sha256": "9bd631ba666cb96f4410a3f0377c1bc76e4fd9d7d32e81c6e33861e2b3ffc210",
+      "bytes_read": 4172,
+      "file_mtime_utc": "2026-11-11T13:15:49.438577+00:00",
+      "recorded_phase": "OFFLINE_VALIDATION_RUNNING",
+      "runtime_status_verified": false,
+      "contains_stage_claims_not_matching_new_signal_economics": true
+    },
+    {
+      "kind": "memory_review",
+      "path": "research_outputs/analysis/m510_next_20261111/memory-review.json",
+      "sha256": "c6a7afb09825464b97d4d1277695297f4a00a0fa855a0373045e98e6ef356bef",
+      "bytes_read": 15064,
+      "file_mtime_utc": "2026-11-11T13:15:59.970402+00:00",
+      "recorded_status": "PARTIAL",
+      "checked_markets": 26,
+      "expected_markets": 288,
+      "continuous_24h_live_test": false,
+      "claim_scope": "MEMORY_AND_STATE_EQUIVALENCE_ONLY"
+    },
+    {
+      "kind": "candidate_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/next25-v3b/progress.json",
+      "sha256": "c4ba5ad65b18c1fd76ecb04f0c45e1bfbd14851bf1e3af407b0e8a7bc281287c",
+      "bytes_read": 8216,
+      "file_mtime_utc": "2026-11-11T13:11:17.638423+00:00",
+      "market_rows": 24,
+      "top_level_fields": [
+        "markets",
+        "seconds"
+      ],
+      "row_grain": "REPLAY_MARKET_PROGRESS",
+      "economic_result_fields_present": false,
+      "liveness_not_inferred": true
+    },
+    {
+      "kind": "memory_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/memory288-v3b/progress.json",
+      "sha256": "747ef8ea1f51dfda012991eafab444bc23bebd8f8fc5cb4620b839f643e4894e",
+      "bytes_read": 8804,
+      "file_mtime_utc": "2026-11-11T13:10:33.526120+00:00",
+      "market_rows": 26,
+      "top_level_fields": [
+        "markets",
+        "seconds"
+      ],
+      "row_grain": "REPLAY_MARKET_PROGRESS",
+      "economic_result_fields_present": false,
+      "liveness_not_inferred": true
+    },
+    {
+      "kind": "native_lifecycle_result",
+      "path": "research_outputs/analysis/m510_next_20261111/native288/result.json",
+      "sha256": "f238cc2d1044ef457a4e3191ec06911ddc1760b8f65fd9b11604f25ffb8210ce",
+      "bytes_read": 352,
+      "file_mtime_utc": "2026-11-11T12:58:58.963395+00:00",
+      "recorded_status": "PASS",
+      "recorded_kind": "ARTIFICIAL_ACCELERATED_NATIVE_COORDINATOR_LIFECYCLE",
+      "complete_windows": 288,
+      "continuous_live_24h": false,
+      "real_orders": 0,
+      "claim_scope": "ARTIFICIAL_LIFECYCLE_NOT_CONTINUOUS_ECONOMIC_VALIDATION"
+    }
+  ],
+  "findings": [
+    "已读candidate摘要24个市场、memory摘要26个市场；阶段进度和signals不是已结算成交数。",
+    "新增native288的PASS明确属于人工加速生命周期，continuous_live_24h=false；不能替代24h经济目标。",
+    "读到的M5–M10版本/运行身份与本目录新候选不同，未取得M12–M21冻结版本的实际Maker经济结果。",
+    "不从状态文件推断进程存活，不重跑、停止或改动其他任务。"
+  ],
+  "decision": "KEEP_SPEC_ONLY_AND_EXISTING_MECHANISM_PRIORITY; CONTINUE_SIGNAL_RESEARCH",
+  "tests_started_by_this_task": 0,
+  "raw_tape_read": false,
+  "profitability_recomputed": false,
+  "earliest_routine_recheck_utc": "2026-11-11T14:25:05.806384+00:00"
+}

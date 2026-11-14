@@ -1,0 +1,15 @@
+{
+  "enabled": false,
+  "thread_id": "01a1952a-bb2c-7bb2-812a-ef460ed3be4b",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "owned_units": [
+    "polymaker-signal-sop-hourly.timer",
+    "polymaker-signal-sop-hourly.service"
+  ],
+  "report_retention_hours": 48,
+  "no_market_data_jobs": true,
+  "paused_at_utc": "2026-11-11T18:39:35.528692+00:00",
+  "pause_reason": "USER_REQUESTED_STAGE_REPORT_AND_PAUSE",
+  "resume_requires_explicit_user_instruction": true
+}

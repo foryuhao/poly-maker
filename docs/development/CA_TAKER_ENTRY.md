@@ -9,6 +9,11 @@ CA 检测器、确认门槛、形成时长、信号有效期、单次消费，�
 [rdp_sm]
 normal_entry_mode = "ca_v1"
 ca_entry_execution = "taker" # "maker" 恢复原有被动买入
+normal_start_sec = 10.0      # 从市场开始计时，允许新开仓的下界（包含）
+normal_cutoff_sec = 200.0   # 允许新开仓的上界（不包含）
+base_size = "5"             # fixed_shares 的固定股数
+sizing_mode = "fixed_shares" # 可切换为 fixed_risk
+risk_per_trade_usdc = "5"   # fixed_risk 的开仓本金上限，手续费另计
 
 [rdp_sm.ca_taker]
 order_type = "FOK"          # FOK 全成或撤；FAK 允许部分成交，余量立即取消
@@ -21,6 +26,16 @@ entry_price_ceiling = "0.90" # 达到或超过此价格，跳过建仓（0.90 �
 在已有的对应配置表中设置这些参数，不要在同一 TOML 文件重复声明同一个表。
 原有 CA observation、仓位、风控、TP 等配置仍需保留。无需修改全局
 `execution.post_only`；TP、BA 和其他策略路径依然强制 Maker。
+
+固定风险模式仅用于 CA 单侧开仓且要求 `target_delta=0`。计划股数为
+`min(risk_per_trade_usdc / 开仓限价, max_order_size)`，向下取整至 0.01 份；
+价格使用实际挂单限价（Taker 包含已配置滑点），不会为凑市场最低股数而向上扩仓。
+不足最低股数时跳过。`base_size` 在固定风险模式不参与计算；固定股数模式保留原有行为。
+开仓本金不超过风险金额，手续费、SL 最低 1 美元补量及额外反向仓风险另计。
+Taker 价格改善可能增加实际份数，TP 按已证明的真实成交量覆盖，而非假定份数等于计划值。
+15 份单笔计划上限、退出预留、可用余额和 20 美元单场资金限制仍生效，不会因启用该模式自动放宽。
+尤其在当前保守退出预留算法下，固定风险 5 美元可能被 20 美元资金门槛拦截；
+这不是自动提高资金上限的授权。默认配置仍为固定股数，切换 `sizing_mode` 后才启用固定风险。
 
 `ca_entry_direction` 不随执行方式改变：`higher_bid` 仍买两边 Bid 较高的一侧；
 `signal` 才买 CA 信号同侧。要保留过去的方向选择，就保留当前值。
@@ -131,12 +146,21 @@ tick 已核验的卖盘才下单；该侧缺少买盘不阻止 BUY，空卖盘�
 单次 FAK 无撮合不是整轮退出的终点：严格 kill 证明通过后，释放该单预留，以新的
 签名 ID、最新卖一与最低金额要求继续退出。失败的完整订单／成交页、真实迟到成交、
 金额或状态字段不明时，仍不允许把旧单当成未成而直接补第二笔。
+FAK 部分成交也可能返回 `MATCHED`（例如原始 5 份、成交 3.95 份），不要求其成交量
+接近原始量才算订单终态。仅对 exact signed ID、已注册 Taker BUY、native POST 已开始
+且实际 `orderType=FAK` 的单子启用此语义；完整成交／账户核对通过、开放订单页无冲突
+后，才按剩余 1.05 份重新计算下一笔金额。FOK、Maker 及无成交证据不使用此放行。
 撤 TP 后遇到 `SYNC_CACHE_NOT_READY` 等暂时读失败时，同一轮到期退出继续持有执行权，
 等待完整订单／成交／账户核对恢复，不能返回普通循环后丢失退出任务。只有全部旧单均
 已终态并且账户证明完整，才释放已排空的网络 batch，让正常 PAUSED→PROBE 规则恢复，
 再准备本轮下一笔 FAK；不会重置网络熔断或 TP 期限。对冲后的确认读取暂时失败也继续
 核对同一订单，不重复买入。到市场提交截止仍有不可接受原仓或无法核实状态，记录
 `CA_EXPIRY_EXIT_FAILED`，禁止把该轮计为成功退出。
+到期退出持有主循环期间，也负责重新核验目标 BUY 侧的 tick。即使空卖盘或陈旧盘口
+掩盖了 `WS_TICK_UNVERIFIED`，仍会按官方 GET 重新核验；超时或官方副本与 WS 冲突时
+保留本轮风险并限频重试，不重置原 TP 期限。核验仅针对签名所需的目标侧，普通开仓
+仍默认核验两侧。等待日志额外记录目标侧买卖一、盘口年龄、WS／官方 tick 及连接状态。
+确实不存在有效卖单时，BUY 无法成交，继续等待并在截止未覆盖时记录失败，不伪造卖一。
 不会为了消除补量产生的反向仓位，再次反向对冲而形成来回补量。
 完全覆盖且无多余仓位记 `PAIRED`；有额外反向仓位记 `HEDGED_WITH_EXCESS`，同时记录
 `original_unhedged_shares`、`hedged_shares`、`extra_reverse_shares` 和
@@ -145,6 +169,13 @@ tick 已核验的卖盘才下单；该侧缺少买盘不阻止 BUY，空卖盘�
 真实残差，不为 0.005737 份之类尾差补买最低 1 美元，也不把它当作退出失败。
 订单 UNKNOWN、账实不符、资金不足或到截止仍有原仓时，保留全部不确定风险、记录
 `CA_EXPIRY_EXIT_FAILED` 并阻止新订单，不再把未覆盖的原仓当作正常退出。
+
+只读运行监测：`.venv/bin/python ops/ca_execution_watch.py --project-dir .`，默认每 2 秒
+增量读取最近 session 的 journal，输出 `research_outputs/ca_execution_watch/status.json`
+和去重的 `incidents.jsonl`。异常结束、日志中断、超过 TP ttl+5 秒仍未覆盖原仓、迟到关闭、
+未知开仓未解及开仓突破配置价格上限会记录异常。按实际成交去重，TP／SL 分开计算，
+SL 0.96 不会误标为 0.96 开仓；≤0.01 份尾差及已覆盖原仓后的额外反向仓位不触发残仓告警。
+监测不加载凭据、不发单、不修改交易配置，也不能自动唤醒 Codex 或自动修复。
 
 `config/config.toml` 的开仓方向现为 `ca_entry_direction = "signal"`：
 只买出现有效 CA 的同侧，开仓执行继续为 Taker；`taker_exit_on_expiry = true`。

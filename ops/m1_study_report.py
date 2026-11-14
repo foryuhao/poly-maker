@@ -51,6 +51,12 @@ def report(state):
              f"校准场次：{len(calibration)}；固定参数评估：{len(evaluation)}/{state['evaluation_target']}"]
     if state.get("error"):
         lines.append("运行原因："+str(state["error"])[:250])
+    if state.get("paper_policy_history"):
+        changed = sum(item["reclassified_orders"] for item in state["paper_policy_history"])
+        lines.append(f"成交不确定性采用10ms乱序容差；历史{changed}笔仅轻微乱序的订单已重分类为正常订单，"
+                     "保留原排队/撤单记录，不补记成交；后续模拟不因10ms内忽略成交而撤单。")
+        boundary = state["paper_policy_history"][-1]["evaluation_markets_already_recorded"]+1
+        lines.append(f"后续挂单容差从第{boundary}个评估场次生效；此前执行过程未重放，前后执行口径需区分。")
     rows = evaluation if evaluation else calibration
     missing = [r for r in rows if not r.get("complete_window") or not r.get("audit_valid") or not r.get("paper")]
     known = [r for r in rows if isinstance(r.get("signals"), int)]

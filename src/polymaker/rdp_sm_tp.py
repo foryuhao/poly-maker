@@ -98,7 +98,7 @@ class TPExecution(SLExecution):
             return "COOLDOWN_ACTIVE"
         if not e.cfg.rdp_sm.repair.path.tp_enabled:
             return "TP_DISABLED"
-        if not 15 <= self.elapsed() < 180:
+        if not self.start <= self.elapsed() < 180:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.fatal:
             return e.fatal

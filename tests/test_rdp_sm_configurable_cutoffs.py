@@ -43,10 +43,12 @@ async def at_elapsed(setup, monkeypatch, elapsed):
 
 
 def test_cutoffs_load_from_toml_without_changing_defaults(tmp_path):
+    assert RDPSMConfig().normal_start_sec == 15
     assert RDPSMConfig().normal_cutoff_sec == 120
     assert RDPRepairConfig().cutoff_sec == 240
     (tmp_path / 'config.toml').write_text('''[rdp_sm]
 normal_entry_mode = "ca_v1"
+normal_start_sec = 10
 normal_cutoff_sec = 150.5
 [rdp_sm.ca_observe]
 enabled = true
@@ -55,12 +57,14 @@ policy = "opposite_ba_v1"
 cutoff_sec = 270.5
 ''')
     cfg = Config.load(tmp_path, load_env=False)
+    assert cfg.rdp_sm.normal_start_sec == 10
     assert cfg.rdp_sm.normal_cutoff_sec == 150.5
     assert cfg.rdp_sm.repair.cutoff_sec == 270.5
     # Operator settings are intentionally editable; defaults must be tested
     # against an empty config rather than the current live TOML.
     (tmp_path / 'config.toml').write_text('')
     defaults = Config.load(tmp_path, load_env=False)
+    assert defaults.rdp_sm.normal_start_sec == 15
     assert defaults.rdp_sm.normal_cutoff_sec == 120
     assert defaults.rdp_sm.repair.cutoff_sec == 240
 
@@ -75,11 +79,15 @@ def test_invalid_cutoffs_cannot_cross_five_minute_market_end(phase, value):
             RDPRepairConfig(cutoff_sec=value)
 
 
-@pytest.mark.parametrize('cutoff,elapsed,allowed', [(90, 95, False), (150, 130, True), (150, 150, False)])
-async def test_ca_normal_entry_uses_configured_boundary(env, monkeypatch, cutoff, elapsed, allowed):
+@pytest.mark.parametrize('start,cutoff,elapsed,allowed', [
+    (15, 90, 95, False), (15, 150, 130, True), (15, 150, 150, False),
+    (10, 200, 8, False), (10, 200, 11, True), (10, 200, 190, True), (10, 200, 200, False),
+])
+async def test_ca_normal_entry_uses_configured_boundary(env, monkeypatch, start, cutoff, elapsed, allowed):
     setup = await ca_setup(env, monkeypatch)
     v, e, feed, _, normal = setup[:5]
     try:
+        e.cfg.rdp_sm.normal_start_sec = start
         e.cfg.rdp_sm.normal_cutoff_sec = cutoff
         await at_elapsed(setup, monkeypatch, elapsed)
         await confirm_ca(feed)

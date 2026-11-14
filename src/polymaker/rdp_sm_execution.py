@@ -43,7 +43,6 @@ from polymaker.rdp_sm import (
     OFFICIAL_HOSTS,
     TEST_CAPITAL_LIMIT_USDC,
     TRADING_END_S,
-    TRADING_START_S,
     ReadOnlyClobClient,
     SessionStatus,
     _account,
@@ -57,6 +56,7 @@ from polymaker.rdp_sm import (
     inventory_trading_state,
     repair_required,
     run_preflight,
+    trading_start_sec,
 )
 from polymaker.rdp_sm_http_trace import sdk_write_timing
 from polymaker.rdp_sm_recovery import pause_reason, reason_code, retry_read
@@ -537,7 +537,9 @@ class ExecutionClobClient(ReadOnlyClobClient):
             endpoint == f"{OFFICIAL_HOSTS['clob_host']}/orders"
             and bool(attempts)
             and all(not a.post_started for a in attempts)
-            and self.pagination_failure is None
+            # M1 reads cash only and has no order/trade pagination lifecycle.
+            and (sm_config is not None and sm_config.normal_entry_mode in {"m1_v1", "m4_v2"}
+                 or self.pagination_failure is None)
             and self._operation_value("submit_guard")(),
             "SM_POST_NOT_PERMITTED",
         )
@@ -546,6 +548,9 @@ class ExecutionClobClient(ReadOnlyClobClient):
             len(rows) == len(attempts) and 1 <= len(rows) <= 2
             and all((r.get("postOnly") is True and r.get("orderType") == "GTC"
                      and a.entry_execution == "maker") or
+                    (sm_config is not None and sm_config.normal_entry_mode == "m4_v2"
+                     and callable(getattr(self, "m4_taker_permitted", None))
+                     and self.m4_taker_permitted(r, a)) or
                     (sm_config is not None and sm_config.normal_entry_mode == "ca_v1"
                      and a.entry_execution == "taker" and r.get("postOnly") is False
                      and ((sm_config.ca_entry_execution == "taker"
@@ -603,7 +608,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
         operation_id = "post:" + hashlib.sha256(data.encode()).hexdigest()
         with sdk_write_timing() as timing:
             try:
-                raw = ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
+                raw = self._native_order_post(endpoint, headers=headers, data=data, params=params)
             except BaseException as exc:
                 self._observe_http("POST", endpoint, began, started_wall,
                                    operation_id=operation_id, error=exc, batch_id=batch_id,
@@ -615,6 +620,10 @@ class ExecutionClobClient(ReadOnlyClobClient):
         for current in attempts:
             current.raw_response = raw
         return raw
+
+    def _native_order_post(self, endpoint, headers=None, data=None, params=None):
+        """Execution boundary after every shared signature and admission check."""
+        return ClobClient._post(self, endpoint, headers=headers, data=data, params=params)
 
     def _delete(self, endpoint, headers=None, data=None, params=None):
         ids = json.loads(data)
@@ -660,7 +669,7 @@ class _ExecutionReads(_Reads):
         self.network = getattr(risk_reads, "network", None)
         self.market_raw = getattr(risk_reads, "market_raw", None)
         self.ca_session_id = ca_session_id or getattr(risk_reads, "ca_session_id", None)
-        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"} and self.network is None:
+        if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1", "m4_v2"} and self.network is None:
             from polymaker.rdp_sm_network import NetworkHealth
 
             self.network = NetworkHealth(cfg.rdp_sm.obi)
@@ -725,7 +734,7 @@ class _ExecutionReads(_Reads):
         return raw
 
     async def book(self, token: str):
-        _require(self.cfg.rdp_sm.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"}, "OBI_REST_BOOK_FORBIDDEN")
+        _require(self.cfg.rdp_sm.normal_entry_mode not in {"obi_v1", "ba_v1", "ca_v1", "m1_v1", "m4_v2"}, "OBI_REST_BOOK_FORBIDDEN")
         # SDK normally caches tick size indefinitely. SM needs an official read
         # at every submission, rather than a permanently cached M1 snapshot.
         self.gateway._client._ClobClient__tick_sizes.pop(token, None)
@@ -767,9 +776,12 @@ class _ExecutionReads(_Reads):
         )
         return self.feed
 
-    async def refresh_feed_ticks(self):
+    async def refresh_feed_ticks(self, *, tokens=None):
+        selected = tuple(self.feed.books) if tokens is None else tuple(tokens)
+        _require(bool(selected) and all(token in self.feed.books for token in selected),
+                 'WS_TICK_TOKEN_IDENTITY')
         ticks = {}
-        for token in self.feed.books:
+        for token in selected:
             self.gateway._client._ClobClient__tick_sizes.pop(token, None)
             ticks[token] = await self.gateway._io(self.gateway._client.get_tick_size, token)
         try:
@@ -845,6 +857,15 @@ class _SMProcessor(UserEventProcessor):
     def normalize_owned_order(self, row):
         oid = row.get('id', row.get('order_id')) if isinstance(row, dict) else None
         return normalize_order(row, allow_taker_buy_overfill=self.taker_spec(oid) is not None)
+
+    def is_fak_buy(self, oid):
+        """Only a registered, actually posted native FAK has killed remainder."""
+        if self.taker_spec(oid) is None:
+            return False
+        return (oid in getattr(self.executor.gateway._client, 'ca_taker_ids', set())
+                and any(a.post_started and a.order_id == a.expected_order_id == oid
+                        and a.entry_execution == 'taker' and a.order_type == 'FAK'
+                        and a.quote.side is Side.BUY for a in self.executor.attempts))
 
     def fill_quantity_mismatch(self, event, owned, observed_prior):
         spec = self.taker_spec(event.maker_order_id)
@@ -994,12 +1015,14 @@ class _SMProcessor(UserEventProcessor):
             previous = self.executor.terminal.get(ev.order_id)
             released = getattr(self.executor, "sl_terminal_quantities", {})
             if ev.order_id in released and (not _terminal(ev, self.executor.matched_remaining_tolerance_shares,
-                    taker_buy=self.taker_spec(ev.order_id) is not None)
+                    taker_buy=self.taker_spec(ev.order_id) is not None,
+                    fak_buy=self.is_fak_buy(ev.order_id))
                     or Decimal(str(ev.size_matched)) != released[ev.order_id]):
                 released.pop(ev.order_id, None)
                 self.executor.fatal = "SL_TERMINAL_EVIDENCE_CONTRADICTION"
             if previous is not None and not _terminal(ev, self.executor.matched_remaining_tolerance_shares,
-                                                     taker_buy=self.taker_spec(ev.order_id) is not None):
+                    taker_buy=self.taker_spec(ev.order_id) is not None,
+                    fak_buy=self.is_fak_buy(ev.order_id)):
                 self.executor.terminal_conflict(ev.order_id, source="ORDER_EVENT")
             self.executor.invalidate("ORDER_EVIDENCE_CHANGED", ev.order_id)
             with suppress(Exception):
@@ -1013,7 +1036,7 @@ class _SMProcessor(UserEventProcessor):
 
 
 def _terminal(event: OrderEvent, tolerance: Decimal = MATCHED_REMAINING_TOLERANCE_SHARES,
-              *, taker_buy=False) -> bool:
+              *, taker_buy=False, fak_buy=False) -> bool:
     if event.status in {"CANCELED", "CANCELLED"}:
         return True
     if event.status != "MATCHED":
@@ -1022,7 +1045,8 @@ def _terminal(event: OrderEvent, tolerance: Decimal = MATCHED_REMAINING_TOLERANC
     if not original.is_finite() or not matched.is_finite():
         return False
     # Inclusive Decimal boundary; inventory still uses actual confirmed fills.
-    return within_tolerance(original, matched, tolerance) or (taker_buy and matched >= original)
+    return (within_tolerance(original, matched, tolerance) or (taker_buy and matched >= original)
+            or (taker_buy and fak_buy and event.side is Side.BUY and 0 < matched < original))
 
 
 def _same_fill_economics(left, right):
@@ -1188,6 +1212,10 @@ class SMWindowExecutor:
                     **(
                         {
                             "normal_entry_mode": cfg.rdp_sm.normal_entry_mode,
+                            "normal_start_sec": trading_start_sec(cfg),
+                            "normal_cutoff_sec": cfg.rdp_sm.normal_cutoff_sec,
+                            "sizing_mode": cfg.rdp_sm.sizing_mode,
+                            "risk_per_trade_usdc": str(cfg.rdp_sm.risk_per_trade_usdc),
                             "normal_order_policy": "SIGNAL_SIDE_ONLY",
                             "normal_active_order_policy": ("CA_PULLBACK_FIXED_ADVANCE_DEADLINE" if cfg.rdp_sm.ca_pullback.enabled
                                                            else "CA_FIXED_T0_DEADLINE" if cfg.rdp_sm.normal_entry_mode == "ca_v1"
@@ -1243,6 +1271,7 @@ class SMWindowExecutor:
                     "funder": reads.gateway.funder,
                     "signature_type": cfg.wallet.signature_type,
                     "live_authority": authority,
+                    "starting_available_capital_usdc": preflight.account["available_balance_usd"],
                     "starting_spendable_usdc": min(
                         preflight.account["available_balance_usd"],
                         preflight.account["applicable_allowance_usd"]
@@ -1407,12 +1436,18 @@ class SMWindowExecutor:
                           if f.token_id == t), Decimal(0))-self.merged_pairs
                      for t in (self.meta.yes.token_id, self.meta.no.token_id))
 
-    def delta_candidate_allowed(self, delta, side, quantity, *, pending_batch=()):
+    def delta_candidate_allowed(self, delta, side, quantity, *, pending_batch=(), normal_entry=False):
         if self.cfg.rdp_sm.normal_entry_mode == "m1_v1":
             return True  # Money, not share Delta, constrains this strategy.
         recovery = getattr(self, "normal_unknown", None)
         if recovery is not None and recovery.unknowns():
             return recovery.candidate_allowed(delta, side, quantity, exclude=pending_batch)
+        if (normal_entry and self.cfg.rdp_sm.normal_entry_mode == "ca_v1"
+                and self.cfg.rdp_sm.sizing_mode == "fixed_risk"):
+            # This explicit opening mode uses a price-dependent principal cap.
+            # The quote and native order guards enforce that cap; do not apply
+            # the legacy five-share admission limit to a risk-sized opening.
+            return 0 < quantity <= self.cfg.rdp_sm.max_order_size
         limit = self.cfg.rdp_sm.repair.delta_limit
         after = delta+(quantity if side == "YES" else -quantity)
         if abs(delta) > limit:
@@ -1556,7 +1591,7 @@ class SMWindowExecutor:
         checks = (
             ("CLOSE_BARRIER_REQUIRED", self.safe_to_continue),
             ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", self.inventory_mismatch is None),
-            ("NORMAL_SUBMISSION_CUTOFF", TRADING_START_S <= elapsed < self.cfg.rdp_sm.normal_cutoff_sec),
+            ("NORMAL_SUBMISSION_CUTOFF", trading_start_sec(self.cfg) <= elapsed < self.cfg.rdp_sm.normal_cutoff_sec),
             ("MARKET_DATA_NOT_READY", snapshot.valid),
             ("NETWORK_ADMISSION_BLOCKED", health.allowed),
             ("ACCOUNT_EVIDENCE_STALE", now-self.time_anchor <= self.cfg.risk.ws_stale_halt_s),
@@ -2014,7 +2049,8 @@ class SMWindowExecutor:
         except Exception:
             return False  # Absence, errors and incomplete facts cannot release collateral.
 
-    def _validate(self, quote: WindowQuote, window_id: str, books, meta, *, allow_taker=False):
+    def _validate(self, quote: WindowQuote, window_id: str, books, meta, *, allow_taker=False,
+                  normal_entry=False):
         _require(
             quote.market_id == meta.condition_id and quote.window_id == window_id,
             "QUOTE_SESSION_IDENTITY_INVALID",
@@ -2057,6 +2093,10 @@ class SMWindowExecutor:
             _require(price < Decimal(str(books[token]["best_ask"])), "QUOTE_WOULD_TAKE")
         if self.cfg.rdp_sm.normal_entry_mode == "m1_v1":
             _require(price*size <= Decimal(5), "M1_ORDER_BUDGET_EXCEEDED")
+        if (normal_entry and self.cfg.rdp_sm.sizing_mode == "fixed_risk"
+                and re.fullmatch(r".+:w\d+", window_id) is not None):
+            _require(price*size <= self.cfg.rdp_sm.risk_per_trade_usdc,
+                     "CA_ENTRY_RISK_EXCEEDED")
 
     async def _verify_order(self, oid: str) -> None:
         if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"}:
@@ -2101,10 +2141,17 @@ class SMWindowExecutor:
         )
         UserEventProcessor.on_order(self.processor, ev, self.meta.condition_id)
         if oid in self.terminal and not _terminal(ev, self.matched_remaining_tolerance_shares,
-                                                taker_buy=self.processor.taker_spec(oid) is not None):
+                taker_buy=self.processor.taker_spec(oid) is not None,
+                fak_buy=self.processor.is_fak_buy(oid)):
             self.terminal_conflict(oid, source="ORDER_DETAIL")
         _require(_terminal(ev, self.matched_remaining_tolerance_shares,
-                          taker_buy=self.processor.taker_spec(oid) is not None), "ORDER_NOT_TERMINAL")
+                          taker_buy=self.processor.taker_spec(oid) is not None,
+                          fak_buy=self.processor.is_fak_buy(oid)), "ORDER_NOT_TERMINAL")
+        if self.processor.is_fak_buy(oid) and ev.size_matched < ev.original_size:
+            # MATCHED on native FAK proves the unused part was killed, not
+            # fully filled. Still reject any contradictory live-order page.
+            _require(oid not in {o.order_id for o in await self.gateway.open_orders()},
+                     'TERMINAL_LIVE_CONTRADICTION')
         official = self._official_fills(trades, {oid})
         if self.cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"} and (
             any(v[0] is not TradeState.CONFIRMED for v in official.values())
@@ -2218,7 +2265,8 @@ class SMWindowExecutor:
                 ev = self.processor.normalize_owned_order(row)
                 owned = self.processor.owned_record(oid)
                 if (ev is None or owned is None or not _terminal(ev, self.matched_remaining_tolerance_shares,
-                        taker_buy=self.processor.taker_spec(oid) is not None)
+                        taker_buy=self.processor.taker_spec(oid) is not None,
+                        fak_buy=self.processor.is_fak_buy(oid))
                     or self.processor.has_unresolved_fill_key(oid)
                     or ev.token_id != owned["token_id"] or ev.side is not Side.BUY
                     or ev.market_id != self.meta.condition_id
@@ -2863,7 +2911,7 @@ class SMWindowExecutor:
                     for token in (meta.yes.token_id, meta.no.token_id)))
                 normal_cutoff = self.cfg.rdp_sm.normal_cutoff_sec
                 cutoff = TRADING_END_S if inventory_trading_state(delta) == "REBALANCE" else normal_cutoff
-                _require(TRADING_START_S <= elapsed < cutoff,
+                _require(trading_start_sec(self.cfg) <= elapsed < cutoff,
                          "MARKET_SUBMISSION_CUTOFF")
                 if elapsed >= normal_cutoff:
                     _require(len(quotes) == 1
@@ -2905,7 +2953,7 @@ class SMWindowExecutor:
                         and previous_ids <= self.proofs.keys()
                         and self.monotonic() < deadline
                         and self.monotonic() - self.time_anchor <= self.cfg.risk.ws_stale_halt_s
-                        and TRADING_START_S <= elapsed < cutoff
+                        and trading_start_sec(self.cfg) <= elapsed < cutoff
                     )
 
                 client = self.gateway._client

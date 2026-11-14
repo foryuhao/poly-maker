@@ -1,0 +1,12 @@
+# Shared M6 strategy contract. This implementation enables simulation only.
+strategy = "m6-withdrawal-supported-v1.1"
+minimum_price = "0.02"
+maximum_price = "0.20" # Exclusive; filter the original signal anchor.
+order_budget_usdc = 5
+session_budget_usdc = 10
+max_opportunities_per_direction = 1
+start_sec = 15
+cutoff_sec = 240
+close_sec = 300
+quantity_step = "0.1"
+post_budget_floor_ms = 400

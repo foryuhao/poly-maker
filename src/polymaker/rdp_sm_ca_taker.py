@@ -2,40 +2,20 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from polymaker.domain import Side
+from polymaker.execution.taker_fees import (
+    buy_amount_fee_reserve,
+    fee_reserve,
+)
+from polymaker.execution.taker_fees import (
+    buy_fee_reserve as buy_fee_reserve,
+)
+from polymaker.execution.taker_fees import (
+    fee_parameters as fee_parameters,
+)
 from polymaker.state.tracker import TradeEvent
 from polymaker.userstream.parse import strict_number
 
 MICRO = Decimal("0.000001")
-
-
-def fee_parameters(raw, tokens):
-    if ({str(t["t"]) for t in raw.get("t", []) if t} != set(tokens)
-            or not isinstance(raw.get("fd"), dict)):
-        raise ValueError("CA_TAKER_FEE_PARAMETERS_UNAVAILABLE")
-    fd = raw["fd"]
-    rate, exponent = Decimal(str(fd["r"])), Decimal(str(fd["e"]))
-    if (not rate.is_finite() or not 0 <= rate < 1 or not exponent.is_finite()
-            or exponent != int(exponent) or not 1 <= exponent <= 5 or fd.get("to") is not True):
-        raise ValueError("CA_TAKER_FEE_PARAMETERS_UNSUPPORTED")
-    return {"rate": str(rate), "exponent": int(exponent)}
-
-
-def fee_reserve(quantity, params):
-    # Rounding to five decimals can at most double a positive unrounded fee.
-    # p(1-p)<=1/4; this covers arbitrary fills and price improvement below cap.
-    return quantity * Decimal(params["rate"]) * Decimal("0.25")**params["exponent"] * 2 + MICRO
-
-
-def buy_fee_reserve(quantity, price, params):
-    """Immediate BUY spends a dollar budget, with no signed share-count cap.
-
-    For e>=1, fee per dollar is <= rate. Doubling covers per-match rounding.
-    """
-    return buy_amount_fee_reserve(quantity*price, params)
-
-
-def buy_amount_fee_reserve(amount, params):
-    return amount*Decimal(params['rate'])*2+MICRO
 
 
 def validate_buy_fills(fills, spec):

@@ -1,0 +1,11 @@
+[Unit]
+Description=Inspect M1-M11 simulations and report in the authorized existing chat
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m111_hourly_watch.py
+Nice=15
+TimeoutStartSec=180

@@ -15,7 +15,6 @@ from py_clob_client_v2.http_helpers import helpers
 from polymaker.config import Config
 from polymaker.rdp_sm import (
     TRADING_END_S,
-    TRADING_START_S,
     SessionStatus,
     _Issue,
     _require,
@@ -23,6 +22,7 @@ from polymaker.rdp_sm import (
     inventory_trading_state,
     repair_required,
     run_preflight,
+    trading_start_sec,
 )
 from polymaker.rdp_sm_execution import (
     InventoryMismatch,
@@ -149,6 +149,8 @@ class SMTradingLoop:
             self.pause_reason = self.pause_stage = None
 
     async def _merge(self, result, elapsed=None):
+        if self.cfg.rdp_sm.normal_entry_mode == "m1_v1":
+            return False
         if self.executor.check_repair_abandonment():
             return False  # Retain all remaining inventory for settlement.
         if self.executor.inventory_mismatch is not None:
@@ -416,7 +418,7 @@ class SMTradingLoop:
                 continue
             if executor.fatal in UNCERTAIN_MUTATIONS or self.pause_stage == "close":
                 continue
-            if elapsed < TRADING_START_S or (normal and elapsed >= self.cfg.rdp_sm.normal_cutoff_sec):
+            if elapsed < trading_start_sec(self.cfg) or (normal and elapsed >= self.cfg.rdp_sm.normal_cutoff_sec):
                 # Hold balanced inventory until market end without requiring a
                 # quotable late-market book or creating any planned order.
                 if not waiting and self.observer is not None:
@@ -674,7 +676,7 @@ class SMTradingLoop:
                 if isinstance(rebalance, PathRepairController):
                     rebalance.reconcile_episode()
                 if engine is not None and elapsed >= 240 and executor.safe_to_continue:
-                    engine.transition("MERGING" if self.production
+                    engine.transition("MERGING" if self.production and not m1
                         and min(executor.economic_inventory()) >= Decimal(".1")
                         and self.merge_disabled_reason is None else "HOLD_SETTLEMENT")
                 if await self._merge(result, elapsed):
@@ -716,7 +718,7 @@ class SMTradingLoop:
                 if elapsed >= TRADING_END_S:
                     result.stop_reason = "MARKET_CUTOFF"
                     break
-                if elapsed < (executor.cfg.rdp_sm.m1.entry_start_sec if m1 else TRADING_START_S) or elapsed >= controller.cutoff:
+                if elapsed < (executor.cfg.rdp_sm.m1.entry_start_sec if m1 else trading_start_sec(self.cfg)) or elapsed >= controller.cutoff:
                     await self.sleep(min(1, max(0.01, TRADING_END_S - elapsed)))
                     continue
                 snapshot = lifecycle.snapshot(controller, yes, no)

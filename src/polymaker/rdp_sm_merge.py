@@ -130,6 +130,8 @@ class SMMerger:
 
 
 async def merge_confirmed_pairs(executor, *, elapsed_s=None, on_progress=None):
+    if executor.cfg.rdp_sm.normal_entry_mode == "m1_v1":
+        return False  # M1 retains both outcomes for platform settlement.
     async with executor.lock:
         if not executor.known or executor.meta is None:
             return False

@@ -1,0 +1,113 @@
+{
+  "checked_at_utc": "2026-11-11T12:15:16.561515+00:00",
+  "scope": "BOUNDED_READ_OF_EXISTING_METADATA_NO_TEST_EXECUTION",
+  "claim_boundary": "Only the listed summaries were assessed; no claim that other outputs do not exist.",
+  "new_signal_feedback": "NO_VERSION_MATCHED_M12_M18_ECONOMIC_FEEDBACK_IN_READ_SET",
+  "sources": [
+    {
+      "kind": "legacy_launch",
+      "path": "research_outputs/m511_sim/current.json",
+      "sha256": "3416345e9fce125c08b127863039cab36be019aa2a8dcff22cabc684ba7b8326",
+      "bytes_read": 3152,
+      "file_mtime_utc": "2026-11-10T10:10:55.889915+00:00",
+      "recorded_status": "STARTED",
+      "status_is_launch_record_not_liveness": true,
+      "scope": "m5-m10",
+      "strategy_versions": {
+        "M5": "m5-overlap-recovery-v1",
+        "M6": "m6-withdrawal-supported-v1.1",
+        "M7": "m7-short-pause-single-refill-v1",
+        "M8": "m8-depth-repair-v1",
+        "M9": "m9-single-support-weak-retest-v1",
+        "M10": "m10-two-return-decay-v1"
+      },
+      "run_identity": {
+        "implementation_hash": "2fcadc10527689b26de0e3854f80ef2db84c1f8d16b05381fd5251118520b3b1",
+        "input_schema": 2,
+        "model": "m1234-queue-v5",
+        "run_id": "357342f2-1f55-4add-ae1f-aadbfbfa4f54",
+        "settings_hash": "556fdf20629efe0534abba08981b2a29913288e724aeb882fac77cb6ce9b5d6b"
+      },
+      "has_separate_assumed_fill_output": true
+    },
+    {
+      "kind": "other_research_work_state",
+      "path": "research_outputs/analysis/m510_next_20261111/work-state.json",
+      "sha256": "f2f5cb51e85b417cfa0f99823cf998e2d0a5b5ddffe40c3d39c38894789c23ac",
+      "bytes_read": 1481,
+      "file_mtime_utc": "2026-11-11T12:14:49.802505+00:00",
+      "recorded_phase": "OFFLINE_VALIDATION_RUNNING",
+      "runtime_status_verified": false,
+      "contains_only_stage_status": true
+    },
+    {
+      "kind": "memory_review",
+      "path": "research_outputs/analysis/m510_next_20261111/memory-review.json",
+      "sha256": "1b56076bb8b012b392422a14e72d131e18195a509fd402d9da95b0ab5ef4d762",
+      "bytes_read": 8560,
+      "file_mtime_utc": "2026-11-11T12:12:25.568345+00:00",
+      "recorded_status": "PARTIAL",
+      "continuous_24h_live_test": false,
+      "limits": "Accelerated original-clock replay across retained sources; native writer/retirement/pending lifecycle covered separately by directed tests. Live WS/HTTP latency and 24h scheduling remain untested.",
+      "claim_scope": "MEMORY_AND_STATE_EQUIVALENCE_ONLY"
+    },
+    {
+      "kind": "candidate_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/next25-v3b/progress.json",
+      "sha256": "5ba27ad0aa370c88979549dc75822837cf5fc27a6dd9c3c23b0bce1479782945",
+      "bytes_read": 4477,
+      "file_mtime_utc": "2026-11-11T12:09:52.551520+00:00",
+      "top_level_fields": [
+        "markets",
+        "seconds"
+      ],
+      "row_grain": "REPLAY_MARKET_PROGRESS",
+      "economic_result_fields_present": false,
+      "liveness_not_inferred": true
+    },
+    {
+      "kind": "memory_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/memory288-v3b/progress.json",
+      "sha256": "0dedd7359f820d275f831b06900a193ef1e82944765a1e4f2d3e0ab7477e37e8",
+      "bytes_read": 5033,
+      "file_mtime_utc": "2026-11-11T12:14:49.420361+00:00",
+      "top_level_fields": [
+        "markets",
+        "seconds"
+      ],
+      "row_grain": "REPLAY_MARKET_PROGRESS",
+      "economic_result_fields_present": false,
+      "liveness_not_inferred": true
+    },
+    {
+      "kind": "frozen_parameter_document",
+      "path": "research_outputs/analysis/m510_next_20261111/frozen-v3b/extension/maker_signals/parameters.json",
+      "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c",
+      "bytes_read": 14337,
+      "file_mtime_utc": "2026-11-10T02:01:04.125417+00:00",
+      "spec_version": "m5-m11-maker-sop-v1.1",
+      "declared_status": "FROZEN_RESEARCH_SPEC_NOT_IMPLEMENTED",
+      "documented_strategies": [
+        "M5",
+        "M6",
+        "M7",
+        "M8",
+        "M9",
+        "M10",
+        "M11"
+      ],
+      "not_proof_of_loaded_runtime_config": true
+    }
+  ],
+  "findings": [
+    "已读取的运行清单明确为M5–M10，当前反馈未对齐新M12–M18 SOP。",
+    "progress的signals与资源字段不是独立已结算订单数，也没有主经济账trim3/trim5结果。",
+    "内存核对明确不是连续24h实测；跨来源回放与合成生命周期记录不能替代本任务验收。",
+    "参数规格文档、启动时STARTED和阶段状态分别不足以证明当前加载版本、进程存活或最终结果。"
+  ],
+  "decision": "KEEP_SPEC_ONLY_AND_EXISTING_MECHANISM_PRIORITY; CONTINUE_SIGNAL_RESEARCH",
+  "tests_started_by_this_task": 0,
+  "raw_tape_read": false,
+  "profitability_recomputed": false,
+  "earliest_routine_recheck_utc": "2026-11-11T13:15:16.561515+00:00"
+}

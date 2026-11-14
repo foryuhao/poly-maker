@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly SOP research report in the same authorized task
+
+[Timer]
+OnCalendar=*-*-* *:00:40 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=polymaker-signal-sop-hourly.service
+
+[Install]
+WantedBy=timers.target

@@ -10,7 +10,9 @@ import sqlite3
 import time
 from pathlib import Path
 
-from polymaker.dashboard.model import PNL_ATTRIBUTION_VERSION, Record, compact, summarize
+from polymaker.dashboard.m1 import VirtualReader, real_session
+from polymaker.dashboard.m1_native import M1_NATIVE_VERSION, M1_SIGNAL_EVENTS
+from polymaker.dashboard.model import PNL_ATTRIBUTION_VERSION, Record, compact, number, summarize
 
 KINDS = {
     "sm_session", "sm_run_result", "sm_placement_result", "sm_trade", "sm_ba_taker_trade",
@@ -23,11 +25,15 @@ KINDS = {
     "sm_ca_close_requested", "sm_restored_tp_ba_handoff", "sm_tp_ba_handoff_closed",
     "sm_repair_episode", "sm_ba_taker_state", "sm_network_exit_state",
     "sm_window_result",
-    "sm_m1_state", "sm_m1_wait",
+    "sm_m1_state", "sm_m1_wait", "sm_m1_heartbeat",
+    "sm_m1_signal", "sm_m1_live_signal", "sm_m1_candidate_skipped", "sm_m1_native_post",
+    "sm_m1_live_post", "sm_m1_live_post_error", "sm_m1_account_snapshot",
     "sm_ca_expiry_exit_result",
 }
 MAX_LINE = 4 * 1024 * 1024
 DIAGNOSTIC_PREFIX = re.compile(rb'^\{"ts": ([0-9.eE+\-]+), "kind": "(sm_sync_cache_read|sm_prepared)", "data": ')
+M1_SIGNAL_PREFIX = re.compile(rb'^\{"ts": ([0-9.eE+\-]+), "kind": "sm_m1_signal", "data": \{"session_id": "([^"\\]+)", "payload": \{"event": "([^"\\]+)"')
+M1_SIGNAL_BYTES = {name.encode() for name in M1_SIGNAL_EVENTS}
 WRITER_SEQUENCE = re.compile(rb'"writer_sequence": ([0-9]+),')
 WRITER_DROPPED = re.compile(rb'"diagnostics_dropped": ([0-9]+)')
 
@@ -57,7 +63,7 @@ class Collector:
         if (self.output == self.project or self.output in self.project.parents
                 or any(self.output == p or p in self.output.parents for p in self.journal_dirs)
                 or any(p in self.output.parents or self.output == p
-                       for p in (self.project / "config", self.project / "livecfg", self.project / "logs", self.project / "src"))):
+                       for p in (self.project / "config", self.project / "livecfg", self.project / "logs", self.project / "src", self.project / "research_outputs/m1_virtual"))):
             raise ValueError("dashboard output must be a separate derived-data directory")
         self.output.mkdir(parents=True, exist_ok=True)
         self.lock = (self.output / "observer.lock").open("a+")
@@ -85,16 +91,72 @@ class Collector:
         self.last_discovery = 0.0
         self.round_robin = 0
         self.changed: set[str] = set()
+        self._snapshot_cache: dict[str, tuple[str, Record]] = {}
+        self.m1_reader = VirtualReader(self.project)
         row = self.db.execute("SELECT value FROM metadata WHERE key='excluded_session_ids'").fetchone()
         self.excluded_session_ids = set(json.loads(row[0])) if row else set()
+        row = self.db.execute("SELECT value FROM metadata WHERE key='m1_native_version'").fetchone()
+        if row is None or int(row[0]) != M1_NATIVE_VERSION:
+            # Replay only the observer's derived M1 cursors to collect event
+            # types older readers skipped; source journals stay untouched.
+            for source in self.db.execute("SELECT path,sid FROM sources WHERE kind='risk'").fetchall():
+                if source["sid"].startswith("m1_live_") and source["sid"] not in self.excluded_session_ids:
+                    self.db.execute("DELETE FROM events WHERE path=?", (source["path"],))
+                    self.db.execute("DELETE FROM sources WHERE path=?", (source["path"],))
+                    self.add_source(Path(source["path"]), source["sid"], "risk")
+            self.db.execute("INSERT OR REPLACE INTO metadata VALUES('m1_native_version',?)", (str(M1_NATIVE_VERSION),))
         # Refresh persisted summaries when the accounting classification changes.
         for row in self.db.execute("SELECT sid,snapshot FROM summaries").fetchall():
             cached = json.loads(row["snapshot"])
-            if cached.get("pnl_attribution_version") != PNL_ATTRIBUTION_VERSION or "post_counts" not in cached or "condition_id" not in cached:
+            if "starting_available_capital_usdc" not in cached:
+                self._restore_starting_capital(row["sid"], cached)
+                self.db.execute("UPDATE summaries SET snapshot=? WHERE sid=?", (dumps(cached), row["sid"]))
+            if (cached.get("pnl_attribution_version") != PNL_ATTRIBUTION_VERSION or "post_counts" not in cached or "condition_id" not in cached
+                    or (cached.get("header", {}).get("normal_entry_mode") == "m1_v1"
+                        and cached.get("post_type") != "VIRTUAL" and ("m1_signals" not in cached or "m1_components" not in cached
+                            or cached.get("m1_native_version") != M1_NATIVE_VERSION
+                            or any("submitted_at" not in o or "confirmed_cost" not in o for o in cached.get("orders", []))))):
                 sid = row["sid"]
-                result = summarize(sid, self.events(sid), self.sources(sid))
+                events = self.events(sid)
+                result = (real_session(cached) if not events and cached.get("strategy") == "M1"
+                          and cached.get("post_type") == "REAL" else summarize(sid, events, self.sources(sid)))
                 self.db.execute("UPDATE summaries SET snapshot=? WHERE sid=?", (dumps(result), sid))
         self.db.commit()
+
+    def _restore_starting_capital(self, sid: str, cached: Record) -> None:
+        """Recover only startup metadata discarded by older compaction versions."""
+        field = "starting_available_capital_usdc"
+        for source in cached.get("sources", []):
+            if source["kind"] != "risk":
+                continue
+            path = source.get("path")
+            if not path:
+                continue
+            row = self.db.execute("SELECT offset,event FROM events WHERE path=? ORDER BY offset LIMIT 1", (path,)).fetchone()
+            if not row:
+                continue
+            e = json.loads(row["event"])
+            if e["kind"] != "sm_session":
+                continue
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd, "rb") as stream:
+                    stream.seek(row["offset"])
+                    line = stream.readline(MAX_LINE + 1)
+                if len(line) > MAX_LINE or not line.endswith(b"\n"):
+                    continue
+                raw = json.loads(line)
+                if raw["kind"] != "sm_session" or raw["data"]["session_id"] != sid:
+                    continue
+                restored = compact("sm_session", raw["data"]["payload"])
+                if field in restored:
+                    e["payload"][field] = restored[field]
+                    cached["header"][field] = restored[field]
+                    self.db.execute("UPDATE events SET event=? WHERE path=? AND offset=?", (dumps(e), path, row["offset"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass  # Removed historical sources remain explicitly unknown.
+        value = number(cached.get("header", {}).get(field))
+        cached[field] = str(value) if value is not None and value >= 0 else None
 
     def close(self) -> None:
         self.db.close()
@@ -120,15 +182,32 @@ class Collector:
                 continue
             for path in paths:
                 try:
-                    if path.stem.rsplit("_", 1)[-1] in self.excluded_session_ids:
+                    match = re.fullmatch(r"rdp_sm_[^_]+_(.+)", path.stem)
+                    sid = match[1] if match else path.stem.rsplit("_", 1)[-1]
+                    if sid in self.excluded_session_ids:
                         continue
                     if path.is_symlink() or path.stat().st_mtime < now - self.history_hours * 3600:
                         continue
-                    self.add_source(path, path.stem.rsplit("_", 1)[-1], "risk")
-                except FileNotFoundError:
+                    old = self.db.execute("SELECT sid FROM sources WHERE path=?", (str(path),)).fetchone()
+                    if old and old[0] != sid:
+                        # Only rebuild the derived cache, and only when the log
+                        # itself proves the complete underscore-containing ID.
+                        with path.open("rb") as stream:
+                            first = json.loads(stream.readline(MAX_LINE+1))
+                        if first.get("data", {}).get("session_id") != sid:
+                            continue
+                        self.db.execute("DELETE FROM events WHERE path=?", (str(path),))
+                        self.db.execute("DELETE FROM sources WHERE path=?", (str(path),))
+                        if not self.db.execute("SELECT 1 FROM sources WHERE sid=?", (old[0],)).fetchone():
+                            self.db.execute("DELETE FROM summaries WHERE sid=?", (old[0],))
+                            self.db.execute("DELETE FROM settlements WHERE sid=?", (old[0],))
+                    self.add_source(path, sid, "risk")
+                except (FileNotFoundError, ValueError):
                     continue
 
     def events(self, sid: str) -> list[Record]:
+        if sid.startswith("m1_virtual_"):
+            return self.m1_reader.archive_events(sid)
         result = [json.loads(row[0]) for row in self.db.execute("SELECT event FROM events WHERE sid=?", (sid,))]
         row = self.db.execute("SELECT evidence FROM settlements WHERE sid=?", (sid,)).fetchone()
         if row:
@@ -140,8 +219,31 @@ class Collector:
     def sources(self, sid: str) -> list[Record]:
         return [json.loads(row[0]) for row in self.db.execute("SELECT state FROM sources WHERE sid=?", (sid,))]
 
-    def snapshots(self) -> list[Record]:
-        result = [json.loads(row[0]) for row in self.db.execute("SELECT snapshot FROM summaries")]
+    def snapshots(self, *, since: float | None = None) -> list[Record]:
+        query = "SELECT sid,snapshot FROM summaries"
+        params = ()
+        if since is not None:
+            # Filter before decoding full histories; keep the persisted cache
+            # and immutable archives available for explicit historical reads.
+            query += " WHERE COALESCE(json_extract(snapshot,'$.market_start'),json_extract(snapshot,'$.last_event_at'),0)>=?"
+            params = (since,)
+        result = []
+        kept = set()
+        for row in self.db.execute(query, params):
+            sid, encoded = row["sid"], row["snapshot"]
+            cached = self._snapshot_cache.get(sid) if since is not None else None
+            if cached is None or cached[0] != encoded:
+                base = json.loads(encoded)
+                if since is not None:
+                    self._snapshot_cache[sid] = (encoded, base)
+            else:
+                base = cached[1]
+            # Account/balance observers attach root-level fields. Keep their
+            # changes out of the cached ledger, including appended warnings.
+            result.append({**base, "issues": list(base.get("issues", []))})
+            kept.add(sid)
+        if since is not None:
+            self._snapshot_cache = {sid: value for sid, value in self._snapshot_cache.items() if sid in kept}
         return sorted(result, key=lambda s: (s.get("market_start") or 0, s["session_id"]))
 
     def _ca_source(self, payload: Record, sid: str) -> None:
@@ -163,6 +265,7 @@ class Collector:
         state = json.loads(row["state"])
         before = dumps(state)
         path, sid, kind = Path(row["path"]), row["sid"], row["kind"]
+        sid_bytes = sid.encode()
         used = 0
         try:
             # O_NOFOLLOW also prevents a replaced source from redirecting reads.
@@ -197,6 +300,12 @@ class Collector:
                     # Relevant order, fill, signal and barrier records still get full
                     # JSON validation; the skipped diagnostic count is explicit.
                     diagnostic = DIAGNOSTIC_PREFIX.match(line) if kind == "risk" else None
+                    if kind == "risk" and diagnostic is None:
+                        m1 = M1_SIGNAL_PREFIX.match(line)
+                        if m1 and m1[2] == sid_bytes and m1[3] not in M1_SIGNAL_BYTES:
+                            # These events were already excluded from KINDS.
+                            # Read only their envelope, not their large payloads.
+                            diagnostic = m1
                     tail = line[-512:]
                     sequence = WRITER_SEQUENCE.search(tail) if diagnostic else None
                     dropped = WRITER_DROPPED.search(tail) if diagnostic else None
@@ -231,7 +340,10 @@ class Collector:
                             self._ca_source(payload, sid)
                         dropped = raw.get("data", {}).get("diagnostics_dropped", 0)
                         state["diagnostics_dropped"] = max(state.get("diagnostics_dropped", 0), dropped)
-                        if name in KINDS or kind == "ca" or (name == "sm_network_request" and payload.get("method") == "POST"):
+                        keep = name in KINDS or kind == "ca" or (name == "sm_network_request" and payload.get("method") == "POST")
+                        if name == "sm_m1_signal" and payload.get("event") not in M1_SIGNAL_EVENTS:
+                            keep = False
+                        if keep:
                             event = {"kind": name, "payload": compact(name, payload), "ts": ts,
                                      "source_kind": kind, "offset": offset, "sequence": seq,
                                      "monotonic": raw.get("data", {}).get("occurred_monotonic", raw.get("observed_monotonic"))}
@@ -270,7 +382,11 @@ class Collector:
             except OSError:
                 return 0
 
-        newest = sorted((r for r in rows if r["kind"] == "risk"), key=modified, reverse=True)[:2]
+        cutoff = now - self.history_hours * 3600
+        modified_at = {r["path"]: modified(r) for r in rows}
+        rows = [r for r in rows if max(modified_at[r["path"]], json.loads(r["state"]).get("last_ts", 0)) >= cutoff]
+        newest = sorted((r for r in rows if r["kind"] == "risk"),
+                        key=lambda r: modified_at[r["path"]], reverse=True)[:2]
         latest_ids = {r["sid"] for r in newest}
         priority = newest + [r for r in rows if r["kind"] == "ca" and r["sid"] in latest_ids]
         remainder = [r for r in rows if r not in priority]
@@ -282,23 +398,34 @@ class Collector:
         for row in priority + remainder:
             if remaining <= 0 or time.monotonic() >= deadline:
                 break
-            used = self._tail(row, min(remaining, 1024 * 1024), deadline)
+            allowance = max(1, self.budget_bytes // 2) if row in newest else 1024 * 1024
+            used = self._tail(row, min(remaining, allowance), deadline)
             remaining -= used
         for sid in self.changed:
             result = summarize(sid, self.events(sid), self.sources(sid))
             self.db.execute("INSERT OR REPLACE INTO summaries VALUES(?,?)", (sid, dumps(result)))
+        for result in self.m1_reader.read(now, self.history_hours):
+            if result["session_id"] in self.m1_reader.updated_ids:
+                self.db.execute("INSERT OR REPLACE INTO summaries VALUES(?,?)",
+                                (result["session_id"], dumps(result)))
         self.db.commit()
-        sessions = self.snapshots()
-        source_states = [json.loads(row[0]) for row in self.db.execute("SELECT state FROM sources")]
+        sessions = self.snapshots(since=cutoff)
+        active_paths = {r["path"] for r in rows}
+        source_states = [json.loads(row["state"]) for row in self.db.execute("SELECT path,state FROM sources")
+                         if row["path"] in active_paths]
         active = [s for s in sessions if s.get("market_start") is not None
                   and s["market_start"] <= now < s["market_end"]]
-        current = max(active or sessions, key=lambda s: (s.get("market_start") or 0, s["last_event_at"]), default=None)
+        m1 = [s for s in sessions if s.get("strategy") == "M1"]
+        candidates = [s for s in active if s.get("strategy") == "M1"] or m1 or active or sessions
+        current = max(candidates, key=lambda s: (s.get("market_start") or 0,
+                      s.get("post_type") == "REAL", s["last_event_at"]), default=None)
         return {"schema_version": 1, "observed_at": now, "pid": os.getpid(),
                 "history_hours": self.history_hours, "sessions": sessions,
                 "current_session_id": current["session_id"] if current else None,
-                "source_count": self.db.execute("SELECT count(*) FROM sources").fetchone()[0],
+                "source_count": len(source_states),
                 "catching_up_sources": sum(not s.get("caught_up") and not s.get("missing") for s in source_states),
-                "isolation": "LOCAL_READ_ONLY; NO_CONFIG_KEYS_SDK_NETWORK_OR_TRADING_DB"}
+                "error": self.m1_reader.error,
+                "isolation": "LOCAL_READ_ONLY; M1_PUBLIC_VIRTUAL_LEDGER_READ_ONLY; NO_CONFIG_KEYS_SDK_OR_TRADING_WRITES"}
 
 
 def public_snapshot(snapshot: Record) -> Record:

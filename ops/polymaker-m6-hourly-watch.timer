@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly M6 baseline inspection
+
+[Timer]
+OnCalendar=*-*-* *:00:20 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=polymaker-m6-hourly-watch.service
+
+[Install]
+WantedBy=timers.target

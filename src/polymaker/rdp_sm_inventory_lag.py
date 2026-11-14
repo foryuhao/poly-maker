@@ -13,7 +13,7 @@ from decimal import Decimal
 from threading import RLock
 
 from polymaker.domain import Side, TradeState
-from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
+from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE, trading_start_sec
 from polymaker.state.tracker import fill_cost
 
 ZERO = Decimal(0)
@@ -94,7 +94,7 @@ class InventoryLagAdmission:
             return "INVENTORY_LAG_POLICY_UNSUPPORTED"
         if (e.closed or e.fatal or not e.journal.ready or e.gateway._client.pagination_failure
                 or e.merge_pending or e.cooldown.active or e.repair_abandonment is not None
-                or e.repair_episode is None or not 15 <= elapsed < e.cfg.rdp_sm.repair.cutoff_sec):
+                or e.repair_episode is None or not trading_start_sec(e.cfg) <= elapsed < e.cfg.rdp_sm.repair.cutoff_sec):
             return "INVENTORY_LAG_SAFETY_BLOCKED"
         if (self.since is None or e.monotonic() >= self.since+cfg.grace_sec):
             return "INVENTORY_LAG_EXPIRED"

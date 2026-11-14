@@ -19,12 +19,12 @@ from polymaker.domain import TradeState
 from polymaker.rdp_sm import (
     OFFICIAL_HOSTS,
     TRADING_END_S,
-    TRADING_START_S,
     ReadOnlyClobClient,
     _book,
     _Issue,
     _market,
     _require,
+    trading_start_sec,
 )
 from polymaker.rdp_sm_loop import RunResult, SMTradingLoop
 from polymaker.rdp_sm_recovery import reason_code, retry_read
@@ -71,7 +71,7 @@ async def discover_current_market(cfg, *, observer=None, _pinned=None, _monotoni
         observer.emit("discovery", {"slug": meta.slug, "condition_id": meta.condition_id,
                                      "start": start, "end": start + 300,
                                      "elapsed_s": elapsed, "official_time": now})
-    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"} or not TRADING_START_S <= elapsed < cfg.rdp_sm.normal_cutoff_sec:
+    if cfg.rdp_sm.normal_entry_mode in {"obi_v1", "ba_v1", "ca_v1", "m1_v1"} or not trading_start_sec(cfg) <= elapsed < cfg.rdp_sm.normal_cutoff_sec:
         return meta, start, now, {}
     books = {}
     for token in (meta.yes.token_id, meta.no.token_id):
@@ -267,17 +267,18 @@ async def _run_current_market(cfg, *, sleep=None, monotonic=None, observer=None,
                     "SHADOW_ERROR launch=%s session=%s", type(exc).__name__, session)
         # Pin discovery to this market while waiting; never select the next one.
         clock = ReadOnlyClobClient(host=cfg.wallet.clob_host, chain_id=137)
-        if now - start < TRADING_START_S and observer is not None:
-            observer.emit("phase", {"elapsed_s": now - start, "state": "WAIT_UNTIL_T15"})
-        while now - start < TRADING_START_S:
-            await sleep(min(1, TRADING_START_S - (now - start)))
+        trading_start = trading_start_sec(cfg)
+        if now - start < trading_start and observer is not None:
+            observer.emit("phase", {"elapsed_s": now - start, "state": f"WAIT_UNTIL_T{trading_start:g}"})
+        while now - start < trading_start:
+            await sleep(min(1, trading_start - (now - start)))
             try:
                 latest = strict_number(await asyncio.to_thread(clock.get_server_time))
             except Exception as exc:
                 if not retry_read(exc) or monotonic() >= pinned["deadline"]:
                     raise
                 if observer is not None:
-                    observer.emit("recovery", {"status": "PAUSED", "stage": "wait_until_t15",
+                    observer.emit("recovery", {"status": "PAUSED", "stage": f"wait_until_t{trading_start:g}",
                         "reason": reason_code(exc), "elapsed_s": 300 - (pinned["deadline"] - monotonic())})
                 await sleep(min(2, pinned["deadline"] - monotonic()))
                 continue

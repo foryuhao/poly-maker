@@ -1,4 +1,4 @@
-"""Standalone entry point; never imports the trading CLI or loads .env/config."""
+"""Standalone observer; no trading client, state writes or strategy lifecycle actions."""
 
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 
 from polymaker.dashboard.archive import Archiver
+from polymaker.dashboard.balance import BalanceObserver
 from polymaker.dashboard.collector import Collector, atomic_json, public_snapshot
+from polymaker.dashboard.pm_account import AccountObserver
 from polymaker.dashboard.settlement import SettlementObserver
 from polymaker.dashboard.view import watch
 
@@ -26,6 +28,8 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
     collector = Collector(project, output, history_hours=history_hours, journal_dirs=journal_dirs)
     archiver = Archiver(collector)
     settlement = None if once else SettlementObserver(collector)
+    account = None if once else AccountObserver(collector)
+    balance = None if once else BalanceObserver(collector)
     stopping = False
 
     def stop(_signum: int, _frame: object) -> None:
@@ -42,7 +46,12 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
                 snapshot = collector.poll()
                 if settlement is not None:
                     settlement.tick(snapshot)
-                snapshot["isolation"] = "PUBLIC_GAMMA_RESOLUTION_GET_ONLY; NO_KEYS_SDK_OR_TRADING_DB"
+                if account is not None:
+                    account.tick(snapshot)
+                if balance is not None:
+                    balance.tick(snapshot)
+                snapshot["isolation"] = ("PM_PUBLIC_DATA_AND_AUTHENTICATED_BALANCE_GET_ONLY; "
+                    "NO_TRADING_CLIENT_OR_TRADING_WRITES")
                 archiver.tick(snapshot)
                 atomic_json(collector.output / "latest.json", public_snapshot(snapshot))
                 if archiver.last_error:
@@ -61,6 +70,10 @@ def run_archive(project: Path, output: Path, *, once: bool = False, history_hour
     finally:
         if settlement is not None:
             settlement.close()
+        if account is not None:
+            account.close()
+        if balance is not None:
+            balance.close()
         collector.close()
         for signum, handler in handlers.items():
             signal.signal(signum, handler)
@@ -73,12 +86,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-dir", type=Path, default=Path.cwd())
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--journal-dir", type=Path, action="append", default=None)
-    parser.add_argument("--history-hours", type=float, default=24)
+    parser.add_argument("--history-hours", type=float, default=None)
     parser.add_argument("--refresh", type=float, default=1)
     parser.add_argument("--session-id", default=None)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args(argv)
+    if args.history_hours is None:
+        args.history_hours = 24 if args.mode == "archive" else 4
     output = args.output_dir or args.project_dir / "research_outputs/dashboard"
     try:
         if args.mode == "archive":

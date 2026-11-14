@@ -1,0 +1,7 @@
+M6 基线每小时巡检。用户已授权在本聊天每小时检查和展示结果。只处理 M6，不改动、启动、停止或重启 M4 实盘及其巡检；不恢复 M4 基线。
+先读取本轮 report.json、最新索引、agent-state.json、M6 latest.json 与完整链路验证目录的 progress.json/completion.json，必要时只读读取 research_outputs/m6_virtual 的日志和 SQLite（mode=ro、query_only）。区分底层证据、CANDIDATE、OPPORTUNITY_IDENTIFIED、持久机会、模拟 POST、ACK、有效触价模拟成交和官方结算；ACK 不算成交。没有合格信号不等于漏单或BUG。
+策略为冻结 M6「撤供留托」，原锚定价0.02≤p<0.20，每笔5 USDC、每场10 USDC，每方向一个已POST独立机会；新单[T15,T240)，有效触价观察截至T240（含）。同token的有效Best ask≤原锚定价减POST时1tick，才按原POST价量全成交；无证据则0成交并记录模拟撤单。旧口径使用同批POST立即全成交对照。不能为了覆盖率放宽阈值或制造信号。
+检查进程、重启、心跳、日志增长、行情质量诊断、重试、预算、换场、T240、重启恢复、官方结算。只访问公共行情和官方结果，不查询真实账户或真实下单。报告异常证据；不要自动重启服务或修改交易参数。
+M6正在进行完整链路验收：独立条件观察服务会在至少一场完整市场具有有效触价成交且官方已结算后保存证据并停止M6。本次预期停止不能误判故障，不要擅自恢复。若 completion.json 已产生，核对 chain-evidence.json 及账本，明确完整链路是否通过；未产生则如实报告还缺哪一步。
+读取本轮summary.json、validation.json、覆盖CSV并检查PNG，可直接用绝对路径Markdown图片展示M6双口径瀑布图；不完整、缺失、待观察和未结算场次单列，未官方结算不计PnL。报告北京时间、场次、候选/机会/模拟POST/触价成交/撤单/已结算数量、每笔锚定价量与触价证据、累计模拟PnL及回撤，附原始日志/归档/剩余磁盘容量。质量诊断计数不是全部行情包数。不发外部消息。
+完成实际复核后，使用 research_outputs/m6_hourly_watch/agent-state.lock 的 flock 排他锁重读并原子保存 agent-state.json 的 reviewed_report_directory、reviewed_at，保留其他字段。用户要求停止M6巡检时，禁用 polymaker-m6-hourly-watch.timer 并将本目录control.json的enabled置false。遵守最新人工指令。

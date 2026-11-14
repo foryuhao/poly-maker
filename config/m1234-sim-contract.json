@@ -1,0 +1,213 @@
+{
+  "mode": "SIMULATION_ONLY",
+  "run_id": "20261108-m1-unfiltered-5usdc-v1",
+  "entry": "python -m polymaker.m1234_sim",
+  "output": "research_outputs/m1234_sim",
+  "profiles": {
+    "config": {
+      "order_budget_usdc": 5,
+      "session_budget_usdc": 20,
+      "max_opportunities_per_direction": 1,
+      "start_sec": 15,
+      "cutoff_sec": 240,
+      "close_sec": 300,
+      "minimum_price": "0",
+      "maximum_price": "1",
+      "out_of_order_tolerance_ms": 20.0,
+      "account_max_age_sec": 2.0,
+      "account_poll_sec": 0.5,
+      "post_budget_floor_ms": 400.0,
+      "heartbeat_sec": 10.0,
+      "retry_initial_sec": 0.1,
+      "retry_max_sec": 2.0,
+      "signal": {
+        "profile": "cal-16",
+        "min_round_shares": "0.5",
+        "min_round_depth_fraction": "0.0001",
+        "round_window_sec": 0.5,
+        "ap_min_shares": "1",
+        "ap_min_depth_fraction": "0.0001",
+        "ap_min_share": "0.65",
+        "ap_min_records": 2,
+        "ap_max_concentration": "0.95",
+        "ap_window_sec": 0.75,
+        "rf_rounds": 2,
+        "rf_sequence_span_sec": 15.0,
+        "rf_min_median_recovery": "0.50",
+        "rf_ttl_sec": 8.0,
+        "combination_span_sec": 20.0,
+        "ex_ttl_sec": 0.75,
+        "track_visible_anchor": true,
+        "flow_requires_top_match": false,
+        "mirror_complement_flow": true
+      }
+    },
+    "config/m1-live": {
+      "order_budget_usdc": 5,
+      "session_budget_usdc": 20,
+      "max_opportunities_per_direction": 1,
+      "start_sec": 15,
+      "cutoff_sec": 240,
+      "close_sec": 300,
+      "minimum_price": "0",
+      "maximum_price": "1",
+      "out_of_order_tolerance_ms": 20.0,
+      "account_max_age_sec": 2.0,
+      "account_poll_sec": 0.5,
+      "post_budget_floor_ms": 400.0,
+      "heartbeat_sec": 10.0,
+      "retry_initial_sec": 0.1,
+      "retry_max_sec": 2.0,
+      "signal": {
+        "profile": "cal-16",
+        "min_round_shares": "0.5",
+        "min_round_depth_fraction": "0.0001",
+        "round_window_sec": 0.5,
+        "ap_min_shares": "1",
+        "ap_min_depth_fraction": "0.0001",
+        "ap_min_share": "0.65",
+        "ap_min_records": 2,
+        "ap_max_concentration": "0.95",
+        "ap_window_sec": 0.75,
+        "rf_rounds": 2,
+        "rf_sequence_span_sec": 15.0,
+        "rf_min_median_recovery": "0.50",
+        "rf_ttl_sec": 8.0,
+        "combination_span_sec": 20.0,
+        "ex_ttl_sec": 0.75,
+        "track_visible_anchor": true,
+        "flow_requires_top_match": false,
+        "mirror_complement_flow": true
+      }
+    },
+    "m234": {
+      "signal": {
+        "profile": "m2-candidates-v1",
+        "min_round_shares": "0.5",
+        "min_round_depth_fraction": "0.0001",
+        "round_window_sec": 0.5,
+        "ap_min_shares": "1",
+        "ap_min_depth_fraction": "0.0001",
+        "ap_min_share": "0.65",
+        "ap_min_records": 2,
+        "ap_max_concentration": "0.95",
+        "ap_window_sec": 0.75,
+        "rf_rounds": 2,
+        "rf_sequence_span_sec": 15.0,
+        "rf_min_median_recovery": "0.50",
+        "rf_ttl_sec": 8.0,
+        "combination_span_sec": 20.0,
+        "ex_ttl_sec": 0.75,
+        "track_visible_anchor": true,
+        "flow_requires_top_match": false,
+        "mirror_complement_flow": true
+      },
+      "start_sec": 15.0,
+      "cutoff_sec": 240.0,
+      "close_sec": 300.0,
+      "observation_interval_sec": 0.25,
+      "attack_lifetime_sec": 20.0,
+      "risk_usdc": "5",
+      "market_budget_usdc": "20",
+      "max_entries_per_direction": 1,
+      "include_m3_m4": true,
+      "m4_frequency_study": true,
+      "research_ratios": [
+        "0.25",
+        "0.50",
+        "0.75",
+        "1.00"
+      ],
+      "out_of_order_tolerance_ms": 20,
+      "max_output_mib": 8192,
+      "min_free_disk_mib": 2048,
+      "host_cpu_guard_enabled": false,
+      "m1_cpu_guard_enabled": false,
+      "max_host_cpu_busy_pct": 85.0,
+      "max_m1_cpu_pressure_pct": 20.0,
+      "cpu_busy_grace_sec": 5.0
+    }
+  },
+  "window": {
+    "new_orders": "[T15,T240)",
+    "observe_until": 300,
+    "warmup": "before T15",
+    "unresolved_tail": "UNKNOWN, never clock-cancelled"
+  },
+  "rules": {
+    "M1": "cal-16; M1Market shared admission; 5 USDC budget_quantity (floor shares to 0.01); no strategy price band; GTC; per-direction first POST; one uncertain resend, explicit rejection backoff",
+    "M2": "all_candidates; current M2Signals",
+    "M3": "CA then new BA, current M234Hub",
+    "M4": "frequency-v2, current M4FrequencySignals",
+    "M234_submission": "at most one independent POST per market/direction; skips do not consume; invalidation/deadline requests cancel",
+    "accounts": "independent per-market/profile/scenario; never sum as a portfolio"
+  },
+  "scenarios": {
+    "trades-only": {
+      "post_effect_ms": 100,
+      "ack_ms": 200,
+      "cancel_effect_ms": 200,
+      "ahead_cancel_fraction": "0"
+    },
+    "cancel-half": {
+      "post_effect_ms": 100,
+      "ack_ms": 200,
+      "cancel_effect_ms": 200,
+      "ahead_cancel_fraction": ".5",
+      "assumption": "unattributed net decreases allocated half ahead; never fills directly"
+    }
+  },
+  "seed": 1234,
+  "fees": {
+    "status": "GROSS_UNTIL_MARKET_RULE_VERIFIED",
+    "maker_rebate": "0, unverified earnings excluded",
+    "source": "https://docs.polymarket.com/trading/fees",
+    "checked_utc": "2026-11-05T14:50:56.233169+00:00"
+  },
+  "resource_budget": {
+    "max_run_seconds": 4500,
+    "target_complete_windows": 12,
+    "input_queue_frames": 2048,
+    "writer_queue_records": 8192,
+    "max_output_mib": 4096,
+    "min_free_disk_mib": 2048,
+    "max_rss_mib": 512,
+    "cpu_gate": false,
+    "overflow": "fail visible, preserve gap and unresolved exposure, no deletion"
+  },
+  "differences": [
+    {
+      "item": "M1 simulation price and budget",
+      "previous_virtual_price_band": "[0.01,0.19]",
+      "previous_live_mirror_price_band": "[0.01,0.09]",
+      "current_both": "no strategy price band; venue 0 < price < 1 and tick/minimum constraints remain",
+      "previous_order_budget_usdc": 1,
+      "current_order_budget_usdc": 5,
+      "old_M1_data": "discarded from future M1 analysis; shared raw tapes retained for M234"
+    },
+    {
+      "item": "M234 old close",
+      "before": "feed closed at T240",
+      "simulation": "continue at least T300; unresolved tails retained"
+    },
+    {
+      "item": "M1 virtual fill",
+      "before": "full assumed fill at native POST",
+      "simulation": "intent/reservation at POST; MODELLED_FILL only from queue"
+    }
+  ],
+  "planned_modules": [
+    "m1234_sim/events.py",
+    "m1234_sim/signals.py",
+    "m1234_sim/broker.py",
+    "m1234_sim/policy.py",
+    "m1234_sim/runner.py",
+    "m1234_sim/report.py",
+    "m1234_sim/audit.py",
+    "m1234_sim/calibration.py",
+    "m1234_sim/__main__.py",
+    "config/m1234-sim.toml",
+    "tests/test_m1234_sim*.py"
+  ],
+  "preserve_existing": "No service commands other than read-only status; old databases and configuration untouched."
+}

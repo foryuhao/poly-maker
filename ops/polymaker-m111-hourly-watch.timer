@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly simulation inspection offset from the live five-minute watch
+
+[Timer]
+OnCalendar=*-*-* *:02:50 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=polymaker-m111-hourly-watch.service
+
+[Install]
+WantedBy=timers.target

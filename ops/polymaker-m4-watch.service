@@ -1,0 +1,11 @@
+[Unit]
+Description=Audit M4 live and wake the authorized existing Codex chat
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m4_live_watch.py --project-dir /home/ubuntu/polymaker --thread 01a19f0f-b745-7111-9a8d-7305d5bda514
+Nice=15
+TimeoutStartSec=180

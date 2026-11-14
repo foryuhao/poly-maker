@@ -45,6 +45,8 @@ def open_inodes():
 
 
 class Cleaner:
+    research_roots = (("research_outputs", "periodic_sync"),)
+
     def __init__(self, base, *, now=None, open_reader=open_inodes):
         self.base = Path(base).absolute()
         if self.base.resolve() != self.base:
@@ -61,8 +63,8 @@ class Cleaner:
         parts = path.relative_to(self.base).parts
         if not parts or parts[0] not in {"journal", "logs", "livecfg", "research_outputs"}:
             raise ValueError("Outside cleanup scope")
-        if parts[0] == "research_outputs" and parts[:2] != ("research_outputs", "periodic_sync"):
-            raise ValueError("Only periodic_sync is allowed under research_outputs")
+        if parts[0] == "research_outputs" and not any(parts[:len(root)] == root for root in self.research_roots):
+            raise ValueError("Outside allowed research log directories")
         if parts[0] == "livecfg" and (len(parts) < 2 or parts[1] not in {"journal", "logs"}):
             raise ValueError("Only logs and journal are allowed under livecfg")
         fd = os.open(self.base, DIRECTORY_FLAGS)
@@ -170,11 +172,17 @@ class Cleaner:
                 if "summary.json" in files and not set(files) - SYNC_FILES:
                     self.add(directory, "completed_periodic_sync", files, whole=True)
 
+    def safe_group(self, group):
+        """Recheck recovery references immediately before any deletion."""
+        return (group['category'] != 'trading_journal'
+                or not set(group['files']) & self.recovery(group['directory']))
+
     def run(self, *, apply=False, receipt=None):
         self.discover()  # Malformed recovery state aborts before any deletion.
         report = dict(cutoff_utc=dt.datetime.fromtimestamp(self.cutoff, dt.UTC).isoformat(),
                       retention_hours=24, apply=apply, deleted_files=0, deleted_bytes=0,
                       candidate_files=sum(len(g["files"]) for g in self.groups),
+                      candidate_bytes=sum(s[2] for g in self.groups for s in g["files"].values()),
                       protected_recovery_files=len(self.protected_recovery), skipped_groups=0,
                       warnings=self.warnings, categories={})
         for group in self.groups:
@@ -188,7 +196,7 @@ class Cleaner:
                 if any(name not in current or identity(current[name]) != expected for name, expected in files.items()):
                     report["skipped_groups"] += 1
                     continue
-                if group["category"] == "trading_journal" and set(files) & self.recovery(directory):
+                if not self.safe_group(group):
                     report["skipped_groups"] += 1
                     continue
                 opened = self.open_reader()
@@ -199,6 +207,9 @@ class Cleaner:
                 if not apply:
                     continue
                 with self.directory(directory) as fd:
+                    if not self.safe_group(group):
+                        report["skipped_groups"] += 1
+                        continue
                     for name, expected in files.items():
                         s = os.stat(name, dir_fd=fd, follow_symlinks=False)
                         if identity(s) != expected or not self.old_regular(s):
@@ -226,9 +237,9 @@ class Cleaner:
         return report
 
 
-def main():
+def main(cleaner_class=Cleaner, *, default_data_root=Path("/home/ubuntu/poly-maker")):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-root", type=Path, default=Path("/home/ubuntu/poly-maker"))
+    parser.add_argument("--data-root", type=Path, default=default_data_root)
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--apply", action="store_true", help="Delete eligible logs (default is dry-run)")
     args = parser.parse_args()
@@ -239,7 +250,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         run_id = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         with (args.state_dir / f"run-{run_id}.jsonl").open("x") as receipt:
-            report = Cleaner(args.data_root).run(apply=args.apply, receipt=receipt)
+            report = cleaner_class(args.data_root).run(apply=args.apply, receipt=receipt)
             receipt.write(json.dumps(dict(event="summary", **report)) + "\n")
             receipt.flush()
             os.fsync(receipt.fileno())

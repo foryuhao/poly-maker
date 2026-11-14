@@ -90,6 +90,11 @@ async def recover_fence(reads, meta):
     lease = getattr(reads, "lease", None)
     if lease is None or lease.file.closed:
         reads.lease = lease = await asyncio.to_thread(AccountLease, reads.cfg, reads.gateway.funder)
+    # Retained live M1 orders belong to its resumable ledger. A CA restart
+    # must not run the legacy cancel-only recovery against that ownership.
+    _require(not (lease.state.get("status") == "UNRESOLVED"
+                  and lease.state.get("strategy") == "m1_live_v1"),
+             "M1_OWNER_REQUIRES_M1_RUN_RESUME")
     path = fence_path(reads.cfg, reads.gateway.funder, meta.condition_id)
     if not path.exists():
         _require(
@@ -103,6 +108,7 @@ async def recover_fence(reads, meta):
 
     def load():
         fence = json.loads(path.read_text())
+        _require(fence.get("strategy") != "m1_live_v1", "M1_MARKET_OWNERSHIP_REQUIRES_M1_RUN")
         _require(
             fence.get("funder") == reads.gateway.funder.lower()
             and path == fence_path(reads.cfg, reads.gateway.funder, fence["market_id"]),

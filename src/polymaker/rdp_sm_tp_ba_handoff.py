@@ -97,7 +97,7 @@ class TPMakerHandoff(SLExecution):
         direction_prover = getattr(self.owner, "prove_ba_direction", None)
         if direction_prover is not None and not direction_prover():
             return "CA_TP_DIRECTION_UNPROVEN"
-        if not self.controller.restore_tp_enabled or not 15 <= self.elapsed() < self.cutoff:
+        if not self.controller.restore_tp_enabled or not self.start <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.check_repair_abandonment():
             return "HIGH_ENTRY_REPAIR_ABANDONED"

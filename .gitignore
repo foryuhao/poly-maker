@@ -495,3 +495,6 @@ research_outputs/
 /logs
 /livecfg/journal
 /livecfg/logs
+
+# Machine-local trading observations and persistent stop/control state.
+/runtime/

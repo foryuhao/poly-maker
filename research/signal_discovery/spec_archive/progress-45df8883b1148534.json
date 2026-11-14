@@ -1,0 +1,155 @@
+{
+  "updated_at": "2026-11-11T16:25:20.810358+00:00",
+  "status": "QR_XR_FIXED_PAIR_GUARD_OVERLAP_REVIEWED",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "signal_sop_count": 23,
+  "existing_signals_documented": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11"
+  ],
+  "new_candidates": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "work": "完成QR/XR前后两种顺序的条件归并：同档QR先于XR时，XR更高底线覆盖QR旧数量guard，但QR真实受卖历史及更早原截止必须保留；反向顺序按实际Q0R比较。",
+  "version_findings": [
+    "M2 主规则不强制买压衰减",
+    "M10 当前两轮版最多 8 秒，7.5 秒只属旧三轮示例",
+    "M11 完整 500ms 与 M4 专用 25ms 分开",
+    "M7/M9/M10 v2 仅显式选择，不自动视为已部署"
+  ],
+  "research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "next": "继续区分真实新增观察与派生指标/重复guard，不为双重承接另立编号；优先挖掘未覆盖的盘口路径。按既定小时只读小型反馈，不运行测试或修改执行。",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "tests_started_by_this_task": 0,
+  "profitability": "M12–M23、SR、QR v1.1、XR及M4/M17/M23显式备选均未获本任务完整经济验证；没有连续24h达标或结算概率提高结论。",
+  "catalog": "research/signals/catalog.json",
+  "hourly_first_delivery": "2026-11-11T19:00:42+08:00 QUEUED_AND_RESUME_REQUESTED",
+  "hourly_changes": [
+    "本轮没有新增编号；完成QR/XR两种顺序的重复数量guard与不同截止审查，原语仍各自保存。",
+    "本小时已交付M23攻后加托复验备选；最新归并不修改其参数、历史交接或数据复核。",
+    "全部新假说仍未取得本任务完整经济验证，无测试/回测/模拟/适配器和其他进程改动。"
+  ],
+  "open_idea_file": "research/signal_discovery/IDEAS.md",
+  "latest_changes": [
+    "PRIMITIVE_COMPOSITION_REVIEW升至v1.2，加入同档QR先、XR后的条件归并与反向序列比较。",
+    "前向固定配对：B>=0.70Q0、Delta>=0.20B，故XR当前底线>=0.77Q0，强于QR的0.70Q0；保留QR历史而不重复数量加分。",
+    "QR第三子窗SELL及XR前500ms零SELL使cXR>cQR+300ms，QR原截止必然更早；不能把旧截止替换为XR新3秒。",
+    "两者共存的XR发布量可能仅为旧QR初量81.2%，低于QR原发布90%；标签增加不代表绝对队列恢复。",
+    "反向XR先、QR后按真实Q0R取max；若Q0R恰为B+Delta，0.25B与1.50B为数量guard分界，仍需真实新SELL及时间分布。",
+    "不新建双重承接原语，不改变任何原语/M参数或执行；当前23份M＋3份原语、3份显式备选不变。"
+  ],
+  "mechanism_review": "research/signals/MECHANISM_MAP.md",
+  "maker_feasibility": "research/signals/MAKER_FEASIBILITY.md",
+  "feedback_receipt": "research/signal_discovery/feedback_latest.json",
+  "feedback_checked_at": "2026-11-11T15:28:03.748554+00:00",
+  "feedback_next_routine_check_not_before": "2026-11-11T16:28:03.748554+00:00",
+  "complement_provenance": "research/signals/COMPLEMENT_PROVENANCE.md",
+  "trade_timing_capabilities": "research/signals/TRADE_TIMING_CAPABILITIES.md",
+  "causal_handoff_review": "research/signals/CAUSAL_HANDOFF_REVIEW.md",
+  "maker_admission_review": "research/signals/MAKER_ADMISSION_REVIEW.md",
+  "absence_evidence_review": "research/signals/ABSENCE_EVIDENCE_REVIEW.md",
+  "depth_batch_semantics": "research/signals/DEPTH_BATCH_SEMANTICS.md",
+  "maker_selection_review": "research/signals/MAKER_SELECTION_REVIEW.md",
+  "frequency_budget_review": "research/signals/FREQUENCY_BUDGET_REVIEW.md",
+  "preload_sequence_review": "research/signals/PRELOAD_SEQUENCE_REVIEW.md",
+  "family_consolidation": "research/signals/FAMILY_CONSOLIDATION.md",
+  "directional_family_count": 12,
+  "overlay_count": 1,
+  "research_order_policy": "FAMILY_FIRST",
+  "research_family_order": [
+    "F_SUPPORT_WEAK_SUPPLY",
+    "F_WITHDRAWAL_SUPPORT",
+    "F_SELL_ABSORPTION",
+    "F_BUY_RETURN",
+    "F_COUNTERATTACK_HOLD",
+    "F_REPAIR",
+    "F_ABSORPTION_SPEED",
+    "F_RETAINED_DEPTH",
+    "F_STRESS_TOLERANCE",
+    "F_BID_FRONTLOAD",
+    "F_ASK_BACKLOAD",
+    "F_PRELOADED_BUFFER"
+  ],
+  "primitive_sop_count": 3,
+  "primitive_sops": [
+    "SR",
+    "QR",
+    "XR"
+  ],
+  "primitive_index": "research/signals/PRIMITIVES.md",
+  "new_waiting_variant": {
+    "strategy_id": "M4",
+    "version": "m4-relative-exit-v1",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_composition_review": "research/signals/PRIMITIVE_COMPOSITION_REVIEW.md",
+  "new_combination_variant": {
+    "strategy_id": "M23",
+    "version": "m23-xr-seeded-sell-test-v1",
+    "name": "攻后加托复验",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_revisions": {
+    "QR": {
+      "version": "qr-consumed-queue-retention-v1.1",
+      "supersedes": "qr-consumed-queue-retention-v1",
+      "reason": "补回发布点90%保量并冻结首个发布检查点，不能混池"
+    }
+  },
+  "new_primitive": {
+    "primitive_id": "XR",
+    "version": "xr-cross-side-following-liquidity-v1",
+    "name": "攻后跟挂",
+    "status": "SPEC_ONLY"
+  },
+  "documented_combination_variants": [
+    "m17-qr-sr-ask-v1",
+    "m23-xr-seeded-sell-test-v1"
+  ],
+  "explicit_variant_count": 3,
+  "new_candidate_ids_this_step": [],
+  "documentation_validation": {
+    "checked_at": "2026-11-11T16:25:20.810358+00:00",
+    "scope": "UNCHANGED_SOP_IDENTITIES_REVIEW_HASH_LINKS_AND_GUARD_ARITHMETIC_ONLY",
+    "status": "PASS",
+    "M_sop_files": 23,
+    "primitive_sop_files": 3,
+    "all_signal_parameters_unchanged": true,
+    "signal_or_market_tests_run": false
+  }
+}

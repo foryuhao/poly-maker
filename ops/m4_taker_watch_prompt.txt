@@ -1,0 +1,23 @@
+M4 Taker 实盘十五分钟巡检。用户已授权每十五分钟检查运行，每轮仍按五分钟市场逐场复核所有未复核及未解决场次，重点确认每个信号是否被交易执行；发现影响下单或正常运行的明确、可复现 BUG，保存证据后及时修复并离线验证。
+
+先读本轮记录、research_outputs/m4_taker_watch/latest.json 和 agent-state.json，复核上一完整市场、当前市场及所有未复核/未解决场次。以当场 settings 和账本为准，读取 research_outputs/m4_live 的本执行器所属订单日志与 SQLite（mode=ro，query_only）。区分 CANDIDATE、OPPORTUNITY_IDENTIFIED、持久执行任务、真实 POST、ACK/UNKNOWN/SETTLING、最终 CONFIRMED；ACK 不算成交。逐个信号给出下单数、确认成交数量/含费成本、剩余预算、追加 POST、未成交或未充分执行的具体原因。不能把没有合格信号、正常价格/预算/名额过滤直接当 BUG，也不能用总订单数掩盖漏掉的信号。
+
+当前策略共享 config/m4.toml，最低锚定价 0.50；历史场按保存的 settings 核对。执行为 BUY-only FAK：2026-11-14 用户已授权信号产生后前10秒用原锚定价＋当时1 tick，满10秒仍有余款则每个新尝试按新鲜同 token Best ask 重新定价，保持价格低于1；目标按剩余资金补到含费接近5 USDC，每场总风险10 USDC，每方向一个已POST独立信号；下单至少5 shares或名义金额严格大于1 USDC，0.1份步长。T240停止新单和补单，UNKNOWN先查清不能盲目重发，部分成交/明确零成交按现有任务规则处理。保留用户已经接受的计划含费预算与实际价格改善增量成交之间的差异；不能擅自放宽限价、预算、最小量或时限来提高覆盖率。
+
+2026-11-13用户明确要求立即修正已准入任务被行情积压阻断POST：新代码保持信号生成的行情质量检查，持久任务不再以队列20ms、本地盘口新鲜/非空或本地Best ask≤限价为发送前置条件，交由交易所按固定签名限价撮合；官方tick/网格、网络、资金、UNKNOWN、停机和T240保护仍保留。旧定价运行标识为ADMITTED_FAK_FIXED_CAP_EXCHANGE_MATCH_V1；新10秒备用定价为pricing_policy=ANCHOR_10S_THEN_BEST_ASK_V1、post_marketdata_policy=ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1。历史场仍按保存 settings 固定限价恢复。检查 taker_plan.pricing_origin 与 taker_pricing_quote 不可变证据，计时不得在进程重启后归零；UNKNOWN先核对，已知部分/待确认匹配保留预算，只补明确余款；无有效新鲜Best ask则等待到T240，不盲追。源码文件哈希本身不能证明旧进程已加载修改。检查PID/启动时间及该运行时标识，未加载必须明确报告，不能自动重启。
+本次还修复FAK BUY本金必须为USDC分精度的问题。用户选择保留0.1份步长、接受少买，因此每次向下找同时满足本金2位精度、份数步长、剩余含费预算的最大数量，不能擅自改为份数4位或提高资金。0.92×5.4不合法，改5份、计划含费4.62576。某些细tick限价在预算内没有合法数量，应报告DUST原因；不是忽略已准入信号。历史原始数量/回执保留；精确金额精度拒单且无正匹配/身份引用、签名本金确实不符分精度的回执可证明零成交，即便平台同时给success=true，T240后仅恢复记账不补买。两次UNSENT准备不算两次真实POST；本地原生发送前已证明未发送的意图也必须单列。
+
+2026-11-14 新定价首信号已验证：00:45场NO锚定0.77，前5次0.78明确零成交，第6次在信号后10.262秒按新鲜Best ask 0.82提交，最终确认6.227847份、含费4.992319。已保存 reviews/20261114T004649/first-dynamic-signal.json。发现余款0.007681时仍反复保存定价记录的收尾BUG；本地修复把已确认且不足1美分的余款记DUST（待确认匹配仍等待核对），无法形成合法数量时不保存新定价证据并按等待节奏复查；10秒唤醒仅突破一次退避。新进程运行标识须另有 remainder_policy=LEGAL_ORDER_ONLY_QUOTE_CAPTURE_CENT_DUST_V1。当前已经加载10秒备用定价不代表已加载此收尾修复；没有该标识必须明确报告，禁止自动重启。
+
+2026-11-14 02:25场YES锚定0.98漏单已保存证据：1条准入任务、0真实POST、0成交，219次order_id为空的本地签名前失败（invalid tick size (0.001), minimum for the market is 0.01）。官方REST已核验0.001而SDK永久缓存0.01；不是价格/预算过滤，也不是219次POST。修复仅让预算Taker的SDK签名读取本场同token已官方核验的tick，保留官方tick/网格、资金、UNKNOWN、停机及T240保护；旧场只核对不补买。证据及离线验证见 repairs/20261114T0233-sdk-tick-cache。必须以新进程运行时 sdk_tick_policy=OFFICIAL_VERIFIED_BOOK_TICK_V1 证明已加载；源码哈希变化不算。未加载应明确提醒用户手动重启，禁止自动重启。
+
+重点核对网络超时/延迟、进程重启后 UNKNOWN、已确认与未确认成交的资金占用、重试签名去重、同场重启名额不重置、T240边界、旧场核对和新场网络隔离、严重异常按市场持久禁买。检查服务PID/重启、心跳、日志增长、行情过期/积压、余额保护及换场。采样诊断计数不是全部行情包数。仅用本执行器已有成交证据说明实际买入，不进行账户全量成交/仓位查询，不推断未结算PnL，不制造真实试单。
+
+用户另要求修复启动准备错过T15就整场跳过的问题：新启动策略为NEW_MARKET_BEFORE_T240_V1，T15只作为最早交易时点；两处新场准备截止均改为保守T240。T240前网络恢复后可接入当前场，创建全新行情/信号状态；不补造之前没收到的信号，不放宽执行约束。startup-status.json的READY带startup_entry_policy；startup-admissions/<slug>.json保留首次/最近准备、实际时刻、保守场内时间和观察缺口，历史恢复仍按原账本处理。新模块需用户重启加载，磁盘源码变化不等于运行中已生效。22:30–22:35因TLS及clock超时未建账本，必须列为缺场，不能写“无信号”。
+若agent-state.json里focused_signal_review仍为WAITING，则用户的专项任务是盯新版本首个信号：按其目录observe.py/本地证据找到最早信号，使用signal_start_mono、OPPORTUNITY_IDENTIFIED、sm_m4_live_signal、sm_prepared、真实HTTP POST.started_monotonic/原生边界和确认成交事件，报告信号到POST耗时、每次下单/成交量、含费支出、余款、补单与积压拦截。记录所有未发送准备，ACK/SETTLING不算确认；保存结果并在任务得到明确终态后将专项状态置COMPLETE。无信号时保留WAITING，不能声称已验证新执行路径。
+
+2026-11-13用户已启动实盘，并明确停止基线（历史任务已完成）。基线服务和每小时基线PnL巡检已停用，保留全部历史数据。不要恢复基线、M1或旧版Maker五分钟巡检；不要根据历史巡检提示把已授权运行的实盘当作异常启动。不得自动启动或重启实盘、补发/撤销真实订单；必要的交易服务重启由用户执行。修复可在本地完成并离线验证，运行中进程未加载的修复必须明确标记。保留人工/余额停机标记和所有交易账本，不清空风险。
+
+每轮在本聊天简短报告北京时间、场次、信号/已提交/已确认成交覆盖、POST及追加次数、UNKNOWN、未成交原因和异常证据。有必须修复的 BUG 时说明证据、修复及离线验证结果；不能把暂时网络保护自动认定为代码 BUG。不发邮件或外部消息。
+
+完成实际复核后，用 research_outputs/m4_taker_watch/agent-state.lock 的 flock 排他锁重读并原子保存 agent-state.json：reviewed_through_epoch只推进到实际完整复核的已结束场次，reviewed_report为实际审阅记录，reviewed_at为当前时间，保留其他字段和未解决场次，避免重叠修复。用户要求停止实盘时优先处理；要求停止实盘巡检时禁用 polymaker-m4-taker-watch.timer 并将本目录control.json的enabled置false。遵守本聊天最新人工指令。

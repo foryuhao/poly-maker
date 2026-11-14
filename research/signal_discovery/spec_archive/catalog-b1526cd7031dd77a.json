@@ -1,0 +1,925 @@
+{
+  "schema_version": 1,
+  "purpose": "SIGNAL_SOP_HANDOFF_NOT_SIMULATOR_CONFIG",
+  "scope": "SIGNAL_AND_SOP_ONLY_TESTING_OWNED_BY_USER_MODULE",
+  "generated_at": "2026-11-11T11:58:44.958033+00:00",
+  "signals": [
+    {
+      "strategy_id": "M1",
+      "name": "M1 承接后的卖压余波",
+      "file": "M1.md",
+      "sha256": "4ed3ae2c05e843204523ca225f835ec8e13eea27ca0aafe618c2f53816244a48",
+      "version": "m1-hold-v2/cal-16",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M1",
+        "version": "m1-hold-v2/cal-16",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/rdp_sm_m1_signal.py",
+          "src/polymaker/m1_live_config.py"
+        ],
+        "ap_window_ms": 750,
+        "ex_window_ms": 750,
+        "ex_ttl_ms": 750,
+        "round_window_ms": 500,
+        "rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "rf_sequence_span_ms": 15000,
+        "combination_span_ms": 20000,
+        "mirror_complement_flow": true,
+        "flow_requires_top_match": false,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/rdp_sm_m1_signal.py",
+          "sha256": "97ebb3835fe8d1d04e88910f00b12fe9066fcecb6f820691565e72e215abc656"
+        },
+        {
+          "path": "src/polymaker/m1_live_config.py",
+          "sha256": "3e79e527c3df78c635a72e790210de7d3ab8a743071f68ded5b08c1dd2d63c5b"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M2",
+      "name": "M2 买入进攻后的受控回流",
+      "file": "M2.md",
+      "sha256": "b641d2f47c9e5ecbb0277427a15b412b6c8a766cac45e9814c2e3ad880104e8f",
+      "version": "m2-candidates-v1/all_candidates",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M2",
+        "version": "m2-candidates-v1/all_candidates",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m2_signal.py",
+          "src/polymaker/m2_config.py"
+        ],
+        "ap_window_ms": 750,
+        "attack_reference_ttl_ms": 20000,
+        "round_window_ms": 500,
+        "fresh_rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "buy_fade_required": false,
+        "diagnostic_buy_ratio_limits": [
+          "0.25",
+          "0.50",
+          "0.75",
+          "1.00"
+        ],
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m2_signal.py",
+          "sha256": "bb40f570e9bdcbcaa45a039b450e4cf88371b605ca868543a77733b1c827324d"
+        },
+        {
+          "path": "src/polymaker/m2_config.py",
+          "sha256": "566e9ebbc8b913902cb074bc2013882e147d43c5a30402b23d5a081ddc0d1f0d"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M3",
+      "name": "M3 反击后守价",
+      "file": "M3.md",
+      "sha256": "0bda6466d06c81e9805b0a7b203d81468654013ac9ac38d5433986083ed47616",
+      "version": "m3-ca-then-ba-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M3",
+        "version": "m3-ca-then-ba-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m234_signal.py",
+          "src/polymaker/rdp_sm_ca.py",
+          "src/polymaker/rdp_sm_ba.py"
+        ],
+        "direct_trades_only": true,
+        "ca_sell_min": "5",
+        "ca_subsequent_buy_min": "10",
+        "ca_observation_max_ms": 750,
+        "ca_lifetime_from_first_sell_ms": 3000,
+        "ba_sell_min": "5",
+        "ba_depletion_min": "5",
+        "ba_positive_refill_min": "5",
+        "ba_observation_max_ms": 750,
+        "ba_lifetime_from_first_sell_ms": 3000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m234_signal.py",
+          "sha256": "7c9690bef86ab776b56f2108228a9b58fe3c05582cddf25e8413b1d537f4c4ca"
+        },
+        {
+          "path": "src/polymaker/rdp_sm_ca.py",
+          "sha256": "a61b70fea8e752552473da20f2b2ccd53313fb64e53f92ac8c279bfc75caf324"
+        },
+        {
+          "path": "src/polymaker/rdp_sm_ba.py",
+          "sha256": "0808e46c2fddfe73ec0707a24bc4fe5f19f10749fdae8a25a624c3b8481b9ff3"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M4",
+      "name": "M4 守强攻弱",
+      "file": "M4.md",
+      "sha256": "adcbaf309a7a4e2a46c1fc5194634e5fafbce651023aa45e45cc889586c5e947",
+      "version": "m4-frequency-v2",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M4",
+        "version": "m4-frequency-v2",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "sop_revision": "2026-11-11-r2-source-transition-clarification",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "src/polymaker/m4_frequency_signal.py",
+          "src/polymaker/m4_rounds.py"
+        ],
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "bid_support_rounds": 1,
+        "bid_support_ttl_ms": 8000,
+        "ask_reference_rounds": 1,
+        "ask_reference_min_recovery": "0.50",
+        "ask_reference_ttl_ms": 15000,
+        "weak_rounds": 1,
+        "weak_loss_fraction_min": "0.05",
+        "weak_recovery_max": "0.60",
+        "weak_reference_fraction_max": "0.80",
+        "comparable_ratios": [
+          "0.10",
+          "10.00"
+        ],
+        "ask_weak_ttl_ms": 5000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "src/polymaker/m4_frequency_signal.py",
+          "sha256": "a02dd229df64924ddca45e4138679fe0f4a65a5668f4a1738617af115378025d"
+        },
+        {
+          "path": "src/polymaker/m4_rounds.py",
+          "sha256": "bee3ff08ffb48395e3a9e575a2f2d3250521f7744a156e5f1710f1a68b6601a3"
+        }
+      ],
+      "previous_document": {
+        "version": "m4-frequency-v2",
+        "sha256": "48df63f7879e3a34e29828e01e5c4587796672521ac72c094c94b2334ecd9842",
+        "archive_file": "research/signal_discovery/spec_archive/M4-48df63f7879e3a34.md"
+      }
+    },
+    {
+      "strategy_id": "M5",
+      "name": "M5 强压稳接",
+      "file": "M5.md",
+      "sha256": "77ef6f852380a1ec2be82e601cc3ed6a3139593ade6cfa55abee1f07e5674701",
+      "version": "m5-overlap-recovery-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M5",
+        "version": "m5-overlap-recovery-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "rf_rounds": 2,
+        "round_window_ms": 500,
+        "second_recovery_fraction_min": "0.80",
+        "ap_second_round_overlap_required": true,
+        "hit_comparability_required": false,
+        "depth_comparability_required": false,
+        "candidate_ttl_upper_ms": 750,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M6",
+      "name": "M6 撤供留托",
+      "file": "M6.md",
+      "sha256": "6f3ae2002225f180e93636e9c089a56e279d3e08b451dff781a56e27904ca9a6",
+      "version": "m6-withdrawal-supported-v1.1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M6",
+        "version": "m6-withdrawal-supported-v1.1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "rf_rounds": 2,
+        "rf_ttl_ms": 8000,
+        "lw_ttl_ms": 750,
+        "lw_loss_fraction_min": "0.30",
+        "lw_residual_fraction_of_initial_min": "0.20",
+        "lw_residual_fraction_of_loss_min": "0.50",
+        "lw_hold_ms": 100,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M7",
+      "name": "M7 歇后再攻",
+      "file": "M7.md",
+      "sha256": "1cc2e41f611a56f678f9177aa8605a20ad6a2fb2f4985909db16c03bdc2b3441",
+      "version": "m7-short-pause-single-refill-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M7",
+        "version": "m7-short-pause-single-refill-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "ap1_window_ms": 750,
+        "pause_window_ms": 500,
+        "pause_bin_ms": 250,
+        "pause_bin_fraction_max": "0.20",
+        "pause_total_fraction_max": "0.35",
+        "new_bid_rounds": 1,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "pause_and_bid_round_may_overlap": true,
+        "ap2_window_ms": 750,
+        "root_ttl_ms": 20000,
+        "rf_ttl_ms": 8000,
+        "alternative_variant": {
+          "version": "m7-short-pause-single-refill-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "pause_bin_fraction_max": "0.35",
+          "pause_total_fraction_max": "0.50"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M8",
+      "name": "M8 失守后修复",
+      "file": "M8.md",
+      "sha256": "3af50904458b799828c8b3628bbf77ca389a00ed5c1a3b129db98dccbf05760a",
+      "version": "m8-depth-repair-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M8",
+        "version": "m8-depth-repair-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/primitives.py"
+        ],
+        "weak_rounds": 1,
+        "weak_recovery_max": "0.30",
+        "repair_rounds": 1,
+        "repair_recovery_min": "0.60",
+        "round_window_ms": 500,
+        "repair_formation_ms": 5000,
+        "depth_loss_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "hit_ratio_required": false,
+        "post_repair_ttl_ms": 8000,
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M9",
+      "name": "M9 余波复验",
+      "file": "M9.md",
+      "sha256": "93f1bb5f9a672c24a2f8d60224bef9f89b49de4a02d5179159eb25bf889fcb12",
+      "version": "m9-single-support-weak-retest-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M9",
+        "version": "m9-single-support-weak-retest-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "seed_bid_rounds": 1,
+        "seed_bid_round_ms": 500,
+        "seed_support_ttl_ms": 3000,
+        "retest_rounds": 1,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "formation_ms": 5000,
+        "rolling_sell_ms": 750,
+        "residual_fraction_strict_max": "0.65",
+        "post_retest_rf_ttl_ms": 8000,
+        "original_ap_history_ttl_ms": 20000,
+        "alternative_variant": {
+          "version": "m9-single-support-weak-retest-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "seed_support_ttl_ms": 6000,
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "formation_ms": 8000,
+          "residual_fraction_strict_max": "0.95"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M10",
+      "name": "M10 回流递减",
+      "file": "M10.md",
+      "sha256": "7d94c592e3fcbef6d46c9301a9033d68f51d4690250c03a7474d91c7ae83a18f",
+      "version": "m10-two-return-decay-v1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M10",
+        "version": "m10-two-return-decay-v1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "DIRECTIONAL_MAKER_SIGNAL",
+        "source": [
+          "research/maker_signals/strategies.py",
+          "research/maker_signals/parameters.json"
+        ],
+        "return_rounds": 2,
+        "local_round_ms": 500,
+        "local_hold_ms": 100,
+        "volume_ratio_max": "0.90",
+        "normalized_hit_ratio_max": "0.90",
+        "recovery_ratio_min": "0.80",
+        "stable_recovery_min": "0.50",
+        "sequence_span_ms": 15000,
+        "rf_ttl_ms": 8000,
+        "ap_history_ttl_ms": 20000,
+        "post_confirmation_pressure_ratio_max": "1.25",
+        "post_confirmation_recovery_ratio_min": "0.80",
+        "alternative_variant": {
+          "version": "m10-two-return-decay-v2",
+          "selection": "EXPLICIT_ONLY_NOT_ASSUMED_DEPLOYED",
+          "local_round_ms": 250,
+          "local_hold_ms": 50,
+          "volume_ratio_max": "0.99",
+          "normalized_hit_ratio_max": "0.99",
+          "recovery_ratio_min": "0.60"
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        },
+        {
+          "path": "research/maker_signals/parameters.json",
+          "sha256": "3a8347790f905216b5b511f24892b0507a4777873a6dce374ab53d5e9c82ea2c"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M11",
+      "name": "M11 多档续托",
+      "file": "M11.md",
+      "sha256": "ec75802288c298d8b8dee0a3929f3b569a57cdacc756c38f142e8320e8c9f96f",
+      "version": "m11-full-retention-v1.1",
+      "status": "DOCUMENTED_FROM_SOURCE",
+      "common_file": "LEGACY_COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M11",
+        "version": "m11-full-retention-v1.1",
+        "status": "DOCUMENTED_FROM_SOURCE",
+        "common_contract": "LEGACY_COMMON.md",
+        "role": "PARENT_FILTER_NOT_STANDALONE_DIRECTION",
+        "source": [
+          "research/maker_signals/strategies.py"
+        ],
+        "parents": [
+          "M4",
+          "M9",
+          "M10"
+        ],
+        "lower_bid_levels": 2,
+        "first_joint_cross_window_ms": 500,
+        "retention_after_cross_ms": 500,
+        "net_add_min_shares": "0.5",
+        "net_add_initial_fraction": "0.10",
+        "retention_first_cross_fraction": "0.50",
+        "inherits_parent_deadline": true,
+        "alternative_variant": {
+          "version": "m4-m11-retention-25ms-v1",
+          "selection": "EXPLICIT_ONLY_M4_PARENT",
+          "first_joint_cross_window_ms": 1000,
+          "retention_after_cross_ms": 25,
+          "net_add_min_shares": "1",
+          "net_add_initial_fraction": null
+        },
+        "execution_owner": "USER_SIGNAL_TEST_MODULE"
+      },
+      "source_snapshots": [
+        {
+          "path": "research/maker_signals/strategies.py",
+          "sha256": "135bc6256c24aa9216b9a54debdc3a08d972cfcbbb93e8d5212ef0e171e952d4"
+        }
+      ]
+    },
+    {
+      "strategy_id": "M12",
+      "name": "M12 买卖恢复差",
+      "file": "M12.md",
+      "sha256": "064ba994ce660b7ac77c3f5629db5b641b8cba51db9a9ff97eae5661829c6344",
+      "version": "m12-response-asymmetry-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M12",
+        "version": "m12-response-asymmetry-v1.1",
+        "sop_revision": "2026-11-11-prefill-evidence-guard-v1.1",
+        "supersedes_version": "m12-response-asymmetry-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 1,
+        "family": "two_sided_response",
+        "ask_guard_starts": "ASK_WEAK_ROUND_CONFIRMATION_BEFORE_PAIRING",
+        "round_window_ms": 500,
+        "pair_confirmation_gap_max_ms": 750,
+        "bid_recovery_min": "0.50",
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "normalized_hit_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "component_ttl_ms": 3000,
+        "execution": "guarded-maker-v1"
+      },
+      "source_snapshots": [],
+      "previous_sop_hash": "223b547ce1a853d7fcd46ba12930b481eac42087b229bc68699490b015a4c9f4",
+      "sop_revision": "2026-11-11-r2-clarification-only",
+      "previous_document": {
+        "version": "m12-response-asymmetry-v1",
+        "sha256": "c7c919adcc2868bc413cc62aaa23eb7446c4570deff710307e7fc583747d87a0",
+        "archive_file": "research/signal_discovery/spec_archive/M12-c7c919adcc2868bc.md"
+      }
+    },
+    {
+      "strategy_id": "M13",
+      "name": "M13 撤供后再承接",
+      "file": "M13.md",
+      "sha256": "f5a9841e4ea905a88cf36fa8ac0dd2cf9d66920257fb4c5ae226c175a2217a7f",
+      "version": "m13-withdrawal-retest-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M13",
+        "version": "m13-withdrawal-retest-v1.1",
+        "sop_revision": "2026-11-11-causal-seed-v1.1",
+        "supersedes_version": "m13-withdrawal-retest-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 2,
+        "family": "withdrawal_then_absorption",
+        "seed_selection": "FIRST_LIVE_LW_SUPPORT_OVERLAP_LATEST_VALID_SUPPORT_KEY",
+        "new_round_gate": "STRICTLY_AFTER_FROZEN_SEED_KEY",
+        "lw_native_ttl_ms": 750,
+        "prior_support_ttl_ms": 8000,
+        "new_round_window_ms": 500,
+        "formation_after_lw_max_ms": 1250,
+        "retest_recovery_min": "0.50",
+        "normalized_hit_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.25",
+          "4.00"
+        ],
+        "post_retest_ttl_ms": 3000,
+        "lw_root_hard_ttl_ms": 3000,
+        "execution": "guarded-maker-v1"
+      },
+      "source_snapshots": [],
+      "previous_sop_hash": "3f0d25ef83ea4eb4d326e272954171f94fb98569db52b7c69bdd269f11906351",
+      "sop_revision": "2026-11-11-r2-clarification-only",
+      "previous_document": {
+        "version": "m13-withdrawal-retest-v1",
+        "sha256": "3375b3573129da0784099eb247d98acdf8143918b84290a279606ced332f0946",
+        "archive_file": "research/signal_discovery/spec_archive/M13-3375b3573129da07.md"
+      }
+    },
+    {
+      "strategy_id": "M14",
+      "name": "M14 弱供连续受击",
+      "file": "M14.md",
+      "sha256": "4916a8c9b8a67eda0dadf0f520556a0023104ded378b8df97009564cd228232f",
+      "version": "m14-repeated-weak-supply-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M14",
+        "version": "m14-repeated-weak-supply-v1.1",
+        "supersedes_version": "m14-repeated-weak-supply-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 3,
+        "family": "two_sided_response",
+        "ask_rounds": 2,
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "second_recovery_increase_max": "0.10",
+        "normalized_hit_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "normalized_loss_ratio": [
+          "0.50",
+          "2.00"
+        ],
+        "ask_confirmation_gap_max_ms": 2000,
+        "ask_formation_deadline_exclusive": true,
+        "ask_second_guard_starts": "SECOND_WEAK_ROUND_CONFIRMATION_BEFORE_BID_PAIRING",
+        "bid_confirmation_gap_max_ms": 1500,
+        "component_ttl_ms": 3000,
+        "execution": "guarded-maker-v1"
+      },
+      "source_snapshots": [],
+      "previous_document": {
+        "version": "m14-repeated-weak-supply-v1",
+        "sha256": "8275f649712c45bccfad01d66789f4b02aa8a9edae671aa793ebc66693a77b51",
+        "archive_file": "research/signal_discovery/spec_archive/M14-8275f649712c45bc.md"
+      }
+    },
+    {
+      "strategy_id": "M15",
+      "name": "M15 撤供后的买入接替",
+      "file": "M15.md",
+      "sha256": "43242f184f4eca8244d37167911dd3b9f0d9decd6e91e167dad1c167ea4e5f5e",
+      "version": "m15-withdrawal-buy-handoff-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M15",
+        "version": "m15-withdrawal-buy-handoff-v1.1",
+        "supersedes_version": "m15-withdrawal-buy-handoff-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 4,
+        "family": "withdrawal_then_buy_test",
+        "seed_selection": "FIRST_LIVE_LW_SUPPORT_OVERLAP_LATEST_VALID_SUPPORT_KEY",
+        "new_round_gate": "STRICTLY_AFTER_FROZEN_SEED_KEY",
+        "lw_native_ttl_ms": 750,
+        "prior_support_ttl_ms": 8000,
+        "ask_round_window_ms": 500,
+        "formation_after_lw_max_ms": 1250,
+        "ask_recovery_max": "0.30",
+        "ask_loss_fraction_min": "0.05",
+        "post_test_ttl_ms": 3000,
+        "lw_root_hard_ttl_ms": 3000,
+        "execution": "guarded-maker-v1"
+      },
+      "source_snapshots": [],
+      "previous_document": {
+        "version": "m15-withdrawal-buy-handoff-v1",
+        "sha256": "292ef11394e0b3fbdbc257dececa636a2c3aad9e29e6553526e807c57fb8420d",
+        "archive_file": "research/signal_discovery/spec_archive/M15-292ef11394e0b3fb.md"
+      }
+    },
+    {
+      "strategy_id": "M16",
+      "name": "M16 承接提速",
+      "file": "M16.md",
+      "sha256": "033e00addc00692ef6756d09967471127816cdff6ca472f60791c49512ec66b8",
+      "version": "m16-faster-absorption-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M16",
+        "version": "m16-faster-absorption-v1.1",
+        "supersedes_version": "m16-faster-absorption-v1",
+        "sop_revision": "2026-11-11-level-provenance-and-handoff-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 5,
+        "family": "response_speed",
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "stable_continuous_hold_ms": 100,
+        "pair_confirmation_gap_max_ms": 2000,
+        "second_absolute_hit_ratio": [
+          "1.00",
+          "2.00"
+        ],
+        "second_normalized_hit_ratio": [
+          "1.00",
+          "2.00"
+        ],
+        "second_normalized_loss_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "second_final_recovery_at_least_first": true,
+        "reference_latency_lower_bound_min_ms": 100,
+        "second_latency_upper_to_first_lower_max": "0.50",
+        "crossing_bracket_max_ms": 50,
+        "receiver_clock_quantum_max_ms": 1,
+        "latency_interval_clock_padding_quanta": 2,
+        "crossing_requires_explicit_anchor_quantity_events": true,
+        "guard_closed_window_to_publication": true,
+        "post_confirmation_ttl_ms": 3000,
+        "post_round_latency_upper_to_reference_lower_max": "1.00",
+        "post_round_recovery_to_second_min": "0.80",
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "ORDERED_RAW_UPDATES_WITH_ONE_RECEIVER_CLOCK",
+        "existing_round_facts_sufficient": false
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/model.py",
+          "sha256": "41a0e8e3c976cd447f58dbe99de2d3407756e60b89e42f163c41e0b3353d7b1e"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4f7bdb74a29a0fe808bfb0a681f8c7fccbc7e3d3db3ff69f1ee489e25ce138ad"
+        },
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "previous_document": {
+        "version": "m16-faster-absorption-v1",
+        "sha256": "4923f4dc1c5680bc89ec5aa0ad44c2bbbf75a3564e784e1fdcb0bc398b24db67",
+        "archive_file": "research/signal_discovery/spec_archive/M16-4923f4dc1c5680bc.md"
+      }
+    },
+    {
+      "strategy_id": "M17",
+      "name": "M17 卖压打不薄",
+      "file": "M17.md",
+      "sha256": "3b4b4617bff370b12f785faca280bae0f4c17b2e26b1fd8b6d83a587af0e33e1",
+      "version": "m17-retained-depth-under-selling-v1.1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M17",
+        "version": "m17-retained-depth-under-selling-v1.1",
+        "supersedes_version": "m17-retained-depth-under-selling-v1",
+        "sop_revision": "2026-11-11-continuous-recheck-and-causal-timeout-v1.1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "common_overrides": [
+          "RF_ROUND_NOT_USED",
+          "ABSOLUTE_DEPTH_FLOOR_INSTEAD_OF_RECOVERY_FLOOR"
+        ],
+        "adapter": null,
+        "priority": 6,
+        "family": "executed_turnover_with_retained_depth",
+        "direct_trades_only": true,
+        "window_ms": 750,
+        "subwindow_ms": 250,
+        "minimum_sell_shares": "5",
+        "minimum_sell_to_initial_depth": "0.50",
+        "minimum_distinct_sell_records": 3,
+        "occupied_subwindows_required": 3,
+        "max_single_sell_fraction": "0.80",
+        "minimum_visible_to_initial_depth": "0.70",
+        "terminal_visible_to_initial_depth": "0.90",
+        "terminal_continuous_hold_ms": 100,
+        "same_level_post_trade_recheck_max_ms": 100,
+        "recheck_deadline_clock": "TRADE_RECEIVED_PLUS_100MS",
+        "recheck_available_before_deadline_required": true,
+        "recheck_deadline_exclusive": true,
+        "recheck_monitor_continues_across_publication": true,
+        "pending_recheck_blocks_new_submission": true,
+        "require_strictly_later_recheck_source_timestamp": true,
+        "post_confirmation_ttl_ms": 3000,
+        "wait_floor_to_initial_depth": "0.70",
+        "net_flow_residual_is_trigger": false,
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "DIRECT_RAW_TRADES_AND_FRESH_SAME_LEVEL_QUANTITIES"
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "previous_document": {
+        "version": "m17-retained-depth-under-selling-v1",
+        "sha256": "5e5e28cdbe64d537cd6d354f385ca62160bee6c2747356b9137afdc9515e8de4",
+        "archive_file": "research/signal_discovery/spec_archive/M17-5e5e28cdbe64d537.md"
+      }
+    },
+    {
+      "strategy_id": "M18",
+      "name": "M18 加压不增损",
+      "file": "M18.md",
+      "sha256": "238ad5ac8e9a08618ba55fa747555513f728a74ea4c4edac25f690a735e5ed59",
+      "version": "m18-escalating-hit-contained-loss-v1",
+      "status": "SPEC_ONLY",
+      "common_file": "COMMON.md",
+      "parameters": {
+        "document_type": "signal_sop",
+        "strategy_id": "M18",
+        "version": "m18-escalating-hit-contained-loss-v1",
+        "status": "SPEC_ONLY",
+        "common_contract": "maker-discovery-common-v1",
+        "adapter": null,
+        "priority": 7,
+        "family": "stress_response_amplitude",
+        "direct_trades_only": true,
+        "round_window_ms": 500,
+        "stable_recovery_min": "0.50",
+        "stable_continuous_hold_ms": 100,
+        "reference_hit_shares_min": "5",
+        "reference_hit_to_initial_depth_min": "0.10",
+        "reference_loss_to_initial_depth_min": "0.05",
+        "second_to_first_initial_depth_ratio": [
+          "0.80",
+          "1.25"
+        ],
+        "second_to_first_hit_ratio": [
+          "2.00",
+          "4.00"
+        ],
+        "second_to_first_absolute_loss_ratio_max": "1.00",
+        "second_to_first_normalized_loss_ratio_max": "1.00",
+        "second_final_recovery_at_least_first": true,
+        "pair_confirmation_gap_max_ms": 2000,
+        "pair_confirmation_deadline_exclusive": true,
+        "terminal_anchor_quantity_after_all_round_trades_required": true,
+        "terminal_quantity_source_strictly_after_max_trade_source": true,
+        "first_round_floor_is_active_during_second_round": false,
+        "post_confirmation_ttl_ms": 3000,
+        "guard_closed_window_to_publication": true,
+        "execution": "guarded-maker-v1",
+        "execution_owner": "USER_SIGNAL_TEST_MODULE",
+        "observation_requirement": "DIRECT_RAW_TRADES_AND_ORDERED_ANCHOR_DEPTH_PATH"
+      },
+      "source_snapshots": [],
+      "observation_source_review": [
+        {
+          "path": "research/maker_signals/model.py",
+          "sha256": "41a0e8e3c976cd447f58dbe99de2d3407756e60b89e42f163c41e0b3353d7b1e"
+        },
+        {
+          "path": "research/maker_signals/primitives.py",
+          "sha256": "4081425c8268bca004f2d4d448faff14ce67936503196adac28e909a3aa97d3d"
+        },
+        {
+          "path": "research/maker_signals/feed.py",
+          "sha256": "b4aa00f8d6e3f28d9048225410c922ffe1439f2bc7d582c82e4efef65739ad4e"
+        }
+      ],
+      "observation_reviewed_at": "2026-11-11T11:58:44.958033+00:00"
+    }
+  ],
+  "common_files": [
+    {
+      "file": "COMMON.md",
+      "sha256": "c3ec4443e8651e8a6f685309bdd6142166bada3de6c0846d3c18531cdc803645"
+    },
+    {
+      "file": "LEGACY_COMMON.md",
+      "sha256": "e3857f08807717ceb24b9530c1a662bafe838b5907b3f2a2c72bcd56fdd0f2a4"
+    },
+    {
+      "file": "RESEARCH_PROTOCOL.md",
+      "sha256": "05402e577feb8bae98c57429ca957365db881f275d4feb92b8ec597b1e14f370"
+    }
+  ],
+  "new_signal_research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18"
+  ],
+  "input_capabilities_document": {
+    "file": "INPUT_CAPABILITIES.md",
+    "sha256": "9e6538fc3544d1ac303beecc316ee8bba0c8b99300595510f4322ebb0f32e32a"
+  },
+  "mechanism_review_document": {
+    "file": "MECHANISM_MAP.md",
+    "sha256": "92e36c60ae10b84e51a453282087565618d5f826591a5ae06e2f2bfe6bd859c8"
+  },
+  "readme_document": {
+    "file": "README.md",
+    "sha256": "1fc01755c52e869afa1e3ff52acc234967de190d3aa227990686120ba3ab7499"
+  }
+}

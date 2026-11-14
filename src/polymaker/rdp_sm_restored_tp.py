@@ -111,7 +111,7 @@ class RestoredTP(SLExecution):
             return e.fatal or "RESTORED_TP_CLOSED"
         if self.tp_expired():
             return "CA_MATCHED_TP_EXPIRED"
-        if not self.controller.restore_tp_enabled or not 15 <= self.elapsed() < self.cutoff:
+        if not self.controller.restore_tp_enabled or not self.start <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.repair_episode is not self.episode or e.cooldown.active:
             return "REPAIR_EPISODE_CHANGED"

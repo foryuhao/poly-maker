@@ -1,0 +1,131 @@
+{
+  "checked_at_utc": "2026-11-12T04:12:26.570080+00:00",
+  "scope": "BOUNDED_READ_OF_EXISTING_METADATA_NO_TEST_EXECUTION",
+  "claim_boundary": "Only listed summaries and projected fields assessed; no liveness or absence-of-other-results inference.",
+  "previous_receipt_sha256": "e0cb51ea650166dc18172888651332a491e7bbb219686d2841c82225e6d12fb1",
+  "new_signal_feedback": "NO_VERSION_MATCHED_NEW_SOP_ECONOMIC_LEDGER_ESTABLISHED_BY_PROJECTED_FIELDS",
+  "sources": [
+    {
+      "kind": "legacy_launch",
+      "path": "research_outputs/m511_sim/current.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "sha256": "b1d47d96a98e9dcda8bcfd2b9d0b0412cbfeb772954978c264c6e8e80c782999",
+      "bytes_read": 6152,
+      "content_changed_since_previous_receipt": true,
+      "read_status": "READ",
+      "scope": "m5-m10",
+      "strategy_versions": {
+        "M10": "m10-local-ap-two-return-v7",
+        "M5": "m5-overlap-recovery-v1",
+        "M6": "m6-withdrawal-supported-v1.1",
+        "M7": "m7-local-ap-short-pause-v7",
+        "M8": "m8-depth-repair-v1",
+        "M9": "m9-single-support-weak-retest-v5-calibration"
+      },
+      "run_identity": {
+        "implementation_hash": "f1ee24b5a47788f3cb019879ce3be3b3362f293f4d87b4d7555f8f8921cf30d8",
+        "input_schema": 2,
+        "model": "m1234-queue-v5",
+        "run_id": "ff15fa98-fba5-4e24-96f3-e4dd96a461d6",
+        "settings_hash": "77e08f6482953a34bb76d025523961b5577a2e0ff6c89b6d3f57156e1a92bda0"
+      },
+      "recorded_status": "RUNNING",
+      "has_separate_assumed_fill_output": true,
+      "status_field_not_liveness_verification": true,
+      "claim_scope": "STATE_FILE_ONLY_NO_RUNTIME_HANDLE_CHECK"
+    },
+    {
+      "kind": "other_research_work_state",
+      "path": "research_outputs/analysis/m510_next_20261111/work-state.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "sha256": "247507ce9d01d1cb15ac6e47c5eb7c297bc30706035cc646ea151ca76c2b25e5",
+      "bytes_read": 7149,
+      "content_changed_since_previous_receipt": true,
+      "read_status": "READ",
+      "recorded_phase": "USER_STOPPED_PARTIAL_DELIVERY",
+      "recorded_updated_at": "2026-11-12T11:39:34.716792+08:00",
+      "claim_scope": "WORK_STATE_METADATA_ONLY_NOT_NEW_SIGNAL_ECONOMIC_LEDGER"
+    },
+    {
+      "kind": "memory_review",
+      "path": "research_outputs/analysis/m510_next_20261111/memory-review.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "read_status": "OVERSIZE_SKIPPED",
+      "observed_size_bytes": 45584,
+      "bytes_read": 0,
+      "last_read_at_utc": "2026-11-11T15:28:03.748554+00:00",
+      "last_read_sha256": "0bf9fc148abd63f3c2d0290d5817dcbd4cc8b45aafd68765eb9e7f6d51066712"
+    },
+    {
+      "kind": "candidate_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/next25-v3b/progress.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "sha256": "627e5a6eb394fdc4a5f8654ce5b281a7667b0851f590d5f77594f05198715e6c",
+      "bytes_read": 8527,
+      "content_changed_since_previous_receipt": false,
+      "read_status": "READ",
+      "market_rows": 25,
+      "top_level_fields": [
+        "markets",
+        "seconds"
+      ],
+      "row_grain": "REPLAY_MARKET_PROGRESS",
+      "liveness_not_inferred": true
+    },
+    {
+      "kind": "memory_progress",
+      "path": "research_outputs/analysis/m510_next_20261111/memory288-v3b/progress.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "read_status": "OVERSIZE_SKIPPED",
+      "observed_size_bytes": 43145,
+      "bytes_read": 0,
+      "last_read_at_utc": "2026-11-11T16:40:12.367797+00:00",
+      "last_read_sha256": "9ffd6d4674bafef933eaf88a4e9b5958e1dbaee6967208c8f9ed1bdc395ceaa6"
+    },
+    {
+      "kind": "native_lifecycle_result",
+      "path": "research_outputs/analysis/m510_next_20261111/native288/result.json",
+      "observed_at_utc": "2026-11-12T04:12:26.570080+00:00",
+      "runtime_status_verified": false,
+      "sha256": "f238cc2d1044ef457a4e3191ec06911ddc1760b8f65fd9b11604f25ffb8210ce",
+      "bytes_read": 352,
+      "content_changed_since_previous_receipt": false,
+      "read_status": "READ",
+      "recorded_status": "PASS",
+      "recorded_kind": "ARTIFICIAL_ACCELERATED_NATIVE_COORDINATOR_LIFECYCLE",
+      "complete_windows": 288,
+      "continuous_live_24h": false,
+      "real_orders": 0,
+      "claim_scope": "ARTIFICIAL_LIFECYCLE_NOT_CONTINUOUS_ECONOMIC_VALIDATION"
+    }
+  ],
+  "findings": [
+    "恢复后只核对此前六个摘要路径，每文件32KiB上限；超限文件跳过，不沿用旧完成数。",
+    "记录启动/离线进度/生命周期字段不等于新SOP的完整Maker经济验收，也不证明进程存活。",
+    "本次没有读行情、重算PnL、启动测试或改动其他进程；未检查字段与其他路径不作无结果推断。"
+  ],
+  "next_routine_check_not_before_utc": "2026-11-12T05:12:26.570080+00:00",
+  "per_file_read_limit_bytes": 32768,
+  "observed_main_version_differences": [
+    {
+      "strategy_id": "M10",
+      "observed_version": "m10-local-ap-two-return-v7",
+      "catalog_main_version": "m10-two-return-decay-v1"
+    },
+    {
+      "strategy_id": "M7",
+      "observed_version": "m7-local-ap-short-pause-v7",
+      "catalog_main_version": "m7-short-pause-single-refill-v1"
+    },
+    {
+      "strategy_id": "M9",
+      "observed_version": "m9-single-support-weak-retest-v5-calibration",
+      "catalog_main_version": "m9-single-support-weak-retest-v1"
+    }
+  ]
+}

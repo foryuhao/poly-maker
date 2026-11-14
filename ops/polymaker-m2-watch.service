@@ -1,0 +1,18 @@
+[Unit]
+Description=Read-only hourly M2 M3 M4 health audit in its existing Codex chat
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m2_study_watch.py --project-dir /home/ubuntu/polymaker --thread 01a1a0dc-5e73-72e1-886e-bd9856858b4b
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=1
+CPUQuota=10%
+CPUQuotaPeriodSec=10ms
+MemoryMax=192M
+MemorySwapMax=0
+TasksMax=24
+TimeoutStartSec=300

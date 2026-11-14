@@ -1,0 +1,23 @@
+[Unit]
+Description=PolyMaker M2 M3 M4 shared public candidate research (no account access)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B -m polymaker.m2_study --disable-cpu-guards --include-m3-m4
+Nice=0
+IOSchedulingClass=idle
+MemoryHigh=infinity
+MemoryMax=infinity
+MemorySwapMax=infinity
+TasksMax=16
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

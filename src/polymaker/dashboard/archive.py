@@ -27,6 +27,16 @@ def digest(data: bytes) -> str:
 
 
 def session_report(s: Record) -> str:
+    if s.get("strategy") == "M1":
+        virtual = s.get("post_type") == "VIRTUAL"
+        pnl = s.get("simulated_pnl") if virtual else s.get("trading_pnl")
+        return (f"# {s['slug']} / M1\n\nPOST 类型：{'基线' if virtual else '真实'}；状态：{s['phase']}。\n\n"
+                f"M1 信号 {s['signal_counts'].get('M1', 0)}；基线指令 {s.get('virtual_submitted_orders', 0)}；"
+                f"真实提交 {s.get('real_submitted_orders', 0)}。\n\n"
+                f"{'基线' if virtual else '真实'} PnL：{pnl if pnl is not None else '待确认'} USDC。\n\n"
+                + ("基线按指令价足额成交、持有至官方结算；不代表真实成交或账户收益。\n\n" if virtual else "")
+                + f"官方胜方：{(s.get('settlement') or {}).get('winner', '待确认')}。\n\n"
+                + f"数据状态：{', '.join(s['issues']) or '已记录'}。\n")
     residual = s["residual_pnl"] if s["residual_pnl"] is not None else "PENDING"
     total = s["trading_pnl"] if s["trading_pnl"] is not None else "PENDING"
     settlement = s.get("settlement")
@@ -111,10 +121,16 @@ class Archiver:
             is_signal = e["source_kind"] == "ca" or e["kind"] in {
                 "sm_ba_episode", "sm_opposite_ba_episode", "sm_opposite_ba_execution",
                 "sm_ca_normal_execution", "sm_ca_wait", "sm_ca_final_decision"}
+            is_signal |= e["kind"] in {"RF_CONFIRMED", "EX_CONFIRMED", "SIGNAL_IDENTIFIED", "OPPORTUNITY_IDENTIFIED"}
+            is_signal |= e["kind"] in {"sm_m1_signal", "sm_m1_live_signal", "sm_m1_candidate_skipped"}
             (signals if is_signal else execution).append(e)
+        if s.get("pm_account", {}).get("observed_at") is not None:
+            execution.append({"kind": "dashboard_pm_account_snapshot", "source_kind": "pm_account",
+                              "ts": s["pm_account"]["observed_at"], "payload": s["pm_account"]})
         def encode_lines(rows: list[Record]) -> bytes:
             return ("".join(dumps(row) + "\n" for row in rows)).encode()
-        status = "FINAL" if s["ended"] and not s["issues"] and s["trading_pnl"] is not None else "PROVISIONAL"
+        pnl = s.get("simulated_pnl") if s.get("post_type") == "VIRTUAL" else s["trading_pnl"]
+        status = "FINAL" if s["ended"] and not s["issues"] and pnl is not None else "PROVISIONAL"
         manifest = {"schema_version": 1, "kind": "market", "session_id": s["session_id"],
                     "market_start": s["market_start"], "market_end": s["market_end"],
                     "observed_at": observed_at, "observed_local": clock(observed_at),
@@ -139,9 +155,10 @@ class Archiver:
         try:
             # Revisions also happen between boundaries as late confirmations arrive.
             for s in snapshot["sessions"]:
-                material = digest(dumps({k: s[k] for k in (
+                material = digest(dumps({k: s.get(k) for k in (
                     "ended", "execution_status", "issues", "pairs", "residual", "trading_pnl",
-                    "pending_fills", "pending_orders", "filled_orders", "merged_pairs")}).encode())
+                    "pending_fills", "pending_orders", "filled_orders", "merged_pairs", "simulated_pnl",
+                    "virtual_submitted_orders", "real_submitted_orders")}).encode())
                 if boundary == self.last_boundary and self.seen.get(s["session_id"]) == material:
                     continue
                 target = self.market(s, now)
@@ -153,8 +170,9 @@ class Archiver:
                 root = self.output / "intervals" / local.strftime("%Y%m%d") / local.strftime("%H%M")
                 if not root.exists():
                     payload = {**snapshot, "sessions": [
-                        {k: s[k] for k in ("session_id", "slug", "phase", "market_start", "market_end",
-                                          "pair_pnl", "pnl_by_role", "trading_pnl", "residual_pnl", "issues")}
+                        {k: s.get(k) for k in ("session_id", "slug", "phase", "market_start", "market_end",
+                                          "pair_pnl", "pnl_by_role", "trading_pnl", "residual_pnl", "issues",
+                                          "strategy", "post_type", "simulated_pnl", "virtual_submitted_orders", "real_submitted_orders")}
                         for s in snapshot["sessions"]],
                                "window_start": boundary - 300, "window_end": boundary,
                                "observation_lag_seconds": max(0, now - boundary),

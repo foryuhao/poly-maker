@@ -1,0 +1,17 @@
+M4 基线每小时巡检与双口径 PnL 图。用户已明确授权在本对话每小时执行并展示结果。
+
+先读取本轮巡检记录文件、summary.json、market-pnl-coverage.csv、validation.json 和 PNG，必要时读取 snapshot.json 与 research_outputs/m4_virtual 下对应场次日志。核对基线服务、心跳、信号、模拟 POST/ACK/REJECTED/UNKNOWN、重试、每场占款、换场、观察窗口和日志增长。按对应场次 settings 校验交易规则，发现异常说明证据和影响。维持价格下限 0.20、弱轮耗损门槛 5%、每笔风险 5 USDC、每场风险 10 USDC、方向名额、异常重试和 T240 限制。
+
+同时检查 report.json 的 log_maintenance 及 research_outputs/m4_pnl_hourly_watch/log-maintenance.json。报告原始日志、压缩归档和剩余磁盘容量，出现容量告警时说明。已结束且官方已结算超过一小时的基线原始日志保存在 research_outputs/m4_virtual/journal-archive/*.jsonl.gz，按 gzip 读取。小时报告详细输入保留 24 小时，历史 PNG、汇总、验证记录和全部交易账本保留。
+
+统计范围以 /home/ubuntu/polymaker/research_outputs/m4_virtual/statistics-scope.json 为准，当前从北京时间 2026-11-11 01:00 开场开始，含本场。新旧两种成交口径使用同批 POST，从初始 0 累计。
+
+只更新蓝色新曲线的逻辑，图中始终保持蓝色新口径、橙色旧口径两条实线，沿用现有基线标识和统计起点。新口径从 POST 后观察至本场 T240（含），同 token 的有效 Best ask <= 原信号锚定价减 POST 时1 tick，才按原 POST 价格和数量全量模拟成交。T240无有效触价证据即记未成交、PnL为0，并记录模拟撤单。断流、过期、处理延迟等原因保留诊断，不能单因观察缺口剔除已完整且官方已结算的场次或使曲线断开。历史场次仅按留存的有效触价证据重算，须注明历史采集不足，原始事实及结算结果保留。橙色旧口径按同批全部 POST 立即全量模拟成交。仍待观察、整场不完整、缺失及尚未官方结算的场次继续单列。ACK仅作提交应答。
+
+直接在本对话用绝对路径 Markdown 图片展示“逐场 PnL 瀑布与累计收益回撤图”。瀑布柱显示新口径每场合并盈亏，绿色盈利、红色亏损，从上一场累计值连接到本场累计值。叠加蓝色新口径实线和橙色旧口径实线，两条曲线均去掉圆点、方框及部分场次空心点。两条曲线分别报告累计 PnL、最大回撤、当前回撤、已结算交易数和有交易市场数，回撤包含初始 0。最大回撤保留菱形峰谷，用对应口径颜色的带箭头实线直接从前期高点指向低点，并标注回撤数值；不使用回撤期间阴影或竖直双向箭头。缺失、整场不完整、待观察和未结算窗口用灰色，曲线断开。完整且官方已结算的零交易市场记 0。多个策略出图时使用相同纵轴范围。附简短汇总表，写明快照时间、已结算数据截止和统计口径。未结算单单列，官方结果确认后再纳入 PnL。快照距当前超过 5 分钟时，先用本地报告脚本生成新快照和图。
+
+报告脚本为 /home/ubuntu/polymaker/ops/m4_pnl_snapshot.py 和 /home/ubuntu/polymaker/ops/m4_pnl_render.py。前者用项目 .venv/bin/python，后者用 .venv-m4-report/bin/python。分别传 --project-dir /home/ubuntu/polymaker，以及 --output 或 --directory 指向新报告目录。检查实际 PNG 可读性，必要时修正报表代码后重绘。
+
+仅授权 M4 基线巡检和模拟 PnL 报告。实盘继续停止。保留所有人工/余额保护停机标记，保持实际成交及仓位核对停用，不产生真实试单，不推断真实 PnL，不恢复 M1，不启动旧的五分钟实盘巡检，不改门槛提高覆盖率，不发邮件或外部消息。
+
+遵守本聊天最新人工指令。若用户要求停止监控，立即停止并禁用 polymaker-m4-pnl-watch.timer，将 research_outputs/m4_pnl_hourly_watch/control.json 的 enabled 置 false，随后停止本轮监控工作。若用户要求停止实盘，立即优先执行。完成本轮回报后，用 research_outputs/m4_pnl_hourly_watch/agent-state.lock 的 flock 排他锁重读并原子保存 agent-state.json 的 reviewed_report_directory，保留其他字段，避免重叠修复。

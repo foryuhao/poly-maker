@@ -16,7 +16,7 @@ from threading import Event
 from py_clob_client_v2.order_builder.builder import ROUNDING_CONFIG
 
 from polymaker.domain import Quote, Side
-from polymaker.rdp_sm import _require, repair_required
+from polymaker.rdp_sm import _require, repair_required, trading_start_sec
 from polymaker.rdp_sm_ba import entry_admission
 from polymaker.rdp_sm_execution import (
     Placement,
@@ -402,10 +402,12 @@ class BatchLifecycle:
                 return None
         candidates = []
         for direction, (quotes, sizing) in plans.items():
-            if any(not e.delta_candidate_allowed(yes-no, q.outcome, Decimal(str(q.size))) for q in quotes):
+            if any(not e.delta_candidate_allowed(yes-no, q.outcome, Decimal(str(q.size)),
+                       normal_entry=controller.phase == "NORMAL") for q in quotes):
                 continue
             for q in quotes:
                 e._validate(q, window_id, snapshot.books(), e.meta,
+                            normal_entry=controller.phase == "NORMAL",
                             **({"allow_taker": True} if getattr(controller, "taker", False) else {}))
                 _require(f"{ticks[q.token_id]:g}" in ROUNDING_CONFIG, "SDK_TICK_UNSUPPORTED")
             commitment = sum(
@@ -445,6 +447,10 @@ class BatchLifecycle:
                 [Quote(q.token_id, q.side, q.price, q.size) for q in quotes], e.meta, ticks,
                 **({"immediate_order_type": e.cfg.rdp_sm.ca_taker.order_type} if taking else {}),
             )
+            if controller.phase == "NORMAL" and e.cfg.rdp_sm.sizing_mode == "fixed_risk":
+                _require(all(Decimal(str(a.order.makerAmount))/Decimal(1_000_000)
+                             <= e.cfg.rdp_sm.risk_per_trade_usdc for a in signed.orders),
+                         "CA_ENTRY_SIGNED_RISK_EXCEEDED")
             candidates.append(Candidate(direction, quotes, signed, dict(sizing)))
         if not candidates:
             self.wait("OFFICIAL_OR_SESSION_CAPITAL_INSUFFICIENT", snapshot)
@@ -578,7 +584,7 @@ class BatchLifecycle:
             ("ACCOUNT_INVENTORY_NOT_EXPLAINED_BY_SM", e.inventory_mismatch is None),
             ("ACCOUNT_PAGINATION_UNRESOLVED", e.gateway._client.pagination_failure is None),
             ("ACCOUNT_EVIDENCE_STALE", e.monotonic() - e.time_anchor <= e.cfg.risk.ws_stale_halt_s),
-            ("MARKET_SUBMISSION_CUTOFF", 15 <= elapsed < controller.cutoff),
+            ("MARKET_SUBMISSION_CUTOFF", trading_start_sec(e.cfg) <= elapsed < controller.cutoff),
             (current.reason or "WS_INVALID", current.valid),
             ("WS_GENERATION_CHANGED", current.generation == intent.snapshot.generation),
             (
@@ -605,7 +611,8 @@ class BatchLifecycle:
             (admission_reason, admission_reason is None),
             match_check(),
             ("SESSION_DELTA_LIMIT", all(e.delta_candidate_allowed(intent.yes-intent.no,
-                 q.outcome, Decimal(str(q.size)), pending_batch=pending_batch) for q in intent.quotes)),
+                 q.outcome, Decimal(str(q.size)), pending_batch=pending_batch,
+                 normal_entry=intent.phase == "NORMAL") for q in intent.quotes)),
         ]
         self.guard_reason = next((reason for reason, valid in checks if not valid), None)
         if self.guard_reason is not None and admission is not None:

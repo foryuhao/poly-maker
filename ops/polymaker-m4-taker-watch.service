@@ -1,0 +1,10 @@
+[Unit]
+Description=Read-only M4 Taker signal and owned-fill audit for the existing chat
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m4_taker_watch.py --project-dir /home/ubuntu/polymaker
+Nice=15
+TimeoutStartSec=120

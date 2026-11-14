@@ -120,7 +120,7 @@ class HumanRunLog:
     """One CLI invocation, one FIFO writer; emit is an O(1) memory handoff."""
 
     def __init__(self, *, signature_type=None, secrets=(), console_handlers=None, repair_mode=False,
-                 normal_cutoff_sec=NORMAL_END_S, repair_cutoff_sec=240, m1_mode=False,
+                 normal_start_sec=15, normal_cutoff_sec=NORMAL_END_S, repair_cutoff_sec=240, m1_mode=False,
                  m1_observation_only=True, m1_start_sec=100):
         self.signature_type = signature_type
         self.repair_mode = repair_mode
@@ -128,6 +128,7 @@ class HumanRunLog:
         self.m1_observation_only = m1_observation_only
         self.m1_start_sec = m1_start_sec
         self.normal_cutoff_sec = normal_cutoff_sec
+        self.normal_start_sec = normal_start_sec
         self.repair_cutoff_sec = repair_cutoff_sec
         self.cooldown_active = False
         self.repair_abandoned = False
@@ -217,8 +218,8 @@ class HumanRunLog:
                     "M1 Heartbeat: every 10s and on phase changes | Data issues are reported explicitly"]
         elapsed = market.get("elapsed_s")
         remaining = max(0, 300 - elapsed) if isinstance(elapsed, (int, float)) else None
-        repair_window = (f"REPAIR 15 <= T < {self.repair_cutoff_sec:g}s" if self.repair_mode
-                         else "REBALANCE 15 <= T < 300s")
+        repair_window = (f"REPAIR {self.normal_start_sec:g} <= T < {self.repair_cutoff_sec:g}s" if self.repair_mode
+                         else f"REBALANCE {self.normal_start_sec:g} <= T < 300s")
         return [
             "BTC Up/Down 5m Market",
             f"Market Slug: {value(market.get('slug'))}",
@@ -226,7 +227,7 @@ class HumanRunLog:
             f"Market Time: {local_time(market['start']) if market.get('start') is not None else NA} -> "
             f"{local_time(market['end']) if market.get('end') is not None else NA}",
             f"Market Elapsed Seconds: {value(elapsed)} | Trading Window: "
-            f"NORMAL 15 <= T < {self.normal_cutoff_sec:g}s | {repair_window}",
+            f"NORMAL {self.normal_start_sec:g} <= T < {self.normal_cutoff_sec:g}s | {repair_window}",
             f"Completion: T >= 300s | NORMAL waits for market end after T >= {self.normal_cutoff_sec:g}s",
             f"Remaining Trading Time: {value(remaining)}s",
         ]

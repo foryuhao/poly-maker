@@ -15,6 +15,7 @@ from dataclasses import asdict
 from decimal import ROUND_FLOOR, Decimal
 
 from polymaker.domain import Quote, Side
+from polymaker.rdp_sm import trading_start_sec
 from polymaker.rdp_sm_execution import (
     Placement,
     WindowQuote,
@@ -31,6 +32,10 @@ ZERO = Decimal(0)
 
 class SLExecution:
     mode = "SL"
+
+    @property
+    def start(self):
+        return trading_start_sec(self.e.cfg)
 
     @property
     def cutoff(self):
@@ -220,7 +225,7 @@ class SLExecution:
             return "COOLDOWN_ACTIVE"
         if not e.cfg.rdp_sm.repair.path.exit_enabled(self.mode):
             return self.mode+"_DISABLED"
-        if not 15 <= self.elapsed() < self.cutoff:
+        if not self.start <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if e.fatal:
             return e.fatal
@@ -479,7 +484,8 @@ class SLExecution:
             return
         previous = e.sl_terminal_quantities.get(oid)
         if previous is not None and (not _terminal(ev, e.matched_remaining_tolerance_shares,
-                taker_buy=e.processor.taker_spec(oid) is not None)
+                taker_buy=e.processor.taker_spec(oid) is not None,
+                fak_buy=e.processor.is_fak_buy(oid))
                 or Decimal(str(ev.size_matched)) != previous):
             e.sl_terminal_quantities.pop(oid, None)
             e.fatal = self.mode+"_TERMINAL_EVIDENCE_CONTRADICTION"
@@ -496,7 +502,8 @@ class SLExecution:
                 legs[(parsed.trade_id, oid)] = fill
         qty = sum((Decimal(str(f.size)) for f in legs.values()), ZERO)
         if (not self.post_done(a) or not _terminal(ev, e.matched_remaining_tolerance_shares,
-                taker_buy=e.processor.taker_spec(oid) is not None)
+                taker_buy=e.processor.taker_spec(oid) is not None,
+                fak_buy=e.processor.is_fak_buy(oid))
                 or "associate_trades" not in row
                 or set(ev.associate_trades) != {k[0] for k in legs}
                 or abs(Decimal(str(ev.size_matched))-qty) > Decimal(".000001")

@@ -1,0 +1,21 @@
+[Unit]
+Description=PolyMaker M4 live Maker BUY service
+After=network-online.target
+StartLimitIntervalSec=0
+ConditionPathExists=!/home/ubuntu/polymaker/runtime/trading-control/m4-live-stop.json
+ConditionPathExists=!/home/ubuntu/polymaker/runtime/trading-control/balance-stop.json
+ConditionPathExists=!/home/ubuntu/polymaker/research_outputs/m1_live_watch/balance-stop.json
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B -m polymaker.m4_run --project-dir /home/ubuntu/polymaker --mode live --live
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

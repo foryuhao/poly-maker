@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "thread_id": "01a1952a-bb2c-7bb2-812a-ef460ed3be4b",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "owned_units": [
+    "polymaker-signal-sop-hourly.timer",
+    "polymaker-signal-sop-hourly.service"
+  ],
+  "report_retention_hours": 48,
+  "no_market_data_jobs": true
+}

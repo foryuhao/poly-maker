@@ -1,0 +1,12 @@
+[Unit]
+Description=Inspect M1234 simulation every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=polymaker-m1234-sim-watch.service
+
+[Install]
+WantedBy=timers.target

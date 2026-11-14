@@ -71,16 +71,16 @@ async def test_merge_preserves_unpaired_shares_and_releases_only_verified_cost(e
     assert account["yes_inventory"] == 2 and account["no_inventory"] == 0
 
 
-async def test_m1_reuses_t240_merge_with_natural_residual(env):
+async def test_m1_never_merges_confirmed_pairs_and_retains_platform_settlement_inventory(env):
     v, ex = await paired(env, no=3)
     ex.cfg.rdp_sm.normal_entry_mode = "m1_v1"
     assert ex.capital_limit == 20
-    v.time = START + 239
-    assert not await merge_confirmed_pairs(ex)
-    v.time = START + 240
-    assert await merge_confirmed_pairs(ex)
-    assert ex.merged_pairs == 3
-    assert ex.economic_inventory() == (Decimal(2), Decimal(0))
+    for elapsed in (239, 240, 270, 300):
+        v.time = START+elapsed
+        assert not await merge_confirmed_pairs(ex)
+    assert not v.merge_rpc_calls and not v.merge_submissions
+    assert ex.merged_pairs == 0
+    assert ex.economic_inventory() == (Decimal(5), Decimal(3))
     assert ex.safe_to_continue and ex.repair_episode is None
 
 

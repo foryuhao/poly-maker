@@ -1,0 +1,11 @@
+[Unit]
+Description=Report M4 baseline PnL and wake the authorized existing chat hourly
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m4_pnl_hourly_watch.py
+Nice=15
+TimeoutStartSec=480

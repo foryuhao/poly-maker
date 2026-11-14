@@ -1,0 +1,20 @@
+[Unit]
+Description=PolyMaker independent M6 baseline simulation
+After=network-online.target
+StartLimitIntervalSec=0
+ConditionPathExists=!/home/ubuntu/polymaker/runtime/trading-control/m6-baseline-stop.json
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B -m polymaker.m6_baseline.run --project-dir /home/ubuntu/polymaker
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

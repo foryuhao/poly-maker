@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "thread_id": "01a1952a-bb2c-7bb2-812a-ef460ed3be4b",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "owned_units": [
+    "polymaker-signal-sop-hourly.timer",
+    "polymaker-signal-sop-hourly.service"
+  ],
+  "report_retention_hours": 48,
+  "no_market_data_jobs": true,
+  "resume_requires_explicit_user_instruction": true,
+  "resumed_at_utc": "2026-11-12T04:11:46.631752+00:00",
+  "resume_reason": "USER_SET_GOAL_ACTIVE_AND_REQUESTED_CONTINUATION",
+  "last_pause_at_utc": "2026-11-11T18:39:35.528692+00:00",
+  "last_pause_reason": "USER_REQUESTED_STAGE_REPORT_AND_PAUSE",
+  "paused_at_utc": "2026-11-12T04:24:49.391330+00:00",
+  "pause_reason": "USER_REQUESTED_STAGE_REPORT_AND_PAUSE"
+}

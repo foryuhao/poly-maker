@@ -475,7 +475,7 @@ def test_collector_keeps_current_m1_session_when_ca_is_disabled(files, observati
 
         console = Console(width=60, record=True, file=io.StringIO())
         console.print(post_panel(s))
-        assert "M1" in console.export_text()
+        assert "RF / EX" in console.export_text()
         assert len(c.sources(SID)) == 1
         assert c.sources(SID)[0]["caught_up"] and c.sources(SID)[0]["errors"] == 0
         # Catch both the live poll and the persisted restart path: a disabled
@@ -671,9 +671,9 @@ def test_terminal_h_cycles_history_periods_including_archive_view(files):
         assert text.encode() in received, received.decode(errors="replace")
 
     try:
-        expect("历史 24h")
-        for key, label in [(b"h", "历史 4h"), (b"h", "历史 12h"), (b"H", "历史 24h"),
-                           (b"a", "市场归档索引"), (b"h", "历史范围 4h")]:
+        expect("历史 4h")
+        for key, label in [(b"h", "历史 8h"), (b"h", "历史 12h"), (b"H", "历史 24h"), (b"h", "历史 4h"),
+                           (b"a", "市场归档索引"), (b"h", "历史范围 8h")]:
             os.write(master, key)
             expect(label)
         os.write(master, b"q")

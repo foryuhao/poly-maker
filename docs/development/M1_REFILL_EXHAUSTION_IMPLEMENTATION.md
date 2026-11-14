@@ -2,6 +2,9 @@
 
 日期：2026-11-01，北京时间。
 
+2026-11-02 后续实盘开发口径见 [M1 实盘策略开发注意事项](M1_LIVE_DEVELOPMENT_NOTES.md)。
+其中单笔 1 美金、低价区间、并发订单及挂单后不随信号到期撤单属于待开发版本；下文保留旧实现事实。
+
 当前入口更新：CA 长期实盘优先，M1 使用独立公开行情观察器，启动命令为
 `.venv/bin/python -m polymaker.rdp_sm_m1_observe --config-dir config-m1`。
 它不连接账户，不争用账户锁，所有文件在 `research_outputs/m1_isolated/`；完整说明见

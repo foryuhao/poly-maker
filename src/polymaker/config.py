@@ -430,11 +430,12 @@ class RDPM1Config(BaseModel):
 
 
 class RDPSMConfig(BaseModel):
-    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1", "m1_v1"] = "legacy"
+    normal_entry_mode: Literal["legacy", "obi_v1", "ba_v1", "ca_v1", "m1_v1", "m4_v2"] = "legacy"
     m1: RDPM1Config = Field(default_factory=RDPM1Config)
     ca_entry_direction: Literal["signal", "higher_bid"] = "signal"
     ca_entry_execution: Literal["maker", "taker"] = "maker"
     ca_taker: RDPCATakerConfig = Field(default_factory=RDPCATakerConfig)
+    normal_start_sec: float = Field(default=15.0, ge=0, lt=300, allow_inf_nan=False)
     normal_cutoff_sec: float = Field(default=120.0, gt=0, le=300, allow_inf_nan=False)
     obi: RDPObiConfig = Field(default_factory=RDPObiConfig)
     ba: RDPBAConfig = Field(default_factory=RDPBAConfig)
@@ -445,6 +446,8 @@ class RDPSMConfig(BaseModel):
     cooldown: RDPCooldownConfig = Field(default_factory=RDPCooldownConfig)
     sync_observe: RDPSyncObserveConfig = Field(default_factory=RDPSyncObserveConfig)
     base_size: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
+    sizing_mode: Literal["fixed_shares", "fixed_risk"] = "fixed_shares"
+    risk_per_trade_usdc: Decimal = Field(default=Decimal("5"), gt=0, allow_inf_nan=False)
     target_delta: Decimal = Field(default=Decimal("0"), ge=0, le=1, allow_inf_nan=False)
     favorite_threshold: Decimal = Field(default=Decimal("0.70"), gt=Decimal("0.5"),
                                       lt=1, allow_inf_nan=False)
@@ -456,6 +459,10 @@ class RDPSMConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sizing(self) -> RDPSMConfig:
+        if self.sizing_mode == "fixed_risk" and (self.normal_entry_mode != "ca_v1" or self.target_delta != 0):
+            raise ValueError("fixed_risk sizing requires ca_v1 and target_delta=0")
+        if self.normal_start_sec >= self.normal_cutoff_sec:
+            raise ValueError("normal_start_sec must be before normal_cutoff_sec")
         if self.ca_matched_tp.taker_exit_on_expiry and self.repair.ba_enabled:
             raise ValueError("CA expiry Taker exit requires repair.ba_enabled=false")
         if self.ca_entry_execution == "taker":
@@ -482,7 +489,7 @@ class RDPSMConfig(BaseModel):
             raise ValueError(f"{self.repair.policy} requires normal_entry_mode=obi_v1, ba_v1 or ca_v1")
         if self.target_delta not in (0, 1):
             raise ValueError("target_delta must be 0 or 1")
-        if self.max_order_size < self.base_size:
+        if self.sizing_mode == "fixed_shares" and self.max_order_size < self.base_size:
             raise ValueError("max_order_size must be >= base_size")
         if any(q % Decimal(".01") for q in (self.base_size, self.max_order_size)):
             raise ValueError("base_size and max_order_size must use the SDK 0.01 share grid")

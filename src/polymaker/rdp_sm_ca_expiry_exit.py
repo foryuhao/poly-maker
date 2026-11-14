@@ -21,7 +21,7 @@ from polymaker.rdp_sm_ca_taker import (
     fee_reserve,
 )
 from polymaker.rdp_sm_execution import Placement, WindowQuote
-from polymaker.rdp_sm_recovery import PreparationReadRetry, retry_read
+from polymaker.rdp_sm_recovery import PreparationReadRetry, reason_code, retry_read
 from polymaker.rdp_sm_sl import SLExecution
 from polymaker.state.tracker import fill_cost
 
@@ -73,15 +73,58 @@ class CAExpiryExit(SLExecution):
         self.baseline_revision = self.e.revision
         self.fees = None
         self.initial_cash = ZERO
+        self.next_tick_refresh = 0.0
 
     def check_abandonment(self):
         # A high-entry hold policy must not veto an explicitly configured timed exit.
         return False
 
-    def snapshot(self):
+    def target_token(self):
         meta = self.e.meta
-        token = meta.no.token_id if self.owner.intent.direction == 'YES' else meta.yes.token_id
-        return self.lifecycle.feed.snapshot(ba_cfg=self.e.cfg.rdp_sm.ba, taker_buy_token=token)
+        return meta.no.token_id if self.owner.intent.direction == 'YES' else meta.yes.token_id
+
+    def snapshot(self):
+        return self.lifecycle.feed.snapshot(ba_cfg=self.e.cfg.rdp_sm.ba,
+                                             taker_buy_token=self.target_token())
+
+    def exit_book_evidence(self):
+        feed = self.lifecycle.feed
+        with feed.lock:
+            book = feed.books[self.target_token()]
+            verified = feed.tick_verified.get(book.token_id)
+            return {'token_id': book.token_id, 'bid': str(book.best_bid),
+                    'ask': str(book.best_ask), 'ws_tick': str(book.tick),
+                    'official_tick': str(verified), 'tick_verified': verified == book.tick,
+                    'book_age_ms': max(0, (self.e.monotonic()-book.received_mono)*1000),
+                    'generation': feed.generation, 'connected': feed.connected}
+
+    def evidence(self):
+        return {**super().evidence(), 'exit_book': self.exit_book_evidence()}
+
+    async def refresh_exit_ticks(self):
+        # This actor owns the loop, so the normal loop's tick recovery cannot
+        # run. Check the target constraint even if EMPTY/STALE masks its reason.
+        before = self.exit_book_evidence()
+        if before['tick_verified']:
+            return True
+        now = self.e.monotonic()
+        if now < self.next_tick_refresh:
+            return False
+        self.next_tick_refresh = now+max(.5, self.controller.cfg.review_sec)
+        try:
+            await self.e.reads.refresh_feed_ticks(tokens=(self.target_token(),))
+        except Exception as exc:
+            if not retry_read(exc):
+                raise
+            self.record('tick_refresh', {'outcome': 'WAIT', 'error_type': type(exc).__name__,
+                                        'reason': reason_code(exc), 'before': before,
+                                        'after': self.exit_book_evidence()})
+            self.wait('CA_EXIT_WAIT_TICK_VERIFICATION')
+            return False
+        after = self.exit_book_evidence()
+        self.record('tick_refresh', {'outcome': 'VERIFIED' if after['tick_verified'] else 'WAIT',
+                                    'before': before, 'after': after})
+        return after['tick_verified']
 
     def remaining(self):
         opening = {self.oid(a) for a in self.owner.opening}
@@ -111,7 +154,7 @@ class CAExpiryExit(SLExecution):
                 'extra_reverse_cost_usdc': str(excess_cost)}
 
     def require_active(self):
-        if self.e.closed or self.e.fatal or not 15 <= self.elapsed() < self.cutoff:
+        if self.e.closed or self.e.fatal or not self.start <= self.elapsed() < self.cutoff:
             raise ValueError(self.e.fatal or 'CA_EXPIRY_EXIT_OUTSIDE_WINDOW')
 
     async def wait_frame(self):
@@ -147,7 +190,7 @@ class CAExpiryExit(SLExecution):
             return 'CA_EXPIRY_EXIT_DISABLED'
         if self.closed or e.closed or e.fatal:
             return e.fatal or 'CA_EXPIRY_EXIT_CLOSED'
-        if e.monotonic() < self.deadline or not 15 <= self.elapsed() < self.cutoff:
+        if e.monotonic() < self.deadline or not self.start <= self.elapsed() < self.cutoff:
             return 'CA_EXPIRY_EXIT_OUTSIDE_WINDOW'
         if (not e.journal.ready or e.merge_pending or e.inventory_mismatch is not None
                 or e.gateway._client.pagination_failure):
@@ -237,6 +280,9 @@ class CAExpiryExit(SLExecution):
                     await self.wait_frame()
             while self.remaining() > GRID:
                 self.require_active()
+                if not await self.refresh_exit_ticks():
+                    await self.wait_frame()
+                    continue
                 try:
                     _, _, _, account = await e._snapshot(include_books=False)
                 except Exception as exc:

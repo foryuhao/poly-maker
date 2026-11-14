@@ -102,17 +102,18 @@ async def test_r01_current_discovery_uses_official_time_and_token_mapping(env):
     assert not v.posts and not v.cancels
 
 
-@pytest.mark.parametrize("elapsed", [10, 250])
-async def test_r02_r04_early_and_late_starts_wait_in_same_market(env, elapsed):
+@pytest.mark.parametrize("elapsed,start", [(10, 15), (5, 10), (250, 15)])
+async def test_r02_r04_early_and_late_starts_wait_in_same_market(env, elapsed, start):
     v, cfg = env
+    cfg.rdp_sm.normal_start_sec = start
     v.time = START + elapsed
     before = v.mono
-    if elapsed < 15:
+    if elapsed < start:
         on_windows(v, lambda *_: None, stop_after=1)
     result = await run_current_market(cfg, sleep=v.sleep, monotonic=lambda: v.mono)
     assert result.execution_status == "COMPLETED"
-    if elapsed < 15:
-        assert v.post_times == [15, 15] and v.mono - before >= 5
+    if elapsed < start:
+        assert v.post_times == [start, start] and v.mono - before >= start-elapsed
         assert result.stop_reason == "MARKET_CUTOFF"
     else:
         assert result.stop_reason == "MARKET_CUTOFF" and v.mono - before >= 50

@@ -209,9 +209,10 @@ class CAMatchedTP(SLExecution):
         if entry >= 1-self.cfg.profit_per_share:
             return None, "ENTRY_PRICE_TOO_HIGH"
         minimum = max(MIN_MAKER_BUY_SHARES, Decimal(str(self.e.meta.min_order_size)))
-        maximum = min(self.e.cfg.rdp_sm.max_order_size,
-                      max(sum((Decimal(str(a.quote.size)) for a in self.opening), ZERO),
-                          quantity.quantize(Decimal('.01'), rounding=ROUND_CEILING)))
+        maximum = max(sum((Decimal(str(a.quote.size)) for a in self.opening), ZERO),
+                      quantity.quantize(Decimal('.01'), rounding=ROUND_CEILING))
+        if self.e.cfg.rdp_sm.sizing_mode != "fixed_risk":
+            maximum = min(self.e.cfg.rdp_sm.max_order_size, maximum)
         qty = tp_buy_size(quantity, minimum, maximum)
         if qty is None:
             return None, "WAIT_MINIMUM_MATCHED_QUANTITY"
@@ -233,7 +234,7 @@ class CAMatchedTP(SLExecution):
             return e.fatal or "CA_MATCHED_TP_CLOSED"
         if self.tp_expired():
             return "CA_MATCHED_TP_EXPIRED"
-        if not 15 <= self.elapsed() < self.cutoff:
+        if not self.start <= self.elapsed() < self.cutoff:
             return "MARKET_SUBMISSION_CUTOFF"
         if self.opening_problem():
             return "CA_OPENING_FILL_UNRESOLVED"
@@ -260,7 +261,7 @@ class CAMatchedTP(SLExecution):
         quantity = sum((Decimal(str(f.size)) for f in fills), ZERO)
         minimum = max(MIN_MAKER_BUY_SHARES, Decimal(str(e.meta.min_order_size)))
         if (qty - quantity > RDP_TOLERANCE or qty < minimum or qty % Decimal(".01")
-                or qty > e.cfg.rdp_sm.max_order_size):
+                or (e.cfg.rdp_sm.sizing_mode != "fixed_risk" and qty > e.cfg.rdp_sm.max_order_size)):
             return "CA_MATCHED_QUANTITY_CHANGED"
         cost = sum((fill_cost(f) for f in fills), ZERO)
         if quantity <= 0 or price > 1-cost/quantity-self.cfg.profit_per_share:

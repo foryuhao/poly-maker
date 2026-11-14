@@ -1,0 +1,9 @@
+# Public research only; M2 and M3 retain their existing signal and entry rules.
+include_m3_m4 = true
+m4_frequency_study = true
+host_cpu_guard_enabled = false
+m1_cpu_guard_enabled = false
+risk_usdc = "5"
+max_entries_per_direction = 1
+# Allow seven days of accumulated research with growth headroom.
+max_output_mib = 8192

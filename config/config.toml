@@ -49,16 +49,19 @@ max_orders_per_batch = 15       # exchange batch cap
 normal_entry_mode = "ca_v1"
 ca_entry_execution = "taker"
 ca_entry_direction = "signal" # Buy the side that produced the eligible CA signal.
-# Seconds from market start; no new NORMAL orders at or after this time.
-normal_cutoff_sec = 150.0
+# Seconds from market start; allow new NORMAL orders in [start, cutoff).
+normal_start_sec = 10.0
+normal_cutoff_sec = 200.0
 base_size = "5"
+sizing_mode = "fixed_shares" # fixed_shares: base_size; fixed_risk: risk_per_trade_usdc / entry limit.
+risk_per_trade_usdc = "5" # Maximum opening principal; fees and exit topups are separate.
 target_delta = "0"
 # MATCHED order remaining shares; price/inventory tolerances are separate.
 matched_remaining_tolerance_shares = 0.1
 
 [rdp_sm.ca_taker]
 entry_price_ceiling_enabled = true # Skip CA Taker opening prices at or above the ceiling.
-entry_price_ceiling = "0.90" # Exclusive: do not open a Taker position at or above 0.90.
+entry_price_ceiling = "0.80" # Exclusive: do not open a Taker position at or above 0.80.
 
 [rdp_sm.ca_matched_tp]
 enabled = true
@@ -69,7 +72,7 @@ restore_after_ba = true # Restore a fixed TP after the BA order is fully reconci
 # Skip when entry >= 1 - profit_per_share (0.90).
 # A crossing TP target falls back to best bid; each submitted quote stays fixed.
 profit_per_share = "0.05"
-ttl_sec = 30.0 # From the first TP POST; restoration of the same CA lots cannot reset it.
+ttl_sec = 15.0 # From the first TP POST; restoration of the same CA lots cannot reset it.
 
 [rdp_sm.ba]
 out_of_order_tolerance_ms = 20.0 # Ignore late frames within this gap; 0 is strict.

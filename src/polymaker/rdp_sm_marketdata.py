@@ -126,9 +126,12 @@ class RepairPricePoint:
 class SessionFeed:
     def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None,
                  ca_config=None, ca_log_path=None, ca_session_id=None, normal_entry_mode="ba_v1",
-                 opposite_ba_execution=None, ca_pullback_config=None, m1_config=None, m1_log_path=None):
+                 opposite_ba_execution=None, ca_pullback_config=None, m1_config=None, m1_log_path=None,
+                 reader_yield_every=0, book_only=False):
         self.meta, self.cfg, self.monotonic, self.wall = meta, cfg, monotonic, wall or time.time
+        self.reader_yield_every = reader_yield_every
         self.normal_entry_mode = normal_entry_mode
+        self.book_only = book_only
         self.proxy = proxy
         self.lock = RLock()
         self.generation = self.sequence = 0
@@ -377,7 +380,8 @@ class SessionFeed:
             self.repair_path_valid = False
             self.reason = reason
             self.books = {t: replace(b, snapshot_generation=0) for t, b in self.books.items()}
-            self._track_signal(evaluate(self.snapshot(), self.cfg.threshold), self.monotonic())
+            if not self.book_only:
+                self._track_signal(evaluate(self.snapshot(), self.cfg.threshold), self.monotonic())
             self.changed.set()
 
     def verify_ticks(self, ticks):
@@ -596,7 +600,8 @@ class SessionFeed:
                                 accepted=m1_ordered, reason=m1_reason if not m1_ordered else None)
                             if not m1_ordered and kind in {"book", "price_change"} and m1_reason in {
                                     "M1_SOURCE_REGRESSION", "M1_SOURCE_AGE", "M1_PROCESSING_GAP",
-                                    "M1_EVENT_OUT_OF_ORDER_IGNORED"}:
+                                    "M1_EVENT_OUT_OF_ORDER_IGNORED", "M4_SOURCE_REGRESSION", "M4_SOURCE_AGE",
+                                    "M4_PROCESSING_GAP", "M4_EVENT_OUT_OF_ORDER_IGNORED"}:
                                 continue  # Rejected old depth must not mutate the shared live book.
                         ca_ordered = self.observe_ca("before_event", kind, row, b,
                                                      received_mono, received_wall)
@@ -623,6 +628,12 @@ class SessionFeed:
                         stamp = float(exact_stamp)
                         if stamp <= 0 or int(stamp) > int(received_wall) + 2:
                             raise ValueError("WS_SOURCE_CLOCK_INVALID")
+                        if self.book_only and (
+                            not -.002 - 1e-9 <= self.wall() - stamp <= .500 + 1e-9
+                            or stamp < b.source_time
+                            or now - received_mono > .200
+                        ):
+                            continue
                         detectors = self.ba_detectors()
                         if detectors:
                             source_floor = max([number(b.source_time)] + [
@@ -723,7 +734,7 @@ class SessionFeed:
                 self.books = updated
                 for token in touched:
                     self.observe_ca("book_updated", updated[token])
-                if self.m1 is not None:
+                if self.m1 is not None or self.book_only:
                     # M1 never consumes sigma, OBI or the REPAIR price path.
                     # Keep its socket consumer free of these unrelated scans.
                     self.sequence += 1
@@ -801,6 +812,7 @@ class SessionFeed:
             queue = asyncio.Queue(maxsize=2048)
 
             async def reader():
+                received_count = 0
                 async for raw in ws:
                     try:
                         with self.lock:
@@ -811,6 +823,11 @@ class SessionFeed:
                     except asyncio.QueueFull as exc:
                         self.invalidate("WS_QUEUE_OVERFLOW")
                         raise ValueError("WS_QUEUE_OVERFLOW") from exc
+                    received_count += 1
+                    if self.reader_yield_every and received_count % self.reader_yield_every == 0:
+                        # Opt-in fairness for public research burst capture. The
+                        # default preserves existing services' scheduling.
+                        await asyncio.sleep(0)
 
             async def consumer():
                 while True:
@@ -836,11 +853,15 @@ class SessionFeed:
                 for task in done:
                     task.result()
             finally:
-                self.invalidate("WS_DISCONNECTED")
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-                self.ws = None
+                try:
+                    self.invalidate("WS_DISCONNECTED")
+                finally:
+                    # Capture overflow may make invalidation itself fail. The
+                    # socket still owns all three tasks and must drain them.
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    self.ws = None
 
     async def run(self):
         async def ca_maintenance():

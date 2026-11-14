@@ -54,6 +54,11 @@ OFFICIAL_HOSTS = {
 }
 
 
+def trading_start_sec(cfg):
+    """Configured session opening boundary; retain the legacy default."""
+    return getattr(cfg.rdp_sm, "normal_start_sec", TRADING_START_S)
+
+
 def decision_quantity(quantity: Decimal | float) -> Decimal:
     """Ignore strictly sub-0.1 shares only in decisions, never in the ledger."""
     value = Decimal(str(quantity))
@@ -564,7 +569,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check("freshness", "PASS", "fresh snapshots against official CLOB time")
         )
         elapsed = stamp - start
-        window = TRADING_START_S <= elapsed < TRADING_END_S
+        window = trading_start_sec(cfg) <= elapsed < TRADING_END_S
         result.market.update(
             elapsed_s=elapsed,
             trading_eligible=window,
@@ -574,7 +579,7 @@ async def run_preflight(cfg: Config, slug: str, *, _reads: _Reads | None = None)
             Check(
                 "trading_window",
                 "PASS" if window else "REJECTED",
-                f"15 <= elapsed < 300; NORMAL stops at {cfg.rdp_sm.normal_cutoff_sec:g}; M2 rechecks phase before POST",
+                f"{trading_start_sec(cfg):g} <= elapsed < 300; NORMAL stops at {cfg.rdp_sm.normal_cutoff_sec:g}; M2 rechecks phase before POST",
             )
         )
         result.status = (

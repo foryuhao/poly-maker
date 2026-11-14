@@ -1,5 +1,5 @@
 [Unit]
-Description=Clean PolyMaker trading logs older than 24 hours every 5 minutes
+Description=Clean completed M1 raw logs older than 24 hours every 5 minutes
 
 [Timer]
 OnCalendar=*-*-* *:00/5:00

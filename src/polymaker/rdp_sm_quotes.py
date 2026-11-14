@@ -11,6 +11,7 @@ from polymaker.rdp_sm_sizing import (
     adjust_normal_pair,
     adjusted_normal_size,
     calculate_rebalance_size,
+    fixed_risk_size,
     normal_sizes,
     resolve_favorite_target,
     validate_market_sizing,
@@ -56,6 +57,9 @@ def make_quotes(
     target = Decimal(favorite["signed_target_delta"])
     details = {
         "base_size": str(cfg.base_size),
+        "sizing_mode": cfg.sizing_mode,
+        "risk_per_trade_usdc": str(cfg.risk_per_trade_usdc),
+        "risk_basis": "OPENING_PRINCIPAL_EXCLUDING_FEES_AND_EXIT_TOPUPS",
         "configured_target_delta": str(cfg.target_delta),
         "favorite_threshold": str(cfg.favorite_threshold),
         **favorite,
@@ -80,6 +84,8 @@ def make_quotes(
         evidence.clear()
         evidence.update(details)
     if state == "NORMAL":
+        if cfg.sizing_mode == "fixed_risk" and signal_side is None:
+            raise QuoteUnavailable("CA_FIXED_RISK_REQUIRES_SIGNAL_SIDE")
         sizes = normal_sizes(delta, cfg.base_size)
         if signal_side is not None:
             if signal_side not in sizes:
@@ -139,6 +145,15 @@ def make_quotes(
             neutral_size = calculate_rebalance_size(
                 delta, Decimal(0), price, Decimal(str(meta.min_order_size)), cfg.max_order_size
             )[1]
+        elif cfg.sizing_mode == "fixed_risk":
+            try:
+                ideal, size, reasons = fixed_risk_size(price, cfg.risk_per_trade_usdc,
+                    Decimal(str(meta.min_order_size)), cfg.max_order_size)
+            except ValueError as exc:
+                raise QuoteUnavailable(str(exc)) from exc
+            neutral_size = size
+            details.update(ideal_risk_size=str(ideal), opening_principal_usdc=str(size*price),
+                           risk_rounding="SHARES_DOWN_TO_0.01", risk_amount_includes_fees=False)
         else:
             neutral_size = adjusted_normal_size(
                 outcome,

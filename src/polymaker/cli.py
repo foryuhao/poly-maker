@@ -35,7 +35,7 @@ console = Console()
 def dashboard(
     output_dir: Path = typer.Option(Path("research_outputs/dashboard"), help="observer output directory"),  # noqa: B008
     session_id: str | None = typer.Option(None, help="select a specific session"),
-    history_hours: float = typer.Option(24, min=.01, help="visible history in hours"),
+    history_hours: float = typer.Option(4, min=.01, help="visible history in hours"),
     once: bool = typer.Option(False, help="print one snapshot and exit"),
     json_output: bool = typer.Option(False, "--json", help="print the observer snapshot as JSON"),
 ) -> None:
@@ -94,6 +94,83 @@ def rdp_sm_preflight(
                      else 1 if result.status is SessionStatus.REJECTED else 2)
 
 
+@app.command("m1-run")
+def m1_run(
+    config_dir: str = typer.Option("config", help="public M1 settings directory; credentials are not loaded"),
+    output_dir: str = typer.Option("research_outputs/m1_virtual", help="virtual ledger and acceptance reports"),
+    once: bool = typer.Option(False, help="observe one market"),
+    preflight_only: bool = typer.Option(False, help="public clock/settings only"),
+    exercise_failover: bool = typer.Option(False, help="run one controlled public-read and websocket failover drill"),
+) -> None:
+    """M1 public-only signals, virtual instructions and simulated PnL. Real POST disabled."""
+    import json
+
+    from polymaker.m1_virtual import run_virtual
+    from polymaker.m4_control import legacy_entry_guard
+
+    legacy_entry_guard()
+    result = asyncio.run(run_virtual(config_dir, output_dir, once=once, preflight_only=preflight_only,
+                                    exercise_failover=exercise_failover))
+    typer.echo(json.dumps(result, ensure_ascii=False))
+
+
+@app.command("m1-live-run")
+def m1_live_run(
+    config_dir: str = typer.Option("config", help="wallet/config directory; optional independent m1.toml"),
+    once: bool = typer.Option(False, help="run or resume one market, then exit"),
+    preflight_only: bool = typer.Option(False, help="read account and settings; never submit/cancel/Merge"),
+    live: bool = typer.Option(False, "--live", help="explicitly enable real M1 order submissions"),
+) -> None:
+    """Run independent M1 Maker BUYs; Ctrl+C retains orders for restart."""
+    from polymaker.m4_control import legacy_entry_guard
+
+    if not live:
+        raise typer.BadParameter("M1_REAL_POST_DISABLED_REQUIRES_EXPLICIT_LIVE")
+    legacy_entry_guard()
+    _legacy_m1_live_run(config_dir, once, preflight_only, live=True)
+
+
+def _legacy_m1_live_run(config_dir="config", once=False, preflight_only=False, *, live=False):
+    """M1 launcher; real submissions remain an explicit opt-in."""
+    import json
+    import logging
+    from decimal import Decimal
+
+    from polymaker.logging import configure
+    from polymaker.m1_live import run_m1
+    from polymaker.m1_live_config import M1LiveConfig
+    from polymaker.rdp_sm_logging import redact_credentials
+
+    configure(console=True)
+    for name in ("httpx", "httpcore", "websockets"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    cfg = Config.load(config_dir)
+    settings = M1LiveConfig.load(config_dir)
+    secrets = (cfg.secrets.pk, cfg.secrets.builder_key,
+               cfg.secrets.builder_secret, cfg.secrets.builder_passphrase)
+    progress_console = Console(stderr=True)
+
+    def display(payload):
+        metric = payload.get("signals", {})
+        ratio = metric.get("attainment")
+        rate = f"{Decimal(str(ratio))*100:.2f}%" if ratio is not None else "—"
+        message = (f"M1 {payload.get('slug', '')} | {payload.get('state', '')} | "
+                   f"T{payload.get('elapsed_s', '—')} | 信号 {metric.get('signals', 0)} | "
+                   f"POST {metric.get('native_posts', 0)} | 资金完成度 {rate} | "
+                   f"占款 {metric.get('committed_usdc', '0')}/20 | "
+                   f"{payload.get('account_reason') or payload.get('reason') or '正常运行'}")
+        progress_console.print(redact_credentials(message, secrets), markup=False)
+
+    try:
+        result = asyncio.run(run_m1(cfg, settings, live=live, once=once,
+                                   preflight_only=preflight_only, display=display))
+    except Exception as exc:
+        console.print(redact_credentials(str(exc), secrets), markup=False)
+        raise typer.Exit(2) from exc
+    typer.echo(json.dumps(redact_credentials(result, secrets), allow_nan=False))
+    raise typer.Exit(0 if result["status"] in {"COMPLETE", "STOPPED", "RETAINED", "READ_ONLY", "MARKET_ALREADY_COMPLETE"} else 2)
+
+
 @app.command("rdp-sm-run")
 def rdp_sm_run(
     config_dir: str = typer.Option("config", help="existing FL config directory"),
@@ -132,6 +209,7 @@ def rdp_sm_run(
                                    m1_mode=cfg.rdp_sm.normal_entry_mode == "m1_v1",
                                    m1_observation_only=cfg.rdp_sm.m1.observation_only,
                                    m1_start_sec=cfg.rdp_sm.m1.entry_start_sec,
+                                   normal_start_sec=cfg.rdp_sm.normal_start_sec,
                                    normal_cutoff_sec=cfg.rdp_sm.normal_cutoff_sec,
                                    repair_cutoff_sec=cfg.rdp_sm.repair.cutoff_sec,
                                    secrets=secrets, console_handlers=logging.getLogger().handlers[:])

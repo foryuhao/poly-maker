@@ -22,16 +22,29 @@ from rich.table import Table
 from rich.text import Text
 
 from polymaker.dashboard.archive import clock
-from polymaker.dashboard.model import Record
+from polymaker.dashboard.model import Record, number
 
 COLORS = {"TOTAL": "cyan", "TP": "green", "SL": "yellow", "OTHER": "magenta"}
-HISTORY_PERIODS = (4, 12, 24)
+HISTORY_PERIODS = (4, 8, 12, 24)
 
 
 def archive_pagination(count: int, height: int | None, page: int) -> tuple[int, int, int]:
     limit = min(20, max(1, (height - 12) // 2)) if height else 20
     pages = max(1, (count + limit - 1) // limit)
     return limit, pages, min(max(0, page), pages - 1)
+
+
+def read_key(fd: int) -> str:
+    key = os.read(fd, 1).decode(errors="ignore")
+    if key != "\x1b":
+        return key.lower()
+    sequence = key
+    for _ in range(2):
+        if not select.select([fd], [], [], .03)[0]:
+            break
+        sequence += os.read(fd, 1).decode(errors="ignore")
+    return {"\x1b[D": "left", "\x1bOD": "left", "\x1b[C": "right", "\x1bOC": "right",
+            "\x1b[A": "up", "\x1bOA": "up", "\x1b[B": "down", "\x1bOB": "down"}.get(sequence, "")
 
 
 def fmt(value: object, places: int = 3) -> str:
@@ -41,6 +54,12 @@ def fmt(value: object, places: int = 3) -> str:
         return f"{Decimal(str(value)):+.{places}f}"
     except Exception:
         return str(value)
+
+
+def starting_capital_text(session: Record) -> str:
+    value = session.get("starting_available_capital_usdc")
+    amount = f"{Decimal(str(value)):.6f} USDC" if value is not None else "未记录"
+    return f"Available Capital: {amount}"
 
 
 def read_snapshot(output: Path) -> Record:
@@ -59,6 +78,17 @@ def read_snapshot(output: Path) -> Record:
                     if field in session:
                         session[field] = [{**p, "category": "OTHER"} if p.get("category") == "BA" else p
                                           for p in session[field]]
+        settings_path = output / "view-settings.json"
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            since = number(settings.get("display_since"))
+            if since is not None and since >= 0:
+                value["display_since"] = float(since)
+                value["sessions"] = [s for s in value["sessions"] if (s.get("market_start") or 0) >= since]
+                if not any(s["session_id"] == value.get("current_session_id") for s in value["sessions"]):
+                    current = max(value["sessions"], key=lambda s: (s.get("market_start") or 0,
+                        s.get("post_type") == "REAL", s.get("last_event_at", 0)), default={})
+                    value["current_session_id"] = current.get("session_id")
         return cast(Record, value)
     except (OSError, ValueError, TypeError, AttributeError):
         return {"observed_at": 0, "sessions": [], "error": "尚无可读取快照；请先启动 dashboard-archive"}
@@ -129,6 +159,10 @@ def signal_table(current: Record, now: float) -> Table:
 
 
 def post_panel(current: Record) -> Panel:
+    if current.get("strategy") == "M1":
+        from polymaker.dashboard.m1_view import component_panel
+
+        return component_panel(current)
     table = Table(box=None, expand=True, padding=(0, 1))
     table.add_column("类型")
     for side in ("YES", "NO"):
@@ -137,7 +171,14 @@ def post_panel(current: Record) -> Panel:
     roles = ("M1", "CA", "TP", "BA") if "M1" in counts else ("CA", "TP", "BA")
     for role in roles:
         table.add_row(role, *(str(counts.get(role, {}).get(side, 0)) for side in ("YES", "NO")))
-    return Panel(Group(table, Text("实际发单笔数 · 含拒单/未知\n不含发送前放弃；不代表成交", style="dim")),
+    contents = [table, Text("实际发单笔数 · 含拒单/未知\n不含发送前放弃；不代表成交", style="dim")]
+    if progress := current.get("m1_progress"):
+        metric = progress.get("signals", {})
+        ratio = metric.get("attainment")
+        rate = f"{Decimal(str(ratio))*100:.2f}%" if ratio is not None else "—"
+        contents.append(Text(f"M1 已识别信号 {metric.get('signals', 0)} · 达成 {rate} / 目标100%\n"
+                             f"待完成／核对 {metric.get('pending', 0)} · 占款 {metric.get('committed_usdc', '—')}"))
+    return Panel(Group(*contents),
                  title="POST", box=box.SQUARE)
 
 
@@ -183,13 +224,20 @@ def distribution(sessions: list[Record]) -> Group:
 
 
 def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
-           hours: float = 24, archive_view: bool = False, now: float | None = None,
-           height: int | None = None, archive_page: int = 0) -> Group:
+           hours: float = 4, archive_view: bool = False, now: float | None = None,
+           height: int | None = None, archive_page: int = 0, trade_view: bool = False,
+           archive_type: str = "REAL") -> Group:
     now = time.time() if now is None else now
     sessions = [s for s in snapshot["sessions"] if (s.get("market_start") or 0) >= now - hours * 3600]
     selected = session_id or snapshot.get("current_session_id")
     current = next((s for s in snapshot["sessions"] if s["session_id"] == selected), None)
     age = max(0, now - snapshot.get("observed_at", 0))
+    if current and (current.get("strategy") == "M1" or current.get("normal_entry_mode", current.get("header", {}).get("normal_entry_mode")) == "m1_v1"):
+        from polymaker.dashboard.m1_view import render_m1
+
+        return render_m1(snapshot, current, sessions, now=now, width=width, height=height,
+                         hours=hours, archive_view=archive_view, archive_page=archive_page, trade_view=trade_view,
+                         archive_type=archive_type)
     header = Text("> POLYMAKER / SESSION MONITOR   ", style="bold")
     header.append(clock(now) + "  UTC+8\n", style="dim")
     header.append(f"只读观察 · 快照延迟 {age:.1f}s · 历史范围 {hours:g}h · {len(sessions)} sessions",
@@ -202,28 +250,31 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
         header.append("\nSTALE：采集快照已过期，不能据此判断当前交易状态", style="red")
     parts: list[RenderableType] = [Panel(header, box=box.SQUARE)]
     if not current:
-        parts.append(Text(f"{'指定 session 尚未发现' if session_id else '等待真实 session 日志'}。", style="yellow"))
+        parts.append(Text(f"{'指定 session 尚未发现' if session_id else '等待策略数据'}。", style="yellow"))
         return Group(*parts)
     if height is not None and height < 38 and not archive_view:
         return compact_view(snapshot, current, sessions, now, width, height, hours=hours)
     if archive_view:
         table = Table(box=box.SIMPLE, expand=True, title="市场归档索引 / 已观察状态")
-        for name in ("市场", "session", "状态", "配对 PnL", "结算 PnL", "数据"):
+        for name in ("市场", "session", "状态", "信号", "配对 PnL", "结算 PnL", "数据"):
             table.add_column(name)
         limit, pages, page = archive_pagination(len(sessions), height, archive_page)
         start = page * limit
         for s in sessions[start:start + limit]:
             market = clock(s["market_start"])[5:16] if s["market_start"] else s["slug"]
+            counts = s.get("signal_counts", {})
             table.add_row(Text(market), s["session_id"][:8], Text(s["phase"]),
+                          f"CA{counts.get('CA', 0)}/BA{counts.get('BA', 0)}",
                           fmt(s["pair_pnl"]), fmt(s["residual_pnl"]),
                           Text(f"{len(s['issues'])} issues" if s["issues"] else "OK"))
         parts.append(table)
         parts.append(Text(f"第 {page + 1}/{pages} 页 · 第 {start + 1 if sessions else 0}–"
                           f"{min(start + limit, len(sessions))} 场 / 共 {len(sessions)} 场"
-                          " · [p] 上一页 [n] 下一页 · 按时间从早到晚", style="dim"))
+                          " · [↑] 上一页 [↓] 下一页 · 按时间从早到晚", style="dim"))
     else:
         live = current.get("market_start") is not None and current["market_start"] <= now < current["market_end"]
-        status = f"SESSION {current['session_id']}\n{current['slug']}\n{current['phase']}\n"
+        status = (f"SESSION {current['session_id']}\n{current['slug']}\n{current['phase']}\n"
+                  f"{starting_capital_text(current)}\n")
         if live:
             status += f"T+{now-current['market_start']:.0f}s / 300s · 剩余 {max(0,current['market_end']-now):.0f}s"
         else:
@@ -269,16 +320,7 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
         headline.append(f"\n残仓结算待定：{sum(bool(s.get('other_pending')) for s in sessions)} 场", style="dim")
         chart_width = width // 2 - 6 if width >= 95 else width - 6
         curve = Panel(Group(headline, history_chart(sessions, chart_width)), title="HISTORY / 累计已确认 PnL", box=box.SQUARE)
-        dist = Panel(distribution(sessions), title="TP / SL / OTHER 分布", box=box.SQUARE)
-        row = Table.grid(expand=True)
-        row.add_column(ratio=1)
-        if width >= 95:
-            row.add_column(ratio=1)
-            row.add_row(curve, dist)
-        else:
-            row.add_row(curve)
-            row.add_row(dist)
-        parts.append(row)
+        parts.append(curve)
         problems = current["issues"]
         if problems:
             parts.append(Text("数据状态：" + " / ".join(problems), style="yellow"))
@@ -292,12 +334,12 @@ def render(snapshot: Record, *, width: int = 120, session_id: str | None = None,
     error = archive.get("error") or "无"
     next_time = archive.get("next_boundary", int(now // 300) * 300 + 300)
     parts.append(Text(f"ARCHIVE 下次 {clock(next_time)[11:19]} · {max(0,next_time-now):.0f}s · 错误 {error}\n"
-                      "[h] 历史 4h / 12h / 24h   [a] 归档索引 / 总览   [q] 退出看板（后台归档继续）", style="dim"))
+                      "[h] 历史 4h / 8h / 12h / 24h   [a] 归档索引 / 总览   [q] 退出看板（后台归档继续）", style="dim"))
     return Group(*parts)
 
 
 def watch(output: Path, *, once: bool = False, json_output: bool = False,
-          session_id: str | None = None, hours: float = 24, refresh: float = 1) -> int:
+          session_id: str | None = None, hours: float = 4, refresh: float = 1) -> int:
     console = Console(highlight=False)
     if once or json_output or not console.is_terminal:
         snapshot = read_snapshot(output)
@@ -308,6 +350,8 @@ def watch(output: Path, *, once: bool = False, json_output: bool = False,
         return 2 if snapshot.get("error") else 0
     previous = termios.tcgetattr(sys.stdin) if sys.stdin.isatty() else None
     archive_view = False
+    trade_view = False
+    archive_type = "REAL"
     archive_page = 0
     try:
         if previous:
@@ -315,25 +359,45 @@ def watch(output: Path, *, once: bool = False, json_output: bool = False,
         with Live(console=console, screen=True, auto_refresh=False, vertical_overflow="visible") as live:
             while True:
                 snapshot = read_snapshot(output)
-                count = sum((s.get("market_start") or 0) >= time.time() - hours * 3600
-                            for s in snapshot["sessions"])
-                _, pages, archive_page = archive_pagination(count, console.height, archive_page)
+                visible = [s for s in snapshot["sessions"] if (s.get("market_start") or 0) >= time.time()-hours*3600]
+                count = len(visible)
+                current = next((s for s in snapshot["sessions"]
+                                if s["session_id"] == (session_id or snapshot.get("current_session_id"))), {})
+                if (archive_view or trade_view) and current.get("strategy") == "M1":
+                    from polymaker.dashboard.m1_view import archive_sessions
+
+                    visible = archive_sessions(visible, archive_type)
+                    count = len(visible)
+                if trade_view:
+                    from polymaker.dashboard.m1_trades import trade_pagination, trade_records
+
+                    count = len(trade_records(visible))
+                pagination = trade_pagination if trade_view else archive_pagination
+                _, pages, archive_page = pagination(count, console.height, archive_page)
                 live.update(render(snapshot, width=console.width, session_id=session_id,
                                    hours=hours, archive_view=archive_view, height=console.height,
-                                   archive_page=archive_page), refresh=True)
+                                   archive_page=archive_page, trade_view=trade_view, archive_type=archive_type), refresh=True)
                 if previous and select.select([sys.stdin], [], [], refresh)[0]:
-                    key = os.read(sys.stdin.fileno(), 1).decode(errors="ignore")
+                    key = read_key(sys.stdin.fileno())
+                    if (archive_view or trade_view) and key in {"left", "right"}:
+                        archive_type = "REAL" if key == "left" else "VIRTUAL"
+                        archive_page = 0
                     if key.lower() == "q":
                         break
                     if key.lower() == "a":
                         archive_view = not archive_view
+                        trade_view = False
+                        archive_page = 0
+                    if key.lower() == "t":
+                        trade_view = not trade_view
+                        archive_view = False
                         archive_page = 0
                     if key.lower() == "h":
                         hours = next((period for period in HISTORY_PERIODS if period > hours), HISTORY_PERIODS[0])
                         archive_page = 0
-                    if archive_view and key.lower() == "n":
+                    if (archive_view or trade_view) and key == "down":
                         archive_page = min(archive_page + 1, pages - 1)
-                    if archive_view and key.lower() == "p":
+                    if (archive_view or trade_view) and key == "up":
                         archive_page = max(0, archive_page - 1)
                 elif not previous:
                     time.sleep(refresh)
@@ -346,12 +410,13 @@ def watch(output: Path, *, once: bool = False, json_output: bool = False,
 
 
 def compact_view(snapshot: Record, current: Record, sessions: list[Record], now: float,
-                 width: int, height: int, *, hours: float = 24) -> Group:
+                 width: int, height: int, *, hours: float = 4) -> Group:
     age = max(0, now - snapshot.get("observed_at", 0))
     title = Text(f"> POLYMAKER  {clock(now)[11:19]} CST  ", style="bold")
     title.append(f"快照 {age:.1f}s" + (" STALE" if age > 10 else ""), style="red" if age > 10 else "green")
     title.append(f" · 历史 {hours:g}h", style="dim")
     top = Text(f"{current['slug']} / {current['session_id'][:12]}\n{current['phase']} · {current['reason'] or '—'}\n"
+               f"{starting_capital_text(current)}\n"
                f"YES {current['inventory']['YES']} / NO {current['inventory']['NO']} / Δ {current['delta']}\n"
                f"POST {current['submitted_orders']} · 成交订单 {current['filled_orders']} · 待核实 {current['pending_orders']} / {current['pending_fills']}")
     if current.get("market_end") and now >= current["market_end"]:
@@ -371,14 +436,7 @@ def compact_view(snapshot: Record, current: Record, sessions: list[Record], now:
     pnl.append(f"OTHER 含已核实残仓结算；待定 {sum(bool(s.get('other_pending')) for s in sessions)} 场；[h] 历史周期 [a] 归档索引 [q] 退出（归档继续）", style="dim")
     pieces = [title, top, signal_post_row(Panel(signal, title="SIGNALS", box=box.SQUARE), current, width), pnl]
     if height >= 22:
-        if width >= 95:
-            row = Table.grid(expand=True)
-            row.add_column(ratio=1)
-            row.add_column(ratio=1)
-            row.add_row(history_chart(sessions, width // 2 - 2, height=5), distribution(sessions))
-            pieces.append(row)
-        else:
-            pieces.append(history_chart(sessions, width, height=5))
+        pieces.append(history_chart(sessions, width, height=5))
     archive = snapshot.get("archive", {})
     loading = f" · 历史 {snapshot['catching_up_sources']} 源加载中" if snapshot.get("catching_up_sources") else ""
     pieces.append(Text("数据：" + (" / ".join(current["issues"]) or "当前已追平") + loading

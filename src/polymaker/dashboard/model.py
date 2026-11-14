@@ -26,10 +26,15 @@ def number(value: Any) -> Decimal | None:
 def compact(kind: str, payload: Record) -> Record:
     """Keep useful evidence, never copy raw API responses or credentials."""
     if kind == "sm_session":
-        fields = {"session_id", "slug", "normal_entry_mode", "runtime_source_sha256",
+        if "starting_available_capital_usdc" not in payload and payload.get("preflight_observed_order_ids") == []:
+            # Older headers lack Available Capital. With no reserved startup
+            # commitments its value is provably the official startup balance.
+            payload = {**payload, "starting_available_capital_usdc": payload.get("starting_official_balance_usdc")}
+        fields = {"session_id", "slug", "market_id", "normal_entry_mode", "runtime_source_sha256",
+                  "strategy", "execution_mode",
                   "ca_entry_direction", "ca_entry_execution", "ca_taker", "ca_matched_tp", "ca_pullback", "m1", "m1_signal_spec", "m1_execution_policy",
                   "repair", "ca_observation", "ba", "ba_flow", "cooldown",
-                  "normal_max_entry_price", "test_capital_limit_usdc"}
+                  "normal_max_entry_price", "test_capital_limit_usdc", "starting_available_capital_usdc"}
         payload = {k: v for k, v in payload.items() if k in fields}
     elif kind == "sm_run_result":
         payload = {k: v for k, v in payload.items() if k not in {"windows", "skipped_quotes"}}
@@ -125,6 +130,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
     status: dict[tuple[str, str], str] = {}
     phase = "NORMAL / WAIT_CA" if header.get("normal_entry_mode") == "ca_v1" else "PREFLIGHT"
     reason, network = None, None
+    m1_progress = None
     last_signal: dict[str, Record] = {"CA": {}, "BA": {}}
     ca_confirmed, ba_confirmed = set(), set()
     merged = {}
@@ -150,6 +156,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                 if order_status == "ACK" and previous == "CANCEL_ACK / FILL_RECONCILE":
                     order_status = previous
                 orders[oid] = {"order_id": oid, "role": role, "quote": quote,
+                               "submitted_at": orders.get(oid, {}).get("submitted_at", e["ts"]),
+                               "post_started": bool(p.get("post_started") or orders.get(oid, {}).get("post_started")),
                                "status": order_status}
                 if p.get("outcome") in {"UNKNOWN", "INTENT"}:
                     pending_orders.add(oid)
@@ -183,6 +191,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                     confirmed[key] = e
         elif k == "sm_m1_state":
             phase = "M1 / " + str(p.get("state", "UNKNOWN"))
+        elif k == "sm_m1_heartbeat":
+            m1_progress = p
         elif k == "sm_m1_wait":
             reason = p.get("reason")
         elif k == "sm_strategy_window":
@@ -378,12 +388,15 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                                "ts": settlement.get("observed_at", 0) if settlement else risk[-1]["ts"] if risk else 0})
     for oid, order in orders.items():
         order["confirmed_quantity"] = str(sum((f["quantity"] for f in fills if f["order_id"] == oid), ZERO))
+        if header.get("normal_entry_mode") == "m1_v1":
+            order["confirmed_cost"] = str(sum((f["cost"] for f in fills if f["order_id"] == oid), ZERO))
         quote_qty = number(order["quote"].get("size", order["quote"].get("quantity")))
         if quote_qty is not None and Decimal(order["confirmed_quantity"]) >= quote_qty:
             order["status"] = "FILLED_CONFIRMED"
         if final:
             order["status"] = "SESSION_ENDED / " + order["status"]
     last_ts = max((s.get("last_ts", 0) for s in sources if s["kind"] == "risk"), default=0)
+    starting_capital = number(header.get("starting_available_capital_usdc"))
     total_pnl = pair_pnl + residual_pnl if residual_pnl is not None and not problems else None
     post_counts = {role: {side: 0 for side in ("YES", "NO")} for role in ("CA", "TP", "BA")}
     if header.get("normal_entry_mode") == "m1_v1":
@@ -395,17 +408,20 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
                     else role)
         if category in post_counts and side in post_counts[category]:
             post_counts[category][side] += 1
-    return {
+    result = {
         "session_id": session_id, "slug": slug, "market_start": start,
         "condition_id": condition_id, "token_ids": token_ids,
         "settlement": settlement, "settlement_error": resolution.get("error"),
         "market_end": start + 300 if start is not None else None,
         "header": header, "phase": phase, "reason": reason, "network": network,
+        "starting_available_capital_usdc": (str(starting_capital)
+            if starting_capital is not None and starting_capital >= 0 else None),
         "ended": bool(final), "execution_status": final.get("execution_status"),
         "last_event_at": last_ts, "sources": sources, "issues": sorted(set(problems)),
         "signals": last_signal, "signal_counts": {"CA": len(ca_confirmed), "BA": len(ba_confirmed)},
         "submitted_orders": len(posts), "filled_orders": len({f["order_id"] for f in fills}),
         "post_counts": post_counts,
+        "m1_progress": m1_progress,
         "pending_fills": pending_fills, "pending_orders": len(pending_orders),
         "orders": list(orders.values()), "recent_events": recent[-8:],
         "inventory": {side: str(acquired[side] - merged_qty) for side in acquired},
@@ -422,3 +438,8 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
         "rebates": sizing.get("actual_maker_rebate", "UNKNOWN"), "gas": None,
         "signal_event_counts": dict(Counter(e["kind"] for e in ca)),
     }
+    if header.get("normal_entry_mode") == "m1_v1":
+        from polymaker.dashboard.m1 import real_session
+
+        return real_session(result, risk)
+    return result

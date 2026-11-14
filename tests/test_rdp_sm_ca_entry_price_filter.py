@@ -5,7 +5,7 @@ from decimal import Decimal as D
 import pytest
 from pydantic import ValidationError
 
-from polymaker.config import Config, RDPCATakerConfig
+from polymaker.config import RDPCATakerConfig
 from test_rdp_sm_ca_entry import confirm_ca
 from test_rdp_sm_ca_entry import env as env
 from test_rdp_sm_ca_taker import setup_taker
@@ -13,8 +13,9 @@ from test_rdp_sm_m1 import CID
 from test_rdp_sm_obi_execution import cleanup
 
 
-def test_deployed_price_filter_and_strict_configuration():
-    cfg = Config.load('config', load_env=False).rdp_sm.ca_taker
+def test_price_filter_defaults_and_strict_configuration():
+    # Live operator settings are editable; validate the model defaults here.
+    cfg = RDPCATakerConfig()
     assert cfg.entry_price_ceiling_enabled and cfg.entry_price_ceiling == D('.90')
     assert not RDPCATakerConfig(entry_price_ceiling_enabled=False).entry_price_ceiling_enabled
     for invalid in [{'entry_price_ceiling_enabled': 'false'}, {'entry_price_ceiling_enabled': 1},

@@ -8,8 +8,13 @@ from threading import Thread
 
 
 class AsyncRiskWriter:
-    def __init__(self, journal, capacity=4096):
+    def __init__(self, journal, capacity=4096, *, batch_size=1):
+        if not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("ASYNC_JOURNAL_BATCH_SIZE_INVALID")
+        if batch_size > 1 and not callable(getattr(journal, "write_batch", None)):
+            raise ValueError("ASYNC_JOURNAL_BATCH_UNSUPPORTED")
         self.journal = journal
+        self.batch_size = batch_size
         self.queue = Queue(capacity)
         self.failure = None
         self.dropped = 0
@@ -83,11 +88,21 @@ class AsyncRiskWriter:
                 if self.closed:
                     return
                 continue
-            seq, kind, payload, ts, mono, future = item
+            batch = [item]
+            # Drain only records already queued: no timer and no waiting for
+            # a fuller batch on a prepared-order durability barrier.
+            while len(batch) < self.batch_size:
+                try:
+                    batch.append(self.queue.get_nowait())
+                except Empty:
+                    break
             try:
                 if self.failure is not None:
                     raise RuntimeError(self.failure)
-                if kind is not None:
+                records = []
+                for seq, kind, payload, ts, mono, _future in batch:
+                    if kind is None:
+                        continue
                     data = {
                         **payload,
                         "writer_sequence": seq,
@@ -97,16 +112,26 @@ class AsyncRiskWriter:
                         "writer_queue_depth": self.queue.qsize(),
                         "diagnostics_dropped": self.dropped,
                     }
-                    self.journal.write(kind, data, ts)
-                self.written = seq
-                if not future.done():
-                    future.set_result(seq)
+                    records.append((kind, data, ts))
+                if records:
+                    if self.batch_size > 1:
+                        self.journal.write_batch(records)
+                    else:
+                        self.journal.write(*records[0])
+                # Every record in the batch, including records before a flush
+                # marker, must be fsynced before any future acknowledges it.
+                for seq, _, _, _, _, future in batch:
+                    self.written = seq
+                    if not future.done():
+                        future.set_result(seq)
             except BaseException as exc:
                 self.failure = f"ASYNC_JOURNAL_FAILED:{type(exc).__name__}"
-                if not future.done():
-                    future.set_exception(exc)
+                for _, _, _, _, _, future in batch:
+                    if not future.done():
+                        future.set_exception(exc)
             finally:
-                self.queue.task_done()
+                for _ in batch:
+                    self.queue.task_done()
 
     def close(self):
         self.closed = True

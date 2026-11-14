@@ -1,0 +1,139 @@
+{
+  "updated_at": "2026-11-11T15:41:59.395392+00:00",
+  "status": "M17_QR_SR_COMBINATION_SOP_DELIVERED",
+  "scope": "SIGNAL_AND_SOP_ONLY",
+  "signal_sop_count": 23,
+  "existing_signals_documented": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11"
+  ],
+  "new_candidates": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "work": "交付M17保量配短补显式分支：QR确认后首个新SR_ASK，失败不换后者，冻结一次准入、两原截止及取消竞态。修正QR提取稿遗漏的发布点90%门槛并升至v1.1。",
+  "version_findings": [
+    "M2 主规则不强制买压衰减",
+    "M10 当前两轮版最多 8 秒，7.5 秒只属旧三轮示例",
+    "M11 完整 500ms 与 M4 专用 25ms 分开",
+    "M7/M9/M10 v2 仅显式选择，不自动视为已部署"
+  ],
+  "research_order": [
+    "M12",
+    "M13",
+    "M14",
+    "M15",
+    "M16",
+    "M17",
+    "M18",
+    "M19",
+    "M20",
+    "M21",
+    "M22",
+    "M23"
+  ],
+  "next": "继续挖掘现有RF/DF/LW/QR/SR未覆盖的原始盘口模式，优先区分净补量路径、受击响应和跨档结构；先检查是否只属已有策略提取或参数变体。反馈不早于既定下一小时，只读摘要，不运行测试。",
+  "testing_owner": "USER_SIGNAL_TEST_MODULE",
+  "tests_started_by_this_task": 0,
+  "profitability": "M12–M23、SR、QR v1.1、M4-relative-exit与M17-qr-sr-ask备选均未取得本任务验证的完整经济结果；全部新假说不得称已提高结算概率。",
+  "catalog": "research/signals/catalog.json",
+  "hourly_first_delivery": "2026-11-11T19:00:42+08:00 QUEUED_AND_RESUME_REQUESTED",
+  "hourly_changes": [
+    "本小时新增SR/QR原语与组合审查；进一步交付M17保量配短补显式分支，仍在原M17文件。",
+    "QR v1.1修正发布90%门槛遗漏，旧v1留档；新组合不续期、不挑后续更好SR，全部仍未测试。",
+    "23份M主定义及SR保持原参数；新增原语与M17备选的频次、实际Maker收益及结算优势未验证。"
+  ],
+  "open_idea_file": "research/signal_discovery/IDEAS.md",
+  "latest_changes": [
+    "M17同文件增加m17-qr-sr-ask-v1保量配短补：先确认QR，再选首个全新SR_ASK；失败不换下一个，不新增M编号。",
+    "QR升至v1.1：补回主M17已有的发布点90%数量检查；原750ms、70%等待底线、3s与100ms复核不变，旧稿归档。",
+    "新组合绑定原语版本/hash和冻结快照，完整定义候选、一次准入、原锚post-only、原截止、数量与复核退出、取消竞态及经济账。",
+    "同一QR最多选一份SR；已有SR不重置，首次准入失败不重试，实际提交仍受每版本/市场/token一次额度。",
+    "索引、家族、机制与组合审查同步；现23份M文件＋2份原语，M17主版和SR参数未变，未运行测试或实现适配器。"
+  ],
+  "mechanism_review": "research/signals/MECHANISM_MAP.md",
+  "maker_feasibility": "research/signals/MAKER_FEASIBILITY.md",
+  "feedback_receipt": "research/signal_discovery/feedback_latest.json",
+  "feedback_checked_at": "2026-11-11T15:28:03.748554+00:00",
+  "feedback_next_routine_check_not_before": "2026-11-11T16:28:03.748554+00:00",
+  "complement_provenance": "research/signals/COMPLEMENT_PROVENANCE.md",
+  "trade_timing_capabilities": "research/signals/TRADE_TIMING_CAPABILITIES.md",
+  "causal_handoff_review": "research/signals/CAUSAL_HANDOFF_REVIEW.md",
+  "maker_admission_review": "research/signals/MAKER_ADMISSION_REVIEW.md",
+  "absence_evidence_review": "research/signals/ABSENCE_EVIDENCE_REVIEW.md",
+  "depth_batch_semantics": "research/signals/DEPTH_BATCH_SEMANTICS.md",
+  "maker_selection_review": "research/signals/MAKER_SELECTION_REVIEW.md",
+  "frequency_budget_review": "research/signals/FREQUENCY_BUDGET_REVIEW.md",
+  "preload_sequence_review": "research/signals/PRELOAD_SEQUENCE_REVIEW.md",
+  "family_consolidation": "research/signals/FAMILY_CONSOLIDATION.md",
+  "directional_family_count": 12,
+  "overlay_count": 1,
+  "research_order_policy": "FAMILY_FIRST",
+  "research_family_order": [
+    "F_SUPPORT_WEAK_SUPPLY",
+    "F_WITHDRAWAL_SUPPORT",
+    "F_SELL_ABSORPTION",
+    "F_BUY_RETURN",
+    "F_COUNTERATTACK_HOLD",
+    "F_REPAIR",
+    "F_ABSORPTION_SPEED",
+    "F_RETAINED_DEPTH",
+    "F_STRESS_TOLERANCE",
+    "F_BID_FRONTLOAD",
+    "F_ASK_BACKLOAD",
+    "F_PRELOADED_BUFFER"
+  ],
+  "primitive_sop_count": 2,
+  "primitive_sops": [
+    "SR",
+    "QR"
+  ],
+  "primitive_index": "research/signals/PRIMITIVES.md",
+  "new_waiting_variant": {
+    "strategy_id": "M4",
+    "version": "m4-relative-exit-v1",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_composition_review": "research/signals/PRIMITIVE_COMPOSITION_REVIEW.md",
+  "new_combination_variant": {
+    "strategy_id": "M17",
+    "version": "m17-qr-sr-ask-v1",
+    "name": "保量配短补",
+    "status": "SPEC_ONLY",
+    "default_changed": false
+  },
+  "primitive_revisions": {
+    "QR": {
+      "version": "qr-consumed-queue-retention-v1.1",
+      "supersedes": "qr-consumed-queue-retention-v1",
+      "reason": "补回发布点90%保量并冻结首个发布检查点，不能混池"
+    }
+  },
+  "documentation_validation": {
+    "checked_at": "2026-11-11T15:41:59.395392+00:00",
+    "scope": "SOP_JSON_HASH_SNAPSHOT_LINKS_AND_PAPER_ARITHMETIC_ONLY",
+    "status": "PASS",
+    "main_M17_baseline_text_unchanged": true,
+    "signal_or_market_tests_run": false
+  }
+}
