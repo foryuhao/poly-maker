@@ -254,12 +254,18 @@ class TaskLedger(SinglePostM4LiveLedger):
         plans = self.get("next_plan:" + key)
         return plans if plans is not None else self.root_plan(key)
 
+    def initial_plan_price_allowed(self, price):
+        return self.minimum_price <= price < 1
+
+    def root_policy_evidence(self):
+        return {}
+
     def plan_signal(self, key, tick, minimum, *, pricing_origin=None):
         row = self.row(key)
         anchor, tick = decimal(row["price"]), decimal(tick)
         price = anchor + tick
         require(
-            tick > 0 and anchor % tick == 0 and self.minimum_price <= price < 1,
+            tick > 0 and anchor % tick == 0 and self.initial_plan_price_allowed(price),
             "M4_TAKER_ANCHOR_PLUS_TICK_INVALID",
         )
         quantity = self.order_quantity(price, minimum)
@@ -279,6 +285,7 @@ class TaskLedger(SinglePostM4LiveLedger):
             "order_type": "FAK",
             "task_policy": self.task_policy,
             "max_posts_per_signed_order": 1,
+            **self.root_policy_evidence(),
         }
         if pricing_origin is not None:
             plan["pricing_origin"] = pricing_origin

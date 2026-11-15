@@ -222,11 +222,14 @@ class M4Ledger:
             r["id"] in retained or r["state"] in {"RESERVED", "PREPARED", "UNKNOWN", "ACK"}
             for r in self.rows())
 
+    def signal_price_allowed(self, price):
+        return self.minimum_price <= price < 1
+
     def observe(self, opportunity, *, minimum, elapsed):
         """Fix every eligible signal's denominator, even if no money is left."""
         quantity = self.order_quantity(opportunity.anchor_bid_price, minimum)
         price = decimal(opportunity.anchor_bid_price)
-        if not self.minimum_price <= price < 1:
+        if not self.signal_price_allowed(price):
             raise ValueError('M4_PRICE_OUTSIDE_BAND')
         with self.lock, self.db:
             duplicate = self.db.execute("SELECT id FROM opportunities WHERE root=?",

@@ -15,10 +15,23 @@ from polymaker.m4_live_numeric import (
     fak_amounts_compatible,
     units,
 )
-from polymaker.m4_live_pricing import DYNAMIC, quote_valid
+from polymaker.m4_live_price_band import (
+    ABANDON_BEST_ASK_BAND, BEST_ASK_BAND_ABANDONED, POST_PRICE_OUTSIDE_BAND,
+    WAIT_FOR_PRICE_BAND, configured_band, price_in_band,
+)
+from polymaker.m4_live_pricing import DYNAMIC, quote_valid, rejected_best_ask_valid
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
 from polymaker.state.tracker import TradeEvent
+
+FAK_BUY_MIN_PRINCIPAL = decimal("1")
+FAK_BUY_MINIMUM_POLICY = "EXCHANGE_PRINCIPAL_GE_1_USDC_V1"
+
+
+def minimum_fak_buy_ok(price, quantity):
+    # Keep the strategy's OR rule, and also satisfy the exchange's independent
+    # marketable BUY principal floor. Shares >=5 cannot waive that cash floor.
+    return minimum_order_ok(price, quantity) and price * quantity >= FAK_BUY_MIN_PRINCIPAL
 
 
 class BudgetLedger(TaskLedger):
@@ -29,6 +42,60 @@ class BudgetLedger(TaskLedger):
     @property
     def sizing_policy(self):
         return "M4_CASH_TARGET_PLANNED_MAX5_GROSS_MAX10_V1"
+
+    @property
+    def post_price_band(self):
+        return configured_band(self.settings.execution.taker)
+
+    def signal_price_allowed(self, price):
+        return 0 < price < 1 if self.post_price_band else super().signal_price_allowed(price)
+
+    def initial_plan_price_allowed(self, price):
+        # This is an unsigned pricing reference, never permission to POST.
+        # An anchor at1-tick must survive to a possible legal ask after10seconds.
+        return 0 < price <= 1 if self.post_price_band else super().initial_plan_price_allowed(price)
+
+    def root_policy_evidence(self):
+        evidence = {"post_price_band": self.post_price_band} if self.post_price_band else {}
+        if self.settings.execution.taker.post_price_band_retry_policy == ABANDON_BEST_ASK_BAND:
+            evidence["post_price_band_retry_policy"] = ABANDON_BEST_ASK_BAND
+        return evidence
+
+    def price_band_abandonment(self, key):
+        with self.lock:
+            row = self.db.execute(
+                "SELECT payload FROM facts WHERE kind='taker_price_band_abandonment' AND identity=?",
+                (key,),
+            ).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def abandon_price_band(self, key, quote):
+        """Latch entry termination; confirmed/pending/UNKNOWN funds stay intact."""
+        with self.lock, self.db:
+            root, row = self.root_plan(key), self.row(key)
+            require(root.get("post_price_band_retry_policy") == ABANDON_BEST_ASK_BAND
+                    and self.settings.execution.taker.post_price_band_retry_policy == ABANDON_BEST_ASK_BAND
+                    and rejected_best_ask_valid(root, quote, row["token"]),
+                    "M4_BAND_ABANDONMENT_EVIDENCE_INVALID")
+            prior = self.price_band_abandonment(key)
+            if prior is not None:
+                return prior
+            proof = {"policy": ABANDON_BEST_ASK_BAND, "reason": BEST_ASK_BAND_ABANDONED,
+                     "opportunity_id": key, "post_price_band": self.post_price_band,
+                     "pricing_origin": root["pricing_origin"], "pricing": quote}
+            self.db.execute("INSERT INTO facts VALUES ('taker_price_band_abandonment',?,?)",
+                            (key, encode(proof)))
+            self.refresh_totals(key)
+            return proof
+
+    def post_price_allowed(self, price):
+        band = self.post_price_band
+        return price_in_band(price, band) if band else 0 < decimal(price) < 1
+
+    def record_price_band_wait(self, key, price, stage):
+        name = "post_price_band_wait:" + key
+        if self.post_price_band and self.get(name) is None:
+            self.set(name, {"price": str(price), "stage": stage, **self.post_price_band})
 
     def order_quantity(self, price, minimum):
         # observe() first sizes the signal's anchor, which is not its POST cap.
@@ -60,6 +127,7 @@ class BudgetLedger(TaskLedger):
     def select_pricing(self, key, quote):
         """No active/unresolved order can be repriced or lose its reservation."""
         with self.lock:
+            require(not self.price_band_abandonment(key), BEST_ASK_BAND_ABANDONED)
             row, root = self.row(key), self.root_plan(key)
             require(self.dynamic_pricing and not row["order_id"] and not self.unresolved(key),
                     "M4_PRICING_ORDER_UNRESOLVED")
@@ -67,6 +135,9 @@ class BudgetLedger(TaskLedger):
             require(quote_valid(root, plan, row["token"], quote), "M4_PRICING_QUOTE_INVALID")
             self.fact("taker_pricing_quote", quote["id"], quote)
             with self.db:
+                if self.post_price_band:
+                    self.db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)",
+                                    ("post_price_band_eligible:" + key, encode(True)))
                 self.db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)",
                                 ("pricing_selection:" + key, encode(quote)))
                 self.db.execute("DELETE FROM metadata WHERE key=?", ("next_plan:" + key,))
@@ -124,6 +195,13 @@ class BudgetLedger(TaskLedger):
         )
         if active:
             state, reason = active["state"], active["state"]
+        elif self.price_band_abandonment(key) and not self.unresolved(key):
+            # Stop new buys immediately; independent owned-order reads continue
+            # until every pending match is CONFIRMED/FAILED. Never resurrect entry.
+            state, reason = ("WAIT_SETTLEMENT" if self.pending_matches(key) else "CUTOFF"), BEST_ASK_BAND_ABANDONED
+            if (not attempts and not self.get("post_price_band_eligible:" + key)
+                    and not self.pending_matches(key)):
+                state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
         elif self.get("buy_closed") or self.get("complete"):
             state, reason = "CUTOFF", self.get("market_halt_reason") or "M4_T240_ENTRY_ENDED"
         elif self.unresolved(key):
@@ -131,7 +209,7 @@ class BudgetLedger(TaskLedger):
         else:
             price = self.selected_price(key)
             qty = budget_quantity(price, self.order_budget - spent - pending, self.fees)
-            if minimum_order_ok(price, qty):
+            if minimum_fak_buy_ok(price, qty):
                 state, reason = "RESERVED", "M4_REMAINING_CASH"
             elif self.pending_matches(key):
                 state, reason = "WAIT_SETTLEMENT", "M4_PENDING_MATCHES_RESERVE_BUDGET"
@@ -142,6 +220,11 @@ class BudgetLedger(TaskLedger):
                 # No future ask can make this residue executable. Pending fills
                 # were handled above, so a FAILED match can still release cash.
                 state, reason = "DUST", "M4_REMAINING_CASH_BELOW_USDC_CENT"
+            elif self.order_budget - spent < FAK_BUY_MIN_PRINCIPAL:
+                # No future price can turn this confirmed cash remainder into
+                # a BUY principal >=1. Uncertain/pending matches were handled
+                # above: a failed match must still be able to release budget.
+                state, reason = "DUST", "M4_REMAINING_CASH_BELOW_FAK_BUY_MINIMUM"
             elif self.dynamic_pricing:
                 # A different ask/grid may make a previously illegal residual
                 # executable. Retain the intent until T240, without rounding up.
@@ -155,6 +238,7 @@ class BudgetLedger(TaskLedger):
 
     def next_plan(self, key, *, minimum, spendable):
         with self.lock, self.db:
+            require(not self.price_band_abandonment(key), BEST_ASK_BAND_ABANDONED)
             row, root = self.row(key), self.root_plan(key)
             require(row["state"] == "RESERVED" and not row["order_id"], "M4_TASK_NOT_READY")
             if self.unresolved(key):
@@ -162,10 +246,11 @@ class BudgetLedger(TaskLedger):
             selected = self.get("pricing_selection:" + key) if self.dynamic_pricing else None
             require(not self.dynamic_pricing or selected is not None, "M4_PRICING_NOT_SELECTED")
             price = self.selected_price(key)
+            require(self.post_price_allowed(price), POST_PRICE_OUTSIDE_BAND)
             used = self.budget_used(key)
             pending = self.pending_cost(key)
             qty = budget_quantity(price, self.order_budget - used, self.fees)
-            if not minimum_order_ok(price, qty):
+            if not minimum_fak_buy_ok(price, qty):
                 self.refresh_totals(key)
                 return None
             # pending matches stay reserved; only an unsent preparation may be replaced.
@@ -174,7 +259,7 @@ class BudgetLedger(TaskLedger):
             while qty > 0 and (gross_risk_cost(price, qty, self.fees) > available
                                or not fak_amounts_compatible(price, qty)):
                 qty -= STEP
-            if not minimum_order_ok(price, qty):
+            if not minimum_fak_buy_ok(price, qty):
                 self.db.execute(
                     "UPDATE opportunities SET reserved=?,reason='M4_WAIT_REMAINDER_FUNDS' WHERE id=?",
                     (str(pending), key),
@@ -195,6 +280,8 @@ class BudgetLedger(TaskLedger):
                 "budget_basis": self.budget_basis(key),
                 "minimum": str(minimum),
                 "minimum_policy": "SHARES_GE_5_OR_NOTIONAL_GT_1",
+                "fak_buy_minimum_policy": FAK_BUY_MINIMUM_POLICY,
+                "fak_buy_min_principal_usdc": str(FAK_BUY_MIN_PRINCIPAL),
                 "amount_precision": "FAK_BUY_CENTS_SHARES_0_1_V1",
                 "task_policy": "REMAINING_ALL_IN_CASH_UNTIL_T240",
                 "max_native_posts": 1,
@@ -217,12 +304,16 @@ class BudgetLedger(TaskLedger):
         prior = sum((decimal(p["spent"]) + decimal(p["pending"]) for p in basis), ZERO)
         pricing = plan.get("pricing", {})
         require(
-            ("pricing_origin" in root) == self.dynamic_pricing
+            root.get("post_price_band") == self.post_price_band
+            and root.get("post_price_band_retry_policy", WAIT_FOR_PRICE_BAND)
+                == self.settings.execution.taker.post_price_band_retry_policy
+            and ("pricing_origin" in root) == self.dynamic_pricing
             and quote_valid(root, plan, row["token"], self.pricing_evidence(pricing.get("id")))
             and price == decimal(plan["limit_price"])
             and decimal(root["limit_price"]) == decimal(row["price"]) + decimal(root["tick_at_plan"]),
             "M4_TASK_ATTEMPT_PRICING_CONFLICT",
         )
+        require(self.post_price_allowed(price), POST_PRICE_OUTSIDE_BAND)
         require(
             re.fullmatch(r"0x[0-9a-fA-F]{64}", attempt["order_id"]) is not None
             and quote["window_id"] == row["id"]
@@ -267,6 +358,7 @@ class BudgetLedger(TaskLedger):
 
     def prepare(self, key, oid, quote):
         with self.lock, self.db:
+            require(not self.price_band_abandonment(key), BEST_ASK_BAND_ABANDONED)
             row, plan = self.row(key), self.plan(key)
             require(
                 row["state"] == "RESERVED"
@@ -276,6 +368,12 @@ class BudgetLedger(TaskLedger):
                 "M4_TASK_PREPARE_STATE",
             )
             a = {"task_id": key, "order_id": oid, "plan": encode(plan), "quote": encode(quote)}
+            require(self.post_price_allowed(decimal(quote["price"])), POST_PRICE_OUTSIDE_BAND)
+            require(minimum_fak_buy_ok(decimal(quote["price"]), decimal(quote["size"])),
+                    "M4_FAK_BUY_MINIMUM")
+            # validate_attempt also restores immutable historical orders. Keep
+            # its legacy evidence rules so old rejected receipts remain readable;
+            # enforce the new exchange floor only on new preparations/POSTs.
             self.validate_attempt(a)
             # Signing yields to old-order reconciliation, which may refresh
             # totals and release this not-yet-prepared plan's reservation.
@@ -339,7 +437,9 @@ class BudgetLedger(TaskLedger):
         # Last durable gate, under the same lock that updates reconciliation facts.
         # A newly detected UNKNOWN between signing and native POST forbids the buy.
         with self.lock, self.db:
+            require(not self.price_band_abandonment(key), BEST_ASK_BAND_ABANDONED)
             plan = self.plan(key)
+            require(self.post_price_allowed(decimal(plan["limit_price"])), POST_PRICE_OUTSIDE_BAND)
             require(not self.unresolved(key), "M4_UNRESOLVED_PRIOR_ATTEMPT")
             require(
                 self.budget_used(key) + decimal(plan["planned_cost_usdc"]) <= 5
@@ -434,6 +534,16 @@ class BudgetLedger(TaskLedger):
         with self.lock, self.db:
             row = self.row(key)
             require(not row["order_id"] and not row["started"], "M4_UNRESOLVED_ORDER_CANNOT_FINISH")
+            if self.price_band_abandonment(key):
+                self.refresh_totals(key)
+                return
+            if (self.post_price_band and state == "CUTOFF" and reason == "M4_T240_RESIDUAL"
+                    and self.get("post_price_band_wait:" + key)
+                    and not self.get("post_price_band_eligible:" + key)
+                    and not self.attempts(key)):
+                # A durable observation never reached executable price admission.
+                # Preserve it as a normal price filter, not a lost/failed POST.
+                state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
             self.db.execute(
                 "UPDATE opportunities SET state=?,reason=?,reserved=? WHERE id=?",
                 (state, reason, str(self.pending_cost(key)), key),
@@ -478,6 +588,18 @@ class BudgetLedger(TaskLedger):
 
     def validate_recovery(self):
         for row in self.rows():
+            abandoned = self.price_band_abandonment(row["id"])
+            if abandoned:
+                root = self.root_plan(row["id"])
+                require(
+                    self.settings.execution.taker.post_price_band_retry_policy == ABANDON_BEST_ASK_BAND
+                    and root.get("post_price_band_retry_policy") == abandoned["policy"] == ABANDON_BEST_ASK_BAND
+                    and abandoned["opportunity_id"] == row["id"]
+                    and abandoned["post_price_band"] == self.post_price_band
+                    and abandoned["pricing_origin"] == root["pricing_origin"]
+                    and rejected_best_ask_valid(root, abandoned["pricing"], row["token"]),
+                    "M4_BAND_ABANDONMENT_EVIDENCE_INVALID",
+                )
             attempts = self.attempts(row["id"])
             active = [a for a in attempts if a["state"] in {"PREPARED", "ACK", "UNKNOWN"}]
             require(

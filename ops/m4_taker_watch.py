@@ -19,7 +19,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from polymaker.m4_control import atomic_json
+from polymaker.m4_live_price_band import POST_SIGNED_LIMIT_BAND, price_in_band
 from polymaker.m4_live_pricing import DYNAMIC, quote_valid
+from polymaker.m4_taker_coverage import rolling_coverage
 
 PROJECT = Path(__file__).resolve().parents[1]
 LIVE = "polymaker-m4-live.service"
@@ -63,6 +65,8 @@ def inspect_market(project, epoch, now=None):
                  db.execute("SELECT * FROM facts WHERE kind='taker_plan'")}
         pricing_quotes = {r["identity"]: json.loads(r["payload"]) for r in
                           db.execute("SELECT * FROM facts WHERE kind='taker_pricing_quote'")}
+        band_abandonments = {r["identity"]: json.loads(r["payload"]) for r in
+                             db.execute("SELECT * FROM facts WHERE kind='taker_price_band_abandonment'")}
         trades = [dict(r) for r in db.execute("SELECT * FROM taker_trade_evidence")]
     journals = sorted((root / "journal").glob("*_" + meta["session_id"] + ".jsonl"))
     if len(journals) != 1 or journals[0].is_symlink():
@@ -140,17 +144,20 @@ def inspect_market(project, epoch, now=None):
             missing.append({**opp, "status": "NO_DURABLE_TASK_NEEDS_REVIEW"})
     if missing:
         observations.append("IDENTIFIED_SIGNAL_WITHOUT_TASK")
-    # A candidate before T15, below the floor or after T240 is not an admitted
-    # trade. Preserve that denominator separately rather than call it a fill miss.
+    # Inspect the market's saved price contract, never the current config.
     candidate_review = []
     roots = {r["root"] for r in rows} | {o["root_id"] for o in opportunities.values()}
     settings = meta["settings"]
+    taker = settings.get("execution", {}).get("taker", {})
+    post_band = ({"policy": POST_SIGNED_LIMIT_BAND,
+                  "minimum": taker["post_minimum_price"], "maximum": taker["post_maximum_price"]}
+                 if taker.get("price_band_policy") == POST_SIGNED_LIMIT_BAND else None)
     for item in candidates.values():
         if item["root"] in roots:
             continue
         price = Decimal(str(item["price"]))
         elapsed = item["wall"] - epoch
-        reason = ("PRICE_BELOW_FLOOR" if price < Decimal(settings["minimum_price"])
+        reason = ("PRICE_BELOW_FLOOR" if not post_band and price < Decimal(settings["minimum_price"])
                   else "OUTSIDE_ENTRY_WINDOW" if not settings["start_sec"] <= elapsed < settings["cutoff_sec"]
                   else "CANDIDATE_NOT_IDENTIFIED_REVIEW_EVIDENCE_LIFETIME")
         candidate_review.append({"id": item["id"], "price": str(price), "elapsed_s": elapsed, "reason": reason})
@@ -176,6 +183,7 @@ def inspect_market(project, epoch, now=None):
         signal_rows.append({k: row[k] for k in
                             ("id", "outcome", "price", "state", "reason", "posts", "filled", "spent", "reserved")} |
                            {"confirmed_fill": filled > 0, "additional_posts": max(0, len(sent)-1),
+                            "price_band_abandonment": band_abandonments.get(key),
                             "remaining_cash_usdc": str(max(Decimal(0), Decimal(5)-spent)),
                             "unsigned_preparation_failures": len(local_errors),
                             "unsigned_preparation_error_reasons": dict(Counter(x.get("reason") for x in local_errors)),
@@ -193,8 +201,13 @@ def inspect_market(project, epoch, now=None):
             valid_price = (quote_valid(root_plan, plan, row["token"], pricing_quotes.get(pricing.get("id")))
                            and price == Decimal(plan["limit_price"])) if dynamic else (
                                "pricing_origin" not in root_plan and cap.is_finite() and price <= cap)
+            anchor = Decimal(row["price"])
+            valid_anchor = 0 < anchor < 1 if post_band else Decimal(settings["minimum_price"]) <= anchor < 1
+            if post_band:
+                valid_price = (valid_price and root_plan.get("post_price_band") == post_band
+                               and price_in_band(price, post_band))
             if (not valid_price or quote["side"] != "BUY" or not 0 < price < 1
-                    or not Decimal(settings["minimum_price"]) <= Decimal(row["price"]) < 1
+                    or not valid_anchor
                     or size <= 0 or size % Decimal(".1") or not (size >= 5 or price * size > 1)):
                 alerts.append("POST_PRICE_SIZE_RULE_VIOLATION")
             if Decimal(plan["planned_cost_usdc"]) + Decimal(plan.get("prior_spent_usdc", "0")) > Decimal("5.000001"):
@@ -292,7 +305,12 @@ def collect(project, state_dir, control, now=None):
         alerts.append("CURRENT_MARKET_NOT_OPEN_CHECK_STARTUP")
     if latest.get("signal_failure") or latest.get("reason"):
         alerts.append("LIVE_REPORTED_FAILURE_OR_HALT")
+    try:
+        coverage = rolling_coverage(project, state, now)
+    except (OSError, ValueError, KeyError, TypeError, ArithmeticError, sqlite3.Error) as error:
+        coverage = {"status": "READ_ERROR", "error_type": type(error).__name__}
     return {"observed_at": now, "bucket": int((now-20)//300), "previous_market_epoch": current-300,
+            "rolling_12h": coverage,
             "markets": markets, "live_service": service, "live_latest": latest,
             "heartbeat_age_sec": heartbeat_age, "startup": startup, "balance": balance,
             "balance_observation_age_sec": now-balance["observed_at"] if "observed_at" in balance else None,
@@ -308,8 +326,8 @@ def wake(project, state_dir, control, report, runner=subprocess.run):
         state["requested_through_epoch"] = report["previous_market_epoch"]
         if report["bucket"] in state.get("notified_buckets", []):
             return {"status": "ALREADY_QUEUED"}
-        # The collector runs every five minutes even while one agent review is
-        # busy; a single queued review reads latest and all unreviewed markets.
+        # Timer cadence is independent of five-minute market boundaries. A
+        # queued review reads latest and all unreviewed markets when busy.
         if (not state.get("resume_unconfirmed")
                 and state.get("last_queued_at", 0) > state.get("reviewed_at", 0)
                 and time.time()-state["last_queued_at"] < 590):

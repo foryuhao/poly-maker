@@ -11,23 +11,53 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 from polymaker.execution.taker_fees import buy_amount_fee_reserve, fee_parameters
 from polymaker.m4_config import M4Config
 from polymaker.m4_frequency_signal import PARAMETERS
+from polymaker.m4_live_price_band import (
+    ABANDON_BEST_ASK_BAND, ANCHOR_PRICE_FLOOR, POST_SIGNED_LIMIT_BAND, WAIT_FOR_PRICE_BAND,
+)
 
 
 class TakerSettings(BaseModel):
-    model_config = ConfigDict(extra='forbid', frozen=True)
+    model_config = ConfigDict(extra='forbid', frozen=True, allow_inf_nan=False)
     order_type: Literal['FAK'] = 'FAK'
     max_anchor_slippage_ticks: int = Field(default=1, ge=1, le=1, strict=True)
     budget_policy: Literal['LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1'] = 'LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1'
     pricing_policy: Literal['ANCHOR_FIXED_V1', 'ANCHOR_10S_THEN_BEST_ASK_V1'] = 'ANCHOR_FIXED_V1'
     anchor_wait_sec: Literal[10] = 10
+    price_band_policy: Literal['ANCHOR_PRICE_FLOOR_V1', 'POST_SIGNED_LIMIT_BAND_V1'] = ANCHOR_PRICE_FLOOR
+    post_minimum_price: Decimal = Field(default=Decimal('.50'), ge=0, lt=1)
+    post_maximum_price: Decimal = Field(default=Decimal('.95'), gt=0, le=1)
+    post_price_band_retry_policy: Literal[
+        'WAIT_UNTIL_T240_V1', 'ABANDON_ON_BEST_ASK_BAND_REJECTION_V1'
+    ] = WAIT_FOR_PRICE_BAND
+
+    @model_validator(mode='after')
+    def price_band(self):
+        if self.post_minimum_price >= self.post_maximum_price:
+            raise ValueError('M4_POST_PRICE_BAND_INVALID')
+        if (self.price_band_policy == ANCHOR_PRICE_FLOOR
+                and (self.post_minimum_price != Decimal('.50')
+                     or self.post_maximum_price != Decimal('.95'))):
+            raise ValueError('M4_POST_PRICE_BAND_POLICY_REQUIRED')
+        if (self.post_price_band_retry_policy == ABANDON_BEST_ASK_BAND
+                and (self.price_band_policy != POST_SIGNED_LIMIT_BAND
+                     or self.pricing_policy != 'ANCHOR_10S_THEN_BEST_ASK_V1')):
+            raise ValueError('M4_BAND_ABANDON_REQUIRES_DYNAMIC_POST_BAND')
+        return self
 
     @model_serializer(mode='wrap')
     def historical_serialization(self, handler):
         value = handler(self)
+        if self.post_price_band_retry_policy == WAIT_FOR_PRICE_BAND:
+            # Preserve both pre-band and already-running band-market identities.
+            value.pop('post_price_band_retry_policy')
         # Preserve the exact saved settings and fingerprint of every old market.
         if self.pricing_policy == 'ANCHOR_FIXED_V1':
             value.pop('pricing_policy')
             value.pop('anchor_wait_sec')
+        if self.price_band_policy == ANCHOR_PRICE_FLOOR:
+            # Old saved settings/fingerprints must not acquire default policy fields.
+            for key in ('price_band_policy', 'post_minimum_price', 'post_maximum_price'):
+                value.pop(key)
         return value
 
 
@@ -49,6 +79,9 @@ class M4LiveSettings(M4Config):
         if (self.execution.taker.pricing_policy != 'ANCHOR_FIXED_V1'
                 and self.execution_revision != 'm4-taker-budget-v1'):
             raise ValueError('M4_DYNAMIC_PRICING_REQUIRES_BUDGET_TASK')
+        if (self.execution.taker.price_band_policy == POST_SIGNED_LIMIT_BAND
+                and self.execution_revision != 'm4-taker-budget-v1'):
+            raise ValueError('M4_POST_PRICE_BAND_REQUIRES_BUDGET_TAKER')
         return self
 
     @property

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from polymaker.m4_live_numeric import age_us
+from polymaker.m4_live_price_band import price_in_band
 from polymaker.m4_state import decimal
 
 FIXED = "ANCHOR_FIXED_V1"
@@ -38,6 +39,8 @@ def quote_valid(root, plan, token, evidence=None):
     """
     try:
         price = decimal(plan["limit_price"])
+        if root.get("post_price_band") and not price_in_band(price, root["post_price_band"]):
+            return False
         if "pricing_origin" not in root:
             return price == decimal(root["limit_price"])
         q = plan["pricing"]
@@ -59,4 +62,19 @@ def quote_valid(root, plan, token, evidence=None):
                 and -2_000 <= age_us(q["captured_wall"], q["source_wall"]) <= 500_000
                 and q["reported_prices_agree"] is True)
     except (KeyError, ValueError, TypeError, ArithmeticError):
+        return False
+
+
+def rejected_best_ask_valid(root, quote, token):
+    """Validate immutable rejection evidence; never grants POST permission."""
+    try:
+        if (quote["stage"] != "BEST_ASK" or not root.get("post_price_band")
+                or price_in_band(quote["limit_price"], root["post_price_band"])):
+            return False
+        # Reuse every clock/token/grid/freshness check. Only the band predicate
+        # is inverted for this rejection fact; executable quotes still require it.
+        capture_root = {k: v for k, v in root.items() if k != "post_price_band"}
+        plan = {**capture_root, "pricing": quote, "limit_price": quote["limit_price"]}
+        return quote_valid(capture_root, plan, token, quote)
+    except (KeyError, ValueError, TypeError):
         return False
