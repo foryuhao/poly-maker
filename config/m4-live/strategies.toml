@@ -1,0 +1,2 @@
+# New markets freeze this list. Removing a strategy blocks new sends immediately.
+enabled = ["M4", "M6"]

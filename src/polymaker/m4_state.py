@@ -11,11 +11,13 @@ import re
 import sqlite3
 import time
 from contextlib import closing
+from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
 from threading import RLock
 
 from polymaker.m4_config import CURRENT_MINIMUM_PRICE, quantity_for_budget, validated_minimum_price
+from polymaker.m4_types import M4_LEDGER
 
 BASELINE_MAX_INSTRUCTIONS = 2
 
@@ -28,8 +30,10 @@ def decimal(value):
 
 
 class M4Ledger:
+    ledger_strategy = M4_LEDGER
+
     @staticmethod
-    def metadata(path):
+    def metadata(path, *, strategy=M4_LEDGER):
         """Inspect identity without changing a foreign ledger or its journal mode."""
         path = Path(path).absolute()
         if path.is_symlink() or path.resolve() != path:
@@ -37,13 +41,14 @@ class M4Ledger:
         if not path.exists():
             return {}
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as db:
+            db.execute("PRAGMA query_only=ON")
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if not tables:
                 return {}
             if 'metadata' not in tables:
                 raise ValueError('M4_FOREIGN_DATABASE')
             result = {k: json.loads(v) for k, v in db.execute('SELECT key,value FROM metadata')}
-            if result.get('identity', {}).get('strategy') != 'm4_frequency_v2_native_v1':
+            if result.get('identity', {}).get('strategy') != strategy:
                 raise ValueError('M4_FOREIGN_DATABASE')
             return result
 
@@ -63,7 +68,7 @@ class M4Ledger:
 
     def __init__(self, path, identity, *, limit=Decimal(10), order_budget=Decimal(5), wall=None):
         self.wall = wall or time.time
-        if identity.get("strategy") != "m4_frequency_v2_native_v1":
+        if identity.get("strategy") != self.ledger_strategy:
             raise ValueError("M4_STRATEGY_IDENTITY_REQUIRED")
         candidate = Path(path).absolute()
         if candidate.resolve() != candidate or candidate.is_symlink():
@@ -72,11 +77,11 @@ class M4Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = RLock()
         self.limit, self.order_budget = decimal(limit), decimal(order_budget)
-        if self.order_budget != 5 or self.limit != 10:
+        if (self.order_budget, self.limit) != self.risk_limits:
             raise ValueError("M4_RISK_LIMIT_INVALID")
         expected = {**identity, "limit": str(self.limit), "order_budget": str(self.order_budget),
                     "prepost_policy": self.sizing_policy}
-        existing = self.metadata(self.path).get('identity')
+        existing = self.metadata(self.path, strategy=self.ledger_strategy).get('identity')
         if existing is not None and existing != expected:
             raise ValueError('M4_RECOVERY_IDENTITY_OR_SETTINGS_CHANGED')
         self.db = sqlite3.connect(self.path, check_same_thread=False)
@@ -112,9 +117,6 @@ class M4Ledger:
             order_id TEXT PRIMARY KEY, opportunity_id TEXT NOT NULL,
             quote TEXT NOT NULL, cost TEXT NOT NULL)""")
         self.db.commit()
-        if identity.get("strategy") != "m4_frequency_v2_native_v1":
-            self.db.close()
-            raise ValueError("M4_STRATEGY_IDENTITY_REQUIRED")
         conflict = False
         with self.lock, self.db:
             existing = self.get("identity")
@@ -165,6 +167,10 @@ class M4Ledger:
         except BaseException:
             self.db.close()
             raise
+
+    @property
+    def risk_limits(self):
+        return Decimal(5), Decimal(10)
 
     def get(self, key, default=None):
         with self.lock:
@@ -236,12 +242,17 @@ class M4Ledger:
                                         (opportunity.root_id,)).fetchone()
             if duplicate:
                 return None
+            evidence = {**asdict(opportunity), "elapsed_s": elapsed}
+            if evidence.get("taker_strategy") is None:
+                evidence.pop("taker_strategy", None)
+            if evidence.get("market_id") is None:
+                evidence.pop("market_id", None)
             self.db.execute("""INSERT INTO opportunities
                 (id,support,root,token,outcome,price,quantity,target,evidence,state)
                 VALUES (?,?,?,?,?,?,?,?,?, 'OBSERVED')""",
                 (opportunity.episode_id, opportunity.support_id, opportunity.root_id,
                  opportunity.token_id, opportunity.outcome, str(price), str(quantity),
-                 str(price*quantity), json.dumps({**vars(opportunity), "elapsed_s": elapsed}, default=str)))
+                 str(price*quantity), json.dumps(evidence, default=str)))
             return self.row(opportunity.episode_id)
 
     def direction_slots(self, key):

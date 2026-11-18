@@ -10,6 +10,8 @@
 # Actual debit may exceed 5 after improved-price extra shares (user accepted).
 # Market/cash admission still reserves worst-case debit and caps the market at 10.
 mode = "taker" # "maker" or "taker"
+# Require the strategy handoff for newly configured live Taker markets.
+require_opportunity_price_risk = true
 
 [taker]
 order_type = "FAK"
@@ -19,14 +21,4 @@ budget_policy = "LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1"
 # fresh same-token Best ask for every new FAK; UNKNOWN must first be resolved.
 pricing_policy = "ANCHOR_10S_THEN_BEST_ASK_V1"
 anchor_wait_sec = 10
-# Execution risk, applied to every signed FAK limit before POST, including
-# retries/top-ups and ten-second repricing. Signal quality is unchanged;
-# shared minimum_price remains the historical anchor contract for old settings.
-# New markets save this policy and these bounds; recovery never substitutes them.
-price_band_policy = "POST_SIGNED_LIMIT_BAND_V1"
-post_minimum_price = "0.50" # Inclusive signed-limit floor; fills may improve below it.
-post_maximum_price = "0.95" # Exclusive signed-limit ceiling.
-# At/after ten seconds, abandon this signal on the first fresh Best ask
-# outside the POST band. Other causes retry within the existing T240 limits.
-# Persisted old markets keep their original wait-until-T240 behavior.
-post_price_band_retry_policy = "ABANDON_ON_BEST_ASK_BAND_REJECTION_V1"
+# Price risk is supplied by the strategy's Opportunity from config/m4.toml.

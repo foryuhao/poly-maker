@@ -160,7 +160,11 @@ def test_unsigned_failures_survive_diagnostics_tail_without_counting_as_posts(tm
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
 
 
-def test_same_thread_delivery_coalesces_and_retains_review_fields(tmp_path):
+@pytest.mark.parametrize("interval,expected,calls_expected", [
+    (3600, "COALESCED_WITH_PENDING_REVIEW", 1),
+    (300, "QUEUED_AND_RESUME_REQUESTED", 2),
+])
+def test_same_thread_delivery_coalesces_and_retains_review_fields(tmp_path, interval, expected, calls_expected):
     (tmp_path / "ops").mkdir()
     (tmp_path / "ops/m4_taker_watch_prompt.txt").write_text("read-only Taker review")
     state_dir = tmp_path / "state"
@@ -171,13 +175,14 @@ def test_same_thread_delivery_coalesces_and_retains_review_fields(tmp_path):
         calls.append(command)
         return SimpleNamespace(returncode=0, stdout="queued", stderr="")
     report = {"bucket": 1, "report_path": "report1", "previous_market_epoch": EPOCH}
-    assert watch.wake(tmp_path, state_dir, {"thread": "authorized-chat"}, report, runner)["status"] == "QUEUED_AND_RESUME_REQUESTED"
-    assert watch.wake(tmp_path, state_dir, {"thread": "authorized-chat"}, report, runner)["status"] == "ALREADY_QUEUED"
+    control = {"thread": "authorized-chat", "interval_seconds": interval}
+    assert watch.wake(tmp_path, state_dir, control, report, runner)["status"] == "QUEUED_AND_RESUME_REQUESTED"
+    assert watch.wake(tmp_path, state_dir, control, report, runner)["status"] == "ALREADY_QUEUED"
     report.update(bucket=2, report_path="report2", previous_market_epoch=EPOCH+300)
-    assert watch.wake(tmp_path, state_dir, {"thread": "authorized-chat"}, report, runner)["status"] == "COALESCED_WITH_PENDING_REVIEW"
+    assert watch.wake(tmp_path, state_dir, control, report, runner)["status"] == expected
     state = watch.read_json(state_dir / "agent-state.json")
     assert state["requested_report"] == "report2" and state["custom"] == "keep"
-    assert len(calls) == 1 and calls[0][3] == "authorized-chat"
+    assert len(calls) == calls_expected and all(call[3] == "authorized-chat" for call in calls)
 
 
 def test_incomplete_and_missing_session_are_never_marked_successful(tmp_path):
@@ -237,3 +242,48 @@ def test_pending_merge_retains_failed_reads_and_orders_but_clears_verified_resol
                {"epoch": EPOCH+300, "record_status": "READ_ERROR"},
                {"epoch": EPOCH+900, "record_status": "AVAILABLE", "signals": [{"unresolved_order_ids": ["owned"]}]}]
     assert watch.pending_epochs(state, markets) == [EPOCH+300, EPOCH+600, EPOCH+900]
+
+
+def test_operational_collection_keeps_market_checks_and_skips_history(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    watch.atomic_json(state_dir / "agent-state.json", {"reviewed_through_epoch": EPOCH})
+    live = tmp_path / "research_outputs/m4_live"
+    live.mkdir(parents=True)
+    with sqlite3.connect(live / "taker-pool.sqlite3") as db:
+        db.execute("CREATE TABLE market_openings(epoch,release_at,released_at,payload)")
+        db.execute("INSERT INTO market_openings VALUES (?,?,?,?)", (
+            EPOCH+300, EPOCH+720, None, json.dumps({
+                "settings": {watch.M6_LEDGER: {}}, "reserved": {watch.M6_LEDGER: "3"}})))
+    seen = []
+
+    def inspect(project, epoch, now, *, strategy="M4"):
+        seen.append((strategy, epoch))
+        return {"epoch": epoch}
+
+    def read_history(*args, **kwargs):
+        pytest.fail("Five-minute collection should read only operational evidence")
+
+    monkeypatch.setattr(watch, "inspect_market", inspect)
+    monkeypatch.setattr(watch, "rolling_coverage", read_history)
+    monkeypatch.setattr(watch, "service_status", lambda: {"ActiveState": "active"})
+    result = watch.collect(tmp_path, state_dir, {"start_epoch": EPOCH, "review_scope": "operational"}, EPOCH+340)
+    assert result["review_scope"] == "operational" and "rolling_12h" not in result
+    assert "rolling_12h_m6" not in result and "price_band_observation" not in result
+    assert seen == [("M4", EPOCH), ("M4", EPOCH+300), ("M6", EPOCH+300)]
+    assert "M6_CURRENT_MARKET_HEARTBEAT_MISSING" in result["alerts"]
+
+
+def test_operational_dispatch_uses_short_prompt(tmp_path):
+    (tmp_path/"ops").mkdir()
+    (tmp_path/"ops/m4_taker_watch_prompt.txt").write_text("full review")
+    (tmp_path/"ops/m4_taker_watch_operational_prompt.txt").write_text("operational review")
+    state_dir = tmp_path/"state"
+    state_dir.mkdir()
+
+    def runner(command, **kwargs):
+        assert command[command.index("--message")+1].startswith("operational review\n")
+        return SimpleNamespace(returncode=0, stdout="queued", stderr="")
+
+    report = {"bucket": 1, "report_path": "report1", "previous_market_epoch": EPOCH}
+    control = {"thread": "authorized-chat", "review_scope": "operational", "interval_seconds": 300}
+    assert watch.wake(tmp_path, state_dir, control, report, runner)["status"] == "QUEUED_AND_RESUME_REQUESTED"

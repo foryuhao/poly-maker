@@ -1,7 +1,7 @@
 """Frozen M6 RF+LW signals bridged to the independent baseline contract.
 
-SessionFeed supplies only socket lifecycle/queueing. Its strategy parser is
-overridden: every raw input is interpreted by the frozen M6 research detector.
+SessionFeed supplies neutral book/lifecycle helpers. M6 owns its atomic socket
+queue and parser: every raw input goes through the frozen research detector.
 """
 from collections import Counter, deque
 from dataclasses import asdict
@@ -12,6 +12,7 @@ from polymaker.rdp_sm_marketdata import SessionFeed, TokenBook
 
 from ._signal_v7.feed import ResearchFeed
 from ._signal_v7.strategies import M5_M10_LOCAL_AP, Strategies
+from .capture import AtomicCapture
 from .types import Opportunity
 
 
@@ -37,11 +38,13 @@ class M6Signals:
         c = self.feed.research
         return legal(self, book, now) and c.good[book.token_id] and c.legal(book.token_id)
 
-    def __init__(self, feed, record=None):
+    def __init__(self, feed, record=None, *, taker_settings=None):
         self.feed, self.record = feed, record
         self.counts, self.events = Counter(), deque(maxlen=4096)
         self.failure = self.selected = None
         self.used_roots, self.opportunities = set(), {}
+        self.taker_settings = taker_settings
+        self.price_risk = taker_settings.live_taker_price_risk if taker_settings else None
 
     def evidence(self, kind, payload):
         self.counts[kind+":"+str(payload.get("event", ""))] += 1
@@ -87,9 +90,16 @@ class M6Signals:
             for candidate in self.feed.strategies.candidates():
                 if candidate["root_id"] in self.used_roots:
                     continue
-                opportunity = Opportunity(candidate["candidate_id"], candidate["token"], candidate["outcome"],
+                fields = (candidate["candidate_id"], candidate["token"], candidate["outcome"],
                     Decimal(candidate["anchor_price"]), candidate["confirmed"], candidate["deadline"],
                     candidate["primitive_ids"][0], candidate["root_id"], candidate["generation"])
+                if self.taker_settings:
+                    from polymaker.m4_types import Opportunity as TakerOpportunity
+                    opportunity = TakerOpportunity(*fields, price_risk=self.price_risk,
+                                                   taker_strategy=self.taker_settings.taker_strategy,
+                                                   market_id=self.feed.meta.condition_id)
+                else:
+                    opportunity = Opportunity(*fields)
                 if opportunity.episode_id not in self.opportunities:
                     self.opportunities[opportunity.episode_id] = opportunity
                     self.emit("OPPORTUNITY_IDENTIFIED", opportunity=asdict(opportunity), signal_evidence=candidate)
@@ -119,12 +129,13 @@ class M6Signals:
         return {"strategy": "M6", "failure": self.failure, "counts": dict(self.counts)}
 
 
-class M6Feed(SessionFeed):
-    def __init__(self, meta, cfg, *, record=None, **kwargs):
+class M6Feed(AtomicCapture, SessionFeed):
+    def __init__(self, meta, cfg, *, record=None, taker_settings=None, **kwargs):
         super().__init__(meta, cfg, normal_entry_mode="ba_v1", book_only=True, **kwargs)
         self.fill_model, self.observed_books = None, []
         self.runtime_released = False
-        self.m1 = M6Signals(self, record)
+        self.input_revision = 0
+        self.m1 = M6Signals(self, record, taker_settings=taker_settings)
         tokens = (meta.yes.token_id, meta.no.token_id)
         self.research = ObservedResearchFeed(meta.condition_id, tokens,
             {t: b.tick for t, b in self.books.items()}, self.m1.evidence)

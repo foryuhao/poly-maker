@@ -40,9 +40,9 @@ def settings(mode='taker'):
 
 
 async def market(tmp_path, monkeypatch, *, mode='taker', response='ACK', price='.70', recover=False):
-    feed, clock = fixture_feed(price)
-    form(feed, clock)
     cfg = settings(mode)
+    feed, clock = fixture_feed(price, price_risk=cfg.live_taker_price_risk)
+    form(feed, clock)
     ident = dict(strategy='m4_frequency_v2_native_v1', mode='LIVE', funder='synthetic',
                  market_id='synthetic', settings_hash=cfg.fingerprint)
     book = M4LiveLedger(tmp_path/'risk.sqlite3', ident, settings=cfg, fees=FEES if mode == 'taker' else None)

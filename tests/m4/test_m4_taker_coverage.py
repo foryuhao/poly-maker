@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from polymaker.m4_taker_coverage import FUNDER, rolling_coverage
+from polymaker.m4_types import M4_LEDGER, M6_LEDGER
 
 EPOCH = 1800000000
 MARKET = "0x"+"a"*64
@@ -23,11 +24,14 @@ def identified(sid="signal", wall=30):
         "outcome": "YES", "anchor_bid_price": ".50"}}, wall)
 
 
-def fixture(tmp_path, *, state="TERMINAL", filled="3.0", normal=None, attempts=1):
+def fixture(tmp_path, *, state="TERMINAL", filled="3.0", normal=None, attempts=1, strategy="M4"):
     root=tmp_path/"research_outputs/m4_live"
-    path=root/"ledgers"/f"btc-updown-5m-{EPOCH}.sqlite3"
-    path.parent.mkdir(parents=True)
+    secondary = strategy == "M6"
+    path=root/("m6-ledgers" if secondary else "ledgers")/f"btc-updown-5m-{EPOCH}.sqlite3"
+    path.parent.mkdir(parents=True, exist_ok=True)
     records=[identified()]
+    if secondary:
+        records[0]["kind"] = "sm_m6_signal"
     with sqlite3.connect(path) as db:
         db.executescript('''
           CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT);
@@ -35,8 +39,10 @@ def fixture(tmp_path, *, state="TERMINAL", filled="3.0", normal=None, attempts=1
           CREATE TABLE taker_attempts(seq INT,order_id TEXT,task_id TEXT,state TEXT,started INT,filled TEXT,spent TEXT,proof TEXT);
           CREATE TABLE taker_trade_evidence(trade_id TEXT,order_id TEXT,status TEXT);
         ''')
-        meta={"identity":{"mode":"LIVE","funder":FUNDER,"market_id":MARKET},
-              "settings":{"execution_revision":"m4-taker-budget-v1","start_sec":15},"complete":True}
+        meta={"identity":{"mode":"LIVE","strategy":M6_LEDGER if secondary else M4_LEDGER,
+                          "funder":FUNDER,"market_id":MARKET},
+              "settings":{"execution_revision":"m4-taker-budget-v1","start_sec":15},
+              "session_id":"m4_live_one","complete":True}
         db.executemany("INSERT INTO metadata VALUES (?,?)",[(k,json.dumps(v)) for k,v in meta.items()])
         db.execute("INSERT INTO opportunities VALUES (?,?,?,?)",("signal","SKIPPED" if normal else "CUTOFF" if state=="TERMINAL" else state,normal or "M4_T240_RESIDUAL","0" if state=="TERMINAL" else "5.5"))
         if normal:
@@ -56,8 +62,8 @@ def fixture(tmp_path, *, state="TERMINAL", filled="3.0", normal=None, attempts=1
             db.execute("INSERT INTO taker_attempts VALUES (?,?,?,?,?,?,?,?)",(i+1,oid,"signal",state,1,qty,cost,json.dumps(proof)))
             records.extend([event("sm_prepared",{"order_id":oid,"body_hash":"hash"+str(i)}),
                             event("sm_network_request",{"method":"POST","operation_id":"post:hash"+str(i),"request_id":"request"+str(i)})])
-    journal=root/"journal"/f"rdp_sm_{FUNDER}_m4_live_one.jsonl"
-    journal.parent.mkdir()
+    journal=root/("m6-journal" if secondary else "journal")/f"rdp_sm_{FUNDER}_m4_live_one.jsonl"
+    journal.parent.mkdir(exist_ok=True)
     journal.write_text("".join(json.dumps(x)+"\n" for x in records))
     os.utime(journal,(EPOCH+400,EPOCH+400))
     return path,journal
@@ -222,3 +228,70 @@ def test_reviewed_tls_zero_does_not_erase_raw_unknown_or_count_native_as_wire_po
     assert r["failed_zero_fill_signals"]==1 and r["pending_signals"]==0
     assert r["HTTP_POST_invocations"]==r["proven_pre_HTTP_attempts"]==1 and r["real_POST"]==0
     assert r["signals"][0]["raw_ledger_state"]=="UNKNOWN"
+
+
+def test_m6_joins_shared_http_by_body_without_importing_m4_signals(tmp_path):
+    _, m4_journal = fixture(tmp_path, attempts=3, filled="0")
+    m6_path, m6_journal = fixture(tmp_path, attempts=2, strategy="M6")
+    with sqlite3.connect(m6_path) as db:
+        settings = json.loads(db.execute("SELECT value FROM metadata WHERE key='settings'").fetchone()[0])
+        settings['taker_strategy'] = {'signal_budget_usdc': '1.50'}
+        db.execute("UPDATE taker_attempts SET spent='1.20' WHERE filled!='0'")
+        db.execute("UPDATE metadata SET value=? WHERE key='settings'", (json.dumps(settings),))
+        proof = json.loads(db.execute("SELECT proof FROM taker_attempts WHERE filled!='0'").fetchone()[0])
+        proof['trades'][0].update(principal_usdc='1.18', fee_usdc='.02')
+        db.execute("UPDATE taker_attempts SET proof=? WHERE filled!='0'", (json.dumps(proof),))
+    moved, owned = [], []
+    for text in m6_journal.read_text().splitlines():
+        r = json.loads(text)
+        payload = r["data"]["payload"]
+        if r["kind"] == "sm_network_request":
+            payload["operation_id"] += "-m6"
+            payload["request_id"] += "-m6"
+            moved.append(r)
+        else:
+            if r["kind"] == "sm_prepared":
+                payload["body_hash"] += "-m6"
+            owned.append(r)
+    m6_journal.write_text("")
+    append(m6_journal, *owned, event("sm_m6_signal", {"event": "CANDIDATE",
+        "evidence": {"payload": {"id": "candidate-6", "root_id": "signal"}}}))
+    append(m4_journal, *moved)
+    m4 = collect(tmp_path)
+    m6 = collect(tmp_path, strategy="M6")
+    assert (m4["real_POST"], m4["confirmed_signals"]) == (3, 0)
+    assert (m6["real_POST"], m6["additional_POST"], m6["confirmed_signals"]) == (2, 1, 1)
+    assert m6["candidate_roots"] == 1 and not m6["candidate_roots_without_identified"]
+    assert m6["confirmed_per_admitted_rate"] == "1"
+    assert m6["signals"][0]["remaining_budget_usdc"] == "0.30"
+
+
+def test_m6_counts_precision_filter_and_pool_observation_gaps_separately(tmp_path):
+    path, _ = fixture(tmp_path, normal="M6_NO_LEGAL_FAK_QUANTITY", strategy="M6")
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE opportunities SET state='CUTOFF'")
+    root = path.parent.parent
+    with sqlite3.connect(root/"taker-pool.sqlite3") as db:
+        db.execute("CREATE TABLE market_openings (funder TEXT, epoch INTEGER, payload TEXT)")
+        db.executemany("INSERT INTO market_openings VALUES (?,?,?)", [
+            (FUNDER, EPOCH - 300, json.dumps({"settings": {M4_LEDGER: {}}, "status": "OPEN"})),
+            (FUNDER, EPOCH, json.dumps({"settings": {M6_LEDGER: {}}, "status": "OPEN"})),
+            (FUNDER, EPOCH + 300, json.dumps({"settings": {M6_LEDGER: {}}, "status": "SKIPPED",
+                                             "reason": "TAKER_POOL_T15_DEADLINE"})),
+        ])
+    m6 = rolling_coverage(tmp_path, {}, EPOCH+610, 1200, strategy="M6")
+    assert m6["identified_signals"] == m6["normal_filtered_signals"] == 1
+    assert m6["admitted_signals"] == m6["confirmed_signals"] == 0
+    assert m6["confirmed_per_admitted_rate"] is None
+    assert m6["outside_strategy_membership_epochs"] == [EPOCH - 600, EPOCH - 300]
+    assert m6["pool_skipped_markets"] == [{"epoch": EPOCH + 300, "reason": "TAKER_POOL_T15_DEADLINE"}]
+    assert m6["missing_markets"][0]["reason"] == "SKIPPED_WITHOUT_SIGNAL_OBSERVATION"
+
+
+def test_m6_missing_journal_is_observation_gap(tmp_path):
+    _, journal = fixture(tmp_path, strategy="M6", attempts=0)
+    journal.unlink()
+    m6 = collect(tmp_path, strategy="M6")
+    assert m6["status"] == "PARTIAL_REVIEW_REQUIRED"
+    assert m6["observation_gaps"] == [{"epoch": EPOCH, "reason": "M6_OWNED_SIGNAL_JOURNAL_UNAVAILABLE"}]
+    assert m6["confirmed_per_admitted_rate"] is None

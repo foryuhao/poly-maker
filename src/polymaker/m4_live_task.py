@@ -169,7 +169,13 @@ class TaskLedger(SinglePostM4LiveLedger):
             and fees is not None,
             "M4_TASK_IDENTITY_INVALID",
         )
-        previous = self.metadata(path)
+        self.settings = settings
+        snapshot = settings.taker_strategy
+        if snapshot is not None:
+            self.ledger_strategy = snapshot.ledger
+            order_budget, limit = self.risk_limits
+        require(identity.get("strategy") == self.ledger_strategy, "M4_STRATEGY_IDENTITY_REQUIRED")
+        previous = self.metadata(path, strategy=self.ledger_strategy)
         if not previous:
             # Reuse the stable base schema, but never run its no-fill recovery
             # validator against an existing task ledger with confirmed fills.
@@ -193,8 +199,7 @@ class TaskLedger(SinglePostM4LiveLedger):
                 "prepost_policy": self.sizing_policy,
             }
             require(
-                self.limit == 10
-                and self.order_budget == 5
+                (self.order_budget, self.limit) == self.risk_limits
                 and previous.get("identity") == expected
                 and previous.get("taker_fees") == fees,
                 "M4_TASK_RECOVERY_IDENTITY_CONFLICT",
@@ -223,6 +228,16 @@ class TaskLedger(SinglePostM4LiveLedger):
         except BaseException:
             self.close()
             raise
+
+    @property
+    def risk_limits(self):
+        policy = self.settings.taker_strategy
+        return (policy.signal_budget_usdc, policy.market_budget_usdc) if policy else super().risk_limits
+
+    @property
+    def direction_limit(self):
+        policy = self.settings.taker_strategy
+        return policy.direction_limit if policy else self.settings.max_opportunities_per_direction
 
     def attempts(self, key=None):
         with self.lock:
@@ -257,13 +272,13 @@ class TaskLedger(SinglePostM4LiveLedger):
     def initial_plan_price_allowed(self, price):
         return self.minimum_price <= price < 1
 
-    def root_policy_evidence(self):
+    def root_policy_evidence(self, row):
         return {}
 
     def plan_signal(self, key, tick, minimum, *, pricing_origin=None):
         row = self.row(key)
         anchor, tick = decimal(row["price"]), decimal(tick)
-        price = anchor + tick
+        price = self.initial_plan_price(anchor, tick)
         require(
             tick > 0 and anchor % tick == 0 and self.initial_plan_price_allowed(price),
             "M4_TAKER_ANCHOR_PLUS_TICK_INVALID",
@@ -285,12 +300,15 @@ class TaskLedger(SinglePostM4LiveLedger):
             "order_type": "FAK",
             "task_policy": self.task_policy,
             "max_posts_per_signed_order": 1,
-            **self.root_policy_evidence(),
+            **self.root_policy_evidence(row),
         }
         if pricing_origin is not None:
             plan["pricing_origin"] = pricing_origin
         self.fact("taker_plan", key, plan)
         return plan
+
+    def initial_plan_price(self, anchor, tick):
+        return anchor + tick
 
     def committed(self):
         return sum((decimal(r["spent"]) + decimal(r["reserved"]) for r in self.rows()), ZERO)
@@ -308,7 +326,7 @@ class TaskLedger(SinglePostM4LiveLedger):
                 return False
             reason = (
                 "SESSION_INSTRUCTION_LIMIT"
-                if self.instruction_slots() >= 2
+                if self.instruction_slots() >= 2 * self.direction_limit
                 else "M4_DIRECTION_OPPORTUNITY_LIMIT"
                 if direction_limit is not None and self.direction_slots(key) >= direction_limit
                 else None
@@ -841,7 +859,7 @@ class TaskMarket(SinglePostM4TakerMarket):
         if row["state"] == "OBSERVED" and not self.ledger.reserve(
             key,
             spendable=self.spendable(),
-            direction_limit=self.settings.max_opportunities_per_direction,
+            direction_limit=self.ledger.direction_limit,
         ):
             return
         plan = self.ledger.next_plan(key, minimum=e.meta.min_order_size, spendable=self.spendable())

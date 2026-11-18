@@ -18,7 +18,7 @@ class SinglePostM4LiveLedger(M4Ledger):
         if identity.get('settings_hash') != settings.fingerprint:
             raise ValueError('M4_LIVE_LEDGER_SETTINGS_CONFLICT')
         self.settings, self.fees = settings, fees
-        previous = self.metadata(path)
+        previous = self.metadata(path, strategy=self.ledger_strategy)
         if self.is_taker and (fees is None or previous.get('taker_fees', fees) != fees):
             raise ValueError('M4_TAKER_FEES_CHANGED_OR_UNAVAILABLE')
         super().__init__(path, identity, **kwargs)

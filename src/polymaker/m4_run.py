@@ -143,7 +143,8 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
     if live:
         source_hashes.update({name: hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()
                              for name in ('m4_live_config.py', 'm4_live_http.py', 'm4_live_taker.py',
-                                          'm4_live_startup.py', 'm4_live_halt.py', 'execution/taker_fees.py')})
+                                          'm4_live_startup.py', 'm4_live_halt.py', 'execution/taker_fees.py',
+                                          'taker_pool.py', 'taker_runner.py')})
     try:
         if live:
             config = Config.load(str(project/'config/m4-live'))
@@ -174,6 +175,7 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                     active_path=lambda: ledger.path if ledger else None), name='m4-modeled-resolution')
             while not stop.is_set() and not control.inhibited():
                 settings = configured_settings
+                opening = opening_account = account_began = m6_settings = None
                 if live:
                     prepared = await startup.prepare(configured_settings, reads_type, config)
                     if prepared is None:
@@ -183,6 +185,25 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                     server, sent, received = prepared.clock
                     epoch = int(slug.rsplit('-', 1)[1])
                     funder = reads.gateway.funder.lower()
+                    if ((project/'config/m4-live/strategies.toml').exists()
+                            or (root/'taker-pool.sqlite3').exists()):
+                        from polymaker.taker_runner import prepare_opening
+                        from polymaker.m4_types import M6_LEDGER
+                        opening, opening_account, account_began = await prepare_opening(
+                            project, root, prepared, control)
+                        if opening:
+                            m4_settings = opening.settings(STRATEGY)
+                            if (prepared.startup or {}).get('recovery'):
+                                if m4_settings is not None and settings != m4_settings:
+                                    raise ValueError('TAKER_POOL_M4_RECOVERY_SETTINGS_CONFLICT')
+                            elif m4_settings is not None:
+                                settings = m4_settings
+                                identity = {**identity, 'settings_hash': settings.fingerprint}
+                            m6_settings = opening.settings(M6_LEDGER)
+                            if settings.execution_revision != 'm4-taker-budget-v1':
+                                raise ValueError('TAKER_POOL_REQUIRES_M4_BUDGET_TRANSPORT')
+                            if control.inhibited():
+                                return {'status': 'STOP_CONFIRMATION_REQUIRED', 'live': live}
                 else:
                     server, sent, received = await api.clock()
                     epoch = int(server//300)*300
@@ -252,7 +273,13 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                                 baseline_fill_model=None if live else BASELINE_FILL_POLICY)
                         if trial:
                             trial.bind(ledger, slug)
-                        feed = M4Feed(meta, RDPObiConfig(), proxy=config.proxy if live else None)
+                        feed_type, options = M4Feed, {}
+                        if m6_settings is not None:
+                            from polymaker.taker_runner import SharedTakerFeed
+                            feed_type, options = SharedTakerFeed, {'m6_settings': m6_settings}
+                        feed = feed_type(meta, RDPObiConfig(), proxy=config.proxy if live else None,
+                                         price_risk=settings.live_taker_price_risk if live else None,
+                                         taker_strategy=settings.taker_strategy if live else None, **options)
                         if live:
                             reads.feed = feed
                         else:
@@ -273,6 +300,8 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                             'source_sha256': source_hashes,
                             'state_path': str(path), 'recovery': recovering, 'fill_tracking': 'NOT_TRACKED',
                             'market_end_actions': 'PLATFORM_MANAGED'})
+                        if opening:
+                            executor.record('sm_taker_pool_opening', opening.payload)
                         def record_signal(row, executor=executor):
                             executor.record('sm_m4_signal', row)
                             return executor.journal.ready
@@ -284,8 +313,16 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                             from polymaker.m4_live_taker import M4TakerMarket
                             market_type = FirstFillMarket if trial else M4TakerMarket
                         market = market_type(executor, settings, stop, public_api=api,
+                            **({'opening': opening} if opening and settings.execution_revision == 'm4-taker-budget-v1' else {}),
                             display=lambda value: atomic_json(root/'latest.json', value))
-                        clean = await market.run()
+                        if opening_account is not None and hasattr(market, 'opening'):
+                            market.account, market.account_at = opening_account, account_began
+                            market.account_reason = None
+                        if m6_settings is None:
+                            clean = await market.run()
+                        else:
+                            from polymaker.taker_runner import run_markets
+                            clean = await run_markets(market, opening, feed, root, Executor, control)
                     finally:
                         try:
                             if feed:
@@ -369,6 +406,15 @@ def main():
             'new_market_baseline_fill_model': None if live else BASELINE_FILL_POLICY,
             'data_root': str(paths(args.project_dir, live)),
             'inhibited': StopControl(args.project_dir, live=live).inhibited(), 'network_requests': 0}
+        if live and (args.project_dir/'config/m4-live/strategies.toml').exists():
+            from polymaker.m4_types import M6_LEDGER
+            from polymaker.taker_pool import POLICY, membership
+            from polymaker.taker_runner import strategy_settings
+            enabled = membership(args.project_dir)
+            result['taker_pool'] = {'policy': POLICY, 'enabled': enabled,
+                'available_strategy_settings': {
+                    k: strategy_settings(args.project_dir, k, settings).model_dump(mode='json')
+                    for k in (STRATEGY, M6_LEDGER)}}
     else:
         result = asyncio.run(run(args.project_dir, live=live, once=args.once,
                                  until_first_fill=args.until_first_fill))

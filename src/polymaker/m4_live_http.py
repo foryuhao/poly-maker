@@ -123,7 +123,7 @@ class M4LiveClobClient(ExecutionClobClient):
             ledger.validate_attempt(saved)
             used = ledger.budget_used(row['id']) if cash_target else Decimal(row['spent'])
             if (saved['started'] or saved['state'] != 'PREPARED'
-                    or used+Decimal(plan['planned_cost_usdc']) > 5
+                    or used+Decimal(plan['planned_cost_usdc']) > getattr(ledger, 'order_budget', 5)
                     or (not cash_target and Decimal(row['filled'])+Decimal(plan['quantity'])
                         > Decimal(ledger.root_plan(row['id'])['quantity']))
                     or (cash_target and ledger.unresolved(row['id']))):
@@ -139,7 +139,7 @@ class M4LiveClobClient(ExecutionClobClient):
                 and Decimal(str(attempt.quote.price)) == Decimal(plan['limit_price'])
                 and Decimal(str(attempt.quote.size)) == Decimal(plan['quantity'])
                 and all_in_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
-                    == Decimal(plan['planned_cost_usdc']) <= 5
+                    == Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5)
                 and attempt.maximum == Decimal(plan['commitment_usdc']) <= ledger.limit
                 and ledger.committed() <= ledger.limit)
 
@@ -169,7 +169,7 @@ class M4LiveGateway(ExecutionGateway):
             plan = ledger.plan(attempt.quote.window_id)
             principal = attempt.principal_limit
             _require(all_in_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
-                     == Decimal(plan['planned_cost_usdc']) <= 5
+                     == Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5)
                      and gross_risk_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
                      == Decimal(plan['commitment_usdc']), 'M4_TAKER_FEE_RESERVE_CHANGED')
             attempt.entry_execution, attempt.order_type = 'taker', 'FAK'

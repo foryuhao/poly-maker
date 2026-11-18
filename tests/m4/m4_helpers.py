@@ -86,9 +86,9 @@ def send(book, i, price='.70', token='1', state='UNKNOWN'):
     book.outcome(row['id'], state)
 
 
-def fixture_feed(price='.70'):
+def fixture_feed(price='.70', *, price_risk=None):
     old, clock, rows = feed_fixture()
-    feed = M4Feed(old.meta, old.cfg, monotonic=old.monotonic, wall=old.wall)
+    feed = M4Feed(old.meta, old.cfg, monotonic=old.monotonic, wall=old.wall, price_risk=price_risk)
     feed.verify_ticks({t:b.tick for t,b in old.books.items()})
     feed.connect()
     for r in rows:
