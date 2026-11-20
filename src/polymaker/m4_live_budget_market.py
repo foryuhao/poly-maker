@@ -11,13 +11,22 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from polymaker.domain import MarketMeta, TokenMeta
-from polymaker.m4_live_budget import BudgetLedger
+from polymaker.m4_live_budget import (
+    FAK_BUY_MIN_PRINCIPAL,
+    FAK_BUY_MINIMUM_POLICY,
+    BudgetLedger,
+    minimum_fak_buy_ok,
+)
 from polymaker.m4_live_budget_reconcile import reconcile_owned
-from polymaker.m4_live_config import M4LiveSettings, all_in_cost
+from polymaker.m4_live_config import M4LiveSettings, all_in_cost, gross_risk_cost
 from polymaker.m4_live_numeric import age_us, budget_quantity, install_live_clock_boundaries
-from polymaker.m4_live_pricing import BOOT_ID, WAIT_US, origin, quote_valid, signal_age
-from polymaker.m4_live_task import TERMINAL_TASKS, TaskMarket, minimum_order_ok
+from polymaker.m4_live_price_band import (
+    ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND,
+)
+from polymaker.m4_live_pricing import BOOT_ID, WAIT_US, origin, quote_valid, rejected_price_band_valid, signal_age
+from polymaker.m4_live_task import TERMINAL_TASKS, TaskMarket
 from polymaker.m4_state import decimal
+from polymaker.m4_types import M4_LEDGER, M21_LEDGER, M421_LEDGER, TAKER_LEDGER_IDS
 from polymaker.rdp_sm_network import NetworkHealth
 
 
@@ -44,7 +53,8 @@ class BudgetMarket(TaskMarket):
                 if now - self.last_heartbeat >= self.settings.heartbeat_sec:
                     self.last_heartbeat = now
                     self.heartbeat()
-                e.drain_network_events()
+                if self.account_owner is None:
+                    e.drain_network_events()
                 await asyncio.sleep(.01)
             await self.drain()
             await self.recycle_after_cutoff()
@@ -66,9 +76,13 @@ class BudgetMarket(TaskMarket):
                 e.fatal = e.fatal or "M4_MARKET_DRAIN_FAILED"
                 raise
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, opening=None, account_owner=None, **kwargs):
         super().__init__(*args, **kwargs)
-        install_live_clock_boundaries(self.feed)
+        self.opening, self.account_owner = opening, account_owner
+        if self.feed.m1.price_risk != self.settings.live_taker_price_risk:
+            raise ValueError("M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
+        if not self.ledger.signal_limited:
+            install_live_clock_boundaries(self.feed)
         self.read_jobs = {}
         self.read_after = {}
         self.read_failures = {}
@@ -90,6 +104,7 @@ class BudgetMarket(TaskMarket):
         client.m4_verified_tick_provider = self.verified_sdk_tick
         self.guard_counts = {}
         self.last_guard_log = {}
+        self.price_band_waits = {}
         self.archive_task = None
         self.last_archive = -float("inf")
         self.archive_cursor = 0
@@ -105,20 +120,35 @@ class BudgetMarket(TaskMarket):
             "m4_live_numeric.py",
             "m4_live_pricing.py",
             "m4_live_http.py",
+            "m4_live_price_band.py",
+            "m4_live_config.py",
+            "m4_live_task.py",
+            "m4_state.py",
         )
         self.e.record(
             "sm_m4_budget_execution_policy",
             {
-                "target_all_in_usdc": "5",
+                "target_all_in_usdc": str(self.ledger.order_budget),
+                "taker_strategy": self.ledger.get("settings", {}).get("taker_strategy"),
                 "task_policy": self.ledger.task_policy,
                 "post_marketdata_policy": (
-                    "ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1" if self.ledger.dynamic_pricing
+                    "FAK_FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1" if self.ledger.signal_limited
+                    else "ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1" if self.ledger.dynamic_pricing
                     else "ADMITTED_FAK_FIXED_CAP_EXCHANGE_MATCH_V1"),
                 "pricing_policy": self.settings.execution.taker.pricing_policy,
-                "anchor_wait_sec": 10 if self.ledger.dynamic_pricing else None,
+                "anchor_wait_sec": 10 if self.ledger.dynamic_pricing and not self.ledger.signal_limited else None,
                 "amount_precision": "FAK_BUY_CENTS_SHARES_0_1_V1",
                 "remainder_policy": "LEGAL_ORDER_ONLY_QUOTE_CAPTURE_CENT_DUST_V1",
+                "fak_buy_minimum_policy": FAK_BUY_MINIMUM_POLICY,
+                "fak_buy_min_principal_usdc": str(FAK_BUY_MIN_PRINCIPAL),
                 "sdk_tick_policy": "OFFICIAL_VERIFIED_BOOK_TICK_V1",
+                "post_price_band_policy": (self.ledger.post_price_band or {}).get("policy", ANCHOR_PRICE_FLOOR),
+                "post_minimum_price": (self.ledger.post_price_band or {}).get("minimum"),
+                "post_maximum_price": (self.ledger.post_price_band or {}).get("maximum"),
+                "signal_anchor_price_filter": not bool(self.ledger.post_price_band),
+                "post_price_band_retry_policy": self.settings.post_price_band_retry_policy,
+                "post_price_band_source": (self.settings.live_taker_price_risk.plan_fields()["post_price_band_source"]
+                                           if self.settings.live_taker_price_risk else "SAVED_EXECUTION_SETTINGS"),
                 "source_sha256": {
                     name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                     for name in modules
@@ -128,6 +158,55 @@ class BudgetMarket(TaskMarket):
 
     def admission_allowed(self):
         return True
+
+    def entry_block(self):
+        return self.opening.entry_block(self.ledger.ledger_strategy) if self.opening else None
+
+    def account_cash(self):
+        owner = self.account_owner or self
+        if not owner.account_current():
+            return 0
+        cash = min(decimal(owner.account[k]) for k in ("official_balance_usd", "applicable_allowance_usd"))
+        return self.opening.strategy_cash(self.ledger.ledger_strategy, cash, self.elapsed()) if self.opening else cash
+
+    def account_current(self):
+        return self.account_owner.account_current() if self.account_owner else super().account_current()
+
+    def spendable(self):
+        return max(0, self.account_cash() - self.ledger.committed())
+
+    def signal_deadline_reached(self, opportunity):
+        now = self.e.monotonic()
+        if self.ledger.ledger_strategy in {M21_LEDGER, M421_LEDGER}:
+            return age_us(now, opportunity.order_deadline) >= 0
+        return now >= opportunity.order_deadline
+
+    def lifetime_block(self, opportunity, root):
+        if not self.ledger.signal_limited:
+            return None
+        if (root["pricing_origin"]["boot_id"] != BOOT_ID
+                or self.signal_deadline_reached(opportunity)):
+            return f"{self.ledger.signal_strategy}_SIGNAL_DEADLINE"
+        return self.feed.m1.active_reason((opportunity.episode_id,))
+
+    def expire_signal(self, opportunity, reason):
+        key = opportunity.episode_id
+        if self.ledger.filled_or_matched(key):
+            self.pending.pop(key, None)
+            return
+        root = self.ledger.root_plan(key)
+        lane = self.ledger.signal_strategy.lower()
+        wait = self.ledger.get(f"{lane}_execution_wait:" + key)
+        if wait and wait["reason"] == POST_PRICE_OUTSIDE_BAND and not (
+                self.ledger.attempts(key) or self.ledger.get("post_price_band_eligible:" + key)):
+            reason = POST_PRICE_OUTSIDE_BAND
+        elif wait and wait["reason"] == f"{self.ledger.signal_strategy}_NO_LEGAL_FAK_QUANTITY":
+            reason = wait["reason"]
+        if not self.ledger.row(key)["order_id"] and not self.ledger.unresolved(key):
+            self.ledger.finish(key, "CUTOFF", reason)
+            self.e.record(f"sm_{lane}_signal_finished", {"opportunity_id": key, "reason": reason,
+                                                   "wait": wait, "pricing_origin": root["pricing_origin"]})
+            self.pending.pop(key, None)
 
     def verified_sdk_tick(self, token_id):
         """Read the same officially verified tick as the final POST guard.
@@ -167,14 +246,31 @@ class BudgetMarket(TaskMarket):
                     )
                     if row is None:
                         continue
+                    if self.ledger.ledger_strategy == M421_LEDGER:
+                        sequence, source = self.feed.m1.provenance(row["id"])
+                        self.ledger.fact("m421_signal_order", row["id"], {"sequence": sequence, "source": source})
+                        self.ledger.set("m421_sequence:" + row["id"], sequence)
                     self.ledger.plan_signal(
                         row["id"],
                         self.feed.books[opportunity.token_id].tick,
                         self.e.meta.min_order_size,
                         **({"pricing_origin": origin(opportunity.signal_start_mono,
-                            self.e.monotonic(), self.elapsed())} if self.ledger.dynamic_pricing else {}),
+                            self.e.monotonic(), self.elapsed(),
+                            deadline=opportunity.order_deadline if self.ledger.signal_limited else None,
+                            ledger_strategy=self.ledger.ledger_strategy)}
+                           if self.ledger.dynamic_pricing else {}),
                     )
-                    self.pending[row["id"]] = opportunity
+                    if reason := self.entry_block():
+                        self.ledger.finish(row["id"], "SKIPPED", reason)
+                        self.e.record("sm_m4_live_signal", self.ledger.row(row["id"]))
+                        continue
+                    # An invalid initial cap is terminal under the new policy,
+                    # before account/network readiness can defer a first attempt.
+                    now, elapsed = self.e.monotonic(), self.elapsed()
+                    root = self.ledger.root_plan(row["id"])
+                    if not self.reject_initial_price_band(opportunity, now,
+                            signal_age(root, now, elapsed) if self.ledger.dynamic_pricing else 0, elapsed):
+                        self.pending[row["id"]] = opportunity
                     self.e.record("sm_m4_live_signal", self.ledger.row(row["id"]))
                 except ValueError as exc:
                     if str(exc) not in {
@@ -197,14 +293,20 @@ class BudgetMarket(TaskMarket):
     def guard(self, opportunity, quote=None, *, native_order_id=None):
         e, key = self.e, opportunity.episode_id
         with self.feed.lock:
+            if self.ledger.price_band_abandonment(key):
+                self.guard_reason = self.ledger.price_band_stop_reason
+                self.guard_results[key] = (self.guard_reason, 0)
+                return False
             row, plan = self.ledger.row(key), self.ledger.plan(key)
+            root = self.ledger.root_plan(key)
             book, now = self.feed.books[opportunity.token_id], e.monotonic()
-            pricing_reason = None
-            if self.ledger.dynamic_pricing:
-                root = self.ledger.root_plan(key)
+            entry_block = self.entry_block()
+            pricing_reason = entry_block or self.lifetime_block(opportunity, root)
+            if self.ledger.dynamic_pricing and pricing_reason is None:
                 captured_elapsed = self.elapsed()
                 age = signal_age(root, now, captured_elapsed)
-                if quote is None and not row["order_id"] and not self.ledger.unresolved(key):
+                if (quote is None and not row["order_id"] and not self.ledger.unresolved(key)
+                        and self.entry_window_open()):
                     pricing_reason = self.select_pricing(opportunity, book, now, age, captured_elapsed)
                     plan = {**self.ledger.plan(key), "limit_price": str(self.ledger.selected_price(key))}
                 elif (quote is not None and plan.get("pricing", {}).get("stage") == "ANCHOR"
@@ -217,15 +319,13 @@ class BudgetMarket(TaskMarket):
                 queued.append(self.feed.m1_processing_received)
             age = age_us(now, min(queued)) if queued else 0
             price = decimal(plan["limit_price"])
+            signed_price = decimal(quote.price) if quote is not None else price
+            band_allowed = self.ledger.post_price_allowed(signed_price, root)
+            if not band_allowed and pricing_reason != POST_PRICE_OUTSIDE_BAND:
+                self.ledger.record_price_band_wait(key, signed_price, plan.get("pricing", {}).get("stage", "ANCHOR"), root)
+                self.price_band_waits[key] = {"signed_limit": str(signed_price)}
             health = e.reads.network.snapshot()
-            cash = (
-                min(
-                    decimal(self.account[k])
-                    for k in ("official_balance_usd", "applicable_allowance_usd")
-                )
-                if self.account_current()
-                else 0
-            )
+            cash = self.account_cash()
             checks = [
                 ("M4_STOPPING", not self.stop.is_set() and not e.closed and not e.inhibited()),
                 (e.fatal or "M4_FATAL_EXECUTION_STATE", e.fatal is None),
@@ -236,16 +336,18 @@ class BudgetMarket(TaskMarket):
                     self.ledger.native_ready(key, native_order_id) if native_order_id else (
                         not row["started"]
                         and row["state"] in {"OBSERVED", "RESERVED", "PREPARED"}
-                        and not self.ledger.unresolved(key)
+                        and not self.ledger.unresolved(key) and not self.ledger.filled_or_matched(key)
                     ),
                 ),
                 (self.account_reason or "M4_ACCOUNT_SNAPSHOT_STALE", self.account_current()),
                 ("M4_ACCOUNT_BUDGET", self.ledger.committed() <= cash),
+                (POST_PRICE_OUTSIDE_BAND,
+                 band_allowed),
                 ("M4_ENTRY_WINDOW_ENDED", self.entry_window_open()
                  and not self.ledger.get("buy_closed") and not self.ledger.get("complete")),
                 (
                     "M4_POST_LATENCY_BUDGET",
-                    quote is None or self.initial_post_budget_available(opportunity),
+                    quote is None or self.ledger.signal_limited or self.initial_post_budget_available(opportunity),
                 ),
                 # This task was durably admitted from a valid signal. A FAK's
                 # immutable signed cap protects its execution price even when
@@ -254,6 +356,8 @@ class BudgetMarket(TaskMarket):
                 # gates again after signing/fsync; let the exchange match it.
                 ("M4_TAKER_TICK_UNVERIFIED",
                  self.feed.tick_verified.get(opportunity.token_id) == book.tick),
+                (f"{self.ledger.signal_strategy}_BEST_ASK_CHANGED_OR_STALE", not self.ledger.signal_limited or quote is None
+                 or (self.feed.m1.legal(book, now) and book.best_ask == signed_price)),
                 # Frozen cap stays fixed; a verified finer tick must not disable it.
                 (
                     "M4_TAKER_CAP_OFF_CURRENT_TICK",
@@ -262,13 +366,15 @@ class BudgetMarket(TaskMarket):
                     and book.tick <= price <= 1 - book.tick,
                 ),
                 ("M4_PREPARED_PRICE_CHANGED", quote is None or decimal(quote.price) == price),
+                ("M4_FAK_BUY_MINIMUM", quote is None
+                 or minimum_fak_buy_ok(price, decimal(quote.size))),
                 (
                     "M4_TASK_BUDGET",
                     quote is None
                     or self.ledger.budget_used(key) + all_in_cost(price, quote.size, plan["fees"])
-                    <= 5,
+                    <= self.ledger.order_budget,
                 ),
-                ("M4_SESSION_BUDGET", self.ledger.committed() <= 10),
+                ("M4_SESSION_BUDGET", self.ledger.committed() <= self.ledger.limit),
                 (health.reason, health.allowed),
             ]
             self.guard_reason = next((r for r, ok in checks if not ok), None)
@@ -276,10 +382,28 @@ class BudgetMarket(TaskMarket):
             self.guard_results[key] = (self.guard_reason, self.pending_input_age_ms)
             return self.guard_reason is None
 
+    def reject_initial_price_band(self, opportunity, now, age, elapsed):
+        key = opportunity.episode_id
+        root = self.ledger.root_plan(key)
+        if root.get("post_price_band_retry_policy") != ABANDON_FIRST_SIGNED_BAND:
+            return False
+        price = decimal(root["limit_price"])
+        if self.ledger.post_price_allowed(price, root):
+            return False
+        if not self.ledger.price_band_abandonment(key):
+            captured = self.pricing_capture(key, opportunity.token_id, None, now, age, elapsed, "INITIAL", price)
+            proof = self.ledger.abandon_price_band(key, captured)
+            self.e.record("sm_m4_signal_price_band_abandoned", proof)
+        return True
+
     def select_pricing(self, opportunity, book, now, age, elapsed):
         key = opportunity.episode_id
         root = self.ledger.root_plan(key)
-        stage = "BEST_ASK" if age >= WAIT_US else "ANCHOR"
+        # Also cover a restored task whose first check was interrupted/delayed.
+        # Never substitute a now-legal ask for its rejected original cap.
+        if self.reject_initial_price_band(opportunity, now, age, elapsed):
+            return POST_PRICE_OUTSIDE_BAND
+        stage = "BEST_ASK" if self.ledger.signal_limited or age >= WAIT_US else "ANCHOR"
         if age < 0:
             return "M4_SIGNAL_CLOCK_INVALID"
         if stage == "BEST_ASK" and not (
@@ -289,16 +413,65 @@ class BudgetMarket(TaskMarket):
         ):
             return "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK"
         price = decimal(book.best_ask if stage == "BEST_ASK" else root["limit_price"])
+        if not self.ledger.post_price_allowed(price, root):
+            self.ledger.record_price_band_wait(key, price, stage, root)
+            self.price_band_waits[key] = {"signed_limit": str(price), "stage": stage,
+                                         "signal_age_us": age}
+            if self.ledger.signal_limited:
+                self.remember_signal_wait(key, POST_PRICE_OUTSIDE_BAND, price, book.tick)
+            if (stage == "BEST_ASK" and root.get("post_price_band_retry_policy")
+                    in {ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND}):
+                captured = self.pricing_capture(key, opportunity.token_id, book, now, age, elapsed, stage, price)
+                if not rejected_price_band_valid(root, captured, opportunity.token_id):
+                    return "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK"
+                proof = self.ledger.abandon_price_band(key, captured)
+                self.e.record("sm_m4_signal_price_band_abandoned", proof)
+            return POST_PRICE_OUTSIDE_BAND
         qty = budget_quantity(price, self.ledger.order_budget - self.ledger.budget_used(key),
                               self.ledger.fees)
-        if not minimum_order_ok(price, qty):
+        if self.ledger.signal_limited:
+            while qty > 0 and (gross_risk_cost(price, qty, self.ledger.fees) > self.ledger.order_budget
+                               or qty * price % decimal(".01")):
+                qty -= decimal(".1")
+            if not minimum_fak_buy_ok(price, qty):
+                reason = f"{self.ledger.signal_strategy}_NO_LEGAL_FAK_QUANTITY"
+                self.remember_signal_wait(key, reason, price, book.tick)
+                return reason
+        if not minimum_fak_buy_ok(price, qty):
+            # A restored pre-fix RESERVED row may still hold a confirmed cash
+            # remainder below the exchange floor. Reclassify it without saving
+            # a quote; pending/UNKNOWN budget protections remain authoritative.
+            with self.ledger.lock, self.ledger.db:
+                self.ledger.refresh_totals(key)
             # Keep a potentially executable intent, but no durable price fact
             # is needed until there is a legal order to prepare at that ask.
             return "M4_REMAINDER_WAIT_LEGAL_REPRICE"
-        q = {"id": uuid4().hex, "opportunity_id": key, "token_id": opportunity.token_id,
+        q = self.pricing_capture(key, opportunity.token_id, book, now, age, elapsed, stage, price)
+        # Only selecting a new price requires a fresh book. Signing, fsync and
+        # native POST then use this immutable cap, regardless of queue backlog.
+        if not quote_valid(root, {**root, "pricing": q, "limit_price": q["limit_price"]},
+                           opportunity.token_id, q):
+            return "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK"
+        self.ledger.select_pricing(key, q)
+        wait_key = f"{self.ledger.signal_strategy.lower()}_execution_wait:" + key
+        if self.ledger.signal_limited and self.ledger.get(wait_key):
+            self.ledger.set(wait_key, None)
+        self.e.record("sm_m4_pricing_selected", q)
+        return None
+
+    def remember_signal_wait(self, key, reason, price, tick):
+        lane = self.ledger.signal_strategy.lower()
+        name = f"{lane}_execution_wait:" + key
+        item = {"opportunity_id": key, "reason": reason, "signed_limit": str(price), "tick": str(tick)}
+        if item != self.ledger.get(name):
+            self.ledger.set(name, item)
+            self.e.record(f"sm_{lane}_execution_wait", item)
+
+    def pricing_capture(self, key, token, book, now, age, elapsed, stage, price):
+        q = {"id": uuid4().hex, "opportunity_id": key, "token_id": token,
              "stage": stage, "signal_age_us": age, "captured_monotonic": now,
              "captured_elapsed_s": elapsed, "boot_id": BOOT_ID,
-             "limit_price": str(book.best_ask if stage == "BEST_ASK" else root["limit_price"])}
+             "limit_price": str(price)}
         if stage == "BEST_ASK":
             q.update(tick=str(book.tick), best_bid=str(book.best_bid), best_ask=str(book.best_ask),
                      connected=self.feed.connected, generation=self.feed.generation,
@@ -306,14 +479,7 @@ class BudgetMarket(TaskMarket):
                      verified_tick=str(self.feed.tick_verified.get(book.token_id)),
                      received_monotonic=book.received_mono, captured_wall=self.feed.wall(),
                      source_wall=book.source_time, reported_prices_agree=True)
-        # Only selecting a new price requires a fresh book. Signing, fsync and
-        # native POST then use this immutable cap, regardless of queue backlog.
-        if not quote_valid(root, {**root, "pricing": q, "limit_price": q["limit_price"]},
-                           opportunity.token_id, q):
-            return "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK"
-        self.ledger.select_pricing(key, q)
-        self.e.record("sm_m4_pricing_selected", q)
-        return None
+        return q
 
     def guard_failure(self, key):
         return self.guard_results.get(key, (None, 0))[0]
@@ -336,6 +502,8 @@ class BudgetMarket(TaskMarket):
                 return self.e.fatal
             if not self.entry_window_open():
                 return "M4_ENTRY_WINDOW_ENDED"
+            if self.ledger.signal_limited and self.signal_deadline_reached(opportunity):
+                return f"{self.ledger.signal_strategy}_SIGNAL_DEADLINE"
         return None
 
     def entry_retry_delay(self, key):
@@ -354,9 +522,16 @@ class BudgetMarket(TaskMarket):
 
     def schedule(self, opportunity):
         row = self.ledger.row(opportunity.episode_id)
+        if self.ledger.price_band_abandonment(row["id"]):
+            self.pending.pop(row["id"], None)
+            return
         if (self.e.fatal or self.ledger.get("buy_closed")
                 or row["state"] in TERMINAL_TASKS or self.stop.is_set() or self.e.inhibited()):
             return
+        if self.ledger.signal_limited and not row["order_id"] and not self.ledger.unresolved(row["id"]):
+            if reason := self.lifetime_block(opportunity, self.ledger.root_plan(row["id"])):
+                self.expire_signal(opportunity, reason)
+                return
         if not row["order_id"] and not self.entry_window_open():
             self.ledger.finish(row["id"], "CUTOFF", "M4_T240_RESIDUAL")
             return
@@ -364,7 +539,12 @@ class BudgetMarket(TaskMarket):
         # Queries use their own pacing. Known residuals are not delayed by a read backoff.
         delay = self.entry_retry_delay(row["id"])
         reason, input_age = self.guard_results.get(row["id"], (None, 0))
-        if reason == "M4_REMAINDER_WAIT_LEGAL_REPRICE":
+        if self.ledger.signal_limited and reason in {
+                f"{self.ledger.signal_strategy}_NO_LEGAL_FAK_QUANTITY",
+                POST_PRICE_OUTSIDE_BAND, "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK"}:
+            # Quote changes can restore eligibility within the original subsecond window.
+            delay = .01
+        elif reason in {"M4_REMAINDER_WAIT_LEGAL_REPRICE", POST_PRICE_OUTSIDE_BAND}:
             delay = max(delay, 0.5)
         elif reason == "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK":
             delay = max(delay, self.settings.retry_initial_sec)
@@ -386,6 +566,9 @@ class BudgetMarket(TaskMarket):
                         "reason": reason,
                         "pending_input_age_ms": input_age,
                         "count": self.guard_counts[reason],
+                        **({"post_price_band": self.ledger.root_plan(row["id"]).get("post_price_band"),
+                            **self.price_band_waits.get(row["id"], {})}
+                           if reason == POST_PRICE_OUTSIDE_BAND else {}),
                     },
                 )
 
@@ -399,7 +582,10 @@ class BudgetMarket(TaskMarket):
 
     def entry_retry_ready(self, row, now):
         key = row["id"]
-        if self.ledger.dynamic_pricing and not row["order_id"] and not self.ledger.unresolved(key):
+        if self.ledger.price_band_abandonment(key):
+            return False
+        if (self.ledger.dynamic_pricing and not self.ledger.signal_limited
+                and not row["order_id"] and not self.ledger.unresolved(key)):
             selected = self.ledger.get("pricing_selection:" + key)
             if (key not in self.pricing_due_woken
                     and (selected is None or selected["stage"] == "ANCHOR")
@@ -475,14 +661,13 @@ class BudgetMarket(TaskMarket):
         if row["state"] == "RESERVED" and (not was_ready or key not in self.pending):
             self.schedule(self.restored_opportunity(row))
 
-    async def advance_entries(self, now):
-        if self.e.fatal or self.ledger.get("buy_closed"):
-            return
+    def schedule_tick_refresh(self, now):
         if (
             self.public_api is not None
             and self.tick_task is None
             and now - self.last_tick_refresh >= 0.5
-            and self.entry_window_open()
+            and (self.entry_window_open() or (getattr(self.feed, "observe_until_market_close", False)
+                                             and self.elapsed() < self.settings.close_sec))
             and not self.stop.is_set()
             and not self.e.inhibited()
         ):
@@ -495,7 +680,20 @@ class BudgetMarket(TaskMarket):
             if tokens:
                 self.last_tick_refresh = now
                 self.tick_task = asyncio.create_task(self.refresh_ticks(tokens))
+
+    async def advance_entries(self, now):
+        if self.e.fatal or self.ledger.get("buy_closed") or getattr(self.feed, "transport_only", False) or getattr(self.feed, "execution_disabled", False):
+            return
+        self.schedule_tick_refresh(now)
         self.collect()
+        if self.ledger.signal_limited:
+            for key, opportunity in tuple(self.pending.items()):
+                row = self.ledger.row(key)
+                if row["state"] in TERMINAL_TASKS:
+                    self.pending.pop(key)
+                elif not row["order_id"] and not self.ledger.unresolved(key):
+                    if reason := self.lifetime_block(opportunity, self.ledger.root_plan(key)):
+                        self.expire_signal(opportunity, reason)
         ready = [
             r
             for r in self.ledger.rows()
@@ -507,6 +705,19 @@ class BudgetMarket(TaskMarket):
             and r["id"] not in self.posting_keys
             and self.entry_retry_ready(r, now)
         ]
+        if self.ledger.ledger_strategy == M421_LEDGER:
+            # Persist the oldest valid claim even while a legal quote is missing.
+            # An OBSERVED successor stays queued until the earlier claim releases.
+            heads = {}
+            for row in sorted(self.ledger.rows(), key=lambda row: self.ledger.get("m421_sequence:" + row["id"]) or 0):
+                if row["id"] in self.pending and row["state"] in {"OBSERVED", "RESERVED"}:
+                    heads.setdefault(row["outcome"], row)
+            for row in heads.values():
+                key = row["id"]
+                if row["state"] == "OBSERVED" and not self.ledger.direction_slots(key):
+                    self.ledger.reserve(key, spendable=self.spendable(), direction_limit=1)
+            ready = [row for row in ready if heads.get(row["outcome"], {}).get("id") == row["id"]
+                     and not self.ledger.direction_slots(row["id"])]
         if self.account_current():
             ready.sort(key=lambda r: (bool(r["posts"]), self.retry_after.get(r["id"], 0)))
             for row in ready[:max(0, 2 - len(self.post_jobs))]:
@@ -538,8 +749,19 @@ class BudgetMarket(TaskMarket):
         if self.stop.is_set() or self.e.inhibited():
             return
         now = self.e.monotonic()
+        if self.opening and self.account_owner is None and (
+                self.opening.epoch + self.elapsed() >= getattr(self, "_next_pool_release", 0)):
+            self.opening.pool.release(self.opening.funder, self.opening.epoch + self.elapsed())
+            self._next_pool_release = min(
+                (p["release_at"] for p in self.opening.payload["older"]
+                 if p["release_at"] > self.opening.epoch + self.elapsed()), default=float("inf"))
         # Cash refresh also runs independently from potentially slow owned-order reads.
-        if self.account_task is None and now - self.last_account >= self.settings.account_poll_sec:
+        if self.account_owner is not None:
+            self.account, self.account_at = self.account_owner.account, self.account_owner.account_at
+            self.account_reason = self.account_owner.account_reason
+            self.account_read_ms = self.account_owner.account_read_ms
+        if (self.account_owner is None and self.account_task is None
+                and now - self.last_account >= self.settings.account_poll_sec):
             self.last_account = now
             self.account_task = asyncio.create_task(self.refresh_account())
         if self.e.fatal:
@@ -548,7 +770,10 @@ class BudgetMarket(TaskMarket):
         elif self.elapsed() < self.settings.cutoff_sec:
             await self.advance_entries(now)
         else:
-            self.ledger.set("buy_closed", True)
+            if not self.ledger.get("buy_closed"):
+                self.ledger.set("buy_closed", True)
+            if not getattr(self.feed, "transport_only", False) and getattr(self.feed, "observe_until_market_close", False):
+                self.schedule_tick_refresh(now)
             await self.recycle_after_cutoff()
         attempts = self.ledger.attempts()
         offset = self.read_cursor % max(1, len(attempts))
@@ -564,13 +789,18 @@ class BudgetMarket(TaskMarket):
             ):
                 self.read_jobs[a["order_id"]] = asyncio.create_task(self.read_order(a["order_id"]))
                 self.read_cursor = (attempts.index(a) + 1) % len(attempts)
-        if self.archive_task is None and now - self.last_archive >= 5:
+        if self.account_owner is None and self.archive_task is None and now - self.last_archive >= 5:
             self.last_archive = now
             self.archive_task = asyncio.create_task(self.reconcile_archive())
 
     async def reconcile_archive(self):
         """Resume unresolved ended markets with a separate strictly read-only client."""
         paths = sorted(self.ledger.path.parent.glob("*.sqlite3"))
+        secondary_ledgers = {f"{name.lower()}-ledgers": identity for name, identity in TAKER_LEDGER_IDS.items()
+                             if identity != M4_LEDGER}
+        if self.ledger.ledger_strategy == M4_LEDGER and not getattr(self.e, "isolated_strategy", False):
+            for directory in secondary_ledgers:
+                paths += sorted((self.ledger.path.parent.parent / directory).glob("*.sqlite3"))
         if not paths:
             return
         paths = paths[self.archive_cursor :] + paths[: self.archive_cursor]
@@ -584,7 +814,8 @@ class BudgetMarket(TaskMarket):
             ):
                 continue
             try:
-                saved = BudgetLedger.metadata(path)
+                saved = BudgetLedger.metadata(path, strategy=secondary_ledgers.get(
+                    path.parent.name, self.ledger.ledger_strategy))
                 ended = int(
                     saved.get("market", {}).get("slug", "").rsplit("-", 1)[-1]
                 ) + 300 <= int(self.e.meta.slug.rsplit("-", 1)[-1])
@@ -679,7 +910,9 @@ class BudgetMarket(TaskMarket):
         super().finish_pending()
 
     async def recycle_after_cutoff(self):
-        if self.post_jobs or self.posting_keys:
+        if (self.post_jobs or self.posting_keys
+                or (getattr(self.feed, "observe_until_market_close", False)
+                    and not self.stop.is_set() and self.elapsed() < self.settings.close_sec)):
             return
         await super().recycle_after_cutoff()
 

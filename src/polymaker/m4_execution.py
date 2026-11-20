@@ -16,7 +16,7 @@ from polymaker.domain import Quote, Side
 from polymaker.m2_memory import recycle_idle_memory
 from polymaker.m4_config import STRATEGY
 from polymaker.m4_state import decimal
-from polymaker.m4_types import Opportunity
+from polymaker.m4_types import M21_LEDGER, M421_LEDGER, Opportunity, TakerPriceRisk, TakerStrategy
 from polymaker.maker_account import account_snapshot
 from polymaker.maker_retry import post_exception_rejection, rejection, uncertain_kind
 from polymaker.rdp_sm import _require
@@ -107,7 +107,10 @@ class M4Market:
         self.memory_recycle = None
 
         # The runner installs the same M4 detector in both modes before this engine.
-        if not getattr(self.feed.m1, "m4_only", False):
+        strategy = getattr(settings, "taker_strategy", None)
+        detector = ("m21_only" if strategy and strategy.ledger in {M21_LEDGER, M421_LEDGER} else
+                    "m6_only" if strategy and strategy.ledger != STRATEGY else "m4_only")
+        if not getattr(self.feed.m1, detector, False):
             raise ValueError("M4_DETECTOR_REQUIRED")
 
     def elapsed(self):
@@ -124,6 +127,10 @@ class M4Market:
         evidence = json.loads(row["evidence"])
         evidence.pop("elapsed_s", None)
         evidence["anchor_bid_price"] = decimal(evidence["anchor_bid_price"])
+        if evidence.get("price_risk") is not None:
+            evidence["price_risk"] = TakerPriceRisk(**evidence["price_risk"])
+        if evidence.get("taker_strategy") is not None:
+            evidence["taker_strategy"] = TakerStrategy(**evidence["taker_strategy"])
         opportunity = Opportunity(**evidence)
         _require(opportunity.episode_id == row["id"] and opportunity.token_id == row["token"]
                  and opportunity.anchor_bid_price == decimal(row["price"]), "M4_RETRY_RECOVERY_IDENTITY")
@@ -505,7 +512,7 @@ class M4Market:
         self.retry_after.clear()
 
     def heartbeat(self):
-        payload = {"strategy": STRATEGY, "slug": self.e.slug, "state": self.state,
+        payload = {"strategy": getattr(self.ledger, "ledger_strategy", STRATEGY), "slug": self.e.slug, "state": self.state,
             "elapsed_s": round(self.elapsed(), 1), "account_reason": self.account_reason,
             "signal_failure": self.feed.m1.failure, "reason": self.feed.m1.failure,
             "market_data_closed": self.feed_closed, "memory_recycle": self.memory_recycle,
@@ -516,6 +523,8 @@ class M4Market:
         observer = getattr(self.e.reads, 'fill_model', None)
         if observer is not None:
             payload['baseline_execution'] = observer.summary()
+        if getattr(self.feed, 'observe_until_market_close', False) and hasattr(self.feed, 'market_input_health'):
+            payload['market_input_health'] = self.feed.market_input_health()
         self.e.record("sm_m4_heartbeat", payload)
         self.display(payload)
 

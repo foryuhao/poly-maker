@@ -67,4 +67,6 @@ class M6Config(BaseModel):
 
     @classmethod
     def load(cls, project):
-        return cls.model_validate(tomllib.loads((Path(project)/"config/m6.toml").read_text(), parse_float=Decimal))
+        raw = tomllib.loads((Path(project)/"config/m6.toml").read_text(), parse_float=Decimal)
+        raw.pop("live_taker", None)
+        return cls.model_validate(raw)

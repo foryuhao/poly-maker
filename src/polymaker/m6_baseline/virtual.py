@@ -1,20 +1,17 @@
 """Real signing and pre-POST checks, with a permanently modeled POST endpoint."""
 from types import SimpleNamespace
 
-from eth_account import Account
-from py_clob_client_v2.clob_types import ApiCreds
-
 from polymaker.config import RDPSMConfig
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.m6_baseline.fill_model import POLICY, TouchFillModel
+from polymaker.m6_baseline.signing import M6Signer, virtual_creds
 from polymaker.rdp_sm_execution import ExecutionClobClient
 
 
 class VirtualClient(ExecutionClobClient):
-    def __init__(self, reads, ledger):
+    def __init__(self, reads, ledger, key):
         self.reads, self.ledger = reads, ledger
-        super().__init__('https://clob.polymarket.com', 137, key=Account.create().key.hex(),
-            creds=ApiCreds('virtual-only', 'dmlydHVhbA==', 'virtual-only'))
+        super().__init__('https://clob.polymarket.com', 137, key=key, creds=virtual_creds())
         self.known_ids, self.observed_open_rows = set(), {}
         self._pagination_failures = {}
         self.sm_config = RDPSMConfig(normal_entry_mode='m4_v2')
@@ -41,21 +38,31 @@ class VirtualClient(ExecutionClobClient):
 
 
 class VirtualGateway(ExecutionGateway):
-    def __init__(self, reads, ledger):
+    def __init__(self, reads, ledger, signer=None):
         super().__init__(SimpleNamespace(wallet=SimpleNamespace(data_api_host='https://data-api.polymarket.com'),
             execution=SimpleNamespace(rate_budget_fraction=1)))
-        self._client = VirtualClient(reads, ledger)
+        self.signer = signer or M6Signer()
+        self.owns_signer = signer is None
+        self._client = VirtualClient(reads, ledger, self.signer.key)
+
+    async def prepare(self, quotes, meta, tick_sizes):
+        return await self.signer.prepare(quotes, meta, tick_sizes)
+
+    def close(self):
+        super().close()
+        if self.owns_signer:
+            self.signer.close()
 
 
 class VirtualReads:
-    def __init__(self, feed, ledger, api):
+    def __init__(self, feed, ledger, api, *, signer=None):
         self.feed, self.api = feed, api
         policy = ledger.get('baseline_fill_model')
         if policy != POLICY:
             raise ValueError('M6_BASELINE_FILL_MODEL_UNSUPPORTED')
         self.fill_model = TouchFillModel(feed, ledger) if policy is not None else None
         feed.fill_model = self.fill_model
-        self.gateway = VirtualGateway(self, ledger)
+        self.gateway = VirtualGateway(self, ledger, signer)
         self.network = SimpleNamespace(
             snapshot=lambda: SimpleNamespace(allowed=feed.connected,
                 reason=None if feed.connected else 'WS_DISCONNECTED'),

@@ -124,6 +124,8 @@ class RepairPricePoint:
 
 
 class SessionFeed:
+    reader_backpressure_levels: tuple[int, int] | None = None
+
     def __init__(self, meta, cfg, *, monotonic=time.monotonic, wall=None, proxy=None, ba_cfg=None, opposite_ba_cfg=None,
                  ca_config=None, ca_log_path=None, ca_session_id=None, normal_entry_mode="ba_v1",
                  opposite_ba_execution=None, ca_pullback_config=None, m1_config=None, m1_log_path=None,
@@ -428,16 +430,20 @@ class SessionFeed:
                            not 0 <= now-self.last_transport_receipt <= 2*WS_HEARTBEAT_SEC):
                 reason = reason or "WS_TRANSPORT_STALE"
             if not repair and not repair_token and taker_buy_token is None:
-                if signal_cfg is not None:
-                    pair_skew = signal_cfg.max_pair_skew_ms
-                    source_skew_ms = abs(number(yes.source_time)-number(no.source_time))*1000
+                if not (math.isfinite(yes.source_time) and math.isfinite(no.source_time)):
+                    # M6 keeps missing source times at -inf until fresh depth arrives.
+                    reason = reason or "WS_SOURCE_CLOCK_INVALID"
                 else:
-                    pair_skew = self.cfg.max_pair_skew_ms
-                    # Preserve the existing OBI path; BA uses exact milliseconds.
-                    source_skew_ms = int(abs(yes.source_time-no.source_time))*1000
-                if (abs(yes.received_mono-no.received_mono)*1000 > pair_skew
-                        or source_skew_ms > pair_skew):
-                    reason = reason or "WS_PAIR_TIME_SKEW"
+                    if signal_cfg is not None:
+                        pair_skew = signal_cfg.max_pair_skew_ms
+                        source_skew_ms = abs(number(yes.source_time)-number(no.source_time))*1000
+                    else:
+                        pair_skew = self.cfg.max_pair_skew_ms
+                        # Preserve the existing OBI path; BA uses exact milliseconds.
+                        source_skew_ms = int(abs(yes.source_time-no.source_time))*1000
+                    if (abs(yes.received_mono-no.received_mono)*1000 > pair_skew
+                            or source_skew_ms > pair_skew):
+                        reason = reason or "WS_PAIR_TIME_SKEW"
             return PairSnapshot(
                 self.meta.condition_id,
                 self.generation,
@@ -507,6 +513,15 @@ class SessionFeed:
             finally:
                 self.m1_processing_received = None
 
+    def validate_receipt_clock(self, now, received_mono, received_wall):
+        if (not all(math.isfinite(v) for v in (now, received_mono, received_wall))
+                or received_mono > now
+                or (self.last_receipt is not None and received_mono < self.last_receipt)):
+            raise ValueError("WS_CLOCK_INVALID")
+        if (self.last_receipt is not None and self.last_wall is not None
+                and abs((received_wall - self.last_wall) - (received_mono - self.last_receipt)) > 2):
+            raise ValueError("WS_WALL_CLOCK_JUMP")
+
     def _apply(self, raw, *, received_mono=None, received_wall=None):
         """Only the consumer calls apply; SDK workers only call snapshot()."""
         received_mono = self.monotonic() if received_mono is None else received_mono
@@ -534,20 +549,7 @@ class SessionFeed:
                 if not self.connected:
                     raise ValueError("WS_REBUILD_REQUIRED")
                 now = self.monotonic()
-                if (
-                    not all(math.isfinite(v) for v in (now, received_mono, received_wall))
-                    or received_mono > now
-                    or self.last_receipt is not None
-                    and received_mono < self.last_receipt
-                ):
-                    raise ValueError("WS_CLOCK_INVALID")
-                if (
-                    self.last_receipt is not None
-                    and self.last_wall is not None
-                    and abs((received_wall - self.last_wall) - (received_mono - self.last_receipt))
-                    > 2
-                ):
-                    raise ValueError("WS_WALL_CLOCK_JUMP")
+                self.validate_receipt_clock(now, received_mono, received_wall)
                 rows = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
                 rows = rows if isinstance(rows, list) else [rows]
                 if not rows:
@@ -810,6 +812,8 @@ class SessionFeed:
             self.connect()
             await ws.send(json.dumps({"assets_ids": list(self.books), "type": "market"}))
             queue = asyncio.Queue(maxsize=2048)
+            high, low = self.reader_backpressure_levels or (0, 0)
+            reader_resume = asyncio.Event() if high else None
 
             async def reader():
                 received_count = 0
@@ -824,7 +828,12 @@ class SessionFeed:
                         self.invalidate("WS_QUEUE_OVERFLOW")
                         raise ValueError("WS_QUEUE_OVERFLOW") from exc
                     received_count += 1
-                    if self.reader_yield_every and received_count % self.reader_yield_every == 0:
+                    if reader_resume is not None and queue.qsize() >= high:
+                        # Stop pulling from the socket until the consumer
+                        # drains to the low-water mark.
+                        reader_resume.clear()
+                        await reader_resume.wait()
+                    elif self.reader_yield_every and received_count % self.reader_yield_every == 0:
                         # Opt-in fairness for public research burst capture. The
                         # default preserves existing services' scheduling.
                         await asyncio.sleep(0)
@@ -838,6 +847,8 @@ class SessionFeed:
                         if self.m1 is not None:
                             with self.lock:
                                 self.m1_pending_received.popleft()
+                    if reader_resume is not None and queue.qsize() <= low:
+                        reader_resume.set()
                     await asyncio.sleep(0)
 
             async def heartbeat():
@@ -863,13 +874,16 @@ class SessionFeed:
                     await asyncio.gather(*tasks, return_exceptions=True)
                     self.ws = None
 
+    def maintain_signals(self):
+        if self.m1 is not None:
+            with self.lock:
+                self.m1.tick()
+
     async def run(self):
         async def ca_maintenance():
             while not self.stop_event.is_set():
                 self.observe_ca("tick")
-                if self.m1 is not None:
-                    with self.lock:
-                        self.m1.tick()
+                self.maintain_signals()
                 await asyncio.sleep(.025)
 
         maintenance = asyncio.create_task(ca_maintenance(), name="signal-observe-timer") if self.ca or self.m1 else None

@@ -12,6 +12,12 @@ from polymaker.m4_frequency_signal import PARAMETERS
 
 CURRENT_MINIMUM_PRICE = Decimal('.20')
 LEGACY_MINIMUM_PRICE = Decimal('.60')
+LIVE_TAKER_PRICE_RISK_KEY = 'live_taker_price_risk'
+LIVE_TAKER_IDENTITY_KEY = 'live_taker_identity'
+
+
+def read_strategy_config(project):
+    return tomllib.loads((Path(project)/'config/m4.toml').read_text())
 
 
 def validated_minimum_price(value):
@@ -69,8 +75,12 @@ class M4Config(BaseModel):
     def load(cls, project):
         # Both modes load this exact file. Missing settings must not silently
         # fall back to a different strategy or an old M1 directory.
-        path = Path(project)/'config/m4.toml'
-        return cls.model_validate(tomllib.loads(path.read_text()))
+        raw = read_strategy_config(project)
+        # Live-only strategy risk is loaded separately by M4LiveSettings.
+        # It is never part of the baseline's saved contract or fingerprint.
+        raw.pop(LIVE_TAKER_PRICE_RISK_KEY, None)
+        raw.pop(LIVE_TAKER_IDENTITY_KEY, None)
+        return cls.model_validate(raw)
 
 
 STRATEGY = 'm4_frequency_v2_native_v1'

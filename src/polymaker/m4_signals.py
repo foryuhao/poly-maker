@@ -16,8 +16,10 @@ class M4LiveSignals:
     m4_only = True
     legal = legal
 
-    def __init__(self, feed, record=None):
+    def __init__(self, feed, record=None, *, price_risk=None, taker_strategy=None):
         self.feed, self.record = feed, record
+        self.price_risk = price_risk
+        self.taker_strategy = taker_strategy
         self.counts, self.events, self.source = Counter(), deque(maxlen=4096), {}
         self.failure = self.decision_reason = self.selected = None
         self.cfg = SimpleNamespace(mirror_complement_flow=False)
@@ -139,7 +141,9 @@ class M4LiveSignals:
                 opportunity = Opportunity(root, token,
                     'YES' if token == self.feed.meta.yes.token_id else 'NO',
                     candidate['price'], candidate['confirmed'], candidate['deadline'],
-                    candidate['support_id'], root, candidate['generation'])
+                    candidate['support_id'], root, candidate['generation'], price_risk=self.price_risk,
+                    taker_strategy=self.taker_strategy,
+                    market_id=self.feed.meta.condition_id if self.taker_strategy else None)
                 if self.opportunities.get(root) != opportunity:
                     self.opportunities[root] = opportunity
                     self.emit('OPPORTUNITY_IDENTIFIED', opportunity=asdict(opportunity))
@@ -179,11 +183,11 @@ class M4LiveSignals:
 
 
 class M4Feed(SessionFeed):
-    def __init__(self, *args, record=None, **kwargs):
+    def __init__(self, *args, record=None, price_risk=None, taker_strategy=None, **kwargs):
         kwargs['normal_entry_mode'] = 'm4_v2'
         super().__init__(*args, **kwargs)
         # SessionFeed's historic name denotes its event-validation port only.
-        self.m1 = M4LiveSignals(self, record)
+        self.m1 = M4LiveSignals(self, record, price_risk=price_risk, taker_strategy=taker_strategy)
         self.fill_model = None
         self.fill_observation_batch = None
 

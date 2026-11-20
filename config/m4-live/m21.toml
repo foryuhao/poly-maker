@@ -1,0 +1,13 @@
+version = "m21-endpoint-recovery-withdrawal-v1/raw-joint-endpoint-r1/p-1256b8aa9433"
+attribution = "M21"
+ledger = "m21_endpoint_coflow_v1"
+order_budget_usdc = 5
+session_budget_usdc = 10
+max_opportunities_per_direction = 1
+pricing_policy = "FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1"
+
+[price_risk]
+policy = "POST_SIGNED_LIMIT_BAND_V1"
+minimum = 0.50
+maximum = 0.95
+retry_policy = "WAIT_UNTIL_SIGNAL_DEADLINE_V1"

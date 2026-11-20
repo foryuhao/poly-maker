@@ -10,6 +10,8 @@
 # Actual debit may exceed 5 after improved-price extra shares (user accepted).
 # Market/cash admission still reserves worst-case debit and caps the market at 10.
 mode = "taker" # "maker" or "taker"
+# Require the strategy handoff for newly configured live Taker markets.
+require_opportunity_price_risk = true
 
 [taker]
 order_type = "FAK"
@@ -19,3 +21,4 @@ budget_policy = "LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1"
 # fresh same-token Best ask for every new FAK; UNKNOWN must first be resolved.
 pricing_policy = "ANCHOR_10S_THEN_BEST_ASK_V1"
 anchor_wait_sec = 10
+# Price risk is supplied by the strategy's Opportunity from config/m4.toml.

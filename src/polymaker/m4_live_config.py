@@ -9,25 +9,62 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from polymaker.execution.taker_fees import buy_amount_fee_reserve, fee_parameters
-from polymaker.m4_config import M4Config
+from polymaker.m4_config import LIVE_TAKER_IDENTITY_KEY, LIVE_TAKER_PRICE_RISK_KEY, M4Config, read_strategy_config
 from polymaker.m4_frequency_signal import PARAMETERS
+from polymaker.m4_live_price_band import (
+    ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR,
+    POST_SIGNED_LIMIT_BAND, WAIT_FOR_PRICE_BAND, configured_band,
+)
+from polymaker.m4_types import (
+    BEST_ASK_SIGNAL, CLOSED_SIGNED_LIMIT_BAND, M6_LEDGER, M21_LEDGER, M21_VERSION, M421_LEDGER, M421_VERSION,
+    WAIT_SIGNAL_BAND, TakerPriceRisk, TakerStrategy,
+)
 
 
 class TakerSettings(BaseModel):
-    model_config = ConfigDict(extra='forbid', frozen=True)
+    model_config = ConfigDict(extra='forbid', frozen=True, allow_inf_nan=False)
     order_type: Literal['FAK'] = 'FAK'
     max_anchor_slippage_ticks: int = Field(default=1, ge=1, le=1, strict=True)
     budget_policy: Literal['LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1'] = 'LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1'
-    pricing_policy: Literal['ANCHOR_FIXED_V1', 'ANCHOR_10S_THEN_BEST_ASK_V1'] = 'ANCHOR_FIXED_V1'
+    pricing_policy: Literal['ANCHOR_FIXED_V1', 'ANCHOR_10S_THEN_BEST_ASK_V1',
+                            'FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1'] = 'ANCHOR_FIXED_V1'
     anchor_wait_sec: Literal[10] = 10
+    price_band_policy: Literal['ANCHOR_PRICE_FLOOR_V1', 'POST_SIGNED_LIMIT_BAND_V1'] = ANCHOR_PRICE_FLOOR
+    post_minimum_price: Decimal = Field(default=Decimal('.50'), ge=0, lt=1)
+    post_maximum_price: Decimal = Field(default=Decimal('.95'), gt=0, le=1)
+    post_price_band_retry_policy: Literal[
+        'WAIT_UNTIL_T240_V1', 'ABANDON_ON_BEST_ASK_BAND_REJECTION_V1',
+        'ABANDON_ON_FIRST_SIGNED_LIMIT_BAND_REJECTION_V1'
+    ] = WAIT_FOR_PRICE_BAND
+
+    @model_validator(mode='after')
+    def price_band(self):
+        if self.post_minimum_price >= self.post_maximum_price:
+            raise ValueError('M4_POST_PRICE_BAND_INVALID')
+        if (self.price_band_policy == ANCHOR_PRICE_FLOOR
+                and (self.post_minimum_price != Decimal('.50')
+                     or self.post_maximum_price != Decimal('.95'))):
+            raise ValueError('M4_POST_PRICE_BAND_POLICY_REQUIRED')
+        if (self.post_price_band_retry_policy in {ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND}
+                and (self.price_band_policy != POST_SIGNED_LIMIT_BAND
+                     or self.pricing_policy != 'ANCHOR_10S_THEN_BEST_ASK_V1')):
+            raise ValueError('M4_BAND_ABANDON_REQUIRES_DYNAMIC_POST_BAND')
+        return self
 
     @model_serializer(mode='wrap')
     def historical_serialization(self, handler):
         value = handler(self)
+        if self.post_price_band_retry_policy == WAIT_FOR_PRICE_BAND:
+            # Preserve both pre-band and already-running band-market identities.
+            value.pop('post_price_band_retry_policy')
         # Preserve the exact saved settings and fingerprint of every old market.
         if self.pricing_policy == 'ANCHOR_FIXED_V1':
             value.pop('pricing_policy')
             value.pop('anchor_wait_sec')
+        if self.price_band_policy == ANCHOR_PRICE_FLOOR:
+            # Old saved settings/fingerprints must not acquire default policy fields.
+            for key in ('price_band_policy', 'post_minimum_price', 'post_maximum_price'):
+                value.pop(key)
         return value
 
 
@@ -38,8 +75,13 @@ class LiveExecutionSettings(BaseModel):
 
 
 class M4LiveSettings(M4Config):
+    strategy: Literal['m4-frequency-v2', 'm6-withdrawal-supported-v1.1', M21_VERSION, M421_VERSION] = 'm4-frequency-v2'
     execution_revision: Literal['m4-maker-v1', 'm4-taker-single-fak-v1', 'm4-taker-task-v1', 'm4-taker-budget-v1'] = 'm4-maker-v1'
     execution: LiveExecutionSettings = Field(default_factory=LiveExecutionSettings)
+    live_taker_price_risk: TakerPriceRisk | None = None
+    taker_strategy: TakerStrategy | None = None
+    order_budget_usdc: int | Decimal = 5
+    session_budget_usdc: int | Decimal = 10
 
     @model_validator(mode='after')
     def execution_identity(self):
@@ -49,7 +91,62 @@ class M4LiveSettings(M4Config):
         if (self.execution.taker.pricing_policy != 'ANCHOR_FIXED_V1'
                 and self.execution_revision != 'm4-taker-budget-v1'):
             raise ValueError('M4_DYNAMIC_PRICING_REQUIRES_BUDGET_TASK')
+        if (self.post_price_band is not None
+                and self.execution_revision != 'm4-taker-budget-v1'):
+            raise ValueError('M4_POST_PRICE_BAND_REQUIRES_BUDGET_TAKER')
+        if self.live_taker_price_risk is not None:
+            if self.execution.taker.model_fields_set & {
+                'price_band_policy', 'post_minimum_price', 'post_maximum_price', 'post_price_band_retry_policy'
+            }:
+                raise ValueError('M4_PRICE_RISK_CONFLICTING_SOURCES')
+            if self.execution.taker.pricing_policy not in {'ANCHOR_10S_THEN_BEST_ASK_V1', BEST_ASK_SIGNAL}:
+                raise ValueError('M4_BAND_ABANDON_REQUIRES_DYNAMIC_POST_BAND')
+        m6 = self.taker_strategy is not None and self.taker_strategy.ledger == M6_LEDGER
+        m21 = self.taker_strategy is not None and self.taker_strategy.ledger == M21_LEDGER
+        m421 = self.taker_strategy is not None and self.taker_strategy.ledger == M421_LEDGER
+        signal_limited = m6 or m21 or m421
+        if (m6 != (self.strategy == 'm6-withdrawal-supported-v1.1')
+                or m21 != (self.strategy == M21_VERSION)
+                or m421 != (self.strategy == M421_VERSION)
+                or signal_limited != (self.execution.taker.pricing_policy == BEST_ASK_SIGNAL)
+                or signal_limited != (self.post_price_band_retry_policy == WAIT_SIGNAL_BAND)
+                or (signal_limited and (
+                    self.live_taker_price_risk is None
+                    or m6 != (self.live_taker_price_risk.policy == CLOSED_SIGNED_LIMIT_BAND)))):
+            raise ValueError('TAKER_STRATEGY_PRICING_CONFLICT')
+        if (m21 or m421) and (self.live_taker_price_risk.minimum, self.live_taker_price_risk.maximum,
+                    self.max_opportunities_per_direction) != (Decimal('.50'), Decimal('.95'), 1):
+            raise ValueError('M21_LIVE_TAKER_LIMIT_CONFLICT')
+        if self.taker_strategy is not None and (
+                self.execution_revision != 'm4-taker-budget-v1' or self.live_taker_price_risk is None
+                or self.taker_strategy.version != self.strategy
+                or self.taker_strategy.signal_budget_usdc != self.order_budget_usdc
+                or self.taker_strategy.market_budget_usdc != self.session_budget_usdc
+                or self.taker_strategy.direction_limit != self.max_opportunities_per_direction):
+            raise ValueError('TAKER_STRATEGY_SETTINGS_CONFLICT')
+        if not m6 and (self.order_budget_usdc, self.session_budget_usdc) != (5, 10):
+            raise ValueError('M4_RISK_LIMIT_INVALID')
         return self
+
+    @model_serializer(mode='wrap')
+    def historical_serialization(self, handler):
+        value = handler(self)
+        if self.live_taker_price_risk is None:
+            value.pop(LIVE_TAKER_PRICE_RISK_KEY)
+        if self.taker_strategy is None:
+            value.pop('taker_strategy')
+        return value
+
+    @property
+    def post_price_band(self):
+        if self.live_taker_price_risk is not None:
+            return self.live_taker_price_risk.plan_fields()["post_price_band"]
+        return configured_band(self.execution.taker)
+
+    @property
+    def post_price_band_retry_policy(self):
+        return (self.live_taker_price_risk.retry_policy if self.live_taker_price_risk is not None
+                else self.execution.taker.post_price_band_retry_policy)
 
     @property
     def fingerprint(self):
@@ -57,18 +154,31 @@ class M4LiveSettings(M4Config):
         value = self.model_dump(mode='json')
         if self.execution.mode == 'maker':
             value.pop('execution')
-        return hashlib.sha256(json.dumps({'settings': value, 'signal': PARAMETERS},
+        signal = (self.taker_strategy.config_fingerprint if self.taker_strategy
+                  and self.taker_strategy.ledger in {M6_LEDGER, M21_LEDGER, M421_LEDGER} else PARAMETERS)
+        return hashlib.sha256(json.dumps({'settings': value, 'signal': signal},
                                         sort_keys=True).encode()).hexdigest()
 
     @classmethod
     def load(cls, project):
-        base = M4Config.load(project).model_dump(mode='json')
+        raw = read_strategy_config(project)
+        price_risk = raw.pop(LIVE_TAKER_PRICE_RISK_KEY, None)
+        raw.pop(LIVE_TAKER_IDENTITY_KEY, None)
+        base = M4Config.model_validate(raw).model_dump(mode='json')
         path = Path(project)/'config/m4-live/execution.toml'
-        execution = LiveExecutionSettings.model_validate(tomllib.loads(path.read_text())
-                    if path.exists() else {})
+        raw_execution = tomllib.loads(path.read_text()) if path.exists() else {}
+        # This is a config-file guard for new markets. Saved market settings
+        # already carry the resolved source and must round-trip unchanged.
+        required = raw_execution.pop('require_opportunity_price_risk', False)
+        if type(required) is not bool:
+            raise ValueError('M4_OPPORTUNITY_PRICE_RISK_REQUIREMENT_INVALID')
+        execution = LiveExecutionSettings.model_validate(raw_execution)
+        if required and execution.mode == 'taker' and price_risk is None:
+            raise ValueError('M4_OPPORTUNITY_PRICE_RISK_REQUIRED')
         base['execution_revision'] = ('m4-taker-budget-v1'
                                      if execution.mode == 'taker' else 'm4-maker-v1')
-        return cls.model_validate({**base, 'execution': execution})
+        return cls.model_validate({**base, 'execution': execution,
+                                   LIVE_TAKER_PRICE_RISK_KEY: price_risk if execution.mode == 'taker' else None})
 
 
 def validated_fees(raw, tokens):

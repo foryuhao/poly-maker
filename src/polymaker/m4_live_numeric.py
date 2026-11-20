@@ -1,6 +1,7 @@
 """Exact live-Taker arithmetic and clock boundaries; baseline is unaffected."""
 
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, getcontext
+from functools import lru_cache
 from types import MethodType
 
 from polymaker.domain import Side
@@ -19,11 +20,23 @@ def units(value):
     return decimal(value).quantize(MICRO, rounding=ROUND_HALF_UP)
 
 
+def _microseconds(value):
+    return int((decimal(value) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+_recent_float_clocks_us = lru_cache(maxsize=8192)(_microseconds)
+
+
 def age_us(now, then):
-    # Quantize epoch timestamps before subtracting: 2 ms must remain 2 ms.
-    return int((decimal(now) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP)) - int(
-        (decimal(then) * 1_000_000).to_integral_value(rounding=ROUND_HALF_UP)
-    )
+    # Several detectors compare the same frame and book clocks. Reuse the
+    # conversion only where multiplying a float's decimal spelling is exact
+    # in this context. Convert the two clocks independently before subtraction.
+    ctx = getcontext()
+    if ctx.prec >= 24 and ctx.Emin <= -324 and ctx.Emax >= 18 and not ctx.clamp:
+        left = _recent_float_clocks_us if type(now) is float and -1e12 < now < 1e12 else _microseconds
+        right = _recent_float_clocks_us if type(then) is float and -1e12 < then < 1e12 else _microseconds
+        return left(now) - right(then)
+    return _microseconds(now) - _microseconds(then)
 
 
 def fak_amounts_compatible(price, quantity):

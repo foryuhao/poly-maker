@@ -939,7 +939,7 @@ class ExecutionGateway:
                 raise
             raise GatewayReadError("trade history read failed") from exc
 
-    async def balance_allowance(self) -> dict[str, Any]:
+    async def balance_allowance(self, *, raise_on_error: bool = False) -> dict[str, Any]:
         """Collateral balance/allowance snapshot (for `doctor`)."""
         if self._client is None:
             return {}
@@ -955,10 +955,12 @@ class ExecutionGateway:
         try:
             return await self._io(_get)
         except Exception as exc:  # noqa: BLE001
+            if raise_on_error:
+                raise
             log.warning("balance_allowance_failed", err=str(exc))
             return {}
 
-    async def required_collateral_spenders(self, meta: MarketMeta) -> tuple[str, ...]:
+    async def required_collateral_spenders(self, meta: MarketMeta, *, raise_on_error: bool = False) -> tuple[str, ...]:
         """Resolve the exchange used by this client's signed BUY order path."""
         if self._client is None:
             return ()
@@ -978,6 +980,8 @@ class ExecutionGateway:
         try:
             return await self._io(_resolve)
         except Exception:  # noqa: BLE001 - unknown spender fails preflight closed
+            if raise_on_error:
+                raise
             return ()
 
     def _journal_write(self, kind: str, payload: Any, ts: float) -> None:
