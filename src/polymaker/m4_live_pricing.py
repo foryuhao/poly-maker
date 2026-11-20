@@ -5,7 +5,7 @@ from pathlib import Path
 from polymaker.m4_live_numeric import age_us
 from polymaker.m4_live_price_band import ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, price_in_band
 from polymaker.m4_state import decimal
-from polymaker.m4_types import BEST_ASK_SIGNAL
+from polymaker.m4_types import BEST_ASK_SIGNAL, M6_LEDGER, signal_lifetime_limit_us
 
 FIXED = "ANCHOR_FIXED_V1"
 DYNAMIC = "ANCHOR_10S_THEN_BEST_ASK_V1"
@@ -13,12 +13,12 @@ WAIT_US = 10_000_000
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 
 
-def origin(signal_mono, now, elapsed, *, deadline=None):
+def origin(signal_mono, now, elapsed, *, deadline=None, ledger_strategy=M6_LEDGER):
     age = age_us(now, signal_mono)
     if age < 0:
         raise ValueError("M4_SIGNAL_CLOCK_INVALID")
     lifetime = age_us(deadline, signal_mono) if deadline is not None else None
-    if lifetime is not None and not 0 < lifetime <= 750_000:
+    if lifetime is not None and not 0 < lifetime <= signal_lifetime_limit_us(ledger_strategy):
         raise ValueError("M6_SIGNAL_LIFETIME_INVALID")
     return {"policy": DYNAMIC if lifetime is None else BEST_ASK_SIGNAL,
             "wait_us": WAIT_US if lifetime is None else 0, "boot_id": BOOT_ID,
@@ -57,9 +57,11 @@ def quote_valid(root, plan, token, evidence=None):
         if age != q["signal_age_us"] or age < 0:
             return False
         start = root["pricing_origin"]
-        if start["policy"] == BEST_ASK_SIGNAL and not (
-                q["boot_id"] == start["boot_id"] and age < start["lifetime_us"] <= 750_000):
-            return False
+        if start["policy"] == BEST_ASK_SIGNAL:
+            ledger = (root.get("taker_strategy") or {}).get("ledger")
+            if not (q["boot_id"] == start["boot_id"]
+                    and age < start["lifetime_us"] <= signal_lifetime_limit_us(ledger)):
+                return False
         if q["stage"] == "ANCHOR":
             return start["policy"] == DYNAMIC and age < WAIT_US and price == decimal(root["limit_price"])
         tick, bid, ask = (decimal(q[k]) for k in ("tick", "best_bid", "best_ask"))

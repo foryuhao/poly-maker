@@ -31,6 +31,8 @@ def verify(bundle):
 
 
 def start(validation, *, min_epoch=None):
+    if (PROJECT / 'config/m9-m10-next-test.json').exists():
+        raise ValueError('LEGACY_ADDITIVE_FOLLOWER_RETIRED_USE_M9_M10_DIRECT_ENTRY')
     next_policy = PROJECT / 'config/m5-m6-m9-m10-next-test.json'
     if next_policy.exists():
         policy = read(next_policy)

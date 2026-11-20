@@ -15,7 +15,10 @@ from polymaker.m4_live_price_band import (
     ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR,
     POST_SIGNED_LIMIT_BAND, WAIT_FOR_PRICE_BAND, configured_band,
 )
-from polymaker.m4_types import BEST_ASK_SIGNAL, M6_LEDGER, WAIT_SIGNAL_BAND, TakerPriceRisk, TakerStrategy
+from polymaker.m4_types import (
+    BEST_ASK_SIGNAL, CLOSED_SIGNED_LIMIT_BAND, M6_LEDGER, M21_LEDGER, M21_VERSION,
+    WAIT_SIGNAL_BAND, TakerPriceRisk, TakerStrategy,
+)
 
 
 class TakerSettings(BaseModel):
@@ -72,7 +75,7 @@ class LiveExecutionSettings(BaseModel):
 
 
 class M4LiveSettings(M4Config):
-    strategy: Literal['m4-frequency-v2', 'm6-withdrawal-supported-v1.1'] = 'm4-frequency-v2'
+    strategy: Literal['m4-frequency-v2', 'm6-withdrawal-supported-v1.1', M21_VERSION] = 'm4-frequency-v2'
     execution_revision: Literal['m4-maker-v1', 'm4-taker-single-fak-v1', 'm4-taker-task-v1', 'm4-taker-budget-v1'] = 'm4-maker-v1'
     execution: LiveExecutionSettings = Field(default_factory=LiveExecutionSettings)
     live_taker_price_risk: TakerPriceRisk | None = None
@@ -99,10 +102,19 @@ class M4LiveSettings(M4Config):
             if self.execution.taker.pricing_policy not in {'ANCHOR_10S_THEN_BEST_ASK_V1', BEST_ASK_SIGNAL}:
                 raise ValueError('M4_BAND_ABANDON_REQUIRES_DYNAMIC_POST_BAND')
         m6 = self.taker_strategy is not None and self.taker_strategy.ledger == M6_LEDGER
+        m21 = self.taker_strategy is not None and self.taker_strategy.ledger == M21_LEDGER
+        signal_limited = m6 or m21
         if (m6 != (self.strategy == 'm6-withdrawal-supported-v1.1')
-                or m6 != (self.execution.taker.pricing_policy == BEST_ASK_SIGNAL)
-                or m6 != (self.post_price_band_retry_policy == WAIT_SIGNAL_BAND)):
+                or m21 != (self.strategy == M21_VERSION)
+                or signal_limited != (self.execution.taker.pricing_policy == BEST_ASK_SIGNAL)
+                or signal_limited != (self.post_price_band_retry_policy == WAIT_SIGNAL_BAND)
+                or (signal_limited and (
+                    self.live_taker_price_risk is None
+                    or m6 != (self.live_taker_price_risk.policy == CLOSED_SIGNED_LIMIT_BAND)))):
             raise ValueError('TAKER_STRATEGY_PRICING_CONFLICT')
+        if m21 and (self.live_taker_price_risk.minimum, self.live_taker_price_risk.maximum,
+                    self.max_opportunities_per_direction) != (Decimal('.50'), Decimal('.95'), 1):
+            raise ValueError('M21_LIVE_TAKER_LIMIT_CONFLICT')
         if self.taker_strategy is not None and (
                 self.execution_revision != 'm4-taker-budget-v1' or self.live_taker_price_risk is None
                 or self.taker_strategy.version != self.strategy
@@ -141,7 +153,7 @@ class M4LiveSettings(M4Config):
         if self.execution.mode == 'maker':
             value.pop('execution')
         signal = (self.taker_strategy.config_fingerprint if self.taker_strategy
-                  and self.taker_strategy.ledger == M6_LEDGER else PARAMETERS)
+                  and self.taker_strategy.ledger in {M6_LEDGER, M21_LEDGER} else PARAMETERS)
         return hashlib.sha256(json.dumps({'settings': value, 'signal': signal},
                                         sort_keys=True).encode()).hexdigest()
 

@@ -1,0 +1,70 @@
+{
+  "status": "PREPARED_NOT_STARTED",
+  "updated_beijing": "2026-11-14",
+  "authorization": "准备重新启动M9 10的信号测试，先不启动；先修改当前入口，再清除上次运行的日志。",
+  "forward_entry": "ops/m511_sim_forward.py",
+  "forward_scope": "m9-m10",
+  "enabled_strategies": [
+    "M9",
+    "M10"
+  ],
+  "excluded_strategies": [
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M11"
+  ],
+  "signal_variant": "m5-m6-m9-m10-density-v8",
+  "frequency_parameters": {
+    "M9": {
+      "round_seconds": 0.5,
+      "hold_seconds": 0.01,
+      "stable_recovery": ".20",
+      "support_ttl_seconds": 6,
+      "formation_seconds": 8,
+      "residual_fraction": ".95",
+      "seed_ex_ttl_seconds": 3,
+      "private_seed": true,
+      "seed_round_seconds": 0.5,
+      "seed_hold_seconds": 0.01,
+      "seed_stable_recovery": ".20",
+      "private_ex": true,
+      "ex_total_fraction": ".49",
+      "ex_bin_fraction": ".30",
+      "ex_resume_fraction": ".50"
+    },
+    "M10": {
+      "round_seconds": 0.5,
+      "hold_seconds": 0.01,
+      "stable_recovery": ".20",
+      "decay_fraction": ".99",
+      "recovery_fraction": ".60",
+      "ap_window_seconds": 0.5
+    }
+  },
+  "accepted_development_signals": {
+    "markets": 100,
+    "M9": 39,
+    "M10": 30,
+    "original_frequency_goal_met": false,
+    "pnl_validation_complete": false
+  },
+  "parameter_provenance": {
+    "selection_file": "research_outputs/analysis/m910_density_v8_20261113/chosen-selection-v8-r1.json",
+    "selection_sha256": "647516f5444109632a8d6927fc25c50acf382c3f3081cc67a66abdd9c792f108",
+    "frozen_parameter_file": "research_outputs/analysis/m910_density_v8_20261113/frozen-chosen-v8-r1/config/chosen-frequency-parameters.json",
+    "frozen_parameter_sha256": "6c53b0ee4cce7b5b305eb8fae205808652b30d7429fea3b3a822e397518f2650",
+    "active_parameters_equal_frozen_resolved_parameters": true
+  },
+  "execution_mode": "research/trade-through",
+  "per_order_budget_usdc": "5",
+  "long_run_requires_separate_start": true,
+  "patrols_or_timers_enabled": false,
+  "independent288_validation": "USER_STOPPED_AFTER_28_COMPLETE_MARKETS_AND_ONE_PARTIAL; NOT_A_PASS",
+  "previous_cycle_metrics_reused": false
+}

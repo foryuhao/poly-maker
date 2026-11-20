@@ -1,0 +1,19 @@
+{
+  "version": "m1223-public-raw-observation-r2",
+  "direct_trade_source": "ORIGINAL_TOKEN_MESSAGE_ONLY_NO_COMPLEMENTARY_VIEW",
+  "economic_trade_identity": "UNIQUE_MATCH_ID_OR_TRANSACTION_AND_FULL_TUPLE_WITH_REPETITION_AMBIGUOUS",
+  "book_freshness_max_ms": 200,
+  "source_age_max_ms": 500,
+  "source_future_tolerance_ms": 2,
+  "round_publication_lateness_max_ms": 50,
+  "per_token_coverage_bucket_ms": 250,
+  "pre_hit_quantity": "EXPLICIT_ANCHOR_QUANTITY_SOURCE_STRICTLY_EARLIER_THAN_HIT_SOURCE_TIMESTAMP",
+  "raw_order": "AVAILABLE_INPUT_SEQ_PARENT_ROW_ORDERED_DEPTH_SUBUPDATE",
+  "publication_boundary": "AFTER_ALL_CURRENT_RAW_PARENT_FRAME_INVALIDATIONS",
+  "reconstruction": "NEW_EVIDENCE_GENERATION_AFTER_INCOMPLETE_BOOK_SNAPSHOT_REBUILD",
+  "ordinary_healthy_snapshot": "KEEP_CURRENT_GENERATION_AND_ROOTS",
+  "shared_exchange_sequence_proven": false,
+  "ambiguous_or_missing_input": "UNKNOWN_NOT_ZERO_OR_SUCCESS",
+  "depth_quantity": "AGGREGATE_LEVEL_QUANTITY_NOT_NEW_ORDER_VOLUME_OR_PARTICIPANT_IDENTITY",
+  "quality_gates_relaxed_for_frequency": false
+}

@@ -44,3 +44,14 @@ def test_replay_keeps_strategy_and_market_accounting_separate(tmp_path):
         [pending] = report["pending_resolution_signals"]
         assert resolved["pnl_usdc"] == net and resolved["order_ids"] == ["order-1", "order-2"]
         assert pending["pnl_usdc"] is None and pending["task_id"] == resolved["task_id"]
+
+        subprocess.run([sys.executable, str(SCRIPT), "--project-dir", str(tmp_path), "--strategy", strategy,
+                        "--replay-dir", str(source), "--output-dir", str(output),
+                        "--market-window-start", str(EPOCH+300), "--market-window-end", str(EPOCH+3900)],
+                       check=True, capture_output=True, text=True)
+        scoped = json.loads((output/"analysis.json").read_text())
+        assert scoped["summary"]["market_window"] == {"window_start": EPOCH+300, "window_end": EPOCH+3900}
+        assert scoped["summary"]["pnl_status"] == "AWAITING_RESULTS"
+        assert scoped["summary"]["pending_cost_usdc"] == "0.51"
+        assert not scoped["resolved_signals"]
+        assert [row["epoch"] for row in scoped["pending_resolution_signals"]] == [EPOCH+300]

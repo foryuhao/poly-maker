@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import sqlite3
 import subprocess
 import time
@@ -20,20 +21,39 @@ from zoneinfo import ZoneInfo
 
 from polymaker.m4_control import atomic_json
 from polymaker.m4_live_price_band import (
-    ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, BEST_ASK_BAND_ABANDONED,
-    SIGNED_LIMIT_BAND_ABANDONED, POST_SIGNED_LIMIT_BAND, price_in_band,
+    ABANDON_BEST_ASK_BAND,
+    ABANDON_FIRST_SIGNED_BAND,
+    BEST_ASK_BAND_ABANDONED,
+    POST_SIGNED_LIMIT_BAND,
+    SIGNED_LIMIT_BAND_ABANDONED,
+    price_in_band,
 )
 from polymaker.m4_live_pricing import DYNAMIC, quote_valid, rejected_price_band_valid
-from polymaker.m4_types import BEST_ASK_SIGNAL, M6_LEDGER, TakerPriceRisk
 from polymaker.m4_taker_coverage import rolling_coverage
+from polymaker.m4_types import BEST_ASK_SIGNAL, M6_LEDGER, TAKER_LEDGER_IDS, TakerPriceRisk
+from polymaker.taker_pool import ADMISSION_CUTOFF_SEC
 
 PROJECT = Path(__file__).resolve().parents[1]
 LIVE = "polymaker-m4-live.service"
+M21_LIVE = "polymaker-m21-live.service"
+M21_PRODUCTION = "m21_production"
 TERMINAL = {"TERMINAL", "UNSENT"}
+HOUR_SEC = 3600
 
 
 def read_json(path, default=None):
     return json.loads(path.read_text()) if path.exists() else default
+
+
+def read_heartbeat(path, sample_clock):
+    try:
+        with path.open() as stream:
+            heartbeat = json.load(stream)
+            modified_at = os.fstat(stream.fileno()).st_mtime
+    except FileNotFoundError:
+        return {}, None, sample_clock()
+    sampled_at = sample_clock()
+    return heartbeat, sampled_at - modified_at, sampled_at
 
 
 def service_status(unit=LIVE):
@@ -61,11 +81,23 @@ def band_abandonment_valid(proof, root, row, owned, band, policy):
         return False
 
 
+def m21_root_id(root):
+    return root if root.startswith("M21:") else root.partition(":")[2]
+
+
+def age_stats(values):
+    ages = sorted(values)
+    return {"samples": len(ages), **({"p50_ms": ages[(len(ages)-1)//2]/1000,
+                                    "p95_ms": ages[(len(ages)-1)*95//100]/1000,
+                                    "max_ms": ages[-1]/1000} if ages else {})}
+
+
 def inspect_market(project, epoch, now=None, *, strategy="M4"):
     now = time.time() if now is None else now
     root = project / "research_outputs/m4_live"
-    secondary = strategy == "M6"
-    path = root / ("m6-ledgers" if secondary else "ledgers") / f"btc-updown-5m-{epoch}.sqlite3"
+    secondary = strategy != "M4"
+    lane = strategy.lower()
+    path = root / (f"{lane}-ledgers" if secondary else "ledgers") / f"btc-updown-5m-{epoch}.sqlite3"
     if not path.exists():
         return {"epoch": epoch, "record_status": "NO_SESSION", "complete": False,
                 "alerts": ["NO_SESSION_CHECK_STARTUP_AND_SERVICE"]}
@@ -78,8 +110,8 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
         meta = {r["key"]: json.loads(r["value"]) for r in db.execute("SELECT * FROM metadata")}
         if meta.get("identity", {}).get("mode") != "LIVE":
             raise ValueError("M4_LIVE_IDENTITY_REQUIRED")
-        if secondary and meta["identity"].get("strategy") != M6_LEDGER:
-            raise ValueError("M6_LIVE_IDENTITY_REQUIRED")
+        if secondary and meta["identity"].get("strategy") != TAKER_LEDGER_IDS[strategy]:
+            raise ValueError(f"{strategy}_LIVE_IDENTITY_REQUIRED")
         if meta.get("settings", {}).get("execution", {}).get("mode") != "taker":
             return {"epoch": epoch, "record_status": "LEGACY_NON_TAKER", "alerts": []}
         rows = [dict(r) for r in db.execute("SELECT * FROM opportunities ORDER BY rowid")]
@@ -91,13 +123,15 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
         band_abandonments = {r["identity"]: json.loads(r["payload"]) for r in
                              db.execute("SELECT * FROM facts WHERE kind='taker_price_band_abandonment'")}
         trades = [dict(r) for r in db.execute("SELECT * FROM taker_trade_evidence")]
-    journals = sorted((root / ("m6-journal" if secondary else "journal")).glob("*_" + meta["session_id"] + ".jsonl"))
+    journals = sorted((root / (f"{lane}-journal" if secondary else "journal")).glob("*_" + meta["session_id"] + ".jsonl"))
     if len(journals) != 1 or journals[0].is_symlink():
         raise ValueError("M4_JOURNAL_IDENTITY_UNAVAILABLE")
     candidates, opportunities, skipped = {}, {}, {}
     posts, responses, blocked, diagnostics, errors = [], [], [], Counter(), []
     network, latency = Counter(), []
     heartbeat, execution_policy, last_wall, parse_errors = {}, {}, None, 0
+    root_ends, quality, clock_rejects, accepted_clocks = {}, Counter(), [], {}
+    market_sessions, signal_ends = [], {}
     # Freeze the journal read boundary; the live writer keeps running untouched.
     with journals[0].open("rb") as stream:
         data = stream.read(journals[0].stat().st_size)
@@ -113,7 +147,7 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             parse_errors += 1
             continue
         last_wall = wall
-        if kind == ("sm_m6_signal" if secondary else "sm_m4_signal"):
+        if kind == f"sm_{lane}_signal":
             event = payload.get("event")
             if event == "CANDIDATE":
                 item = payload["evidence"]["payload"] if secondary else payload
@@ -123,6 +157,27 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
                 opportunities[opp["episode_id"]] = {"wall": wall, **opp}
             elif payload.get("reason"):
                 diagnostics[payload["reason"]] += 1
+            if strategy == "M21":
+                evidence = payload.get("evidence", payload.get("signal_evidence"))
+                if isinstance(evidence, dict):
+                    event_type, fact = evidence["event"], evidence["payload"]
+                    if event_type == "ROOT_ENDED":
+                        root_ends[m21_root_id(fact["id"])] = fact["reason"]
+                    elif event_type == "SIGNAL_ENDED":
+                        signal_ends[fact["id"]] = fact["reason"]
+                    elif event_type == "QUALITY_UNKNOWN":
+                        quality[fact["reason"]] += 1
+                    elif event_type == "LIVE_INPUT_CLOCK_REJECTION":
+                        clock_rejects.append(fact)
+                    occurred = record["data"].get("occurred_monotonic")
+                    if occurred is not None:
+                        for sample in (fact.get("last_trade"), fact.get("terminal_depth")):
+                            if isinstance(sample, dict):
+                                applied = sample["available"]
+                                accepted_clocks.setdefault((sample["frame"], sample["row"], sample["change"], applied), (
+                                    round((wall - occurred + applied - sample["source"]) * 1_000_000),
+                                    round((applied - sample["received"]) * 1_000_000),
+                                ))
         elif kind == "sm_m4_candidate_skipped":
             skipped[payload["opportunity"]["episode_id"]] = payload["reason"]
         elif kind == "sm_m4_native_post":
@@ -135,6 +190,9 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             heartbeat = payload
         elif kind == "sm_m4_budget_execution_policy":
             execution_policy = payload
+        elif kind == "sm_session" and strategy == "M21":
+            market_sessions.append({"wall": wall, **{key: payload.get(key) for key in (
+                "recovery", "signal_input_policy", "shared_frame_processing_policy")}})
         elif kind == "sm_network_request":
             network[str(payload.get("outcome"))] += 1
             if payload.get("duration_ms") is not None:
@@ -202,10 +260,19 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             continue
         price = Decimal(str(item["price"]))
         elapsed = item["wall"] - epoch
-        reason = ("PRICE_BELOW_FLOOR" if not post_band and price < Decimal(settings["minimum_price"])
-                  else "OUTSIDE_ENTRY_WINDOW" if not settings["start_sec"] <= elapsed < settings["cutoff_sec"]
-                  else "CANDIDATE_NOT_IDENTIFIED_REVIEW_EVIDENCE_LIFETIME")
+        if strategy == "M21":
+            reason = root_ends.get(m21_root_id(item.get("root_id", item["id"])),
+                                   "CANDIDATE_TERMINAL_EVIDENCE_UNAVAILABLE")
+        else:
+            reason = ("PRICE_BELOW_FLOOR" if not post_band and price < Decimal(settings["minimum_price"])
+                      else "OUTSIDE_ENTRY_WINDOW" if not settings["start_sec"] <= elapsed < settings["cutoff_sec"]
+                      else "CANDIDATE_NOT_IDENTIFIED_REVIEW_EVIDENCE_LIFETIME")
         candidate_review.append({"id": item["id"], "price": str(price), "elapsed_s": elapsed, "reason": reason})
+    first_posts = {}
+    if strategy == "M21":
+        for post in posts:
+            if post["order_id"] in submitted_ids:
+                first_posts.setdefault(post["opportunity_id"], post["wall"])
     signal_rows = []
     for row in rows:
         key, owned = row["id"], by_task[row["id"]]
@@ -241,13 +308,23 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             alerts.append("SIGNAL_UNPOSTED_WITH_LOCAL_PREPARATION_ERRORS")
         signal_rows.append({k: row[k] for k in
                             ("id", "outcome", "price", "state", "reason", "posts", "filled", "spent", "reserved")} |
-                           {"confirmed_fill": filled > 0, "additional_posts": max(0, len(sent)-1),
+                           {"confirmed_fill": filled > 0, "native_posts": len(sent),
+                            "additional_posts": max(0, len(sent)-1),
                             "price_band_abandonment": band_abandonments.get(key),
                             "remaining_cash_usdc": str(max(Decimal(0), signal_budget-spent)),
                             "unsigned_preparation_failures": len(local_errors),
                             "unsigned_preparation_error_reasons": dict(Counter(x.get("reason") for x in local_errors)),
                             "unresolved_order_ids": [a["order_id"] for a in unresolved],
                             "attempts": [{k: a[k] for k in ("order_id", "state", "started", "filled", "spent")} for a in owned]})
+        if strategy == "M21":
+            identified = opportunities.get(key, {}).get("wall")
+            first_post = first_posts.get(key)
+            signal_rows[-1].update(
+                identified_wall=identified, first_native_post_wall=first_post,
+                identified_to_first_post_ms=round((first_post-identified)*1000, 3)
+                if identified is not None and first_post is not None else None,
+                signal_evidence_ended_reason=signal_ends.get(m21_root_id(key)),
+            )
         for a in owned:
             if not a["started"]:
                 continue
@@ -274,10 +351,10 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             if secondary and (Decimal(plan["commitment_usdc"]) > signal_budget
                               or Decimal(plan.get("prior_spent_usdc", "0")) > 0
                               or plan.get("taker_strategy") != strategy_policy):
-                alerts.append("M6_SEND_POLICY_MISMATCH")
+                alerts.append(f"{strategy}_SEND_POLICY_MISMATCH")
     commitment = sum((Decimal(r["spent"]) + Decimal(r["reserved"]) for r in rows), Decimal(0))
     if commitment > market_budget:
-        alerts.append("M6_MARKET_RISK_OVER_LIMIT" if secondary else "MARKET_RISK_OVER_10")
+        alerts.append(f"{strategy}_MARKET_RISK_OVER_LIMIT" if secondary else "MARKET_RISK_OVER_10")
     directions = Counter(r["outcome"] for r in rows if r["posts"])
     if any(n > strategy_policy.get("direction_limit", 1) for n in directions.values()):
         alerts.append("DIRECTION_SLOT_OVER_LIMIT")
@@ -293,8 +370,25 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
         alerts.append("MARKET_BUY_HALTED")
     if now >= epoch + 330 and not complete:
         alerts.append("MARKET_CLOSE_NOT_COMPLETE")
+    production = {}
+    if strategy == "M21":
+        old = [row for row in clock_rejects
+               if row["reason"] == "EVENT_SOURCE_AGE" and row["source_age_us"] > 500_000]
+        production = {"signal_production": {
+            "candidate_exit_reasons": dict(Counter(c["reason"] for c in candidate_review)),
+            "quality_event_counts": dict(quality),
+            "clock_rejection_sample_counts": dict(Counter(row["reason"] for row in clock_rejects)),
+            "accepted_candidate_fact_source_age": age_stats(age for age, _ in accepted_clocks.values()),
+            "accepted_candidate_fact_app_queue": age_stats(queue for _, queue in accepted_clocks.values()),
+            "stale_source_rejection_age": age_stats(row["source_age_us"] for row in old),
+            "oldest_source_rejection": max(old, key=lambda row: row["source_age_us"], default=None),
+            "largest_stale_rejection_app_queue": max(old, key=lambda row: row["application_queue_us"], default=None),
+            "market_input_health": heartbeat.get("market_input_health"),
+            "sessions": market_sessions,
+        }}
     latency.sort()
     return {"epoch": epoch, "record_status": "AVAILABLE", "complete": complete,
+            **production,
             "settings": settings, "settings_hash": meta["identity"].get("settings_hash"),
             "ledger_path": str(path), "journal_path": str(journals[0]), "journal_bytes": len(data),
             "last_journal_wall": last_wall, "market_halt_reason": meta.get("market_halt_reason"),
@@ -323,9 +417,10 @@ def inspect_market(project, epoch, now=None, *, strategy="M4"):
             "fill_definition": "Local exact-owned-order CONFIRMED evidence; ACK/SETTLING are not fills"}
 
 
-def open_issue_epochs(state):
+def open_issue_epochs(state, strategy=None):
     return {issue["market_epoch"] for issue in state.get("open_issues", [])
             if issue.get("status") not in {"RESOLVED", "CLOSED", "COMPLETE"}
+            and (strategy is None or issue.get("strategy") == strategy)
             and type(issue.get("market_epoch")) is int}
 
 
@@ -340,45 +435,72 @@ def pending_epochs(state, markets):
 
 
 def collect(project, state_dir, control, now=None):
+    fixed_at = now
+    def sample_clock():
+        return time.time() if fixed_at is None else fixed_at
+
     now = time.time() if now is None else now
     current = int(now // 300) * 300
     state = read_json(state_dir / "agent-state.json", {})
     start = control["start_epoch"]
-    low = max(start, min(current-300, state.get("reviewed_through_epoch", start)))
-    epochs = (set(range(low, current+1, 300)) | set(state.get("pending_market_epochs", []))
-              | open_issue_epochs(state))
+    scope = control.get("review_scope", "full")
+    if scope not in {"operational", "hourly", M21_PRODUCTION}:
+        scope = "full"
+    m21_only = scope == M21_PRODUCTION
+    cursor = (state.get("m21_signal_reviewed_through_epoch", current-300) if m21_only
+              else state.get("reviewed_through_epoch", start))
+    low = max(start, min(current-300, cursor+300 if m21_only else cursor))
+    pending_key = "m21_pending_market_epochs" if m21_only else "pending_market_epochs"
+    epochs = (set(range(low, current+1, 300)) | set(state.get(pending_key, []))
+              | open_issue_epochs(state, "M21" if m21_only else None))
     markets = []
-    for epoch in sorted(epochs):
+    for epoch in (() if m21_only else sorted(epochs)):
         try:
             markets.append(inspect_market(project, epoch, now))
         except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error) as error:
             markets.append({"epoch": epoch, "record_status": "READ_ERROR", "error_type": type(error).__name__, "alerts": ["MARKET_AUDIT_READ_ERROR"]})
     root = project / "research_outputs/m4_live"
-    latest = read_json(root / "latest.json", {})
+    latest, heartbeat_age, heartbeat_sampled_at = read_heartbeat(root / "latest.json", sample_clock)
     startup = read_json(root / "startup-status.json", {})
+    next_preparations = {
+        label: row for label, epoch in (("current", current), ("following", current+300))
+        if (row := read_json(root / "next-market-preparations" / f"btc-updown-5m-{epoch}.json", {}))
+    }
     balance = read_json(project / "runtime/trading-control/m4-balance-observation.json", {})
-    service = service_status()
+    balance_sampled_at = sample_clock()
+    service = service_status(M21_LIVE) if m21_only else service_status()
     alerts = []
     if service.get("ActiveState") != "active":
         alerts.append("LIVE_SERVICE_NOT_ACTIVE")
-    heartbeat_age = now-(root / "latest.json").stat().st_mtime if (root / "latest.json").exists() else None
     if latest.get("slug") == f"btc-updown-5m-{current}" and (heartbeat_age is None or heartbeat_age > 35):
         alerts.append("LIVE_HEARTBEAT_STALE")
     elif latest.get("slug") != f"btc-updown-5m-{current}" and now-current > 30:
-        alerts.append("CURRENT_MARKET_NOT_OPEN_CHECK_STARTUP")
+        retrying_pool = (startup.get("status") == "RETRYING_TAKER_POOL_READ"
+                         and startup.get("slug") == f"btc-updown-5m-{current}"
+                         and now-current < ADMISSION_CUTOFF_SEC and now-startup.get("observed_at", 0) <= 35)
+        if not retrying_pool:
+            alerts.append("CURRENT_MARKET_NOT_OPEN_CHECK_STARTUP")
     if latest.get("signal_failure") or latest.get("reason"):
         alerts.append("LIVE_REPORTED_FAILURE_OR_HALT")
-    operational = control.get("review_scope") == "operational"
     history = {}
-    if not operational:
-        for key, strategy in (("rolling_12h", "M4"), ("rolling_12h_m6", "M6")):
+    if scope in {"hourly", "full"}:
+        hourly = scope == "hourly"
+        window_key = "rolling_1h" if hourly else "rolling_12h"
+        window_end = current if hourly else now
+        window_seconds = HOUR_SEC if hourly else 12 * HOUR_SEC
+        for suffix, strategy in (("", "M4"), ("_m6", "M6")):
+            key = window_key + suffix
             try:
-                history[key] = rolling_coverage(project, state, now, strategy=strategy)
+                history[key] = rolling_coverage(project, state, window_end, window_seconds, strategy=strategy)
             except (OSError, ValueError, KeyError, TypeError, ArithmeticError, sqlite3.Error) as error:
-                history[key] = {"strategy": strategy, "status": "READ_ERROR", "error_type": type(error).__name__}
-        history["price_band_observation"] = state.get("price_band_observation")
+                history[key] = {"strategy": strategy, "status": "READ_ERROR", "error_type": type(error).__name__,
+                                "window_start": window_end - window_seconds, "window_end": window_end,
+                                "window_seconds": window_seconds}
+        if not hourly:
+            history["price_band_observation"] = state.get("price_band_observation")
     pool_path = root / "taker-pool.sqlite3"
     shared = {}
+    decisions = []
     if pool_path.exists():
         try:
             with closing(sqlite3.connect(pool_path.resolve().as_uri()+"?mode=ro", uri=True, timeout=2)) as db:
@@ -388,39 +510,62 @@ def collect(project, state_dir, control, now=None):
                              for epoch, release_at, released_at, payload in db.execute(
                     "SELECT epoch,release_at,released_at,payload FROM market_openings WHERE epoch>=? ORDER BY epoch",
                     (min(epochs, default=current)-300,))]
-            m6_epochs = epochs | set(state.get("m6_pending_market_epochs", []))
-            have_m6 = {int(p.stem.rsplit("-", 1)[-1]) for p in (root / "m6-ledgers").glob("btc-updown-5m-*.sqlite3")}
-            expected_m6 = {item["epoch"] for item in decisions if M6_LEDGER in item["settings"]}
-            m6_markets = []
-            for epoch in sorted(m6_epochs & (have_m6 | expected_m6)):
-                try:
-                    m6_markets.append(inspect_market(project, epoch, now, strategy="M6"))
-                except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error) as error:
-                    m6_markets.append({"epoch": epoch, "record_status": "READ_ERROR",
-                                       "error_type": type(error).__name__, "alerts": ["M6_MARKET_AUDIT_READ_ERROR"]})
-            m6_latest_path = root / "m6-latest.json"
-            m6_latest = read_json(m6_latest_path, {})
-            m6_heartbeat_age = now-m6_latest_path.stat().st_mtime if m6_latest_path.exists() else None
-            current_opening = next((item for item in decisions if item["epoch"] == current), {})
-            if M6_LEDGER in current_opening.get("reserved", {}):
-                if m6_latest.get("slug") == f"btc-updown-5m-{current}":
-                    if m6_heartbeat_age is None or m6_heartbeat_age > 35:
-                        alerts.append("M6_HEARTBEAT_STALE")
-                    if m6_latest.get("signal_failure") or m6_latest.get("reason"):
-                        alerts.append("M6_REPORTED_FAILURE_OR_HALT")
-                elif now-current > 30:
-                    alerts.append("M6_CURRENT_MARKET_HEARTBEAT_MISSING")
-            shared = {"openings": decisions, "m6_markets": m6_markets,
-                      "m6_latest": m6_latest, "m6_heartbeat_age_sec": m6_heartbeat_age}
+            shared = {"openings": decisions}
         except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error) as error:
             shared = {"status": "READ_ERROR", "error_type": type(error).__name__}
+    if "openings" in shared or m21_only:
+        try:
+            current_opening = next((item for item in decisions if item["epoch"] == current), {})
+            for strategy in (("M21",) if m21_only else ("M6", "M21")):
+                lane = strategy.lower()
+                ledger = M6_LEDGER if strategy == "M6" else TAKER_LEDGER_IDS[strategy]
+                lane_epochs = epochs | set(state.get(f"{lane}_pending_market_epochs", []))
+                owned = {int(p.stem.rsplit("-", 1)[-1])
+                         for p in (root / f"{lane}-ledgers").glob("btc-updown-5m-*.sqlite3")}
+                expected = {item["epoch"] for item in decisions if ledger in item.get("settings", {})}
+                if strategy == "M21" and not m21_only and not (owned or expected):
+                    continue
+                lane_markets = []
+                for epoch in sorted(lane_epochs if m21_only else lane_epochs & (owned | expected)):
+                    try:
+                        lane_markets.append(inspect_market(project, epoch, now, strategy=strategy))
+                    except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error) as error:
+                        lane_markets.append({"epoch": epoch, "record_status": "READ_ERROR",
+                                             "error_type": type(error).__name__,
+                                             "alerts": [f"{strategy}_MARKET_AUDIT_READ_ERROR"]})
+                latest, heartbeat_age, sampled_at = read_heartbeat(root / f"{lane}-latest.json", sample_clock)
+                if ledger in current_opening.get("reserved", {}):
+                    if latest.get("slug") == f"btc-updown-5m-{current}":
+                        if heartbeat_age is None or heartbeat_age > 35:
+                            alerts.append(f"{strategy}_HEARTBEAT_STALE")
+                        if latest.get("signal_failure") or latest.get("reason"):
+                            alerts.append(f"{strategy}_REPORTED_FAILURE_OR_HALT")
+                    elif now-current > 30:
+                        alerts.append(f"{strategy}_CURRENT_MARKET_HEARTBEAT_MISSING")
+                shared.update({f"{lane}_markets": lane_markets, f"{lane}_latest": latest,
+                               f"{lane}_heartbeat_age_sec": heartbeat_age,
+                               f"{lane}_heartbeat_sampled_at": sampled_at})
+                if strategy == "M21" and scope in {"hourly", "full"}:
+                    try:
+                        history[window_key + "_m21"] = rolling_coverage(
+                            project, state, window_end, window_seconds, strategy="M21")
+                    except (OSError, ValueError, KeyError, TypeError, ArithmeticError, sqlite3.Error) as error:
+                        history[window_key + "_m21"] = {
+                            "strategy": "M21", "status": "READ_ERROR", "error_type": type(error).__name__,
+                            "window_start": window_end - window_seconds, "window_end": window_end,
+                            "window_seconds": window_seconds,
+                        }
+        except (ValueError, KeyError, TypeError, ArithmeticError, OSError, sqlite3.Error) as error:
+            shared.update(status="READ_ERROR", error_type=type(error).__name__)
     return {"observed_at": now, "bucket": int((now-20)//300), "previous_market_epoch": current-300,
-            "review_scope": "operational" if operational else "full",
+            "review_scope": scope,
             **history,
             "markets": markets, "live_service": service, "live_latest": latest,
-            "heartbeat_age_sec": heartbeat_age, "startup": startup, "balance": balance,
+            "heartbeat_age_sec": heartbeat_age, "heartbeat_sampled_at": heartbeat_sampled_at,
+            "startup": startup, "balance": balance,
+            **({"next_market_preparations": next_preparations} if next_preparations else {}),
             **({"shared_taker_pool": shared} if shared else {}),
-            "balance_observation_age_sec": now-balance["observed_at"] if "observed_at" in balance else None,
+            "balance_observation_age_sec": balance_sampled_at-balance["observed_at"] if "observed_at" in balance else None,
             "stop_markers": sorted(p.name for p in (project / "runtime/trading-control").glob("*stop*.json")),
             "alerts": alerts, "observation_mode": "LOCAL_READ_ONLY_NO_TRADING_API"}
 
@@ -443,8 +588,11 @@ def wake(project, state_dir, control, report, runner=subprocess.run):
                      or previously_requested_epoch >= report["previous_market_epoch"])):
             atomic_json(state_dir / "agent-state.json", state)
             return {"status": "COALESCED_WITH_PENDING_REVIEW"}
-        prompt_name = ("m4_taker_watch_operational_prompt.txt" if control.get("review_scope") == "operational"
-                       else "m4_taker_watch_prompt.txt")
+        prompt_name = {
+            "hourly": "m4_taker_watch_hourly_prompt.txt",
+            "operational": "m4_taker_watch_operational_prompt.txt",
+            M21_PRODUCTION: "m21_signal_watch_prompt.txt",
+        }.get(control.get("review_scope"), "m4_taker_watch_prompt.txt")
         prompt = (project / "ops" / prompt_name).read_text()
         prompt += f"\n本轮记录：{report['report_path']}\n最新索引：{state_dir / 'latest.json'}\n"
         result = runner([str(Path.home() / ".local/bin/codex"), "queue", "--thread", control["thread"],
@@ -486,11 +634,13 @@ def main():
         with (state_dir / "agent-state.lock").open("a+") as state_lock:
             fcntl.flock(state_lock, fcntl.LOCK_EX)
             state = read_json(state_dir / "agent-state.json", {})
-            state["pending_market_epochs"] = pending_epochs(state, report["markets"])
-            if "m6_markets" in report.get("shared_taker_pool", {}):
-                state["m6_pending_market_epochs"] = pending_epochs(
-                    {"pending_market_epochs": state.get("m6_pending_market_epochs", [])},
-                    report["shared_taker_pool"]["m6_markets"])
+            if control.get("review_scope") != M21_PRODUCTION:
+                state["pending_market_epochs"] = pending_epochs(state, report["markets"])
+            for lane in ("m6", "m21"):
+                markets = report.get("shared_taker_pool", {}).get(f"{lane}_markets")
+                if markets is not None:
+                    key = f"{lane}_pending_market_epochs"
+                    state[key] = pending_epochs({"pending_market_epochs": state.get(key, [])}, markets)
             atomic_json(state_dir / "agent-state.json", state)
         if not args.no_wake and read_json(state_dir / "control.json").get("enabled"):
             try:

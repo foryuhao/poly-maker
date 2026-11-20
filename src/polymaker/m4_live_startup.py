@@ -19,6 +19,8 @@ from polymaker.maker_public import VirtualPublicAPI
 from polymaker.rdp_sm_execution import _execution_identity
 
 STARTUP_ENTRY_POLICY = 'NEW_MARKET_BEFORE_T240_V1'
+NEXT_MARKET_PREPARATION_POLICY = 'NEXT_MARKET_T270_READ_ONLY_V1'
+NEXT_MARKET_PREPARATION_SEC = 270
 
 
 def elapsed_upper_us(clock, epoch):
@@ -66,6 +68,12 @@ class PreparedMarket:
     startup: dict | None = None
 
 
+@dataclass(frozen=True)
+class PrefetchedMarket:
+    meta: object
+    reads: object
+
+
 class PreparationStopped(Exception):
     pass
 
@@ -76,6 +84,7 @@ class LiveStartup:
         self.phase, self.slug, self.failures = 'clock', None, 0
         self.recovery_slug = None
         self.continue_market_faults = True
+        self.next_preparation = None
 
     def check_stop(self):
         if self.stop.is_set() or self.control.inhibited():
@@ -97,12 +106,103 @@ class LiveStartup:
                 await asyncio.wait_for(self.stop.wait(), min(.1, until-time.monotonic()))
         self.check_stop()
 
-    async def read(self, phase, operation, *args):
+    async def read(self, phase, operation, *args, **kwargs):
         self.check_stop()
         self.phase = phase
-        result = await operation(*args)
+        result = await operation(*args, **kwargs)
         self.check_stop()
         return result
+
+    def schedule_next_preparation(self, market, configured, reads_type, config):
+        self.next_preparation = asyncio.create_task(
+            self.prefetch_next(market, configured, reads_type, config),
+            name='m4-next-market-preparation')
+
+    async def take_next_preparation(self):
+        task, self.next_preparation = self.next_preparation, None
+        if task is None:
+            return None
+        if not task.done():
+            task.cancel()
+        (result,) = await asyncio.gather(task, return_exceptions=True)
+        if isinstance(result, BaseException):
+            if not isinstance(result, asyncio.CancelledError):
+                print(json.dumps({'m4_live_next_market_preparation': {'status': 'FALLBACK',
+                      'error_type': type(result).__name__}}), flush=True)
+            return None
+        return result
+
+    async def discard_next_preparation(self):
+        prefetched = await self.take_next_preparation()
+        if prefetched is not None:
+            prefetched.reads.close()
+
+    async def prefetch_next(self, market, configured, reads_type, config):
+        """Warm one exact next-market reader. Only prepare() can promote it."""
+        api = reads = None
+        receipt = None
+        old_slug = market.e.slug
+        close_sec = market.settings.close_sec
+        epoch = int(old_slug.rsplit('-', 1)[1]) + close_sec
+        slug = f'btc-updown-5m-{epoch}'
+        phase = 'wait'
+        try:
+            while (remaining := NEXT_MARKET_PREPARATION_SEC-market.elapsed()) > 0:
+                await self.pause(remaining)
+            self.check_stop()
+            began = market.elapsed()
+            remaining = close_sec - began - market.e.official_time_uncertainty_s
+            if remaining <= 0:
+                return None
+            receipt = {'policy': NEXT_MARKET_PREPARATION_POLICY, 'slug': slug,
+                       'previous_slug': old_slug, 'started_at': time.time(),
+                       'previous_elapsed_at_start_sec': began}
+            async with asyncio.timeout(remaining):
+                api = LivePublicAPI()
+                phase = 'market'
+                meta = await api.market(slug)
+                if meta.slug != slug:
+                    raise ValueError('M4_NEXT_MARKET_IDENTITY_INVALID')
+                self.check_stop()
+                phase = 'account_identity'
+                reads = reads_type(config)
+                await reads.connect_account()
+                _execution_identity(reads)
+                self.check_stop()
+                phase = 'market_fees'
+                await reads.bind_market(configured, meta)
+                self.check_stop()
+                phase = 'ticks'
+                ticks = await api.ticks([t.token_id for t in meta.tokens])
+                self.check_stop()
+                if market.elapsed() + market.e.official_time_uncertainty_s >= close_sec:
+                    raise TimeoutError('M4_NEXT_MARKET_PREPARATION_CUTOFF')
+            receipt.update(status='READY', condition_id=meta.condition_id,
+                           ticks={token: str(tick) for token, tick in ticks.items()})
+        except (PreparationStopped, asyncio.CancelledError):
+            if receipt is not None:
+                receipt['status'] = 'CANCELLED'
+        except Exception as exc:
+            if receipt is not None:
+                receipt.update(status='FALLBACK', error_type=type(exc).__name__)
+        finally:
+            try:
+                if api is not None:
+                    await api.close()
+            except (Exception, asyncio.CancelledError) as exc:
+                receipt.update(status='FALLBACK', error_type=type(exc).__name__)
+            finally:
+                if receipt is not None:
+                    receipt.update(phase=phase, observed_at=time.time(),
+                                   previous_elapsed_at_finish_sec=market.elapsed())
+                    try:
+                        atomic_json(self.root/'next-market-preparations'/f'{slug}.json', receipt)
+                    except OSError as exc:
+                        receipt.update(status='FALLBACK', error_type=type(exc).__name__)
+                        print(json.dumps({'m4_live_next_market_preparation': receipt}), flush=True)
+                if reads is not None and receipt['status'] != 'READY':
+                    reads.close()
+        return PrefetchedMarket(meta, reads) if receipt is not None and receipt['status'] == 'READY' else None
 
     async def prepare(self, configured, reads_type, config):
         """Retry only preparation GETs; hand ownership to the runner on success.
@@ -111,12 +211,21 @@ class LiveStartup:
         A known recovery session stays pinned through a network outage, so an
         outage crossing T300 cannot silently redirect its recovery to a new one.
         """
+        prefetched = await self.take_next_preparation()
         try:
             while True:
                 reads = None
                 try:
                     clock = await self.read('clock', self.api.clock)
                     server, sent, received = clock
+                    if prefetched is not None and not self.recovery_slug:
+                        target_epoch = int(prefetched.meta.slug.rsplit('-', 1)[1])
+                        if server < target_epoch:
+                            self.slug = prefetched.meta.slug
+                            self.report('WAITING_NEXT_MARKET_T0',
+                                        next_market_preparation_policy=NEXT_MARKET_PREPARATION_POLICY)
+                            await self.pause(min(5, target_epoch-server))
+                            continue
                     epoch = int(server//300)*300
                     if self.recovery_slug:
                         old = self.root/'ledgers'/f'{self.recovery_slug}.sqlite3'
@@ -146,9 +255,21 @@ class LiveStartup:
                         await self.pause(min(5, max(.01, epoch+300-server)))
                         continue
                     meta = await self.read('market', self.api.market, self.slug)
-                    reads = reads_type(config)
-                    # connect_account uses derive_api_key GET only, never key creation.
-                    await self.read('account_identity', reads.connect_account)
+                    reused_prefetch = False
+                    if prefetched is not None:
+                        warmed = prefetched.meta
+                        reused_prefetch = (not recovering and warmed.slug == self.slug
+                                           and warmed.condition_id == meta.condition_id
+                                           and warmed.tokens == meta.tokens and warmed.neg_risk == meta.neg_risk)
+                        if reused_prefetch:
+                            reads = prefetched.reads
+                        else:
+                            prefetched.reads.close()
+                        prefetched = None
+                    if reads is None:
+                        reads = reads_type(config)
+                        # connect_account uses derive_api_key GET only, never key creation.
+                        await self.read('account_identity', reads.connect_account)
                     _execution_identity(reads)
                     settings = configured
                     identity = {'strategy': STRATEGY, 'mode': 'LIVE',
@@ -191,6 +312,9 @@ class LiveStartup:
                         'signal_history': 'EXISTING_LEDGER_RECOVERY' if recovering else 'FRESH_FEED_FROM_PREPARATION',
                         'preparation_observation_gap': not recovering and upper > 0,
                     }
+                    if reused_prefetch:
+                        observation.update(next_market_preparation_policy=NEXT_MARKET_PREPARATION_POLICY,
+                                           next_market_reader_reused=True)
                     # Audit files are distinct from trading ledgers. Retain the
                     # first admission and record the latest recovery separately.
                     admission_path = self.root/'startup-admissions'/f'{self.slug}.json'
@@ -229,3 +353,6 @@ class LiveStartup:
         except PreparationStopped:
             self.report('STOPPED')
             return None
+        finally:
+            if prefetched is not None:
+                prefetched.reads.close()

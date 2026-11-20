@@ -19,13 +19,14 @@ from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
 from polymaker.m4_live_config import LiveExecutionSettings, M4LiveSettings
 from polymaker.m4_live_halt import MarketHalt
+from polymaker.m4_live_startup import PreparationStopped, transient_read_error
 from polymaker.m4_signals import M4Feed
-from polymaker.m4_types import M4_LEDGER, M6_LEDGER, TakerStrategy
+from polymaker.m4_types import M4_LEDGER, M6_LEDGER, M21_LEDGER, M21_VERSION, TAKER_LEDGER_IDS, TakerStrategy
 from polymaker.m6_baseline.config import M6Config
 from polymaker.m6_baseline.signals import M6Feed
 from polymaker.maker_account import account_snapshot
 from polymaker.rdp_sm_writer import AsyncRiskWriter
-from polymaker.taker_pool import TakerPool, membership
+from polymaker.taker_pool import ADMISSION_CUTOFF_SEC, POLICY, TakerPool, membership
 
 
 def strategy_settings(project, strategy, m4):
@@ -39,6 +40,34 @@ def strategy_settings(project, strategy, m4):
                                m4.order_budget_usdc, m4.session_budget_usdc,
                                m4.max_opportunities_per_direction)
         return M4LiveSettings.model_validate({**m4.model_dump(mode="json"), "taker_strategy": asdict(policy)})
+    if strategy == M21_LEDGER:
+        from polymaker.m21_live import detector_manifest
+
+        raw = tomllib.loads((project / "config/m4-live/m21.toml").read_text(), parse_float=Decimal)
+        if set(raw) != {"version", "attribution", "ledger", "order_budget_usdc", "session_budget_usdc",
+                        "max_opportunities_per_direction", "pricing_policy", "price_risk"}:
+            raise ValueError("M21_LIVE_TAKER_CONFIG_INVALID")
+        if (raw["version"], raw["attribution"]) != (M21_VERSION, "M21"):
+            raise ValueError("M21_LIVE_TAKER_IDENTITY_CONFLICT")
+        source = json.dumps({"detector": detector_manifest(), "live_taker": raw}, sort_keys=True, default=str)
+        policy = TakerStrategy(strategy, raw["version"], raw["attribution"], raw["ledger"],
+                               hashlib.sha256(source.encode()).hexdigest(),
+                               raw["order_budget_usdc"], raw["session_budget_usdc"],
+                               raw["max_opportunities_per_direction"])
+        # Use the same operational protections as the lead Taker. The detector
+        # and strategy-specific limits come only from the M21 profile.
+        return M4LiveSettings.model_validate({
+            **{k: getattr(m4, k) for k in ("account_max_age_sec", "account_poll_sec", "heartbeat_sec",
+                                          "retry_initial_sec", "retry_max_sec", "start_sec", "cutoff_sec")},
+            "strategy": policy.version,
+            "execution_revision": "m4-taker-budget-v1",
+            "order_budget_usdc": policy.signal_budget_usdc,
+            "session_budget_usdc": policy.market_budget_usdc,
+            "max_opportunities_per_direction": policy.direction_limit,
+            "execution": {"mode": "taker", "taker": {"pricing_policy": raw["pricing_policy"]}},
+            "live_taker_price_risk": raw["price_risk"],
+            "taker_strategy": asdict(policy),
+        })
     if strategy != M6_LEDGER:
         raise ValueError("TAKER_UNKNOWN_STRATEGY")
     raw = tomllib.loads((project / "config/m6.toml").read_text(), parse_float=Decimal)["live_taker"]
@@ -65,13 +94,16 @@ def strategy_settings(project, strategy, m4):
     })
 
 
-async def prepare_opening(project, root, prepared, control):
+async def prepare_opening(project, root, prepared, startup):
+    """Verify capital before creating either strategy's feed or ledger."""
     funder, market_id = prepared.identity["funder"], prepared.meta.condition_id
     epoch = int(prepared.slug.rsplit("-", 1)[1])
     pool = TakerPool(root / "taker-pool.sqlite3", project)
-    server, sent, received = prepared.clock
+    control = startup.control
+    deadline = epoch + ADMISSION_CUTOFF_SEC
 
     def clock():
+        server, sent, received = prepared.clock
         lower = server + max(0, time.monotonic() - received)
         return lower, lower + 1 + received - sent
 
@@ -86,52 +118,125 @@ async def prepare_opening(project, root, prepared, control):
         if prepared.settings.taker_strategy is not None:
             raise ValueError("TAKER_POOL_OPENING_MISSING")
         return None, None, None
+    if clock()[0] < epoch:
+        raise ValueError("TAKER_POOL_BEFORE_T0")
     enabled = membership(project)
     m4 = M4LiveSettings.load(project)
     settings = {strategy: strategy_settings(project, strategy, m4) for strategy in enabled}
-    account = None
-    error = None
-    began = time.monotonic()
-    remaining = epoch + 15 - clock()[1]
-    if enabled and remaining > 0:
-        try:
-            account = await asyncio.wait_for(account_snapshot(prepared.reads, prepared.meta),
-                                             timeout=min(remaining, m4.account_max_age_sec))
-            if time.monotonic() - began > m4.account_max_age_sec:
-                raise ValueError("TAKER_POOL_ACCOUNT_READ_STALE")
-            control.observe_balance(account["official_balance_usd"])
-            if control.inhibited():
-                error = "TAKER_POOL_ACCOUNT_STOP"
-            account = {**account, "read_started_monotonic": began, "read_at": time.time()}
-        except Exception as exc:
-            account = None
-            error = f"TAKER_POOL_ACCOUNT_READ_{type(exc).__name__}"
-    opened = pool.decide(funder, epoch, market_id, settings, account, clock=clock, read_error=error)
-    return opened, account, began
+    max_age = min((cfg.account_max_age_sec for cfg in settings.values()), default=m4.account_max_age_sec)
+    retries = 0
+    while True:
+        startup.check_stop()
+        account = began = valid_until = None
+        error = retry = None
+        phase = "account"
+        remaining = deadline - clock()[1]
+        if enabled and remaining > 0:
+            try:
+                if retries:
+                    phase = "clock"
+                    refreshed = await asyncio.wait_for(startup.read("pool_clock", startup.api.clock),
+                                                       timeout=remaining)
+                    server, sent, received = refreshed
+                    if server < epoch or received < sent or server + 1 + received - sent < clock()[0]:
+                        raise ValueError("TAKER_POOL_CLOCK_INVALID")
+                    prepared.clock = refreshed
+                    remaining = deadline - clock()[1]
+                if remaining > 0:
+                    phase = "account"
+                    began = time.monotonic()
+                    valid_until = began + max_age
+                    account = await asyncio.wait_for(
+                        startup.read("pool_account", account_snapshot, prepared.reads, prepared.meta,
+                                     raise_on_error=True),
+                        timeout=min(remaining, max_age))
+                    if time.monotonic() >= valid_until:
+                        raise TimeoutError("TAKER_POOL_ACCOUNT_READ_STALE")
+                    control.observe_balance(account["official_balance_usd"])
+                    if control.inhibited():
+                        error = "TAKER_POOL_ACCOUNT_STOP"
+                    account = {**account, "read_started_monotonic": began, "read_at": time.time()}
+            except PreparationStopped:
+                raise
+            except Exception as exc:
+                account = began = valid_until = None
+                reason = f"TAKER_POOL_{phase.upper()}_READ_{type(exc).__name__}"
+                if isinstance(exc, TimeoutError) or transient_read_error(exc):
+                    retry = reason
+                else:
+                    error = reason
+        if error != "TAKER_POOL_ACCOUNT_STOP":
+            startup.check_stop()
+        if retry is None or clock()[1] >= deadline:
+            opened = pool.decide(funder, epoch, market_id, settings, account, clock=clock,
+                                 read_error=error, account_valid_until=valid_until, read_retries=retries)
+            if opened is not None:
+                if retries or opened.payload["official_upper"] >= epoch + m4.start_sec:
+                    startup.phase = "pool_decision"
+                    startup.report("READY", **{k: v for k, v in (prepared.startup or {}).items() if k != "slug"},
+                                   pool_policy=opened.payload["policy"], pool_status=opened.payload["status"],
+                                   pool_open_elapsed_upper_sec=opened.payload["official_upper"] - epoch,
+                                   pool_read_retries=retries)
+                if opened.payload["status"] != "OPEN" or opened.payload["account"] != account:
+                    return opened, None, None
+                return opened, account, began
+            retry = "TAKER_POOL_ACCOUNT_READ_STALE"
+        retries += 1
+        delay = min(5.0, .5 * 2 ** min(retries - 1, 4), max(0, deadline - clock()[1]))
+        startup.report("RETRYING_TAKER_POOL_READ", pool_policy=POLICY, pool_read_retries=retries,
+                       pool_read_reason=retry, retry_in_sec=delay)
+        await startup.pause(delay)
 
 
 class SharedTakerFeed(M4Feed):
-    """One raw socket and watermark, two independently validated signal engines."""
+    """One raw socket and watermark, independently validated signal engines."""
 
-    def __init__(self, meta, *args, m6_settings, **kwargs):
+    reader_backpressure_levels = (64, 32)
+    frame_processing_policy = "SHARED_DECODE_ONCE_REUSE_BOOK_AND_CLOCKS_V1"
+
+    def __init__(self, meta, *args, m6_settings=None, m21_settings=None, m21_only=False, **kwargs):
         super().__init__(meta, *args, **kwargs)
-        self.m6 = M6Feed(meta, RDPObiConfig(), taker_settings=m6_settings,
-                         monotonic=self.monotonic, wall=self.wall)
-        self.m6.lock = self.lock
-        self.m6.pending_receipts = self.pending_receipts
+        if m21_only and (m21_settings is None or m6_settings is not None):
+            raise ValueError("M21_ONLY_STRATEGY_SETTINGS_CONFLICT")
+        self.transport_only = self.observe_until_market_close = m21_only
+        self.secondary = {}
+        self.m6 = None
+        if m6_settings is not None:
+            self.m6 = self.secondary[M6_LEDGER] = M6Feed(meta, RDPObiConfig(), taker_settings=m6_settings,
+                                                       monotonic=self.monotonic, wall=self.wall)
+        if m21_settings is not None:
+            from polymaker.m21_live import M21Feed
+
+            self.secondary[M21_LEDGER] = M21Feed(meta, RDPObiConfig(), taker_settings=m21_settings,
+                                               monotonic=self.monotonic, wall=self.wall)
+            self.secondary[M21_LEDGER].research.record_input_rejections = m21_only
+        for feed in self.secondary.values():
+            feed.lock = self.lock
+            feed.pending_receipts = self.pending_receipts
+            feed.observe_until_market_close = m21_only
+            feed.shared_frame_processing_policy = ("M21_ONLY_SHARED_TRANSPORT_OBSERVE_T300_V1"
+                                                   if m21_only else self.frame_processing_policy)
 
     def pending_receipts(self):
-        queued = tuple(self.m1_pending_received)
-        return queued if self.m1_processing_received is None else (*queued, self.m1_processing_received)
+        # The socket puts monotonic receipts in FIFO order. M6 only needs
+        # their minimum, including a frame being applied outside the queue.
+        oldest = self.m1_pending_received[0] if self.m1_pending_received else None
+        processing = self.m1_processing_received
+        if oldest is None or (processing is not None and processing < oldest):
+            oldest = processing
+        return () if oldest is None else (oldest,)
 
     def mirror(self, method, *args, **kwargs):
-        if not self.m6.stop_event.is_set() and not self.m6.m1.failure:
+        for feed in self.secondary.values():
+            if feed.stop_event.is_set() or feed.m1.failure:
+                continue
             try:
-                getattr(self.m6, method)(*args, **kwargs)
+                getattr(feed, method)(*args, **kwargs)
             except Exception as exc:
-                self.m6.m1.failure = f"M6_SHARED_FEED_{type(exc).__name__}"
-                self.m6.connected = False
-                self.m6.m1.emit("LIVE_OBSERVATION_GAP", reason=self.m6.m1.failure)
+                name = feed.m1.diagnostics()["strategy"]
+                feed.m1.failure = f"{name}_SHARED_FEED_{type(exc).__name__}"
+                feed.connected = False
+                feed.m1.emit("LIVE_OBSERVATION_GAP", reason=feed.m1.failure)
 
     def connect(self):
         with self.lock:
@@ -148,9 +253,41 @@ class SharedTakerFeed(M4Feed):
             super().verify_ticks(ticks)
             self.mirror("verify_ticks", ticks)
 
+    def maintain_signals(self):
+        if self.transport_only:
+            self.secondary[M21_LEDGER].m1.tick()
+        else:
+            super().maintain_signals()
+
     def _apply(self, raw, **kwargs):
-        super()._apply(raw, **kwargs)
-        self.mirror("_apply", raw, **kwargs)
+        frame = raw
+        if isinstance(raw, (str, bytes)) and raw not in ("PING", "PONG"):
+            try:
+                decoded = json.loads(raw)
+            except ValueError:
+                pass  # Preserve the primary consumer's normal rebuild path.
+            else:
+                if isinstance(decoded, (dict, list)):
+                    frame = decoded
+        if self.transport_only and frame not in ("PING", "PONG"):
+            if (not isinstance(frame, (dict, list)) or not frame
+                    or isinstance(frame, list) and any(not isinstance(row, dict) for row in frame)):
+                self.invalidate("WS_FRAME_INVALID")
+                raise ValueError("WS_FRAME_INVALID")
+            now, wall = self.monotonic(), self.wall()
+            received = kwargs.get("received_mono")
+            receive_wall = kwargs.get("received_wall")
+            received = now if received is None else received
+            receive_wall = wall if receive_wall is None else receive_wall
+            try:
+                self.validate_receipt_clock(now, received, receive_wall)
+            except ValueError as exc:
+                self.invalidate(str(exc))
+                raise
+            self.last_receipt, self.last_wall = received, receive_wall
+        elif not self.transport_only:
+            super()._apply(raw if self.m1_writer is not None else frame, **kwargs)
+        self.mirror("_apply", frame, **kwargs)
 
 
 class StrategyReads:
@@ -175,13 +312,15 @@ class StrategyReads:
         pass
 
 
-async def run_secondary(primary, opening, feed, root, make_executor, control, local_stop):
-    settings = opening.settings(M6_LEDGER)
+async def run_secondary(primary, opening, feed, root, make_executor, control, local_stop, *, strategy=M6_LEDGER):
+    settings = opening.settings(strategy)
+    name = next(name for name, ledger in TAKER_LEDGER_IDS.items() if ledger == strategy)
+    lane = name.lower()
     e = primary.e
-    path = root / "m6-ledgers" / f"{e.slug}.sqlite3"
+    path = root / f"{lane}-ledgers" / f"{e.slug}.sqlite3"
     ledger = executor = journal = None
     try:
-        identity = {"strategy": M6_LEDGER, "mode": "LIVE", "funder": opening.funder,
+        identity = {"strategy": strategy, "mode": "LIVE", "funder": opening.funder,
                     "market_id": e.meta.condition_id, "settings_hash": settings.fingerprint}
         ledger = BudgetLedger(path, identity, settings=settings, fees=primary.ledger.fees)
         if ledger.get("complete"):
@@ -189,9 +328,9 @@ async def run_secondary(primary, opening, feed, root, make_executor, control, lo
         sid = ledger.get("session_id")
         recovering = sid is not None
         if not sid:
-            sid = "m4_live_" + uuid4().hex  # Journal format is shared; M6 is isolated by directory and ledger.
+            sid = "m4_live_" + uuid4().hex
             ledger.initialize_session(sid, settings.model_dump(mode="json"), asdict(e.meta))
-        backing = M4RiskJournal(root / "m6-journal", opening.funder, session_id=sid, resume=recovering)
+        backing = M4RiskJournal(root / f"{lane}-journal", opening.funder, session_id=sid, resume=recovering)
         journal = AsyncRiskWriter(backing, batch_size=128)
         journal.accepted = journal.written = backing.last_writer_sequence
         reads = StrategyReads(e.reads, feed, ledger, settings)
@@ -200,22 +339,30 @@ async def run_secondary(primary, opening, feed, root, make_executor, control, lo
         executor.official_time, executor.time_anchor = e.official_time, e.time_anchor
         executor.official_time_uncertainty_s = e.official_time_uncertainty_s
         executor.record("sm_session", {
-            "strategy": M6_LEDGER, "mode": "LIVE", "slug": e.slug, "market_id": e.meta.condition_id,
+            "strategy": strategy, "mode": "LIVE", "slug": e.slug, "market_id": e.meta.condition_id,
             "settings": settings.model_dump(mode="json"), "settings_hash": settings.fingerprint,
             "state_path": str(path), "recovery": recovering, "pool_policy": opening.payload["policy"],
+            "signal_input_policy": feed.research.source_order_policy,
+            "shared_frame_processing_policy": getattr(feed, "shared_frame_processing_policy", None),
         })
 
+        market = BudgetMarket(executor, settings, local_stop, opening=opening, account_owner=primary,
+                              public_api=primary.public_api if getattr(feed, "observe_until_market_close", False) else None,
+                              display=lambda value: atomic_json(root / f"{lane}-latest.json", value))
+
         def record(row):
-            executor.record("sm_m6_signal", row)
+            executor.record(f"sm_{lane}_signal", row)
+            if (getattr(feed, "observe_until_market_close", False) and row["event"] == "OPPORTUNITY_IDENTIFIED"
+                    and market.elapsed() >= market.settings.cutoff_sec):
+                executor.record("sm_m4_candidate_skipped",
+                                {"opportunity": row["opportunity"], "reason": "M21_FORMAL_AFTER_T240"})
             return executor.journal.ready
 
         feed.m1.record = record
-        market = BudgetMarket(executor, settings, local_stop, opening=opening, account_owner=primary,
-                              display=lambda value: atomic_json(root / "m6-latest.json", value))
         await market.run()
     except Exception as exc:
-        MarketHalt(path, e.slug).latch("M6_STRATEGY_RUNTIME_FAILED")
-        e.record("sm_m6_strategy_fault", {"ledger": str(path), "error_type": type(exc).__name__})
+        MarketHalt(path, e.slug).latch(f"{name}_STRATEGY_RUNTIME_FAILED")
+        e.record(f"sm_{lane}_strategy_fault", {"ledger": str(path), "error_type": type(exc).__name__})
     finally:
         feed.m1.record = None
         await feed.close()
@@ -242,10 +389,10 @@ class StrategyStop:
 
 async def run_markets(primary, opening, feed, root, make_executor, control):
     local_stop = StrategyStop(primary.stop)
-    secondary = asyncio.create_task(
-        run_secondary(primary, opening, feed.m6, root, make_executor, control, local_stop),
-        name="m6-taker-market",
-    )
+    secondary = asyncio.gather(*(
+        run_secondary(primary, opening, child, root, make_executor, control, local_stop, strategy=strategy)
+        for strategy, child in feed.secondary.items()
+    ))
     try:
         clean = await primary.run()
     except Exception:

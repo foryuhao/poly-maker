@@ -5,6 +5,7 @@ import json
 import time
 from dataclasses import asdict, replace
 from decimal import Decimal as D
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -22,6 +23,7 @@ from polymaker.m4_state import M4Ledger
 EPOCH = 1800000000
 FUNDER = '0x'+'1'*40
 SETTINGS = M4LiveSettings(execution_revision='m4-taker-budget-v1', execution={'mode': 'taker'})
+PROJECT = Path(__file__).resolve().parents[2]
 
 
 def harness(tmp_path, monkeypatch, *, phase=None, fault=None):
@@ -203,8 +205,9 @@ def test_startup_clock_uses_same_microsecond_t240_boundary(server,rtt,upper):
     assert m4_live_startup.elapsed_upper_us((EPOCH+server,100.,100.+rtt),EPOCH)==upper
 
 
-async def test_late_preparation_hands_runner_a_fresh_feed_without_old_signals(tmp_path, monkeypatch):
-    from polymaker import m4_live_http, m4_live_taker, m4_run
+@pytest.mark.parametrize('shared_pool', [False, True])
+async def test_late_preparation_hands_runner_a_fresh_feed_without_old_signals(tmp_path, monkeypatch, shared_pool):
+    from polymaker import m4_live_http, m4_live_taker, m4_run, taker_runner
     from polymaker.config import Config
     from polymaker.rdp_sm import OFFICIAL_HOSTS
 
@@ -213,6 +216,21 @@ async def test_late_preparation_hands_runner_a_fresh_feed_without_old_signals(tm
     (tmp_path/'config/m4-live').mkdir(parents=True)
     (tmp_path/'config/m4.toml').write_text('')
     (tmp_path/'config/m4-live/execution.toml').write_text('mode="taker"\n')
+    if shared_pool:
+        for name in ('m4.toml', 'm4-live/execution.toml'):
+            (tmp_path/'config'/name).write_text((PROJECT/'config'/name).read_text())
+        (tmp_path/'config/m4-live/strategies.toml').write_text('enabled = ["M4"]\n')
+        h.clock_values.append(EPOCH+105)
+        reads = []
+
+        async def capital(*_, raise_on_error):
+            assert raise_on_error and not (h.startup.root/'ledgers').exists()
+            reads.append(True)
+            if len(reads) == 1:
+                raise httpx.ReadTimeout('balance')
+            return {'official_balance_usd':'40', 'applicable_allowance_usd':'40'}
+
+        monkeypatch.setattr(taker_runner, 'account_snapshot', capital)
     config=SimpleNamespace(wallet=SimpleNamespace(**OFFICIAL_HOSTS,chain_id=137),paths=SimpleNamespace(),proxy=None)
     config.model_copy=lambda **_:config
     monkeypatch.setattr(Config,'load',lambda *_:config)
@@ -225,9 +243,12 @@ async def test_late_preparation_hands_runner_a_fresh_feed_without_old_signals(tm
     class Market:
         def __init__(self,e,settings,stop,**kwargs):
             self.e,self.settings=e,settings
+            if shared_pool:
+                assert kwargs['opening'].payload['status']=='OPEN'
+                assert kwargs['opening'].payload['opening_read_retries']==1
         async def run(self):
             runs.append(self.e.slug)
-            assert self.e.slug==h.meta.slug and self.e.official_time==EPOCH+101
+            assert self.e.slug==h.meta.slug and self.e.official_time==EPOCH+(105 if shared_pool else 101)
             assert self.settings.start_sec==15 and self.settings.cutoff_sec==240
             assert self.e.ledger.rows()==[]
             assert self.e.reads.feed.m1.opportunities=={}
@@ -237,7 +258,7 @@ async def test_late_preparation_hands_runner_a_fresh_feed_without_old_signals(tm
     monkeypatch.setattr(m4_run.M4Feed,'run',no_socket)
     monkeypatch.setattr(m4_live_taker,'M4TakerMarket',Market)
     assert (await m4_run.run(tmp_path,live=True,once=True))['status']=='COMPLETE'
-    assert runs==[h.meta.slug] and h.pauses==[]
+    assert runs==[h.meta.slug] and h.pauses==([.5] if shared_pool else [])
 
 
 async def test_final_clock_failure_restarts_discovery_after_rollover(tmp_path, monkeypatch):
@@ -257,6 +278,168 @@ async def test_final_clock_failure_restarts_discovery_after_rollover(tmp_path, m
     assert ready.slug.endswith(str(EPOCH+300)) and calls == 4
     assert h.readers[0].closed and h.pauses == [.5]
     ready.reads.close()
+
+
+@pytest.mark.parametrize('identity_changes', [False, True])
+async def test_t270_warms_next_reader_and_t0_revalidates_identity(tmp_path, monkeypatch, identity_changes):
+    h = harness(tmp_path, monkeypatch)
+    monkeypatch.setattr(m4_live_startup, 'LivePublicAPI', type(h.startup.api))
+    elapsed = 269
+    old = SimpleNamespace(e=SimpleNamespace(slug=h.meta.slug, official_time_uncertainty_s=1),
+                          settings=SETTINGS, elapsed=lambda: elapsed)
+    pause = h.startup.pause
+
+    async def advance_to_t270(seconds):
+        nonlocal elapsed
+        assert seconds == 1 and not h.calls
+        elapsed += seconds
+
+    monkeypatch.setattr(h.startup, 'pause', advance_to_t270)
+    h.startup.schedule_next_preparation(old, SETTINGS, h.reads_type, None)
+    warmed = await h.startup.next_preparation
+    next_slug = f'btc-updown-5m-{EPOCH+300}'
+    receipt = json.loads((h.startup.root/'next-market-preparations'/f'{next_slug}.json').read_text())
+    assert warmed.meta.slug == next_slug and not warmed.reads.closed
+    assert receipt['previous_elapsed_at_start_sec'] == 270 and receipt['status'] == 'READY'
+    assert h.calls == ['market', 'account_identity', 'market_fees', 'ticks', 'close_public']
+    assert not list(tmp_path.rglob('*.sqlite3'))
+
+    if identity_changes:
+        async def different_market(slug):
+            return replace(h.meta, slug=slug, condition_id='0x'+'ac'*32)
+
+        monkeypatch.setattr(h.startup.api, 'market', different_market)
+    monkeypatch.setattr(h.startup, 'pause', pause)
+    h.clock_values[:] = [EPOCH+299, EPOCH+300, EPOCH+301]
+    prepared = await h.startup.prepare(SETTINGS, h.reads_type, None)
+    assert any(e['status'] == 'WAITING_NEXT_MARKET_T0' for e in h.events)
+    assert prepared.slug == next_slug and prepared.clock[0] == EPOCH+301
+    assert prepared.startup.get('next_market_reader_reused', False) is not identity_changes
+    assert (prepared.reads is warmed.reads) is not identity_changes
+    assert warmed.reads.closed is identity_changes
+    assert h.calls.count('market_fees') == h.calls.count('ticks') == 2
+    assert h.calls.count('account_identity') == (2 if identity_changes else 1)
+    assert not list(tmp_path.rglob('*.sqlite3'))
+    prepared.reads.close()
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_prefetch_timeout_or_stop_closes_reader_and_uses_normal_startup(tmp_path, monkeypatch, cancel):
+    h = harness(tmp_path, monkeypatch)
+    tick_started = asyncio.Event()
+
+    class SlowPublic(type(h.startup.api)):
+        async def ticks(self, tokens):
+            tick_started.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(m4_live_startup, 'LivePublicAPI', SlowPublic)
+    old = SimpleNamespace(e=SimpleNamespace(slug=h.meta.slug, official_time_uncertainty_s=1),
+                          settings=SETTINGS, elapsed=lambda: 270 if cancel else 298.98)
+    h.startup.schedule_next_preparation(old, SETTINGS, h.reads_type, None)
+    await asyncio.wait_for(tick_started.wait(), 1)
+    if cancel:
+        h.startup.stop.set()
+        assert await h.startup.take_next_preparation() is None
+    else:
+        assert await asyncio.wait_for(h.startup.next_preparation, 1) is None
+    next_slug = f'btc-updown-5m-{EPOCH+300}'
+    receipt = json.loads((h.startup.root/'next-market-preparations'/f'{next_slug}.json').read_text())
+    assert receipt['status'] == ('CANCELLED' if cancel else 'FALLBACK')
+    assert h.readers[0].closed and h.calls.count('close_public') == 1
+    assert not list(tmp_path.rglob('*.sqlite3'))
+    if not cancel:
+        h.clock_values[:] = [EPOCH+300, EPOCH+301]
+        ready = await h.startup.prepare(SETTINGS, h.reads_type, None)
+        assert ready.slug == next_slug and ready.reads is h.readers[1]
+        assert not ready.startup.get('next_market_reader_reused')
+        ready.reads.close()
+
+
+async def test_live_runner_prefetches_while_old_market_is_still_in_charge(tmp_path, monkeypatch):
+    from polymaker import m4_live_http, m4_live_taker, m4_run, taker_runner
+    from polymaker.config import Config
+    from polymaker.rdp_sm import OFFICIAL_HOSTS
+
+    h = harness(tmp_path, monkeypatch)
+    h.clock_values[:] = [EPOCH+10, EPOCH+11, EPOCH+300, EPOCH+301]
+    (tmp_path/'config/m4-live').mkdir(parents=True)
+    for name in ('m4.toml', 'm6.toml', 'm4-live/execution.toml', 'm4-live/strategies.toml'):
+        (tmp_path/'config'/name).write_text((PROJECT/'config'/name).read_text())
+    (tmp_path/'config/m4-live/strategies.toml').write_text('enabled = ["M4", "M6"]\n')
+    config = SimpleNamespace(wallet=SimpleNamespace(**OFFICIAL_HOSTS, chain_id=137),
+                             paths=SimpleNamespace(), proxy=None)
+    config.model_copy = lambda **_: config
+    monkeypatch.setattr(Config, 'load', lambda *_: config)
+    public_clients = []
+
+    def make_public():
+        client = type(h.startup.api)() if public_clients else h.startup.api
+        public_clients.append(client)
+        return client
+
+    monkeypatch.setattr(m4_live_startup, 'LivePublicAPI', make_public)
+    monkeypatch.setattr(m4_live_startup, 'LiveStartup', lambda *args: h.startup)
+    monkeypatch.setattr(m4_live_http, 'M4LiveReads', h.reads_type)
+
+    async def no_socket(self):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(taker_runner.SharedTakerFeed, 'run', no_socket)
+    old_elapsed = 269
+    next_slug = f'btc-updown-5m-{EPOCH+300}'
+    capital_reads = []
+    markets = []
+
+    async def delayed_wait(seconds):
+        nonlocal old_elapsed
+        assert seconds == 1
+        old_elapsed = 270
+
+    async def capital(reads, meta, *, raise_on_error):
+        assert raise_on_error
+        capital_reads.append(meta.slug)
+        if meta.slug == next_slug:
+            assert markets[0].e.ledger.path.is_file() and old_elapsed == 300
+            assert reads is h.readers[1]
+        return {'official_balance_usd': '60', 'applicable_allowance_usd': '60'}
+
+    class Market:
+        def __init__(self, e, settings, stop, **kwargs):
+            self.e, self.settings, self.stop = e, settings, stop
+
+        def elapsed(self):
+            return old_elapsed if self.e.slug == h.meta.slug else 2
+
+    async def run_markets(primary, opening, feed, root, *_):
+        nonlocal old_elapsed
+        markets.append(primary)
+        assert primary.e.ledger.rows() == [] and feed.m6.m1.opportunities == {}
+        if primary.e.slug == h.meta.slug:
+            warmed = await h.startup.next_preparation
+            assert warmed.meta.slug == next_slug and old_elapsed == 270
+            assert not primary.e.ledger.get('complete')
+            assert not (root/'ledgers'/f'{next_slug}.sqlite3').exists()
+            assert opening.pool.existing(opening.funder, EPOCH+300) is None
+            assert capital_reads == [h.meta.slug]
+            old_elapsed = 300
+        else:
+            assert primary.e.slug == next_slug and primary.e.official_time >= EPOCH+300
+            assert opening.payload['status'] == 'OPEN'
+            primary.stop.set()
+        primary.e.ledger.set('complete', True)
+        return True
+
+    monkeypatch.setattr(h.startup, 'pause', delayed_wait)
+    monkeypatch.setattr(taker_runner, 'account_snapshot', capital)
+    monkeypatch.setattr(taker_runner, 'run_markets', run_markets)
+    monkeypatch.setattr(m4_live_taker, 'M4TakerMarket', Market)
+
+    assert (await m4_run.run(tmp_path, live=True, stop=h.startup.stop))['status'] == 'STOPPED'
+    assert capital_reads == [h.meta.slug, next_slug]
+    assert len(public_clients) == 2 and h.calls.count('account_identity') == 2
+    assert h.events[-1]['next_market_reader_reused']
+    assert all(reader.closed for reader in h.readers)
 
 
 async def test_recovery_remains_pinned_and_keeps_saved_limits_across_t240_and_t300(tmp_path, monkeypatch):

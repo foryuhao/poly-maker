@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -273,17 +274,116 @@ def test_operational_collection_keeps_market_checks_and_skips_history(tmp_path, 
     assert "M6_CURRENT_MARKET_HEARTBEAT_MISSING" in result["alerts"]
 
 
-def test_operational_dispatch_uses_short_prompt(tmp_path):
+def test_hourly_collection_uses_one_closed_window_for_both_strategies(tmp_path, monkeypatch):
+    state_dir = tmp_path/"state"
+    watch.atomic_json(state_dir/"agent-state.json", {"reviewed_through_epoch": EPOCH-3600})
+    inspected, coverage = [], []
+
+    def inspect(project, epoch, now, *, strategy="M4"):
+        inspected.append(epoch)
+        return {"epoch": epoch}
+
+    def read_history(project, state, now, window_seconds, *, strategy):
+        coverage.append((now, window_seconds, strategy))
+        return {"strategy": strategy}
+
+    monkeypatch.setattr(watch, "inspect_market", inspect)
+    monkeypatch.setattr(watch, "rolling_coverage", read_history)
+    monkeypatch.setattr(watch, "service_status", lambda: {"ActiveState": "active"})
+    result = watch.collect(tmp_path, state_dir, {"start_epoch": EPOCH-7200, "review_scope": "hourly"}, EPOCH+20)
+    assert coverage == [(EPOCH, 3600, "M4"), (EPOCH, 3600, "M6")]
+    assert result["review_scope"] == "hourly" and "rolling_12h" not in result
+    assert result["rolling_1h"] == {"strategy": "M4"}
+    assert result["rolling_1h_m6"] == {"strategy": "M6"}
+    assert inspected == list(range(EPOCH-3600, EPOCH+1, 300))
+
+
+def test_live_collection_ages_use_sample_time_after_market_reads(tmp_path, monkeypatch):
+    live = tmp_path / "research_outputs/m4_live"
+    live.mkdir(parents=True)
+    with sqlite3.connect(live / "taker-pool.sqlite3") as db:
+        db.execute("CREATE TABLE market_openings(epoch,release_at,released_at,payload)")
+        db.execute("INSERT INTO market_openings VALUES (?,?,?,?)", (
+            EPOCH, EPOCH+420, None, json.dumps({
+                "settings": {watch.M6_LEDGER: {}}, "reserved": {watch.M6_LEDGER: "3"}})))
+    clock = [EPOCH+20]
+    slug = f"btc-updown-5m-{EPOCH}"
+
+    def inspect(project, epoch, now, *, strategy="M4"):
+        if epoch == EPOCH:
+            latest = live / ("latest.json" if strategy == "M4" else "m6-latest.json")
+            clock[0] += 12
+            watch.atomic_json(latest, {"slug": slug})
+            os.utime(latest, (clock[0]-2, clock[0]-2))
+            if strategy == "M4":
+                watch.atomic_json(tmp_path / "runtime/trading-control/m4-balance-observation.json",
+                                  {"observed_at": clock[0]-1})
+        return {"epoch": epoch}
+
+    monkeypatch.setattr(watch.time, "time", lambda: clock[0])
+    monkeypatch.setattr(watch, "inspect_market", inspect)
+    monkeypatch.setattr(watch, "service_status", lambda: {"ActiveState": "active"})
+    result = watch.collect(tmp_path, tmp_path/"state", {"start_epoch": EPOCH, "review_scope": "operational"})
+    assert result["previous_market_epoch"] == EPOCH-300
+    assert result["observed_at"] == EPOCH+20
+    assert result["heartbeat_age_sec"] == 2
+    assert result["heartbeat_sampled_at"] == EPOCH+32
+    assert result["shared_taker_pool"]["m6_heartbeat_age_sec"] == 2
+    assert result["shared_taker_pool"]["m6_heartbeat_sampled_at"] == EPOCH+44
+    assert result["balance_observation_age_sec"] == 1
+    assert not result["alerts"]
+
+
+@pytest.mark.parametrize(("elapsed", "reported", "expected_alert"), [(40, 38, False), (80, 38, True), (240, 239, True)])
+def test_opening_retry_preserves_stale_startup_alerts(tmp_path, monkeypatch, elapsed, reported, expected_alert):
+    live = tmp_path/"research_outputs/m4_live"
+    watch.atomic_json(live/"startup-status.json", {"status": "RETRYING_TAKER_POOL_READ",
+                     "slug": f"btc-updown-5m-{EPOCH}", "observed_at": EPOCH+reported})
+    monkeypatch.setattr(watch, "service_status", lambda: {"ActiveState": "active"})
+    result = watch.collect(tmp_path, tmp_path/"state", {"start_epoch": EPOCH, "review_scope": "operational"}, EPOCH+elapsed)
+    assert ("CURRENT_MARKET_NOT_OPEN_CHECK_STARTUP" in result["alerts"]) is expected_alert
+
+
+def test_m21_production_reads_previous_current_and_own_pending_only(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    watch.atomic_json(state_dir / "agent-state.json", {
+        "reviewed_through_epoch": EPOCH - 3600,
+        "pending_market_epochs": [EPOCH - 3000],
+        "m21_pending_market_epochs": [EPOCH - 600],
+    })
+    inspected = []
+
+    def inspect(project, epoch, now, *, strategy):
+        inspected.append((epoch, strategy))
+        return {"epoch": epoch, "record_status": "AVAILABLE"}
+
+    def service(unit):
+        assert unit == "polymaker-m21-live.service"
+        return {"ActiveState": "active"}
+
+    monkeypatch.setattr(watch, "inspect_market", inspect)
+    monkeypatch.setattr(watch, "service_status", service)
+    result = watch.collect(tmp_path, state_dir, {
+        "start_epoch": EPOCH - 7200, "review_scope": watch.M21_PRODUCTION,
+    }, EPOCH + 20)
+    assert inspected == [(EPOCH - 600, "M21"), (EPOCH - 300, "M21"), (EPOCH, "M21")]
+    assert result["markets"] == []
+    assert "rolling_1h_m21" not in result and "rolling_12h_m21" not in result
+
+
+@pytest.mark.parametrize(("scope", "interval"), [("operational", 300), ("hourly", 3600), ("m21_production", 300)])
+def test_dispatch_uses_scope_prompt(tmp_path, scope, interval):
     (tmp_path/"ops").mkdir()
     (tmp_path/"ops/m4_taker_watch_prompt.txt").write_text("full review")
-    (tmp_path/"ops/m4_taker_watch_operational_prompt.txt").write_text("operational review")
+    prompt_name = "m21_signal_watch_prompt.txt" if scope == watch.M21_PRODUCTION else f"m4_taker_watch_{scope}_prompt.txt"
+    (tmp_path / "ops" / prompt_name).write_text(f"{scope} review")
     state_dir = tmp_path/"state"
     state_dir.mkdir()
 
     def runner(command, **kwargs):
-        assert command[command.index("--message")+1].startswith("operational review\n")
+        assert command[command.index("--message")+1].startswith(f"{scope} review\n")
         return SimpleNamespace(returncode=0, stdout="queued", stderr="")
 
     report = {"bucket": 1, "report_path": "report1", "previous_market_epoch": EPOCH}
-    control = {"thread": "authorized-chat", "review_scope": "operational", "interval_seconds": 300}
+    control = {"thread": "authorized-chat", "review_scope": scope, "interval_seconds": interval}
     assert watch.wake(tmp_path, state_dir, control, report, runner)["status"] == "QUEUED_AND_RESUME_REQUESTED"

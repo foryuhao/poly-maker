@@ -59,7 +59,7 @@ async def test_original_anchor_band_and_virtual_ack_is_not_fill(
     m, e, f, c = await setup(tmp_path, price)
     try:
         candidate(f, price)
-        m.collect()
+        await m.collect()
         assert bool(m.pending) == admitted
         if admitted:
             await m.submit(next(iter(m.pending.values())))
@@ -84,7 +84,7 @@ async def test_post_touch_and_inclusive_t240(tmp_path, at, ask, filled):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = at
         f.apply(frame(f, str(D(ask) - D(".01")), ask, size=".1"))
@@ -104,7 +104,7 @@ async def test_gap_is_diagnostic_and_later_valid_touch_still_fills(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = 1
         f.invalidate("OFFLINE_TEST_GAP")
@@ -121,7 +121,7 @@ async def test_stale_source_cannot_create_touch_or_candidate(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = 1
         f.apply(frame(f, ".08", ".09", stamp=f.wall() - 1))
@@ -139,7 +139,7 @@ async def test_atomic_frame_keeps_valid_intermediate_touch(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = 1
         f.apply([frame(f, ".08", ".09"), frame(f, ".10", ".11")])
@@ -153,7 +153,7 @@ async def test_invalid_atomic_frame_discards_touch(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = 1
         f.apply([frame(f, ".08", ".09"), {"event_type": "book", "market": "foreign"}])
@@ -166,7 +166,7 @@ async def test_short_signal_latency_budget_and_cutoff_prevent_post(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         for at in [0.1, 0.2, 0.3, 0.4]:
             c.now = at
             refresh(f)
@@ -176,7 +176,7 @@ async def test_short_signal_latency_budget_and_cutoff_prevent_post(tmp_path):
         c.now = 220
         refresh(f)
         candidate(f)
-        m.collect()
+        await m.collect()
         assert not m.pending and not m.entry_window_open()
     finally:
         await close(m, e)
@@ -185,7 +185,7 @@ async def test_short_signal_latency_budget_and_cutoff_prevent_post(tmp_path):
 async def test_crash_recovery_does_not_repost_or_invent_fill(tmp_path):
     m, e, f, c = await setup(tmp_path)
     candidate(f)
-    m.collect()
+    await m.collect()
     await m.submit(next(iter(m.pending.values())))
     ident, path = m.ledger.get("identity"), m.ledger.path
     settings, market, sid = (
@@ -216,7 +216,7 @@ async def test_official_settlement_both_cohorts_and_risk_retention(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         await m.submit(next(iter(m.pending.values())))
         c.now = 221
         e.reads.fill_model.poll()
@@ -268,7 +268,7 @@ async def test_cutoff_memory_release_and_repeated_close_are_safe(tmp_path):
     m, e, f, c = await setup(tmp_path)
     try:
         candidate(f)
-        m.collect()
+        await m.collect()
         c.now = 221
         await m.recycle_after_cutoff()
         assert m.memory_recycled and m.memory_recycle["status"] == "OK"
@@ -393,7 +393,7 @@ async def test_collect_waits_for_frozen_feed_quality_without_obi_snapshot(tmp_pa
         for token in f.books:
             f.research.unavailable(token, "WAITING_FIRST_VALID_SNAPSHOT")
             f.books[token] = replace(f.books[token], source_time=source_time, snapshot_generation=0)
-        m.collect()
+        await m.collect()
         assert not m.pending and not m.ledger.rows()
         assert f.m1.failure is None
     finally:

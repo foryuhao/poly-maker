@@ -1,5 +1,5 @@
 [Unit]
-Description=Read-only M4 Taker signal and owned-fill audit for the existing chat
+Description=Read-only M21 signal and owned-fill audit for the existing chat
 
 [Service]
 Type=oneshot

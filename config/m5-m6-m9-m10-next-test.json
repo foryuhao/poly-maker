@@ -1,17 +1,42 @@
 {
-  "status": "PLANNED_NOT_STARTED",
+  "status": "SUPERSEDED_NOT_FOR_LIVE_START",
   "updated_beijing": "2026-11-13",
   "authorization": "放弃M7 M8这两个信号，下次信号测试不再测试",
-  "enabled_strategies": ["M5", "M6", "M9", "M10"],
-  "retired_strategies": ["M7", "M8"],
-  "deferred_strategies": ["M11"],
-  "retune_targets": ["M9", "M10"],
+  "enabled_strategies": [
+    "M5",
+    "M6",
+    "M9",
+    "M10"
+  ],
+  "retired_strategies": [
+    "M7",
+    "M8"
+  ],
+  "deferred_strategies": [
+    "M11"
+  ],
+  "retune_targets": [
+    "M9",
+    "M10"
+  ],
   "forward_entry": "ops/m511_sim_forward.py",
   "forward_scope": "m5-m6-m9-m10",
   "legacy_additive_live_start_retired": true,
-  "unchanged_thresholds": ["M5", "M6"],
-  "signal_density_goal": {"signals": 10, "markets": 25, "deduplicate_candidates": true},
+  "unchanged_thresholds": [
+    "M5",
+    "M6"
+  ],
+  "signal_density_goal": {
+    "signals": 10,
+    "markets": 25,
+    "deduplicate_candidates": true
+  },
   "backtest_evidence": "research_outputs/analysis/m910_density_v8_20261113",
   "long_run_requires_separate_start": true,
-  "historical_evidence_deleted": false
+  "historical_evidence_deleted": true,
+  "superseded_by": "config/m9-m10-next-test.json",
+  "superseded_beijing": "2026-11-14",
+  "historical_scope_preserved": true,
+  "preserved_final_summaries_and_frozen_code": true,
+  "cleanup_manifest": "research_outputs/m511_sim/previous-cycle-cleanup-20261114.json"
 }

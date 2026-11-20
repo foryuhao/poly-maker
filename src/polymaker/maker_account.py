@@ -6,10 +6,13 @@ from polymaker.m4_state import decimal
 from polymaker.rdp_sm import _require
 
 
-async def account_snapshot(reads, meta):
+async def account_snapshot(reads, meta, *, raise_on_error=False):
     gateway = reads.gateway
-    values = await asyncio.gather(gateway.balance_allowance(),
-        gateway.required_collateral_spenders(meta), return_exceptions=True)
+    # Pool admission needs the original exception to distinguish a transient
+    # transport failure from a malformed or unauthorized account response.
+    options = {"raise_on_error": True} if raise_on_error else {}
+    values = await asyncio.gather(gateway.balance_allowance(**options),
+        gateway.required_collateral_spenders(meta, **options), return_exceptions=True)
     for value in values:
         if isinstance(value, BaseException):
             raise value

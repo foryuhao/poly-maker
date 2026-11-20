@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly M12 M21 M24 baseline report
+
+[Timer]
+OnCalendar=*-*-* *:00:35 Asia/Shanghai
+AccuracySec=1s
+Persistent=false
+Unit=polymaker-m122124-hourly-watch.service
+
+[Install]
+WantedBy=timers.target

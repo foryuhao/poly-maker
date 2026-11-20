@@ -24,7 +24,7 @@ from polymaker.m4_live_price_band import (
 from polymaker.m4_live_pricing import DYNAMIC, quote_valid, rejected_price_band_valid
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
-from polymaker.m4_types import BEST_ASK_SIGNAL, TakerPriceRisk, TakerStrategy
+from polymaker.m4_types import BEST_ASK_SIGNAL, M21_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
 from polymaker.state.tracker import TradeEvent
 
 FAK_BUY_MIN_PRINCIPAL = decimal("1")
@@ -42,8 +42,12 @@ class BudgetLedger(TaskLedger):
     cash_target = True
     @property
     def task_policy(self):
-        return ("M6_ZERO_FILL_ONLY_UNTIL_SIGNAL_DEADLINE_V1" if self.signal_limited
+        return (f"{self.signal_strategy}_ZERO_FILL_ONLY_UNTIL_SIGNAL_DEADLINE_V1" if self.signal_limited
                 else "REMAINING_ALL_IN_CASH_UNTIL_T240")
+
+    @property
+    def signal_strategy(self):
+        return "M21" if self.ledger_strategy == M21_LEDGER else "M6"
 
     @property
     def sizing_policy(self):
@@ -128,8 +132,8 @@ class BudgetLedger(TaskLedger):
             require(clock.get("policy") == BEST_ASK_SIGNAL
                     and clock.get("signal_monotonic") == evidence["signal_start_mono"]
                     and clock.get("lifetime_us") == age_us(evidence["order_deadline"], evidence["signal_start_mono"])
-                    and 0 < clock["lifetime_us"] <= 750_000,
-                    "M6_SIGNAL_CLOCK_EVIDENCE_CONFLICT")
+                    and 0 < clock["lifetime_us"] <= signal_lifetime_limit_us(self.ledger_strategy),
+                    f"{self.signal_strategy}_SIGNAL_CLOCK_EVIDENCE_CONFLICT")
 
     def price_band_abandonment(self, key):
         with self.lock:
@@ -284,8 +288,9 @@ class BudgetLedger(TaskLedger):
                     and not self.pending_matches(key)):
                 state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
         elif self.signal_limited and (filled > 0 or self.pending_matches(key)):
-            state, reason = (("WAIT_SETTLEMENT", "M6_PENDING_MATCHES_NO_TOP_UP") if self.pending_matches(key)
-                             else ("CUTOFF", "M6_CONFIRMED_FILL_NO_TOP_UP"))
+            state, reason = (("WAIT_SETTLEMENT", f"{self.signal_strategy}_PENDING_MATCHES_NO_TOP_UP")
+                             if self.pending_matches(key)
+                             else ("CUTOFF", f"{self.signal_strategy}_CONFIRMED_FILL_NO_TOP_UP"))
         elif self.get("buy_closed") or self.get("complete"):
             state, reason = "CUTOFF", self.get("market_halt_reason") or "M4_T240_ENTRY_ENDED"
         elif self.unresolved(key):
@@ -423,7 +428,7 @@ class BudgetLedger(TaskLedger):
         if self.signal_limited:
             require(prior == 0 and decimal(plan["commitment_usdc"]) <= self.order_budget
                     and minimum_fak_buy_ok(price, qty) and fak_amounts_compatible(price, qty),
-                    "M6_ATTEMPT_BUDGET_CONFLICT")
+                    f"{self.signal_strategy}_ATTEMPT_BUDGET_CONFLICT")
         seen = set()
         for p in basis:
             earlier = self.attempt(p["order_id"])

@@ -16,7 +16,7 @@ from polymaker.domain import Quote, Side
 from polymaker.m2_memory import recycle_idle_memory
 from polymaker.m4_config import STRATEGY
 from polymaker.m4_state import decimal
-from polymaker.m4_types import Opportunity, TakerPriceRisk, TakerStrategy
+from polymaker.m4_types import M21_LEDGER, Opportunity, TakerPriceRisk, TakerStrategy
 from polymaker.maker_account import account_snapshot
 from polymaker.maker_retry import post_exception_rejection, rejection, uncertain_kind
 from polymaker.rdp_sm import _require
@@ -108,7 +108,9 @@ class M4Market:
 
         # The runner installs the same M4 detector in both modes before this engine.
         strategy = getattr(settings, "taker_strategy", None)
-        if not getattr(self.feed.m1, "m6_only" if strategy and strategy.ledger != STRATEGY else "m4_only", False):
+        detector = ("m21_only" if strategy and strategy.ledger == M21_LEDGER else
+                    "m6_only" if strategy and strategy.ledger != STRATEGY else "m4_only")
+        if not getattr(self.feed.m1, detector, False):
             raise ValueError("M4_DETECTOR_REQUIRED")
 
     def elapsed(self):
@@ -521,6 +523,8 @@ class M4Market:
         observer = getattr(self.e.reads, 'fill_model', None)
         if observer is not None:
             payload['baseline_execution'] = observer.summary()
+        if getattr(self.feed, 'observe_until_market_close', False) and hasattr(self.feed, 'market_input_health'):
+            payload['market_input_health'] = self.feed.market_input_health()
         self.e.record("sm_m4_heartbeat", payload)
         self.display(payload)
 

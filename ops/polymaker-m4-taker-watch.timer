@@ -1,5 +1,5 @@
 [Unit]
-Description=Read-only M4 and M6 Taker audit every five minutes
+Description=Read-only five-minute M21 signal audit
 
 [Timer]
 OnCalendar=*-*-* *:00/5:20 Asia/Shanghai

@@ -12,6 +12,13 @@ OPPORTUNITY_PRICE_RISK = "M4_OPPORTUNITY_PRICE_RISK_V1"
 BEST_ASK_SIGNAL = "FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1"
 M4_LEDGER = "m4_frequency_v2_native_v1"
 M6_LEDGER = "m6_withdrawal_supported_v1_1"
+M21_LEDGER = "m21_endpoint_coflow_v1"
+M21_VERSION = "m21-endpoint-recovery-withdrawal-v1/raw-joint-endpoint-r1/p-1256b8aa9433"
+TAKER_LEDGER_IDS = {"M4": M4_LEDGER, "M6": M6_LEDGER, "M21": M21_LEDGER}
+
+
+def signal_lifetime_limit_us(ledger):
+    return 3_000_000 if ledger == M21_LEDGER else 750_000
 
 
 @dataclass(frozen=True)
@@ -28,6 +35,7 @@ class TakerPriceRisk:
             raise ValueError("M4_POST_PRICE_BAND_INVALID") from exc
         if ((self.policy, self.retry_policy) not in {
                 (POST_SIGNED_LIMIT_BAND, ABANDON_FIRST_SIGNED_BAND),
+                (POST_SIGNED_LIMIT_BAND, WAIT_SIGNAL_BAND),
                 (CLOSED_SIGNED_LIMIT_BAND, WAIT_SIGNAL_BAND)}
                 or not low.is_finite() or not high.is_finite() or not 0 <= low < high <= 1):
             raise ValueError("M4_POST_PRICE_BAND_INVALID")
@@ -35,9 +43,14 @@ class TakerPriceRisk:
         object.__setattr__(self, "maximum", high)
 
     def plan_fields(self):
+        if self.retry_policy == ABANDON_FIRST_SIGNED_BAND:
+            source = OPPORTUNITY_PRICE_RISK
+        elif self.policy == POST_SIGNED_LIMIT_BAND:
+            source = "M21_OPPORTUNITY_PRICE_RISK_V1"
+        else:
+            source = "M6_OPPORTUNITY_PRICE_RISK_V1"
         return {
-            "post_price_band_source": (OPPORTUNITY_PRICE_RISK if self.policy == POST_SIGNED_LIMIT_BAND
-                                       else "M6_OPPORTUNITY_PRICE_RISK_V1"),
+            "post_price_band_source": source,
             "post_price_band": {"policy": self.policy, "minimum": str(self.minimum), "maximum": str(self.maximum)},
             "post_price_band_retry_policy": self.retry_policy,
         }
@@ -56,7 +69,7 @@ class TakerStrategy:
 
     def __post_init__(self):
         signal, market = (Decimal(str(self.signal_budget_usdc)), Decimal(str(self.market_budget_usdc)))
-        if (self.strategy != self.ledger or self.ledger not in {M4_LEDGER, M6_LEDGER}
+        if (self.strategy != self.ledger or self.ledger not in TAKER_LEDGER_IDS.values()
                 or not self.version or not self.attribution or len(self.config_fingerprint) != 64
                 or not signal.is_finite() or not market.is_finite() or not 0 < signal <= market
                 or type(self.direction_limit) is not int or self.direction_limit < 1):

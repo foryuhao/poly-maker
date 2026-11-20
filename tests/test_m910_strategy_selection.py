@@ -8,7 +8,7 @@ from m510_frequency_grid import attach_profiles
 from m511_sim import NEXT_RESEARCH_GROUPS, ResearchOnlyEngine, definition
 from m511_sim_instant_fill import ResearchInstantFill
 from m511_sim_metrics import collect
-from maker_signals.strategies import M5_M10_LOCAL_AP, Strategies
+from maker_signals.strategies import M5_M10_LOCAL_AP, M910_DENSITY, Strategies
 
 from m1234_fixtures import fixture_events
 from test_m511_strategies import H
@@ -29,25 +29,27 @@ def test_disabled_m7_and_m8_cannot_start_or_create_private_ap_observers():
     assert h.s.active('M10', 'up') is not None
 
 
-def test_requested_scope_is_bound_into_definition_and_simulation_accounts(tmp_path):
+@pytest.mark.parametrize('groups, variant', [
+    (NEXT_RESEARCH_GROUPS, M5_M10_LOCAL_AP), (('M9', 'M10'), M910_DENSITY)])
+def test_requested_scope_is_bound_into_definition_and_simulation_accounts(tmp_path, groups, variant):
     async def run():
         events = deepcopy(fixture_events())
         cfg = events[0]['definition']['settings']
         cfg.update(profiles={}, scenarios=SCENARIO_SETTINGS,
-                   m5_m11=definition(M5_M10_LOCAL_AP, only_m5_m10=True,
-                                    enabled_strategies=NEXT_RESEARCH_GROUPS))
+                   m5_m11=definition(variant, only_m5_m10=True,
+                                    enabled_strategies=groups))
         source = tmp_path/'selected'
         source.mkdir()
         import json
         (source/'plan.json').write_text(json.dumps({'settings': cfg,
                          'run_identity': 'reduced-scope-fixture', 'mode': 'SIMULATION_ONLY',
                          'real_order_transport': 'ABSENT'}))
-        engine = ResearchOnlyEngine(source/events[0]['definition']['market']['slug'], signal_variant=M5_M10_LOCAL_AP,
-                                    enabled_strategies=NEXT_RESEARCH_GROUPS)
+        engine = ResearchOnlyEngine(source/events[0]['definition']['market']['slug'], signal_variant=variant,
+                                    enabled_strategies=groups)
         engine.store.run_owner = 'reduced-scope-fixture'
         for event in events:
             await engine.ingest(event)
-        expected = set(NEXT_RESEARCH_GROUPS)
+        expected = set(groups)
         assert set(engine.groups) == expected
         assert set(engine.brokers) == {'research/trade-through'}
         assert set(engine.brokers['research/trade-through'].accounts) == expected

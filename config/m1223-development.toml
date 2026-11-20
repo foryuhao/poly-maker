@@ -1,0 +1,19 @@
+# 24 consecutive five-minute development markets, fixed before collection.
+continuous = true
+seed = 1234
+max_markets = 24
+max_seconds = 7800
+max_pending_markets = 12
+# Existing day budget scaled to 2h with headroom. Full-day remains 16 GiB.
+max_output_mib = 2048
+min_free_disk_mib = 4096
+max_rss_mib = 512
+input_queue_frames = 2048
+writer_queue_records = 8192
+markout_seconds = [1, 5, 30]
+
+[scenarios.trade-through]
+post_ms = 100
+ack_ms = 200
+cancel_ms = 200
+ahead_cancel_fraction = "0"

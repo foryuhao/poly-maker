@@ -15,28 +15,46 @@ import httpx
 
 from polymaker.dashboard.settlement import validate_resolution
 from polymaker.m4_control import atomic_json
-from polymaker.m4_types import M4_LEDGER, M6_LEDGER
+from polymaker.m4_types import TAKER_LEDGER_IDS
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output-dir', type=Path, required=True)
 parser.add_argument('--project-dir', type=Path, default=Path(__file__).resolve().parents[1])
 parser.add_argument('--replay-dir', type=Path, help='Use saved snapshot/results only; no network or live ledger reads.')
-parser.add_argument('--strategy', choices=('M4', 'M6'), default='M4')
+parser.add_argument('--strategy', choices=TAKER_LEDGER_IDS, default='M4')
+parser.add_argument('--market-window-start', type=int, help='Inclusive market-opening epoch.')
+parser.add_argument('--market-window-end', type=int, help='Exclusive market-opening epoch.')
 args = parser.parse_args()
+window_start, window_end = args.market_window_start, args.market_window_end
+window = None
+if window_start is not None or window_end is not None:
+    if (window_start is None or window_end is None or not 0 <= window_start < window_end
+            or window_start % 300 or window_end % 300):
+        parser.error('provide both market-window bounds as increasing five-minute epochs')
+    window = {'window_start': window_start, 'window_end': window_end}
 PROJECT = args.project_dir.resolve()
 OUT = args.output_dir.resolve()
 if not OUT.is_relative_to(PROJECT / 'research_outputs'):
     parser.error('--output-dir must be inside project research_outputs')
 OUT.mkdir(parents=True, exist_ok=True)
 ROOT = PROJECT / 'research_outputs/m4_live'
-SECONDARY = args.strategy == 'M6'
-STRATEGY = M6_LEDGER if SECONDARY else M4_LEDGER
+SECONDARY = args.strategy != 'M4'
+STRATEGY = TAKER_LEDGER_IDS[args.strategy]
 BJ = ZoneInfo('Asia/Shanghai')
 F = '0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d'
 if args.replay_dir:
     snapshot = json.loads((args.replay_dir / 'snapshot.json').read_text())
     if snapshot.get('strategy', 'M4') != args.strategy:
         parser.error('replay snapshot belongs to a different strategy')
+    saved_window = snapshot.get('market_window')
+    if window is not None and saved_window != window:
+        if saved_window and (window_start < saved_window['window_start'] or window_end > saved_window['window_end']):
+            parser.error('requested window is outside the replay snapshot window')
+        snapshot.update(market_window=window, owned_ledgers_scanned=None,
+                        markets=[m for m in snapshot['markets'] if window_start <= m['epoch'] < window_end],
+                        unresolved_attempts_excluded=[a for a in snapshot.get('unresolved_attempts_excluded', [])
+                                                     if window_start <= a['epoch'] < window_end])
+    window = snapshot.get('market_window')
     markets = snapshot['markets']
     ledger_count = snapshot['owned_ledgers_scanned']
     atomic_json(OUT / 'snapshot.json', snapshot)
@@ -44,7 +62,11 @@ else:
     began = time.time()
     markets, unresolved, ignored, orders = [], [], [], set()
     ledger_count = 0
-    for path in sorted((ROOT / ('m6-ledgers' if SECONDARY else 'ledgers')).glob('*.sqlite3')):
+    directory = ROOT / (f'{args.strategy.lower()}-ledgers' if SECONDARY else 'ledgers')
+    paths = (sorted(directory.glob('*.sqlite3')) if window is None else
+             [path for epoch in range(window_start, window_end, 300)
+              if (path := directory / f'btc-updown-5m-{epoch}.sqlite3').exists()])
+    for path in paths:
         if path.is_symlink() or path.resolve() != path:
             raise ValueError('TAKER_PNL_LEDGER_PATH_INVALID')
         with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=2)) as db:
@@ -63,6 +85,8 @@ else:
             evidence = {r['trade_id']: dict(r) for r in db.execute('SELECT * FROM taker_trade_evidence')}
         market = meta['market']
         epoch = int(market['slug'].rsplit('-', 1)[1])
+        if window and (not window_start <= epoch < window_end or path.stem != market['slug']):
+            raise ValueError('TAKER_PNL_LEDGER_MARKET_MISMATCH')
         tokens = {'YES': market['tokens'][0]['token_id'], 'NO': market['tokens'][1]['token_id']}
         assert [z['outcome'] for z in market['tokens']] == ['Up', 'Down']
         confirmed = []
@@ -108,8 +132,10 @@ else:
     snapshot = {'observed_at': began, 'read_completed_at': time.time(),
                 'strategy': args.strategy,
                 'beijing_time': datetime.fromtimestamp(began, BJ).isoformat(),
-                'scope': ('Local live M6 exact-owned CONFIRMED fills' if SECONDARY else
+                'scope': (f'Local live {args.strategy} exact-owned CONFIRMED fills in the market window.' if window else
+                          f'Local live {args.strategy} exact-owned CONFIRMED fills' if SECONDARY else
                           'All local LIVE m4-taker-budget-v1 exact-owned CONFIRMED fills, including the historical first-fill trial; no baseline, Maker or other executor.'),
+                'market_window': window,
                 'read_mode': 'mode=ro,query_only,BEGIN', 'owned_ledgers_scanned': ledger_count,
                 'markets': markets, 'unresolved_attempts_excluded': unresolved,
                 'excluded_other_ledgers': ignored, 'production_ledger_writes': False,
@@ -145,11 +171,13 @@ if args.replay_dir:
     saved_results = json.loads((args.replay_dir / 'official-resolutions.json').read_text())
     if saved_results.get('strategy', 'M4') != args.strategy:
         parser.error('replay results belong to a different strategy')
-    resolutions = saved_results['markets']
+    market_epochs = {m['epoch'] for m in markets}
+    resolutions = [r for r in saved_results['markets'] if r['epoch'] in market_epochs]
 else:
     resolutions = asyncio.run(resolve_all())
 atomic_json(OUT / 'official-resolutions.json', {'observed_at': max((r['observed_at'] for r in resolutions), default=snapshot['read_completed_at']), 'markets': resolutions,
             'strategy': args.strategy,
+            'market_window': window,
             'scope': ('Offline replay of saved official results; no network or live ledger reads.'
                       if args.replay_dir else 'Public exact-owned-market result GET only; no account, trade, position or order API call.')})
 results = {r['epoch']: r for r in resolutions}
@@ -210,6 +238,7 @@ assert max_dd == max((curve[i] - curve[j] for i in range(len(curve)) for j in ra
 assert balance == sum((D(r['payout_usdc']) - D(r['all_in_usdc']) for r in rows), D(0))
 assert len(rows) + len(pending) == len(markets)
 summary = {'strategy': args.strategy,
+           'market_window': window,
            'pnl_status': ('NO_CONFIRMED_FILLS' if not markets else 'RESOLVED_SUBSET' if rows and pending
                           else 'AWAITING_RESULTS' if pending else 'RESOLVED'),
            'snapshot_beijing': snapshot['beijing_time'], 'resolution_read_completed_at': max((r['observed_at'] for r in resolutions), default=snapshot['read_completed_at']),
@@ -221,8 +250,8 @@ summary = {'strategy': args.strategy,
            'resolved_markets': len(rows), 'pending_markets': len(pending),
            'result_read_errors': sum(r['error'] is not None for r in pending),
            'official_result_coverage_complete': not pending,
-           'drawdown_scope': ('COMPLETE_CONFIRMED_MARKET_HISTORY' if not pending
-                              else 'RESOLVED_SUBSET_ONLY_NOT_COMPLETE_HISTORY'),
+           'drawdown_scope': ('RESOLVED_SUBSET_ONLY_NOT_COMPLETE_HISTORY' if pending else
+                              'SELECTED_MARKET_WINDOW' if window else 'COMPLETE_CONFIRMED_MARKET_HISTORY'),
            'positive_markets': sum(D(r['pnl_usdc']) > 0 for r in rows),
            'negative_markets': sum(D(r['pnl_usdc']) < 0 for r in rows),
            'resolved_net_pnl_usdc': str(balance), 'maximum_drawdown_usdc': str(max_dd),

@@ -85,9 +85,12 @@ class M6Market:
         self.ledger.set("fill_tracking", "NOT_TRACKED")
         self.pending = {}
         self.retry_after = {}
+        self.retry_input_revision = {}
         self.submit_lock = asyncio.Lock()
         self.guard_reason = None
         self.pending_input_age_ms = 0.
+        self.guard_input_revision = 0
+        self.guard_input_state = {}
         self.post_task = self.account_task = None
         self.last_account = self.last_heartbeat = -float("inf")
         self.account_revision = 0
@@ -120,7 +123,7 @@ class M6Market:
                  and opportunity.anchor_bid_price == decimal(row["price"]), "M6_RETRY_RECOVERY_IDENTITY")
         return opportunity
 
-    def restore(self):
+    async def restore(self):
         for old in self.ledger.uncertain_posts():
             quote = json.loads(old["quote"])
             quote["side"] = Side(quote["side"])
@@ -145,7 +148,7 @@ class M6Market:
             if row["state"] == "REJECTED":
                 proof = json.loads(row['failure_proof']) if row['failure_proof'] else None
                 if proof and proof.get('kind') == 'REJECTED_RESPONSE' and proof.get('reprice') is True:
-                    self.queue_retry(self.restored_opportunity(row), proof=proof)
+                    await self.queue_retry(self.restored_opportunity(row), proof=proof)
                 continue
             quote = json.loads(row["quote"])
             quote["side"] = Side(quote["side"])
@@ -200,6 +203,48 @@ class M6Market:
         # ends, even when the cash read may already reflect a completed BUY.
         return max(Decimal(0), cash-self.ledger.committed())
 
+    async def persist(self, method, *args, **kwargs):
+        """Await FULL-synchronous SQLite commits without stopping WS consumption.
+
+        Calls never hold feed.lock. Cancellation drains the worker before any
+        caller may close the ledger; it cannot turn a pending commit into a
+        claim that persistence failed or an authorization to send again.
+        """
+        began, committed = time.monotonic(), False
+        worker = {}
+
+        def work():
+            worker['began'] = time.monotonic()
+            try:
+                return method(*args, **kwargs)
+            finally:
+                worker['ended'] = time.monotonic()
+
+        job = asyncio.create_task(asyncio.to_thread(work))
+        try:
+            result = await asyncio.shield(job)
+            committed = True
+            return result
+        except asyncio.CancelledError:
+            await job
+            committed = True
+            raise
+        finally:
+            try:
+                ended = time.monotonic()
+                key = getattr(args[0], 'episode_id', args[0]) if args else None
+                self.e.record('sm_m6_persistence', {'operation': method.__name__,
+                    'opportunity_id': key if isinstance(key, str) else None,
+                    'duration_ms': (ended-began)*1000,
+                    'worker_queue_ms': (worker.get('began', ended)-began)*1000,
+                    'worker_execution_ms': (worker.get('ended', ended)-worker.get('began', ended))*1000,
+                    'result_delivery_ms': (ended-worker.get('ended', ended))*1000,
+                    'durability': 'SQLITE_FULL', 'committed': committed})
+            except Exception:
+                # Diagnostic failure closes further admission, but must not
+                # disguise an already committed ACK as a transport failure.
+                self.e.fatal = self.e.fatal or 'M6_PERSISTENCE_DIAGNOSTIC_FAILED'
+
     def capital_covers(self, row, price):
         if not self.account_current():
             return False
@@ -209,7 +254,7 @@ class M6Market:
         return required <= min(decimal(self.account['official_balance_usd']),
                                decimal(self.account['applicable_allowance_usd']))
 
-    def collect(self):
+    async def collect(self):
         elapsed = self.elapsed()
         if not self.entry_window_open():
             return
@@ -219,10 +264,14 @@ class M6Market:
                 self.e.record("sm_m6_candidate_skipped", {"opportunity": asdict(opportunity),
                                                         "reason": reason, "elapsed": elapsed})
 
-        with self.feed.lock:
-            # select() materializes both token-local candidates. Consume each
-            # only after recording its immutable target in the durable ledger.
-            for _ in range(2):
+        # Capture immutable evidence under the feed lock, then release it for
+        # disk IO. Revalidate after persistence: a vanished signal is audited,
+        # never executed using the earlier snapshot.
+        for _ in range(2):
+            with self.feed.lock:
+                if not self.entry_window_open() or self.stop.is_set() or self.e.inhibited():
+                    break
+                elapsed = self.elapsed()
                 self.feed.m1.evaluate()
                 opportunity = self.feed.m1.selected
                 if opportunity is None:
@@ -237,13 +286,24 @@ class M6Market:
                     skipped(opportunity, "MAKER_QUOTE_NOT_AVAILABLE")
                     continue
                 try:
-                    row = self.ledger.observe(opportunity, minimum=self.e.meta.min_order_size, elapsed=elapsed)
+                    self.ledger.order_quantity(opportunity.anchor_bid_price, self.e.meta.min_order_size)
                 except ValueError:
                     skipped(opportunity, "VENUE_MINIMUM_OR_PRECISION")
                     continue
-                if self.feed.m1.take(opportunity) and row is not None:
+            row = await self.persist(self.ledger.observe, opportunity,
+                                     minimum=self.e.meta.min_order_size, elapsed=elapsed)
+            if row is not None:
+                self.e.record("sm_m6_baseline_signal", row)
+            with self.feed.lock:
+                taken = self.feed.m1.take(opportunity)
+                reason = ('M6_STOPPING_DURING_PERSISTENCE' if self.stop.is_set() or self.e.inhibited() else
+                          'M6_ENTRY_WINDOW_ENDED_DURING_PERSISTENCE' if not self.entry_window_open() else
+                          'M6_SIGNAL_ENDED_DURING_PERSISTENCE' if not taken else None)
+                active = reason is None
+                if taken and row is not None and active:
                     self.pending[row["id"]] = opportunity
-                    self.e.record("sm_m6_baseline_signal", row)
+            if row is not None and not (taken and active):
+                await self.persist(self.ledger.outcome, row['id'], 'SKIPPED', reason)
 
     def entry_window_open(self):
         lower = self.elapsed()
@@ -270,7 +330,7 @@ class M6Market:
     def initial_post_budget_available(self, opportunity):
         return (opportunity.order_deadline-self.e.monotonic())*1000 >= self.post_budget_ms()
 
-    def guard(self, opportunity, quote=None):
+    def guard(self, opportunity, quote=None, *, stage='ADMISSION'):
         e = self.e
         with self.feed.lock:
             book = self.feed.books[opportunity.token_id]
@@ -278,11 +338,18 @@ class M6Market:
             retrying = bool(row["posts"])
             price = self.quote_price(opportunity)
             now = e.monotonic()
+            self.guard_input_revision = self.feed.input_revision
             pending = ([self.feed.m1_pending_received[0]] if self.feed.m1_pending_received else [])
             if self.feed.m1_processing_received is not None:
                 pending.append(self.feed.m1_processing_received)
             age = now-min(pending) if pending else 0.
             self.pending_input_age_ms = age*1000
+            self.guard_input_state = {'revision': self.guard_input_revision,
+                'sequence': self.feed.sequence, 'generation': self.feed.generation,
+                'pending_count': len(self.feed.m1_pending_received),
+                'oldest_received_monotonic': min(pending) if pending else None,
+                'processing_received_monotonic': self.feed.m1_processing_received,
+                'checked_monotonic': now}
             signal_reason = None if retrying else self.feed.m1.active_reason((opportunity.episode_id,), None)
             health = e.reads.network.snapshot()
             checks = [
@@ -302,13 +369,31 @@ class M6Market:
                 ("M6_PREPARED_PRICE_CHANGED", quote is None or decimal(quote.price) == price),
                 # Signing, journal flush and worker queueing consume the same
                 # RF/EX window. Recheck the existing budget at native POST.
-                ("M6_POST_LATENCY_BUDGET", quote is None or retrying
+                ("M6_POST_LATENCY_BUDGET", quote is None and stage != 'AFTER_RESERVATION' or retrying
                     or (opportunity.order_deadline-now)*1000 >= self.post_budget_ms()),
                 ("M6_SESSION_BUDGET", self.ledger.committed() <= self.settings.session_budget_usdc),
                 (health.reason, health.allowed),
             ]
             self.guard_reason = next((reason for reason, valid in checks if not valid), None)
-            return self.guard_reason is None
+            allowed = self.guard_reason is None
+            diagnostic = {'opportunity_id': opportunity.episode_id, 'stage': stage,
+                'allowed': allowed, 'reason': self.guard_reason,
+                'checked_monotonic': now,
+                'remaining_ms': (opportunity.order_deadline-now)*1000,
+                'required_remaining_ms': self.post_budget_ms(),
+                'signal_reason': signal_reason, 'input_state': dict(self.guard_input_state)}
+        # Queue-only diagnostics; never hold the input lock for serialization/fsync.
+        e.record('sm_m6_submit_check', diagnostic)
+        return allowed
+
+    async def stop_unsent(self, opportunity):
+        """Retain the actual failed check, including a recoverable unsent block."""
+        row = self.ledger.row(opportunity.episode_id)
+        reason = self.guard_reason or 'M6_ADMISSION_ENDED'
+        await self.persist(self.ledger.outcome, opportunity.episode_id,
+            'SKIPPED' if row['state'] == 'OBSERVED' else 'ABORTED', reason)
+        if reason != 'M6_POST_LATENCY_BUDGET':
+            await self.queue_retry(opportunity, proof={'kind': 'NOT_SENT'})
 
     def may_retry(self, opportunity):
         row = self.ledger.row(opportunity.episode_id)
@@ -317,7 +402,7 @@ class M6Market:
                 and (row["posts"] > 0 or (self.e.monotonic() < opportunity.order_deadline
                     and self.feed.m1.active_reason((opportunity.episode_id,), None) is None)))
 
-    def queue_retry(self, opportunity, *, proof=None):
+    async def queue_retry(self, opportunity, *, proof=None):
         key = opportunity.episode_id
         if not self.may_retry(opportunity):
             return False
@@ -329,19 +414,30 @@ class M6Market:
         if proof is not None:
             if uncertain and not self.account_current():
                 deferred = True
-            elif not self.ledger.retry(key, proof=proof, spendable=self.spendable(),
-                                       direction_limit=self.settings.max_opportunities_per_direction):
+            elif not await self.persist(self.ledger.retry, key, proof=proof, spendable=self.spendable(),
+                                        direction_limit=self.settings.max_opportunities_per_direction):
                 if not uncertain:
                     return False
                 deferred = True  # Keep the allowed resend while cash is unavailable.
         count = row["posts"]
         delay = min(self.settings.retry_max_sec, self.settings.retry_initial_sec*2**min(10, max(0, count-1)))
+        # A locally blocked, never-sent order has no network attempt to back
+        # off. Wait for actual input progress, then run every guard again.
+        input_wait = (self.guard_reason == 'M6_SUBMIT_INPUT_BACKLOG'
+                      and (proof is None or proof.get('kind') == 'NOT_SENT') and not row['started'])
+        if input_wait:
+            delay = 0.
+            self.retry_input_revision[key] = self.guard_input_revision
+        else:
+            self.retry_input_revision.pop(key, None)
         self.pending[key] = opportunity
         self.retry_after[key] = self.e.monotonic()+delay
         self.e.record("sm_m6_retry_wait", {"opportunity_id": key, "posts": count,
             "retry_after_sec": delay, "original_price": str(opportunity.anchor_bid_price),
             "cutoff_sec": self.settings.cutoff_sec, "proof": proof, "deferred_for_funds": deferred,
-            "reason": self.guard_reason, "pending_input_age_ms": self.pending_input_age_ms})
+            "reason": self.guard_reason, "pending_input_age_ms": self.pending_input_age_ms,
+            "wake_on_input_progress": input_wait,
+            "guard_input_revision": self.guard_input_revision, "input_state": self.guard_input_state})
         return True
 
     async def submit(self, opportunity):
@@ -355,33 +451,39 @@ class M6Market:
             if row["uncertain_retries"] >= 1:
                 return
             if self.guard(opportunity):
-                self.queue_retry(opportunity, proof={"kind": "UNCERTAIN_RESTART"})
+                await self.queue_retry(opportunity, proof={"kind": "UNCERTAIN_RESTART"})
             else:
-                self.queue_retry(opportunity)
+                await self.queue_retry(opportunity)
             return
         if row["state"] not in {"OBSERVED", "RESERVED"}:
             return
         if not self.guard(opportunity):
-            if not self.queue_retry(opportunity):
-                self.ledger.outcome(key, "SKIPPED" if row["state"] == "OBSERVED" else "ABORTED",
+            if not await self.queue_retry(opportunity):
+                await self.persist(self.ledger.outcome, key, "SKIPPED" if row["state"] == "OBSERVED" else "ABORTED",
                                     self.guard_reason or self.account_reason or "M6_ADMISSION_ENDED")
             return
         if not row["posts"] and not self.initial_post_budget_available(opportunity):
-            self.ledger.outcome(key, "SKIPPED" if row["state"] == "OBSERVED" else "ABORTED", "M6_POST_LATENCY_BUDGET")
+            await self.persist(self.ledger.outcome, key, "SKIPPED" if row["state"] == "OBSERVED" else "ABORTED", "M6_POST_LATENCY_BUDGET")
             return
-        if row["state"] == "OBSERVED" and not self.ledger.reserve(key, spendable=self.spendable(),
+        if row["state"] == "OBSERVED" and not await self.persist(self.ledger.reserve, key, spendable=self.spendable(),
                 direction_limit=self.settings.max_opportunities_per_direction):
+            return
+        if not self.guard(opportunity, stage='AFTER_RESERVATION'):
+            await self.stop_unsent(opportunity)
             return
         row = self.ledger.row(key)
         price = self.quote_price(opportunity)
         if price is None:
-            self.queue_retry(opportunity)
+            await self.queue_retry(opportunity)
             return
         quantity = self.ledger.order_quantity(price, e.meta.min_order_size)
-        if not self.ledger.reserve_quote(key, price=price, quantity=quantity, spendable=self.spendable()):
+        unchanged = (row['retry_pricing'] == 'SIGNAL' and price == decimal(row['price'])
+                     and quantity == decimal(row['quantity'])
+                     and price*quantity == decimal(row['reserved']))
+        if not unchanged and not await self.persist(self.ledger.reserve_quote, key, price=price, quantity=quantity, spendable=self.spendable()):
             self.guard_reason = "M6_REPRICED_BUDGET_UNAVAILABLE"
-            if not self.queue_retry(opportunity):
-                self.ledger.outcome(key, "ABORTED", self.guard_reason)
+            if not await self.queue_retry(opportunity):
+                await self.persist(self.ledger.outcome, key, "ABORTED", self.guard_reason)
             return
         quote = WindowQuote(e.meta.condition_id, row["token"], row["outcome"], Side.BUY,
                             float(price), float(quantity), key)
@@ -389,13 +491,28 @@ class M6Market:
         outcome_recorded = False
         try:
             ticks = {token: float(book.tick) for token, book in self.feed.books.items()}
+            began = time.monotonic()
             prepared = await e.gateway.prepare([Quote(quote.token_id, Side.BUY, quote.price, quote.size)], e.meta, ticks)
+            e.record('sm_m6_prepare_timing', {'opportunity_id': key,
+                'duration_ms': (time.monotonic()-began)*1000,
+                'signer': getattr(getattr(e.gateway, 'signer', None), 'last_prepare_timing', None)})
+            if not self.guard(opportunity, quote, stage='AFTER_SIGNING'):
+                await self.stop_unsent(opportunity)
+                outcome_recorded = True
+                return
             oid = prepared.order_ids[0]
-            self.ledger.prepare(key, oid, asdict(quote))
+            await self.persist(self.ledger.prepare, key, oid, asdict(quote))
             e.record("sm_prepared", {"candidates": [{"order_ids": [oid], "quotes": [asdict(quote)],
                                                      "body_hash": prepared.body_hash}],
                                     "normal_entry_mode": STRATEGY})
+            if not self.guard(opportunity, quote, stage='BEFORE_JOURNAL_BARRIER'):
+                await self.stop_unsent(opportunity)
+                outcome_recorded = True
+                return
+            began = time.monotonic()
             await e.journal.flush()
+            e.record('sm_m6_journal_barrier', {'opportunity_id': key,
+                'duration_ms': (time.monotonic()-began)*1000})
             attempt = Placement(f"{key}:post{row['posts']+1}", quote, expected_order_id=oid, order_id=oid)
             self.register(attempt)
 
@@ -416,17 +533,17 @@ class M6Market:
             # The real SDK executes the final guard in its worker immediately
             # before POST. A retry has its existing task's T240 authorization;
             # the original RF/EX times remain unchanged in the audit trail.
-            raw = await e.gateway.send_prepared(prepared, submit_guard=lambda: self.guard(opportunity, quote),
+            raw = await e.gateway.send_prepared(prepared, submit_guard=lambda: self.guard(opportunity, quote, stage='NATIVE_POST'),
                 operation_context={"attempt": attempt, "batch_attempts": [attempt],
                                    "network_batch_id": None, "on_post_start": post_start})
             if not attempt.post_started:
                 attempt.outcome = "ABORTED"
                 budget_ended = self.guard_reason == "M6_POST_LATENCY_BUDGET"
-                self.ledger.outcome(key, "ABORTED", self.guard_reason if budget_ended else "M6_FINAL_GUARD_ENDED")
+                await self.persist(self.ledger.outcome, key, "ABORTED", self.guard_reason or "M6_FINAL_GUARD_ENDED")
                 outcome_recorded = True
                 self.unregister_unsent(attempt)
                 if not budget_ended:
-                    self.queue_retry(opportunity, proof={"kind": "NOT_SENT"})
+                    await self.queue_retry(opportunity, proof={"kind": "NOT_SENT"})
             else:
                 outcome, order = e._placement_outcomes(raw, [quote])[0]
                 proof = rejection(raw, attempt.principal_limit) if outcome == "REJECTED" else None
@@ -436,14 +553,14 @@ class M6Market:
                 if order is not None and order.order_id != oid:
                     outcome, reason = "UNKNOWN", "M6_ACK_SIGNED_ID_CONFLICT"
                 attempt.outcome = outcome
-                self.ledger.outcome(key, outcome, reason, proof=proof)
+                await self.persist(self.ledger.outcome, key, outcome, reason, proof=proof)
                 outcome_recorded = True
                 if outcome == "REJECTED":
                     self.unregister_unsent(attempt)
                     if proof.get("reprice"):
-                        self.queue_retry(opportunity, proof=proof)
+                        await self.queue_retry(opportunity, proof=proof)
                 elif outcome == "UNKNOWN":
-                    self.queue_retry(opportunity, proof={"kind": "UNCERTAIN_RESPONSE"})
+                    await self.queue_retry(opportunity, proof={"kind": "UNCERTAIN_RESPONSE"})
                 e.record("sm_m6_baseline_post", {"opportunity_id": key, "order_id": oid,
                                             "outcome": outcome, "quote": asdict(quote)})
         except Exception as exc:
@@ -461,16 +578,16 @@ class M6Market:
                 proof = {"kind": "NOT_SENT"}
             outcome = "REJECTED" if started and proof else "UNKNOWN" if started else "ABORTED"
             budget_ended = not started and self.guard_reason == "M6_POST_LATENCY_BUDGET"
-            self.ledger.outcome(key, outcome, self.guard_reason if budget_ended else type(exc).__name__, proof=proof)
+            await self.persist(self.ledger.outcome, key, outcome, self.guard_reason if budget_ended else type(exc).__name__, proof=proof)
             if attempt:
                 attempt.outcome = outcome
                 if outcome in {"REJECTED", "ABORTED"}:
                     self.unregister_unsent(attempt)
             if proof is not None and not budget_ended:
                 if not started or proof.get("reprice"):
-                    self.queue_retry(opportunity, proof=proof)
+                    await self.queue_retry(opportunity, proof=proof)
             elif started:
-                self.queue_retry(opportunity, proof={"kind": uncertain_kind(exc)})
+                await self.queue_retry(opportunity, proof={"kind": uncertain_kind(exc)})
             e.record("sm_m6_baseline_post_error", {"opportunity_id": key, "started": bool(started),
                                                "error_type": type(exc).__name__})
         finally:
@@ -493,6 +610,7 @@ class M6Market:
                 self.ledger.outcome(row["id"], "ABORTED", reason)
         self.pending.clear()
         self.retry_after.clear()
+        self.retry_input_revision.clear()
 
     def heartbeat(self):
         payload = {"strategy": STRATEGY, "slug": self.e.slug, "state": self.state,
@@ -554,12 +672,17 @@ class M6Market:
             if tokens:
                 self.last_tick_refresh = now
                 self.tick_task = asyncio.create_task(self.refresh_ticks(tokens))
-        self.collect()
+        await self.collect()
+        now = self.e.monotonic()
         ready = [key for key, ep in self.pending.items() if self.retry_after.get(key, 0) <= now
+                 and (self.feed.input_revision != self.retry_input_revision.get(key, -1)
+                      or not self.ledger.row(key)['posts'] and now >= ep.order_deadline)
                  and (self.account_current() or self.elapsed() >= self.settings.cutoff_sec
                       or not self.ledger.row(key)["posts"] and now >= ep.order_deadline)]
         if self.post_task is None and ready:
             key = ready[0]
+            self.retry_input_revision.pop(key, None)
+            self.retry_after.pop(key, None)
             self.post_task = asyncio.create_task(self.submit(self.pending.pop(key)))
 
     async def recycle_after_cutoff(self):
@@ -599,13 +722,14 @@ class M6Market:
     async def run(self):
         e = self.e
         self.transition("PREPARING")
-        self.restore()
+        await self.restore()
         try:
             while not self.stop.is_set() and self.elapsed() < self.settings.close_sec:
                 if e.inhibited():
                     self.stop.set()
                     break
                 now = e.monotonic()
+                input_sequence = self.feed.sequence
                 self.transition("PREPARING" if self.elapsed() < self.settings.start_sec else
                                 "OPEN" if self.elapsed() < self.settings.cutoff_sec else "DRAINING")
                 await self.advance()
@@ -613,7 +737,7 @@ class M6Market:
                     self.last_heartbeat = now
                     self.heartbeat()
                 e.drain_network_events()
-                await asyncio.sleep(.01)
+                await self.wait_for_progress(input_sequence)
             # Never cancel SDK workers: a cancelled await does not stop POST.
             await self.drain()
             # A POST may span the whole quiet window. Reclaim only after its
@@ -631,6 +755,22 @@ class M6Market:
             if observer is not None:
                 observer.stop('RUN_ENDED_BEFORE_OBSERVATION_END')
             await e.journal.flush()
+
+    async def wait_for_progress(self, input_sequence):
+        if self.feed_closed:
+            await asyncio.sleep(.01)
+            return
+        # Remember the sequence BEFORE advance(): persistence can receive input
+        # while yielding. Clearing the event against a newer sequence loses it.
+        waiter = asyncio.create_task(self.feed.wait_after(input_sequence, .01))
+        try:
+            jobs = [waiter]+[job for job in (self.post_task, self.account_task, self.tick_task)
+                             if job is not None]
+            await asyncio.wait(jobs, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            # Only the local waiter is expendable; never cancel an SDK/commit.
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
 
     def complete_window(self):
         """Record local observation completion; never send a market-end action."""

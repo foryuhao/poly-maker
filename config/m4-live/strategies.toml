@@ -1,2 +1,2 @@
-# New markets freeze this list. Removing a strategy blocks new sends immediately.
-enabled = ["M4", "M6"]
+# M21-only live validation. Future markets freeze the combined strategy lists.
+enabled = []

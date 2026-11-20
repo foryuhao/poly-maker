@@ -1,0 +1,7 @@
+M4／M6 实盘每小时巡检。以本聊天最新人工指令为准。本轮按策略分别报告过去一小时的准入信号完成率和含费 PnL。统一用北京时间和最近 12 个已结束的五分钟场次，窗口以本轮 rolling_1h 和 rolling_1h_m6 的 [window_start, window_end) 为准。
+
+核对两策略的候选、正式信号、准入、真实提交、最终 CONFIRMED、零成交、过滤和未决。完成率为截至窗口结束有最终 CONFIRMED 的独立信号数 ÷ 准入信号数。零准入写“无准入样本”。按信号去重，合并重试和追加。ACK、UNKNOWN、SETTLING 单列。给出异常原因和证据。账本用 SQLite mode=ro、query_only，核对当场设置和所属日志。落盘证据逐场覆盖上次游标后的完整场次，补查当前场和仍影响执行的未决项。按当场 policy 和 entry_cutoff_sec 核对资金池 OPEN／SKIPPED、预留及 120 秒释放。简报汇总 PID、心跳、行情、网络、余额保护、换场及 T270 预取复用，单列缺场、延迟开场与观测缺口。
+
+对 M4 和 M6 分别运行 .venv/bin/python ops/m4_taker_pnl.py --strategy <策略> --market-window-start <window_start> --market-window-end <window_end> --output-dir <本轮审阅目录>/pnl/<策略>。时间参数用整数 epoch，取同一窗口。保存 snapshot.json、official-resolutions.json 和 analysis.json。PnL 按本窗口开场市场归属，使用巡检时已有的本策略 CONFIRMED 份数按官方最终兑付扣实际本金和手续费。报告已裁定信号数、含费 PnL、待裁定的确认信号数与成本。核实无确认成交时写“无确认成交”，只有待裁定写“待裁定”。账本缺场或结果读取失败时保留可核验部分并说明缺口。若窗口结束后出现确认，注明完成率截点与 PnL 采样时点的差异。只允许对已确认成交的精确市场读取公开官方结果。
+
+正常轮次简报。可复现故障留证、修复并离线验证，在此聊天通知用户手动重启所需服务。禁止自行启停或重启实盘、改账本、发单或查全账户。完成实际复核后用 agent-state.lock 的 flock 重读并原子更新已完成的审阅游标及证据路径，保留未决项和其他状态。

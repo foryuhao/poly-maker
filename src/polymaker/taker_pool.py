@@ -10,23 +10,31 @@ from pathlib import Path
 
 from polymaker.m4_live_config import M4LiveSettings
 from polymaker.m4_state import M4Ledger, decimal
-from polymaker.m4_types import M4_LEDGER, M6_LEDGER
+from polymaker.m4_types import TAKER_LEDGER_IDS
 
-POLICY = "SHARED_TAKER_POOL_T15_CLOSE_PLUS_120_V1"
-STRATEGIES = {"M4": M4_LEDGER, "M6": M6_LEDGER}
+POLICY = "SHARED_TAKER_POOL_BEFORE_T240_CLOSE_PLUS_120_V2"
+ADMISSION_CUTOFF_SEC = 240
+STRATEGIES = TAKER_LEDGER_IDS
 
 
 def membership(project):
-    path = Path(project) / "config/m4-live/strategies.toml"
-    if not path.is_file():
-        return ()
-    raw = tomllib.loads(path.read_text())
-    enabled = raw.get("enabled")
-    if (set(raw) != {"enabled"} or not isinstance(enabled, list)
-            or any(not isinstance(name, str) or name not in STRATEGIES for name in enabled)
-            or len(set(enabled)) != len(enabled)):
+    directory = Path(project) / "config/m4-live"
+    names = []
+    # The prior runner hot-reads strategies.toml and rejects unfamiliar names.
+    # Put additions for the new runner in a separate list during cutover.
+    for filename in ("strategies.toml", "strategies-additions.toml"):
+        path = directory / filename
+        if not path.is_file():
+            continue
+        raw = tomllib.loads(path.read_text())
+        enabled = raw.get("enabled")
+        if (set(raw) != {"enabled"} or not isinstance(enabled, list)
+                or any(not isinstance(name, str) or name not in STRATEGIES for name in enabled)):
+            raise ValueError("TAKER_POOL_MEMBERSHIP_INVALID")
+        names.extend(enabled)
+    if len(set(names)) != len(names):
         raise ValueError("TAKER_POOL_MEMBERSHIP_INVALID")
-    return tuple(STRATEGIES[name] for name in enabled)
+    return tuple(STRATEGIES[name] for name in names)
 
 
 def account_cash(account):
@@ -71,17 +79,23 @@ class TakerPool:
                              (funder, epoch)).fetchone()
         return Opening(self, funder, epoch, json.loads(row[0])) if row else None
 
-    def decide(self, funder, epoch, market_id, settings, account, *, clock, read_error=None):
-        """Freeze membership and reserve all requested budgets in a single transaction."""
+    def decide(self, funder, epoch, market_id, settings, account, *, clock, read_error=None,
+               account_valid_until=None, read_retries=0):
+        """Commit the first final decision atomically. A stale read can be retried."""
         with closing(self.connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             lower, upper = clock()
+            if lower < epoch:
+                raise ValueError("TAKER_POOL_BEFORE_T0")
             db.execute("UPDATE market_openings SET released_at=? WHERE funder=? AND release_at<=? "
                        "AND released_at IS NULL", (lower, funder, lower))
             existing = db.execute("SELECT payload FROM market_openings WHERE funder=? AND epoch=?",
                                   (funder, epoch)).fetchone()
             if existing:
-                return Opening(self, funder, epoch, json.loads(existing[0]))
+                payload = json.loads(existing[0])
+                if payload["market_id"] != market_id:
+                    raise ValueError("TAKER_POOL_MARKET_IDENTITY_CONFLICT")
+                return Opening(self, funder, epoch, payload)
             older = []
             # Five-minute markets and a 120-second tail can overlap only the
             # prior epoch. Read its legacy M4 ledger without migrating it.
@@ -113,9 +127,14 @@ class TakerPool:
             cash = account_cash(account) if account is not None else None
             available = max(decimal(0), cash - sum((decimal(p["reserved"]) for p in older), decimal(0))) if (
                 cash is not None) else None
-            # Refresh the bound after the legacy ledger read and SQLite lock.
+            # Recheck the clock and the account snapshot after acquiring the DB
+            # lock and reading the previous market's reservation.
             _, upper = clock()
-            reason = ("TAKER_POOL_T15_DEADLINE" if upper >= epoch + 15
+            expired = upper >= epoch + ADMISSION_CUTOFF_SEC
+            if (not expired and read_error is None and account_valid_until is not None
+                    and time.monotonic() >= account_valid_until):
+                return None
+            reason = ("TAKER_POOL_T240_DEADLINE" if expired
                       else read_error if read_error else "TAKER_POOL_NO_ENABLED_STRATEGIES" if not settings
                       else "TAKER_POOL_ACCOUNT_READ_UNAVAILABLE" if available is None
                       else "TAKER_POOL_INSUFFICIENT_FUNDS" if available <= total else None)
@@ -124,6 +143,7 @@ class TakerPool:
                        "account": account, "available": str(available) if available is not None else None,
                        "older": older, "requested": requested, "reserved": requested if reason is None else {},
                        "decided_at": time.time(), "official_upper": upper,
+                       "entry_cutoff_sec": ADMISSION_CUTOFF_SEC, "opening_read_retries": read_retries,
                        "settings": {key: cfg.model_dump(mode="json") for key, cfg in settings.items()}}
             db.execute("INSERT INTO market_openings VALUES (?,?,?,NULL,?)",
                        (funder, epoch, epoch + 420, json.dumps(payload, sort_keys=True, allow_nan=False)))

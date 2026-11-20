@@ -12,7 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from polymaker.m4_live_price_band import BEST_ASK_BAND_ABANDONED, SIGNED_LIMIT_BAND_ABANDONED
-from polymaker.m4_types import M4_LEDGER, M6_LEDGER
+from polymaker.m4_types import TAKER_LEDGER_IDS
 
 FUNDER = "0x2d73e1f6c90662d30e13fed534bf10bc5bd99d5d"
 REVISION = "m4-taker-budget-v1"
@@ -20,11 +20,12 @@ NORMAL_FILTERS = {
     "M4_PRICE_OUTSIDE_BAND", "M4_DIRECTION_OPPORTUNITY_LIMIT", "SESSION_INSTRUCTION_LIMIT",
     "M4_TAKER_MINIMUM_EXCEEDS_ALL_IN_BUDGET", "M4_TAKER_ANCHOR_PLUS_TICK_INVALID",
     "M4_POST_PRICE_OUTSIDE_BAND",
+    "M21_FORMAL_AFTER_T240",
 }
 FINAL_TASKS = {"CUTOFF", "DUST", "COMPLETE", "ABORTED", "BUDGET_EXHAUSTED"}
 TERMINAL_ATTEMPTS = {"TERMINAL", "UNSENT"}
 MARKERS = tuple(x.encode() for x in (
-    '"sm_m4_signal"', '"sm_m6_signal"', '"sm_prepared"', '"sm_m4_candidate_skipped"',
+    '"sm_m4_signal"', '"sm_m6_signal"', '"sm_m21_signal"', '"sm_prepared"', '"sm_m4_candidate_skipped"',
     '"sm_m4_live_candidate_skipped"', '"sm_m4_live_post_error"',
     '"sm_m4_owned_order_resolved"', '"sm_m4_execution_wait"',
 ))
@@ -111,25 +112,28 @@ def _pool_openings(root, first, last):
 
 
 def rolling_coverage(project, state, now=None, window_seconds=43200, *, strategy="M4"):
-    """Signals born in [cutoff-12h, cutoff); outcomes supported by the frozen cutoff."""
+    """Signals born in [cutoff-window_seconds, cutoff); outcomes supported by the cutoff."""
     project = Path(project).resolve()
     end = time.time() if now is None else now
     start = end-window_seconds
     root = project/"research_outputs/m4_live"
-    identity = {"M4": M4_LEDGER, "M6": M6_LEDGER}[strategy]
-    secondary = strategy == "M6"
-    journal_dir = root/("m6-journal" if secondary else "journal")
-    signal_event = "sm_m6_signal" if secondary else "sm_m4_signal"
+    identity = TAKER_LEDGER_IDS[strategy]
+    secondary = strategy != "M4"
+    lane = strategy.lower()
+    journal_dir = root/(f"{lane}-journal" if secondary else "journal")
+    signal_event = f"sm_{lane}_signal"
     first, last = int(start//300)*300, int(end//300)*300
+    if end == last:
+        last -= 300
     openings = _pool_openings(root, first, last) if secondary else {}
-    expected = any(M6_LEDGER in o["settings"] for e, o in openings.items() if e < first)
+    expected = any(identity in o["settings"] for e, o in openings.items() if e < first)
     pool_skips, out_of_scope = [], []
     ledgers, tasks, attempts, sources, gaps, errors, excluded = {}, {}, defaultdict(list), [], [], [], []
     for epoch in range(first, last+1, 300):
-        path = root/("m6-ledgers" if secondary else "ledgers")/f"btc-updown-5m-{epoch}.sqlite3"
+        path = root/(f"{lane}-ledgers" if secondary else "ledgers")/f"btc-updown-5m-{epoch}.sqlite3"
         opening = openings.get(epoch)
         if opening:
-            expected = M6_LEDGER in opening["settings"]
+            expected = identity in opening["settings"]
             if expected and opening["status"] == "SKIPPED":
                 pool_skips.append({"epoch": epoch, "reason": opening["reason"]})
         if not path.exists():
@@ -257,7 +261,7 @@ def rolling_coverage(project, state, now=None, window_seconds=43200, *, strategy
         normal = reason in NORMAL_FILTERS and (task is None or task["state"] == "SKIPPED")
         if secondary and task:
             normal |= (task["state"] == "CUTOFF" and reason in {
-                "M4_POST_PRICE_OUTSIDE_BAND", "M6_NO_LEGAL_FAK_QUANTITY"}
+                "M4_POST_PRICE_OUTSIDE_BAND", f"{strategy}_NO_LEGAL_FAK_QUANTITY"}
                 and not own and not data["meta"].get("post_price_band_eligible:"+sid))
         if task and task["state"] == "SKIPPED" and reason and reason.startswith(("TAKER_POOL_", "TAKER_STRATEGY_")):
             normal = True
@@ -297,7 +301,7 @@ def rolling_coverage(project, state, now=None, window_seconds=43200, *, strategy
         unsent = sum(not a["started"] or a["state"] == "UNSENT" for a in own)
         settings = data["meta"]["settings"]
         budget = Decimal(str(settings.get("taker_strategy", {}).get(
-            "signal_budget_usdc", settings.get("order_budget_usdc", 5 if not secondary else "1.50"))))
+            "signal_budget_usdc", settings.get("order_budget_usdc", "1.50" if strategy == "M6" else 5))))
         rows.append({"id": sid, "epoch": epoch, "signal_wall": signal["wall"],
                      "outcome": signal["outcome"], "anchor": str(signal["anchor_bid_price"]),
                      "status": status, "reason": reason, "admitted": admitted,
@@ -330,7 +334,7 @@ def rolling_coverage(project, state, now=None, window_seconds=43200, *, strategy
             session_id = data["meta"].get("session_id")
             journal = journal_dir/f"rdp_sm_{FUNDER}_{session_id}.jsonl"
             if not session_id or not journal.is_file() or journal.is_symlink():
-                observation_gaps.append({"epoch": epoch, "reason": "M6_OWNED_SIGNAL_JOURNAL_UNAVAILABLE"})
+                observation_gaps.append({"epoch": epoch, "reason": f"{strategy}_OWNED_SIGNAL_JOURNAL_UNAVAILABLE"})
         path = root/"startup-admissions"/f"btc-updown-5m-{epoch}.json"
         if path.exists():
             try:
@@ -347,7 +351,8 @@ def rolling_coverage(project, state, now=None, window_seconds=43200, *, strategy
     confirmed = counts["CONFIRMED"]
     totals = {key: sum(row[key] for row in rows) for key in
               ("durable_POST_intents", "HTTP_POST_invocations", "real_POST", "additional_POST", "proven_pre_HTTP_attempts", "UNSENT_preparations", "unsigned_failures")}
-    missing_signal_journal = any(g["reason"] == "M6_OWNED_SIGNAL_JOURNAL_UNAVAILABLE" for g in observation_gaps)
+    missing_signal_journal = any(g["reason"] == f"{strategy}_OWNED_SIGNAL_JOURNAL_UNAVAILABLE"
+                                 for g in observation_gaps)
     return {"status": "REVIEWABLE" if not errors and not orphan_tasks and not counts["NEEDS_REVIEW"]
             and not missing_signal_journal else "PARTIAL_REVIEW_REQUIRED",
             "strategy": strategy,

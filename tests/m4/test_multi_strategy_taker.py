@@ -7,32 +7,40 @@ from contextlib import closing
 from dataclasses import asdict, replace
 from decimal import Decimal as D
 from pathlib import Path
+from types import MethodType
 from uuid import uuid4
 
 import httpx
 import pytest
 from m4_helpers import close
+from py_clob_client_v2.exceptions import PolyApiException
 from py_clob_client_v2.http_helpers import helpers
 from test_m4_live_budget import fixture
 from test_m4_live_task import evidence, serve
 
 from polymaker.config import RDPObiConfig
+from polymaker.execution.gateway import ExecutionGateway
 from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
 from polymaker.m4_live_config import M4LiveSettings
 from polymaker.m4_run import Executor
-from polymaker.m4_types import M4_LEDGER, M6_LEDGER
+from polymaker.m4_types import M4_LEDGER, M6_LEDGER, M21_LEDGER
 from polymaker.rdp_sm_writer import AsyncRiskWriter
-from polymaker.taker_pool import TakerPool
-from polymaker.taker_runner import SharedTakerFeed, StrategyReads, strategy_settings
+from polymaker.taker_pool import POLICY, TakerPool
+from polymaker.taker_runner import (
+    SharedTakerFeed,
+    StrategyReads,
+    prepare_opening,
+    strategy_settings,
+)
 
 SOURCE = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
 def project(tmp_path):
-    for name in ("m4.toml", "m6.toml", "m4-live/execution.toml", "m4-live/strategies.toml"):
+    for name in ("m4.toml", "m6.toml", "m4-live/execution.toml", "m4-live/strategies.toml", "m4-live/m21.toml"):
         path = tmp_path / "config" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(SOURCE / "config" / name, path)
@@ -71,7 +79,9 @@ def test_strict_open_atomic_resume_and_release(project):
             pool.release("offline", now)
             value = db.execute("SELECT released_at FROM market_openings WHERE epoch=1200").fetchone()[0]
             assert value == (1620 if now >= 1620 else None)
-    assert decide(pool, 1800, policies, 100, elapsed=15).payload["reason"] == "TAKER_POOL_T15_DEADLINE"
+    assert decide(pool, 1800, policies, 100, elapsed=15).payload["status"] == "OPEN"
+    assert decide(pool, 2100, policies, 100, elapsed=239.999).payload["status"] == "OPEN"
+    assert decide(pool, 2400, policies, 100, elapsed=240).payload["reason"] == "TAKER_POOL_T240_DEADLINE"
     path = project / "config/m4-live/strategies.toml"
     path.write_text('enabled = ["M4"]\n')
     assert opened.entry_block(M6_LEDGER) == "TAKER_STRATEGY_REMOVED"
@@ -156,6 +166,102 @@ def test_shared_public_frames_keep_frozen_m6_book(project):
     assert shared.m6.research.good == standalone.research.good
 
 
+def test_shared_pending_receipts_returns_only_the_earliest_time(project):
+    from m4_helpers import feed_fixture
+
+    base, _, _ = feed_fixture()
+    shared = SharedTakerFeed(base.meta, base.cfg, m6_settings=settings(project, M6_LEDGER))
+    assert shared.m6.pending_receipts() == ()
+    shared.m1_processing_received = 1.0
+    assert shared.m6.pending_receipts() == (1.0,)
+    shared.m1_pending_received.extend((2.0, 2.0, 3.0))
+    assert shared.m6.pending_receipts() == (1.0,)
+    shared.m1_processing_received = 2.0
+    assert shared.m6.pending_receipts() == (2.0,)
+    shared.m1_processing_received = 4.0
+    assert shared.m6.pending_receipts() == (2.0,)
+
+
+@pytest.mark.parametrize("include_m21", [False, True])
+async def test_shared_reader_drains_burst_and_reconnects_with_fresh_books(project, monkeypatch, include_m21):
+    from m4_helpers import feed_fixture
+
+    base, _, books = feed_fixture()
+    shared = SharedTakerFeed(base.meta, base.cfg, m6_settings=settings(project, M6_LEDGER),
+                            m21_settings=settings(project, M21_LEDGER) if include_m21 else None,
+                            monotonic=base.monotonic, wall=base.wall)
+    shared.verify_ticks({"1": D(".01"), "2": D(".01")})
+    burst = [books, *["PONG"] * 2200]
+    processed, buffered = [], []
+    ready = asyncio.Event()
+    original_apply = shared.apply
+
+    def apply(raw, **kwargs):
+        buffered.append(len(shared.m1_pending_received))
+        original_apply(raw, **kwargs)
+        processed.append(raw)
+        if len(processed) == len(burst):
+            assert shared.snapshot().valid and all(child.snapshot().valid for child in shared.secondary.values())
+            ready.set()
+
+    class Socket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def send(self, _):
+            pass
+
+        async def __aiter__(self):
+            for raw in burst:
+                yield raw
+            await ready.wait()
+
+    monkeypatch.setattr(shared, "apply", apply)
+    monkeypatch.setattr("polymaker.rdp_sm_marketdata.websockets.connect", lambda *_a, **_kw: Socket())
+    for generation in (1, 2):
+        await asyncio.wait_for(shared._connection(), 3)
+        assert shared.generation == generation
+        assert all(child.generation == generation for child in shared.secondary.values())
+        assert processed == burst
+        assert max(buffered) == shared.reader_backpressure_levels[0]
+        assert not shared.connected and not shared.m1_pending_received
+        assert all(not child.connected for child in shared.secondary.values())
+        processed.clear()
+        buffered.clear()
+        ready.clear()
+
+
+@pytest.mark.parametrize("stale_tokens", [("1", "2"), ("1",), ("2",)])
+def test_shared_m6_waits_for_fresh_books_after_stale_first_frame(project, stale_tokens):
+    from m4_helpers import feed_fixture
+
+    base, clock, frames = feed_fixture()
+    shared = SharedTakerFeed(base.meta, base.cfg, m6_settings=settings(project, M6_LEDGER),
+                            monotonic=base.monotonic, wall=base.wall)
+    shared.verify_ticks({"1": D(".01"), "2": D(".01")})
+    shared.connect()
+    shared.apply([
+        {**frame, "timestamp": str(int(shared.wall()*1000) - 1000)}
+        if frame["asset_id"] in stale_tokens else frame
+        for frame in frames
+    ])
+    for token in stale_tokens:
+        assert shared.m6.research.reasons[token] == "EVENT_SOURCE_AGE"
+    waiting = shared.m6.snapshot()
+    assert not waiting.valid and waiting.reason == "WS_REBUILD_REQUIRED"
+    shared.m6.m1.evaluate(waiting)
+    assert not shared.m6.m1.failure and shared.m6.m1.selected is None
+
+    clock.now = .025
+    shared.apply([{**frame, "timestamp": str(round(shared.wall()*1000))} for frame in frames])
+    assert shared.m6.snapshot().valid and shared.m6.research.good == {"1": True, "2": True}
+    shared.m6.m1.evaluate(shared.m6.snapshot())
+    assert shared.m6.connected and not shared.m6.m1.failure
+
+
 @pytest.mark.parametrize("kill", [True, False])
 async def test_m6_inside_window_retry_or_partial_has_no_topup(project, monkeypatch, kill):
     m4, parent, parent_feed, clock, primary_posts, primary_transport = await fixture(project, monkeypatch)
@@ -215,16 +321,15 @@ async def test_m6_inside_window_retry_or_partial_has_no_topup(project, monkeypat
 async def test_opening_precedes_ledger_and_survives_changed_configuration(project, monkeypatch):
     from test_m4_live_startup import harness
 
-    from polymaker.taker_runner import prepare_opening
-
     h = harness(project, monkeypatch)
     prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
 
-    async def cash(*_):
+    async def cash(*_, raise_on_error):
+        assert raise_on_error is True
         return {"official_balance_usd": "40", "applicable_allowance_usd": "40", "source": "OFFLINE"}
 
     monkeypatch.setattr("polymaker.taker_runner.account_snapshot", cash)
-    opened, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup.control)
+    opened, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup)
     assert opened.payload["status"] == "OPEN" and account["source"] == "OFFLINE"
     assert not (h.startup.root / "ledgers").exists()
     (project / "config/m4-live/strategies.toml").write_text('enabled = ["M4"]\n')
@@ -233,9 +338,181 @@ async def test_opening_precedes_ledger_and_survives_changed_configuration(projec
         pytest.fail("Original opening must not re-read capital or reallocate")
 
     monkeypatch.setattr("polymaker.taker_runner.account_snapshot", unexpected)
-    restored, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup.control)
+    restored, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup)
     assert restored.payload == opened.payload and account is None
     assert restored.entry_block(M6_LEDGER) == "TAKER_STRATEGY_REMOVED"
+    prepared.reads.close()
+
+
+async def test_late_opening_recovers_balance_and_clock_without_signal_history(project, monkeypatch):
+    from test_m4_live_startup import EPOCH, harness
+
+    h = harness(project, monkeypatch)
+    h.clock_values[:] = [EPOCH+1, EPOCH+14]
+    prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
+    assert prepared.startup["late_new_market_start"]
+    reads, clocks = [], []
+
+    async def balance_io(_):
+        reads.append("balance")
+        assert not (h.startup.root/"ledgers").exists()
+        assert not (h.startup.root/"m6-ledgers").exists()
+        if len(reads) == 1:
+            raise PolyApiException(error_msg="Request exception!")
+        return {"balance": "40000000", "allowances": {"exchange": "40000000"}}
+
+    async def spenders(_, *, raise_on_error):
+        assert raise_on_error
+        return ("exchange",)
+
+    real_clock = h.startup.api.clock
+    h.clock_values[:] = [EPOCH+22]
+
+    async def clock():
+        clocks.append("clock")
+        if len(clocks) == 1:
+            raise httpx.ConnectTimeout("synthetic clock timeout")
+        return await real_clock()
+
+    gateway = prepared.reads.gateway
+    gateway._client = object()
+    gateway._io = balance_io
+    gateway.balance_allowance = MethodType(ExecutionGateway.balance_allowance, gateway)
+    gateway.required_collateral_spenders = spenders
+    monkeypatch.setattr(h.startup.api, "clock", clock)
+    opened, account, began = await prepare_opening(project, h.startup.root, prepared, h.startup)
+    assert len(reads) == len(clocks) == 2
+    assert h.pauses == [.5, 1.]
+    assert account["read_started_monotonic"] == began
+    assert prepared.clock[0] == EPOCH+22
+    assert opened.payload["status"] == "OPEN"
+    assert opened.payload["policy"] == POLICY
+    assert opened.payload["opening_read_retries"] == 2
+    assert opened.payload["reserved"] == {M4_LEDGER: "10", M6_LEDGER: "3.00"}
+    assert 23 <= opened.payload["official_upper"]-EPOCH < 240
+    assert h.events[-1]["pool_status"] == "OPEN"
+    assert account["official_balance_usd"] == account["applicable_allowance_usd"] == "40"
+    prepared.reads.close()
+
+
+@pytest.mark.parametrize("cutoff", [False, True])
+async def test_opening_retry_ends_at_verified_insufficiency_or_t240(project, monkeypatch, cutoff):
+    from test_m4_live_startup import EPOCH, harness
+
+    h = harness(project, monkeypatch)
+    h.clock_values[:] = [EPOCH+1, EPOCH+14, EPOCH+(239 if cutoff else 22)]
+    prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
+    reads = []
+
+    async def cash(*_, raise_on_error):
+        assert raise_on_error is True
+        reads.append("balance")
+        if len(reads) == 1:
+            raise TimeoutError
+        return {"official_balance_usd": "60", "applicable_allowance_usd": "13"}
+
+    monkeypatch.setattr("polymaker.taker_runner.account_snapshot", cash)
+    opening, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup)
+    assert opening.payload["status"] == "SKIPPED" and opening.payload["reserved"] == {}
+    assert opening.payload["reason"] == ("TAKER_POOL_T240_DEADLINE" if cutoff else "TAKER_POOL_INSUFFICIENT_FUNDS")
+    assert len(reads) == (1 if cutoff else 2)
+    assert account is None
+    if not cutoff:
+        assert opening.payload["available"] == "13"
+
+    async def unexpected(*_):
+        pytest.fail("Terminal skips cannot be reopened after a restart")
+
+    monkeypatch.setattr("polymaker.taker_runner.account_snapshot", unexpected)
+    restored, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup)
+    assert restored.payload == opening.payload and account is None
+    prepared.reads.close()
+
+
+def test_pool_stale_snapshot_defers_decision_without_reserving(project):
+    policies = {key: settings(project, key) for key in (M4_LEDGER, M6_LEDGER)}
+    pool = TakerPool(project/"pool.sqlite3", project)
+    output = pool.decide("offline", 900, "condition-900", policies,
+                         {"official_balance_usd": "60", "applicable_allowance_usd": "60"},
+                         clock=lambda: (920, 921), account_valid_until=0)
+    assert output is None and pool.existing("offline", 900) is None
+    assert decide(pool, 900, policies, 60, elapsed=22).payload["status"] == "OPEN"
+
+
+async def test_future_market_cannot_read_capital_or_commit_reservation(project, monkeypatch):
+    from test_m4_live_startup import EPOCH, FUNDER, harness
+
+    h = harness(project, monkeypatch)
+    prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
+    epoch = EPOCH+300
+    slug = f"btc-updown-5m-{epoch}"
+    prepared = replace(prepared, slug=slug, meta=replace(prepared.meta, slug=slug))
+
+    async def unexpected(*_, **__):
+        pytest.fail("Cannot read admission capital before the target T0")
+
+    monkeypatch.setattr("polymaker.taker_runner.account_snapshot", unexpected)
+    with pytest.raises(ValueError, match="TAKER_POOL_BEFORE_T0"):
+        await prepare_opening(project, h.startup.root, prepared, h.startup)
+    pool = TakerPool(h.startup.root/"taker-pool.sqlite3", project)
+    policies = {key: settings(project, key) for key in (M4_LEDGER, M6_LEDGER)}
+    with pytest.raises(ValueError, match="TAKER_POOL_BEFORE_T0"):
+        pool.decide(FUNDER, epoch, prepared.meta.condition_id, policies,
+                    {"official_balance_usd": "60", "applicable_allowance_usd": "60"},
+                    clock=lambda: (epoch-.01, epoch+1))
+    assert pool.existing(FUNDER, epoch) is None
+    prepared.reads.close()
+
+
+async def test_legacy_t15_skip_is_restored_without_capital_read(project, monkeypatch):
+    from test_m4_live_startup import EPOCH, FUNDER, harness
+
+    h = harness(project, monkeypatch)
+    prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
+    pool = TakerPool(h.startup.root/"taker-pool.sqlite3", project)
+    policy = {key: settings(project, key) for key in (M4_LEDGER, M6_LEDGER)}
+    old = pool.decide(FUNDER, EPOCH, prepared.meta.condition_id, policy, None,
+                      clock=lambda: (EPOCH+14, EPOCH+15)).payload
+    old.pop("entry_cutoff_sec")
+    old.pop("opening_read_retries")
+    old.update(policy="SHARED_TAKER_POOL_T15_CLOSE_PLUS_120_V1", reason="TAKER_POOL_T15_DEADLINE")
+    with closing(pool.connect()) as db, db:
+        db.execute("UPDATE market_openings SET payload=?", (json.dumps(old),))
+
+    async def unexpected(*_, **__):
+        pytest.fail("A saved opening is immutable even under the new pool policy")
+
+    monkeypatch.setattr("polymaker.taker_runner.account_snapshot", unexpected)
+    restored, account, _ = await prepare_opening(project, h.startup.root, prepared, h.startup)
+    assert restored.payload == old and account is None
+    assert restored.entry_block(M4_LEDGER) == "TAKER_POOL_T15_DEADLINE"
+    assert restored.entry_block(M6_LEDGER) == "TAKER_POOL_T15_DEADLINE"
+    prepared.reads.close()
+
+
+async def test_stop_during_pool_retry_never_reserves(project, monkeypatch):
+    from test_m4_live_startup import EPOCH, FUNDER, harness
+
+    from polymaker.m4_live_startup import PreparationStopped
+
+    h = harness(project, monkeypatch)
+    prepared = await h.startup.prepare(M4LiveSettings.load(project), h.reads_type, None)
+    runs = []
+
+    async def cash(*_, raise_on_error):
+        assert raise_on_error
+        runs.append(True)
+        raise TimeoutError
+
+    async def pause(_):
+        h.startup.stop.set()
+
+    monkeypatch.setattr("polymaker.taker_runner.account_snapshot", cash)
+    monkeypatch.setattr(h.startup, "pause", pause)
+    with pytest.raises(PreparationStopped):
+        await prepare_opening(project, h.startup.root, prepared, h.startup)
+    assert runs == [True]
+    assert TakerPool(h.startup.root/"taker-pool.sqlite3", project).existing(FUNDER, EPOCH) is None
     prepared.reads.close()
 
 

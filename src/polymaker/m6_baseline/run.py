@@ -22,6 +22,7 @@ from .fill_model import POLICY
 from .journal import M6RiskJournal
 from .settlement import resolutions
 from .signals import M6Feed
+from .signing import M6Signer
 from .state import M6Ledger
 from .virtual import VirtualReads
 
@@ -68,6 +69,7 @@ async def wait(stop, seconds):
 async def run(project, *, once=False, stop=None):
     project = Path(project).resolve()  # noqa: ASYNC240 -- Local setup before network.
     configured, control = M6Config.load(project), StopControl(project)
+    process_sources = sources()
     if control.inhibited():
         return {"status": "STOP_CONFIRMATION_REQUIRED", "real_orders": 0}
     root = paths(project)
@@ -82,10 +84,14 @@ async def run(project, *, once=False, stop=None):
             pass
     api, ledger, feed, executor, resolver = None, None, None, None, None
     reads, journal = None, None
+    signer = None
     resolver_stop = asyncio.Event()
     try:
         with (root/"runner.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Warm once before market admission/WS capture, not on a signal.
+            signer = M6Signer()
+            await signer.warmup()
             api = VirtualPublicAPI()
             resolver = asyncio.create_task(resolutions(root, api, resolver_stop,
                 active_path=lambda: ledger.path if ledger else None), name="m6-public-settlement")
@@ -145,7 +151,7 @@ async def run(project, *, once=False, stop=None):
                         "first_market_epoch": epoch, "initial_pnl_usdc": "0", "settings_hash": settings.fingerprint})
                 feed = M6Feed(meta, RDPObiConfig())
                 feed.verify_ticks(ticks)
-                reads = VirtualReads(feed, ledger, api)
+                reads = VirtualReads(feed, ledger, api, signer=signer)
                 backing = M6RiskJournal(root/"journal", VIRTUAL_IDENTITY, session_id=sid, resume=recovering)
                 journal = AsyncRiskWriter(backing, batch_size=128)
                 journal.accepted = journal.written = backing.last_writer_sequence
@@ -160,7 +166,7 @@ async def run(project, *, once=False, stop=None):
                 executor.record("sm_session", {"strategy": STRATEGY, "mode": "VIRTUAL", "slug": slug,
                     "settings": settings.model_dump(mode="json"), "settings_hash": settings.fingerprint,
                     "signal_sources": signal_sources(), "baseline_fill_model": POLICY,
-                    "source_sha256": sources(), "recovery": recovering, "real_orders": 0})
+                    "source_sha256": process_sources, "recovery": recovering, "real_orders": 0})
                 atomic_json(root/"startup-status.json", {"status": "READY", "observed_at": time.time(), "slug": slug})
                 feed.task = asyncio.create_task(feed.run(), name="m6-public-feed")
                 market = M6Market(executor, settings, stop, public_api=api,
@@ -190,6 +196,8 @@ async def run(project, *, once=False, stop=None):
             journal.close()
         if ledger:
             ledger.close()
+        if signer:
+            signer.close()
         if api:
             await api.close()
         for signum in handlers:

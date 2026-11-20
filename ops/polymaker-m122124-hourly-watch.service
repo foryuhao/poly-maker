@@ -1,0 +1,11 @@
+[Unit]
+Description=Report M12 M21 M24 anchor-only baseline results
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/polymaker
+Environment=PYTHONPATH=/home/ubuntu/polymaker/src:/home/ubuntu/polymaker/ops
+ExecStart=/home/ubuntu/polymaker/.venv/bin/python -B /home/ubuntu/polymaker/ops/m122124_hourly_watch.py
+Nice=15
+TimeoutStartSec=180

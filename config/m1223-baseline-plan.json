@@ -1,0 +1,20 @@
+{
+  "schema": "sop-sequential-baseline-v1",
+  "mode": "SIMULATION_ONLY_PUBLIC_DATA",
+  "strategy_order": ["M23", "M12"],
+  "variants": {
+    "M23": "M23_FIRST_SELL_WHILE_VALID",
+    "M12": "M12_VALIDITY_OVERLAP"
+  },
+  "markets_per_strategy": 288,
+  "seconds_per_strategy": 86400,
+  "quantity_step": "0.1",
+  "order_budget_usdc": "5",
+  "session_budget_usdc": "10",
+  "maximum_posts_per_direction": 1,
+  "price_filter": null,
+  "switch_after": "PLANNED_COHORT_OBSERVED_AND_CLEAN_SHUTDOWN",
+  "frequency_gate": "NOT_APPLIED_USER_AUTHORIZED_BASELINE_NOT_FREQUENCY_SELECTION",
+  "restart": "STOP_VISIBLE_NEVER_RESTART_OR_RESELECT_COHORT",
+  "real_orders": 0
+}
