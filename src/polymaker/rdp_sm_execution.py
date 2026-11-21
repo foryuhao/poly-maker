@@ -574,11 +574,15 @@ class ExecutionClobClient(ReadOnlyClobClient):
 
                 amount = Decimal(current.buy_amount_usdc)
                 spec = getattr(self, 'expiry_buy_amounts', {}).get(current.expected_order_id)
+                # The M4 live permission above already checked the persisted
+                # M421 amount plan and the signed legs against its price band.
+                m421_amount = sm_config is not None and sm_config.normal_entry_mode == "m4_v2"
                 _require(current.entry_execution == 'taker' and row.get('orderType') == 'FAK'
                          and row.get('postOnly') is False
-                         and current.expected_order_id in getattr(self, 'ca_expiry_taker_ids', set())
-                         and spec == (quote.token_id, Decimal(str(quote.price)),
-                                      Decimal(str(quote.size)), amount)
+                         and (m421_amount or (
+                             current.expected_order_id in getattr(self, 'ca_expiry_taker_ids', set())
+                             and spec == (quote.token_id, Decimal(str(quote.price)),
+                                          Decimal(str(quote.size)), amount)))
                          and amount >= 1
                          and Decimal(str(quote.size)) == market_buy_quantity(amount, Decimal(str(quote.price))),
                          'SIGNED_BUY_AMOUNT_IDENTITY_CHANGED')

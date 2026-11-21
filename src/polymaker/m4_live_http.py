@@ -9,7 +9,8 @@ from py_clob_client_v2.client import ClobClient
 
 from polymaker.domain import Side
 from polymaker.execution.gateway import ExecutionGateway
-from polymaker.m4_live_config import all_in_cost, gross_risk_cost, validated_fees
+from polymaker.execution.taker_fees import buy_amount_fee_reserve
+from polymaker.m4_live_config import all_in_cost, planned_fee, validated_fees
 from polymaker.rdp_sm import OFFICIAL_HOSTS, _require
 from polymaker.rdp_sm_execution import ExecutionClobClient, _ExecutionReads
 
@@ -118,12 +119,24 @@ class M4LiveClobClient(ExecutionClobClient):
         plan = ledger.plan(row['id'])
         continuous = getattr(ledger, 'continuous', False)
         cash_target = getattr(ledger, 'cash_target', False)
+        amount_buy = bool(plan.get('taker_buy_amount_policy'))
+        if amount_buy:
+            signed = wire['order']
+            maker = Decimal(str(signed['makerAmount']))
+            taker = Decimal(str(signed['takerAmount']))
+            if (attempt.buy_amount_usdc != plan['principal_usdc']
+                    or not ledger.amount_price_allowed(Decimal(plan['limit_price']), maker, taker,
+                                                       ledger.root_plan(row['id']))):
+                return False
+        elif attempt.buy_amount_usdc is not None:
+            return False
         if continuous:
             saved = ledger.attempt(attempt.expected_order_id)
             ledger.validate_attempt(saved)
-            used = ledger.budget_used(row['id']) if cash_target else Decimal(row['spent'])
+            budget_allowed = (ledger.signal_budget_allows(row['id'], plan) if cash_target else
+                              Decimal(row['spent'])+Decimal(plan['planned_cost_usdc']) <= ledger.order_budget)
             if (saved['started'] or saved['state'] != 'PREPARED'
-                    or used+Decimal(plan['planned_cost_usdc']) > getattr(ledger, 'order_budget', 5)
+                    or not budget_allowed
                     or (not cash_target and Decimal(row['filled'])+Decimal(plan['quantity'])
                         > Decimal(ledger.root_plan(row['id'])['quantity']))
                     or (cash_target and ledger.unresolved(row['id']))):
@@ -138,23 +151,29 @@ class M4LiveClobClient(ExecutionClobClient):
                 and spec == {'quote': asdict(attempt.quote), 'plan': plan}
                 and Decimal(str(attempt.quote.price)) == Decimal(plan['limit_price'])
                 and Decimal(str(attempt.quote.size)) == Decimal(plan['quantity'])
-                and all_in_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
-                    == Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5)
+                and (amount_buy or all_in_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
+                     == Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5))
                 and attempt.maximum == Decimal(plan['commitment_usdc']) <= ledger.limit
                 and ledger.committed() <= ledger.limit)
 
 
 class M4LiveGateway(ExecutionGateway):
-    async def prepare(self, quotes, meta, tick_sizes, **kwargs):
+    async def prepare(self, quotes, meta, tick_sizes, *, buy_amount_usdc=None, **kwargs):
         if getattr(self, 'm4_ledger', None) is not None and self.m4_ledger.is_taker:
             if kwargs:
                 raise ValueError('M4_TAKER_PREPARATION_OVERRIDE_FORBIDDEN')
+            if getattr(self.m4_ledger, 'amount_buy', False):
+                _require(buy_amount_usdc is not None, 'M421_FAK_BUY_AMOUNT_REQUIRED')
+                return await super().prepare(quotes, meta, tick_sizes, immediate_order_type='FAK',
+                                             buy_amount_usdc=buy_amount_usdc)
+            _require(buy_amount_usdc is None, 'M421_FAK_BUY_AMOUNT_FORBIDDEN')
             if getattr(self.m4_ledger, 'cash_target', False):
                 from polymaker.m4_live_numeric import fak_amounts_compatible
 
                 _require(all(fak_amounts_compatible(Decimal(str(q.price)), Decimal(str(q.size)))
                              for q in quotes), 'M4_FAK_AMOUNT_PRECISION_INVALID')
             return await super().prepare(quotes, meta, tick_sizes, immediate_order_type='FAK')
+        _require(buy_amount_usdc is None, 'M421_FAK_BUY_AMOUNT_FORBIDDEN')
         return await super().prepare(quotes, meta, tick_sizes, **kwargs)
 
     async def send_prepared(self, prepared, *, submit_guard, operation_context=None):
@@ -168,10 +187,13 @@ class M4LiveGateway(ExecutionGateway):
                      'M4_TAKER_PREPARED_ID_CHANGED')
             plan = ledger.plan(attempt.quote.window_id)
             principal = attempt.principal_limit
-            _require(all_in_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
-                     == Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5)
-                     and gross_risk_cost(attempt.quote.price, attempt.quote.size, plan['fees'])
-                     == Decimal(plan['commitment_usdc']), 'M4_TAKER_FEE_RESERVE_CHANGED')
+            _require(principal + planned_fee(attempt.quote.price, attempt.quote.size, plan['fees'])
+                     == Decimal(plan['planned_cost_usdc'])
+                     and principal + buy_amount_fee_reserve(principal, plan['fees'])
+                     == Decimal(plan['commitment_usdc'])
+                     and (plan.get('taker_buy_amount_policy')
+                          or Decimal(plan['planned_cost_usdc']) <= getattr(ledger, 'order_budget', 5)),
+                     'M4_TAKER_FEE_RESERVE_CHANGED')
             attempt.entry_execution, attempt.order_type = 'taker', 'FAK'
             attempt.fee_reserve_usdc = str(Decimal(plan['commitment_usdc'])-principal)
             self._client.m4_taker_ids[attempt.expected_order_id] = {

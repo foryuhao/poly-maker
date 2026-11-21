@@ -21,6 +21,9 @@ from polymaker.m4_types import (
 )
 
 
+M421_PRINCIPAL_FAK = 'M421_FAK_BUY_PRINCIPAL_V1'
+
+
 class TakerSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, allow_inf_nan=False)
     order_type: Literal['FAK'] = 'FAK'
@@ -80,6 +83,7 @@ class M4LiveSettings(M4Config):
     execution: LiveExecutionSettings = Field(default_factory=LiveExecutionSettings)
     live_taker_price_risk: TakerPriceRisk | None = None
     taker_strategy: TakerStrategy | None = None
+    taker_buy_amount_policy: Literal['M421_FAK_BUY_PRINCIPAL_V1'] | None = None
     order_budget_usdc: int | Decimal = 5
     session_budget_usdc: int | Decimal = 10
 
@@ -126,6 +130,8 @@ class M4LiveSettings(M4Config):
             raise ValueError('TAKER_STRATEGY_SETTINGS_CONFLICT')
         if not m6 and (self.order_budget_usdc, self.session_budget_usdc) != (5, 10):
             raise ValueError('M4_RISK_LIMIT_INVALID')
+        if self.taker_buy_amount_policy is not None and not m421:
+            raise ValueError('M421_PRINCIPAL_POLICY_REQUIRES_M421')
         return self
 
     @model_serializer(mode='wrap')
@@ -135,6 +141,8 @@ class M4LiveSettings(M4Config):
             value.pop(LIVE_TAKER_PRICE_RISK_KEY)
         if self.taker_strategy is None:
             value.pop('taker_strategy')
+        if self.taker_buy_amount_policy is None:
+            value.pop('taker_buy_amount_policy')
         return value
 
     @property

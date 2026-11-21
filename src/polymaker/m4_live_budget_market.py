@@ -12,13 +12,14 @@ from uuid import uuid4
 
 from polymaker.domain import MarketMeta, TokenMeta
 from polymaker.m4_live_budget import (
+    AMOUNT_PRECISION,
     FAK_BUY_MIN_PRINCIPAL,
     FAK_BUY_MINIMUM_POLICY,
     BudgetLedger,
     minimum_fak_buy_ok,
 )
 from polymaker.m4_live_budget_reconcile import reconcile_owned
-from polymaker.m4_live_config import M4LiveSettings, all_in_cost, gross_risk_cost
+from polymaker.m4_live_config import M4LiveSettings, gross_risk_cost
 from polymaker.m4_live_numeric import age_us, budget_quantity, install_live_clock_boundaries
 from polymaker.m4_live_price_band import (
     ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND,
@@ -128,7 +129,9 @@ class BudgetMarket(TaskMarket):
         self.e.record(
             "sm_m4_budget_execution_policy",
             {
-                "target_all_in_usdc": str(self.ledger.order_budget),
+                **({"target_principal_usdc": str(self.ledger.order_budget),
+                    "taker_buy_amount_policy": self.settings.taker_buy_amount_policy}
+                   if self.ledger.amount_buy else {"target_all_in_usdc": str(self.ledger.order_budget)}),
                 "taker_strategy": self.ledger.get("settings", {}).get("taker_strategy"),
                 "task_policy": self.ledger.task_policy,
                 "post_marketdata_policy": (
@@ -137,7 +140,7 @@ class BudgetMarket(TaskMarket):
                     else "ADMITTED_FAK_FIXED_CAP_EXCHANGE_MATCH_V1"),
                 "pricing_policy": self.settings.execution.taker.pricing_policy,
                 "anchor_wait_sec": 10 if self.ledger.dynamic_pricing and not self.ledger.signal_limited else None,
-                "amount_precision": "FAK_BUY_CENTS_SHARES_0_1_V1",
+                "amount_precision": AMOUNT_PRECISION if self.ledger.amount_buy else "FAK_BUY_CENTS_SHARES_0_1_V1",
                 "remainder_policy": "LEGAL_ORDER_ONLY_QUOTE_CAPTURE_CENT_DUST_V1",
                 "fak_buy_minimum_policy": FAK_BUY_MINIMUM_POLICY,
                 "fak_buy_min_principal_usdc": str(FAK_BUY_MIN_PRINCIPAL),
@@ -306,6 +309,7 @@ class BudgetMarket(TaskMarket):
                 captured_elapsed = self.elapsed()
                 age = signal_age(root, now, captured_elapsed)
                 if (quote is None and not row["order_id"] and not self.ledger.unresolved(key)
+                        and (not self.ledger.amount_buy or not self.ledger.pending_matches(key))
                         and self.entry_window_open()):
                     pricing_reason = self.select_pricing(opportunity, book, now, age, captured_elapsed)
                     plan = {**self.ledger.plan(key), "limit_price": str(self.ledger.selected_price(key))}
@@ -367,12 +371,10 @@ class BudgetMarket(TaskMarket):
                 ),
                 ("M4_PREPARED_PRICE_CHANGED", quote is None or decimal(quote.price) == price),
                 ("M4_FAK_BUY_MINIMUM", quote is None
-                 or minimum_fak_buy_ok(price, decimal(quote.size))),
+                 or self.ledger.plan_minimum_ok(plan, price, decimal(quote.size))),
                 (
                     "M4_TASK_BUDGET",
-                    quote is None
-                    or self.ledger.budget_used(key) + all_in_cost(price, quote.size, plan["fees"])
-                    <= self.ledger.order_budget,
+                    quote is None or self.ledger.signal_budget_allows(key, plan),
                 ),
                 ("M4_SESSION_BUDGET", self.ledger.committed() <= self.ledger.limit),
                 (health.reason, health.allowed),
@@ -427,17 +429,21 @@ class BudgetMarket(TaskMarket):
                 proof = self.ledger.abandon_price_band(key, captured)
                 self.e.record("sm_m4_signal_price_band_abandoned", proof)
             return POST_PRICE_OUTSIDE_BAND
-        qty = budget_quantity(price, self.ledger.order_budget - self.ledger.budget_used(key),
-                              self.ledger.fees)
-        if self.ledger.signal_limited:
-            while qty > 0 and (gross_risk_cost(price, qty, self.ledger.fees) > self.ledger.order_budget
-                               or qty * price % decimal(".01")):
-                qty -= decimal(".1")
-            if not minimum_fak_buy_ok(price, qty):
+        if self.ledger.amount_buy:
+            legal_order = self.ledger.amount_order(key, price) is not None
+        else:
+            qty = budget_quantity(price, self.ledger.order_budget - self.ledger.budget_used(key),
+                                  self.ledger.fees)
+            if self.ledger.signal_limited:
+                while qty > 0 and (gross_risk_cost(price, qty, self.ledger.fees) > self.ledger.order_budget
+                                   or qty * price % decimal(".01")):
+                    qty -= decimal(".1")
+            legal_order = minimum_fak_buy_ok(price, qty)
+        if not legal_order:
+            if self.ledger.signal_limited:
                 reason = f"{self.ledger.signal_strategy}_NO_LEGAL_FAK_QUANTITY"
                 self.remember_signal_wait(key, reason, price, book.tick)
                 return reason
-        if not minimum_fak_buy_ok(price, qty):
             # A restored pre-fix RESERVED row may still hold a confirmed cash
             # remainder below the exchange floor. Reclassify it without saving
             # a quote; pending/UNKNOWN budget protections remain authoritative.

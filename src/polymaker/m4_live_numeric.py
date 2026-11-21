@@ -5,7 +5,8 @@ from functools import lru_cache
 from types import MethodType
 
 from polymaker.domain import Side
-from polymaker.m4_live_config import all_in_cost, gross_risk_cost
+from polymaker.execution.taker_fees import buy_amount_fee_reserve
+from polymaker.m4_live_config import all_in_cost
 from polymaker.m4_state import decimal
 from polymaker.rdp_sm_ca_taker import validate_buy_fills
 from polymaker.state.tracker import TradeEvent
@@ -249,8 +250,9 @@ def validate_cash_fills(fills, spec):
     # or the saved gross reservation. Use the ledger's same canonical cash unit.
     principal = units(sum((decimal(f.principal_usdc) for f in fills), ZERO))
     cost = units(sum((decimal(f.principal_usdc) + decimal(f.fee_usdc) for f in fills), ZERO))
-    if principal > spec["price"] * spec["quantity"] or cost > gross_risk_cost(
-        spec["price"], spec["quantity"], spec["fees"]
+    signed_principal = spec.get("buy_amount_usdc", spec["price"] * spec["quantity"])
+    if principal > signed_principal or cost > signed_principal + buy_amount_fee_reserve(
+        signed_principal, spec["fees"]
     ):
         raise ValueError("M4_FILL_EXCEEDS_RESERVED_CASH")
 

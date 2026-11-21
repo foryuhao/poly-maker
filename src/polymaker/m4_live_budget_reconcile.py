@@ -173,6 +173,13 @@ async def reconcile_owned(market, oid):
             # malformed/foreign/conflicting orders must never take this path.
             raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
         plan, quote = json.loads(a["plan"]), json.loads(a["quote"])
+        quote_price = decimal(plan["limit_price"])
+        reported_price = decimal(raw["price"]) if isinstance(raw, dict) and "price" in raw else None
+        price_matches = reported_price == quote_price
+        if plan.get("taker_buy_amount_policy") and reported_price is not None:
+            # Owned order responses can report the quote or round the signed
+            # amount/share ratio to collateral precision.
+            price_matches |= abs(reported_price - decimal(plan["signed_limit_price"])) <= MICRO
         require(
             isinstance(raw, dict)
             and raw.get("id") == oid
@@ -181,7 +188,7 @@ async def reconcile_owned(market, oid):
             and raw.get("asset_id") == quote["token_id"]
             and raw.get("side") == "BUY"
             and raw.get("order_type") == "FAK"
-            and decimal(raw["price"]) == decimal(plan["limit_price"])
+            and price_matches
             and units(raw["original_size"]) == units(plan["quantity"]),
             "M4_ORDER_IDENTITY_CONFLICT",
         )
@@ -252,6 +259,8 @@ async def reconcile_owned(market, oid):
             "price": decimal(plan["limit_price"]),
             "quantity": decimal(plan["quantity"]),
             "fees": plan["fees"],
+            **({"buy_amount_usdc": decimal(plan["principal_usdc"])}
+               if plan.get("taker_buy_amount_policy") else {}),
         }
         fills = []
         pending_margin = ZERO

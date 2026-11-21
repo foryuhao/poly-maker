@@ -3,9 +3,12 @@
 import json
 import re
 from dataclasses import asdict
+from decimal import ROUND_FLOOR
 
 from polymaker.domain import Side, TradeState
-from polymaker.m4_live_config import all_in_cost, gross_risk_cost, planned_fee
+from polymaker.execution.amounts import market_buy_quantity
+from polymaker.execution.taker_fees import buy_amount_fee_reserve
+from polymaker.m4_live_config import gross_risk_cost, planned_fee
 from polymaker.m4_live_numeric import (
     MICRO,
     STEP,
@@ -29,6 +32,8 @@ from polymaker.state.tracker import TradeEvent
 
 FAK_BUY_MIN_PRINCIPAL = decimal("1")
 FAK_BUY_MINIMUM_POLICY = "EXCHANGE_PRINCIPAL_GE_1_USDC_V1"
+AMOUNT_PRECISION = "FAK_BUY_CENTS_SHARES_4DP_V1"
+CENT = decimal(".01")
 
 
 def minimum_fak_buy_ok(price, quantity):
@@ -42,8 +47,14 @@ class BudgetLedger(TaskLedger):
     cash_target = True
     @property
     def task_policy(self):
+        if self.amount_buy:
+            return "M421_REMAINING_PRINCIPAL_UNTIL_SIGNAL_DEADLINE_V1"
         return (f"{self.signal_strategy}_ZERO_FILL_ONLY_UNTIL_SIGNAL_DEADLINE_V1" if self.signal_limited
                 else "REMAINING_ALL_IN_CASH_UNTIL_T240")
+
+    @property
+    def amount_buy(self):
+        return self.settings.taker_buy_amount_policy is not None
 
     @property
     def signal_strategy(self):
@@ -109,7 +120,9 @@ class BudgetLedger(TaskLedger):
         require(risk == self.settings.live_taker_price_risk, "M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
         if risk is not None:
             return {**risk.plan_fields(), **({"taker_strategy": snapshot, "market_id": evidence["market_id"]}
-                                           if policy else {})}
+                                           if policy else {}),
+                    **({"taker_buy_amount_policy": self.settings.taker_buy_amount_policy}
+                       if self.amount_buy else {})}
 
         # Historical tasks and signals in recovered legacy markets have no
         # handoff snapshot. Their original market settings remain authoritative.
@@ -125,6 +138,7 @@ class BudgetLedger(TaskLedger):
                 and root.get("taker_strategy") == expected.get("taker_strategy")
                 and root.get("market_id") == expected.get("market_id")
                 and root.get("post_price_band_source") == expected.get("post_price_band_source")
+                and root.get("taker_buy_amount_policy") == expected.get("taker_buy_amount_policy")
                 and root.get("post_price_band_retry_policy", WAIT_FOR_PRICE_BAND)
                     == expected.get("post_price_band_retry_policy", WAIT_FOR_PRICE_BAND),
                 "M4_TASK_ATTEMPT_PRICING_CONFLICT")
@@ -200,8 +214,62 @@ class BudgetLedger(TaskLedger):
         return self.order_budget - used if self.signal_limited else self.limit
 
     def filled_or_matched(self, key):
-        return self.signal_limited and (decimal(self.row(key)["filled"]) > 0
-                                        or bool(self.pending_matches(key)))
+        return self.signal_limited and (bool(self.pending_matches(key))
+                                        or (not self.amount_buy and decimal(self.row(key)["filled"]) > 0))
+
+    @staticmethod
+    def confirmed_principal(attempt):
+        if not decimal(attempt["filled"]):
+            return ZERO
+        require(attempt["state"] == "TERMINAL", "M421_CONFIRMED_PRINCIPAL_PROOF_MISSING")
+        return BudgetLedger.principal_from_proof(json.loads(attempt["proof"]))
+
+    @staticmethod
+    def principal_from_proof(proof):
+        require(proof["kind"] == "OWNED_TERMINAL_ORDER_AND_TRADES",
+                "M421_CONFIRMED_PRINCIPAL_PROOF_MISSING")
+        return units(sum((decimal(fill["principal_usdc"]) for fill in proof["trades"]
+                          if fill["status"] == "CONFIRMED"), ZERO))
+
+    def principal_used(self, key):
+        return sum((self.confirmed_principal(a) for a in self.attempts(key)), ZERO)
+
+    @staticmethod
+    def amount_minimum_ok(amount, quantity):
+        return amount >= FAK_BUY_MIN_PRINCIPAL and (quantity >= 5 or amount > 1)
+
+    def amount_price_allowed(self, price, amount, quantity, root):
+        if quantity <= 0:
+            return False
+        signed = amount / quantity
+        # Shares are rounded down. Preserve the intended executable ask and
+        # exclude any higher tick, including after the market's tick tightens.
+        return price <= signed < price + decimal(".0001") and self.post_price_allowed(signed, root)
+
+    def amount_order(self, key, price, available=None):
+        principal = self.order_budget - self.principal_used(key)
+        if available is not None:
+            # Invert the same gross commitment used to reserve actual cash.
+            reserve_per_dollar = buy_amount_fee_reserve(decimal(1), self.fees) - MICRO
+            principal = min(principal, (available - MICRO) / (1 + reserve_per_dollar))
+        amount = principal.quantize(CENT, rounding=ROUND_FLOOR)
+        if amount < FAK_BUY_MIN_PRINCIPAL:
+            return None
+        quantity = market_buy_quantity(amount, price)
+        if (not self.amount_minimum_ok(amount, quantity)
+                or not self.amount_price_allowed(price, amount, quantity, self.root_plan(key))):
+            return None
+        return amount, quantity
+
+    def plan_minimum_ok(self, plan, price, quantity):
+        return (self.amount_minimum_ok(decimal(plan["principal_usdc"]), quantity)
+                if self.amount_buy else minimum_fak_buy_ok(price, quantity))
+
+    def signal_budget_allows(self, key, plan):
+        if self.amount_buy:
+            return (not self.pending_matches(key)
+                    and self.principal_used(key) + decimal(plan["principal_usdc"]) <= self.order_budget)
+        return self.budget_used(key) + decimal(plan["planned_cost_usdc"]) <= self.order_budget
 
     def pricing_evidence(self, identity):
         with self.lock:
@@ -259,6 +327,7 @@ class BudgetLedger(TaskLedger):
             {
                 "order_id": a["order_id"],
                 "spent": a["spent"],
+                **({"principal": str(self.confirmed_principal(a))} if self.amount_buy else {}),
                 "pending": str(
                     decimal(self.get("settling:" + a["order_id"])["cost_bound"])
                     if a["state"] == "SETTLING"
@@ -289,7 +358,7 @@ class BudgetLedger(TaskLedger):
             if (not attempts and not self.get("post_price_band_eligible:" + key)
                     and not self.pending_matches(key)):
                 state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
-        elif self.signal_limited and (filled > 0 or self.pending_matches(key)):
+        elif self.signal_limited and (self.pending_matches(key) or (not self.amount_buy and filled > 0)):
             state, reason = (("WAIT_SETTLEMENT", f"{self.signal_strategy}_PENDING_MATCHES_NO_TOP_UP")
                              if self.pending_matches(key)
                              else ("CUTOFF", f"{self.signal_strategy}_CONFIRMED_FILL_NO_TOP_UP"))
@@ -297,6 +366,16 @@ class BudgetLedger(TaskLedger):
             state, reason = "CUTOFF", self.get("market_halt_reason") or "M4_T240_ENTRY_ENDED"
         elif self.unresolved(key):
             state, reason = "WAIT_SETTLEMENT", "M4_UNKNOWN_PRIOR_ORDER"
+        elif self.amount_buy:
+            remaining = self.order_budget - sum((self.confirmed_principal(a) for a in attempts), ZERO)
+            if remaining == 0:
+                state, reason = "BUDGET_EXHAUSTED", "M421_PRINCIPAL_TARGET_REACHED"
+            elif remaining.quantize(CENT, rounding=ROUND_FLOOR) <= FAK_BUY_MIN_PRINCIPAL:
+                # At exactly $1, the band cannot supply the five shares needed
+                # by the strategy's strictly-greater-than-$1 alternative.
+                state, reason = "DUST", "M421_REMAINING_PRINCIPAL_BELOW_FAK_MINIMUM"
+            else:
+                state, reason = "RESERVED", "M421_REMAINING_PRINCIPAL"
         else:
             price = self.selected_price(key)
             qty = budget_quantity(price, self.order_budget - spent - pending, self.fees)
@@ -332,7 +411,7 @@ class BudgetLedger(TaskLedger):
             require(not self.price_band_abandonment(key), self.price_band_stop_reason)
             row, root = self.row(key), self.root_plan(key)
             require(row["state"] == "RESERVED" and not row["order_id"], "M4_TASK_NOT_READY")
-            if self.unresolved(key):
+            if self.unresolved(key) or (self.amount_buy and self.pending_matches(key)):
                 return None
             selected = self.get("pricing_selection:" + key) if self.dynamic_pricing else None
             require(not self.dynamic_pricing or selected is not None, "M4_PRICING_NOT_SELECTED")
@@ -340,33 +419,39 @@ class BudgetLedger(TaskLedger):
             require(self.post_price_allowed(price, root), POST_PRICE_OUTSIDE_BAND)
             used = self.budget_used(key)
             pending = self.pending_cost(key)
-            qty = budget_quantity(price, self.order_budget - used, self.fees)
-            if not minimum_fak_buy_ok(price, qty):
-                self.refresh_totals(key)
-                return None
             # pending matches stay reserved; only an unsent preparation may be replaced.
             own = decimal(row["reserved"]) - pending
             available = min(self.limit - self.committed() + own, decimal(spendable) + own)
-            available = min(available, self.single_signal_gross_limit(used))
-            while qty > 0 and (gross_risk_cost(price, qty, self.fees) > available
-                               or not fak_amounts_compatible(price, qty)):
-                qty -= STEP
-            if not minimum_fak_buy_ok(price, qty):
+            if self.amount_buy:
+                amount_order = self.amount_order(key, price, available)
+            else:
+                qty = budget_quantity(price, self.order_budget - used, self.fees)
+                if not minimum_fak_buy_ok(price, qty):
+                    self.refresh_totals(key)
+                    return None
+                available = min(available, self.single_signal_gross_limit(used))
+                while qty > 0 and (gross_risk_cost(price, qty, self.fees) > available
+                                   or not fak_amounts_compatible(price, qty)):
+                    qty -= STEP
+                amount_order = (price * qty, qty) if minimum_fak_buy_ok(price, qty) else None
+            if amount_order is None:
                 self.db.execute(
                     "UPDATE opportunities SET reserved=?,reason='M4_WAIT_REMAINDER_FUNDS' WHERE id=?",
                     (str(pending), key),
                 )
                 self.db.execute("DELETE FROM metadata WHERE key=?", ("next_plan:" + key,))
                 return None
+            amount, qty = amount_order
+            fee = planned_fee(price, qty, self.fees)
             plan = {
                 **root,
                 "limit_price": str(price),
                 **({"pricing": selected} if selected else {}),
                 "quantity": str(qty),
-                "principal_usdc": str(price * qty),
-                "planned_fee_usdc": str(planned_fee(price, qty, self.fees)),
-                "planned_cost_usdc": str(all_in_cost(price, qty, self.fees)),
-                "commitment_usdc": str(gross_risk_cost(price, qty, self.fees)),
+                "principal_usdc": str(amount),
+                "planned_fee_usdc": str(fee),
+                "planned_cost_usdc": str(amount + fee),
+                "commitment_usdc": str(amount + buy_amount_fee_reserve(amount, self.fees)),
                 "prior_spent_usdc": str(used),
                 "prior_filled": row["filled"],
                 "budget_basis": self.budget_basis(key),
@@ -374,10 +459,14 @@ class BudgetLedger(TaskLedger):
                 "minimum_policy": "SHARES_GE_5_OR_NOTIONAL_GT_1",
                 "fak_buy_minimum_policy": FAK_BUY_MINIMUM_POLICY,
                 "fak_buy_min_principal_usdc": str(FAK_BUY_MIN_PRINCIPAL),
-                "amount_precision": "FAK_BUY_CENTS_SHARES_0_1_V1",
+                "amount_precision": AMOUNT_PRECISION if self.amount_buy else "FAK_BUY_CENTS_SHARES_0_1_V1",
                 "task_policy": self.task_policy,
                 "max_native_posts": 1,
             }
+            if self.amount_buy:
+                plan["signed_limit_price"] = str(amount / qty)
+                plan["prior_principal_usdc"] = str(sum((decimal(p["principal"])
+                                                       for p in plan["budget_basis"]), ZERO))
             self.db.execute(
                 "UPDATE opportunities SET reserved=? WHERE id=?",
                 (str(pending + decimal(plan["commitment_usdc"])), key),
@@ -394,6 +483,7 @@ class BudgetLedger(TaskLedger):
         price, qty = decimal(quote["price"]), decimal(quote["size"])
         basis = plan.get("budget_basis", [])
         prior = sum((decimal(p["spent"]) + decimal(p["pending"]) for p in basis), ZERO)
+        principal = decimal(plan["principal_usdc"])
         pricing = plan.get("pricing", {})
         self.validate_root_policy(row, root)
         require(
@@ -401,6 +491,7 @@ class BudgetLedger(TaskLedger):
             and quote_valid(root, plan, row["token"], self.pricing_evidence(pricing.get("id")))
             and price == decimal(plan["limit_price"])
             and plan.get("taker_strategy") == root.get("taker_strategy")
+            and plan.get("taker_buy_amount_policy") == root.get("taker_buy_amount_policy")
             and plan.get("market_id") == root.get("market_id")
             and decimal(root["limit_price"]) == self.initial_plan_price(
                 decimal(row["price"]), decimal(root["tick_at_plan"])),
@@ -415,19 +506,30 @@ class BudgetLedger(TaskLedger):
             and quote["side"] == "BUY"
             and 0 < price < 1
             and qty > 0
-            and qty % STEP == 0
-            and minimum_order_ok(price, qty)
             and plan["fees"] == self.fees
             and decimal(plan["quantity"]) == qty
-            and decimal(plan["principal_usdc"]) == price * qty
-            and decimal(plan["planned_cost_usdc"]) == all_in_cost(price, qty, self.fees)
+            and decimal(plan["planned_cost_usdc"]) == principal + planned_fee(price, qty, self.fees)
             and prior == decimal(plan["prior_spent_usdc"])
             and prior >= 0
-            and prior + all_in_cost(price, qty, self.fees) <= self.order_budget
-            and decimal(plan["commitment_usdc"]) == gross_risk_cost(price, qty, self.fees),
+            and decimal(plan["commitment_usdc"]) == principal + buy_amount_fee_reserve(principal, self.fees),
             "M4_TASK_ATTEMPT_ECONOMICS_CONFLICT",
         )
-        if self.signal_limited:
+        if self.amount_buy:
+            prior_principal = sum((decimal(p["principal"]) for p in basis), ZERO)
+            require(plan.get("amount_precision") == AMOUNT_PRECISION
+                    and plan["task_policy"] == self.task_policy
+                    and self.amount_minimum_ok(principal, qty)
+                    and qty == market_buy_quantity(principal, price)
+                    and decimal(plan["signed_limit_price"]) == principal / qty
+                    and self.amount_price_allowed(price, principal, qty, root)
+                    and prior_principal == decimal(plan["prior_principal_usdc"])
+                    and 0 <= prior_principal <= self.order_budget - principal,
+                    "M421_ATTEMPT_PRINCIPAL_OR_PRICE_CONFLICT")
+        else:
+            require(qty % STEP == 0 and minimum_order_ok(price, qty) and principal == price * qty
+                    and prior + decimal(plan["planned_cost_usdc"]) <= self.order_budget,
+                    "M4_TASK_ATTEMPT_ECONOMICS_CONFLICT")
+        if self.signal_limited and not self.amount_buy:
             require(prior == 0 and decimal(plan["commitment_usdc"]) <= self.order_budget
                     and minimum_fak_buy_ok(price, qty) and fak_amounts_compatible(price, qty),
                     f"{self.signal_strategy}_ATTEMPT_BUDGET_CONFLICT")
@@ -443,6 +545,12 @@ class BudgetLedger(TaskLedger):
                 and decimal(p["pending"]) >= 0,
                 "M4_BUDGET_BASIS_INVALID",
             )
+            if self.amount_buy:
+                require(earlier["state"] in {"TERMINAL", "UNSENT"}
+                        and decimal(p["spent"]) == decimal(earlier["spent"])
+                        and decimal(p["pending"]) == 0
+                        and decimal(p["principal"]) == self.confirmed_principal(earlier),
+                        "M421_PRINCIPAL_BASIS_CONFLICT")
             seen.add(p["order_id"])
         expected = {
             a["order_id"]
@@ -465,7 +573,7 @@ class BudgetLedger(TaskLedger):
                 "M4_TASK_PREPARE_STATE",
             )
             a = {"task_id": key, "order_id": oid, "plan": encode(plan), "quote": encode(quote)}
-            require(minimum_fak_buy_ok(decimal(quote["price"]), decimal(quote["size"])),
+            require(self.plan_minimum_ok(plan, decimal(quote["price"]), decimal(quote["size"])),
                     "M4_FAK_BUY_MINIMUM")
             # validate_attempt also restores immutable historical orders. Keep
             # its legacy evidence rules so old rejected receipts remain readable;
@@ -477,7 +585,7 @@ class BudgetLedger(TaskLedger):
             reserved = self.pending_cost(key) + decimal(plan["commitment_usdc"])
             committed = self.committed() - decimal(row["reserved"]) + reserved
             require(
-                self.budget_used(key) + decimal(plan["planned_cost_usdc"]) <= self.order_budget
+                self.signal_budget_allows(key, plan)
                 and committed <= self.limit,
                 "M4_TASK_RESIDUAL_BUDGET_CHANGED",
             )
@@ -506,6 +614,11 @@ class BudgetLedger(TaskLedger):
                     "M4_TASK_TERMINAL_CONFLICT",
                 )
                 return
+            if self.amount_buy:
+                principal = self.principal_from_proof(proof) if filled else ZERO
+                require(0 <= principal <= min(spent, decimal(json.loads(a["plan"])["principal_usdc"]))
+                        and self.principal_used(a["task_id"]) + principal <= self.order_budget,
+                        "M421_CONFIRMED_PRINCIPAL_EXCEEDS_BUDGET")
             require(bool(a["started"]) != unsent, "M4_TASK_TERMINAL_WITHOUT_START")
             if a["state"] == "SETTLING":
                 require(
@@ -539,7 +652,7 @@ class BudgetLedger(TaskLedger):
                     POST_PRICE_OUTSIDE_BAND)
             require(not self.unresolved(key), "M4_UNRESOLVED_PRIOR_ATTEMPT")
             require(
-                self.budget_used(key) + decimal(plan["planned_cost_usdc"]) <= self.order_budget
+                self.signal_budget_allows(key, plan)
                 and self.committed() <= self.limit and not self.filled_or_matched(key),
                 "M4_TASK_RESIDUAL_BUDGET_CHANGED",
             )
@@ -737,6 +850,11 @@ class BudgetLedger(TaskLedger):
             )
             for a in attempts:
                 self.validate_attempt(a)
+                if self.amount_buy and a["state"] == "TERMINAL":
+                    principal = self.confirmed_principal(a)
+                    require(0 <= principal <= min(decimal(a["spent"]),
+                                                  decimal(json.loads(a["plan"])["principal_usdc"])),
+                            "M421_CONFIRMED_PRINCIPAL_EXCEEDS_BUDGET")
                 if a["state"] == "UNSENT" and a["started"]:
                     proof = json.loads(a["proof"])
                     require(
@@ -822,6 +940,9 @@ class BudgetLedger(TaskLedger):
                         decimal(a["filled"]) == 0 and decimal(a["spent"]) == 0,
                         "M4_TASK_RECOVERY_UNFINAL_DEBIT",
                     )
+            if self.amount_buy:
+                require(self.principal_used(row["id"]) <= self.order_budget,
+                        "M421_CONFIRMED_PRINCIPAL_EXCEEDS_BUDGET")
             if active:
                 a = active[0]
                 require(
@@ -847,7 +968,7 @@ class BudgetLedger(TaskLedger):
         value["submitted_unverified"] = sum(
             a["state"] in {"ACK", "UNKNOWN", "SETTLING"} for a in self.attempts()
         )
-        value["target_kind"] = "ALL_IN_CASH"
+        value["target_kind"] = "PRINCIPAL" if self.amount_buy else "ALL_IN_CASH"
         for item in value["by_signal"]:
             key = item["id"]
             item["initial_reference_quantity"] = item.pop("target_quantity")
@@ -864,5 +985,8 @@ class BudgetLedger(TaskLedger):
                 )
             )
             item["requires_reconciliation"] = self.unresolved(key)
-            item["remaining_planned_budget_usdc"] = str(max(ZERO, self.order_budget - self.budget_used(key)))
+            used = self.principal_used(key) if self.amount_buy else self.budget_used(key)
+            item["remaining_planned_budget_usdc"] = str(max(ZERO, self.order_budget - used))
+            if self.amount_buy:
+                item["confirmed_principal_usdc"] = str(used)
         return value

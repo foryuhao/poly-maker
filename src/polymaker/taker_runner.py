@@ -18,7 +18,7 @@ from polymaker.m4_control import atomic_json
 from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
-from polymaker.m4_live_config import LiveExecutionSettings, M4LiveSettings
+from polymaker.m4_live_config import M421_PRINCIPAL_FAK, LiveExecutionSettings, M4LiveSettings
 from polymaker.m4_live_halt import MarketHalt
 from polymaker.m4_live_startup import PreparationStopped, transient_read_error
 from polymaker.m4_signals import M4Feed
@@ -75,6 +75,7 @@ def strategy_settings(project, strategy, m4):
             "execution": {"mode": "taker", "taker": {"pricing_policy": raw["pricing_policy"]}},
             "live_taker_price_risk": raw["price_risk"],
             "taker_strategy": asdict(policy),
+            **({"taker_buy_amount_policy": M421_PRINCIPAL_FAK} if strategy == M421_LEDGER else {}),
         })
     if strategy != M6_LEDGER:
         raise ValueError("TAKER_UNKNOWN_STRATEGY")

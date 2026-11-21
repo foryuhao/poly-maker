@@ -767,6 +767,8 @@ class TaskMarket(SinglePostM4TakerMarket):
                             post_started=True,
                             entry_execution="taker",
                             order_type="FAK",
+                            buy_amount_usdc=(plan["principal_usdc"]
+                                             if plan.get("taker_buy_amount_policy") else None),
                             fee_reserve_usdc=str(
                                 decimal(plan["commitment_usdc"]) - decimal(plan["principal_usdc"])
                             ),
@@ -877,10 +879,12 @@ class TaskMarket(SinglePostM4TakerMarket):
             key,
         )
         attempt, oid = None, None
+        buy_amount = plan["principal_usdc"] if plan.get("taker_buy_amount_policy") else None
         try:
             ticks = {token: float(book.tick) for token, book in self.feed.books.items()}
             prepared = await e.gateway.prepare(
-                [Quote(quote.token_id, Side.BUY, quote.price, quote.size)], e.meta, ticks
+                [Quote(quote.token_id, Side.BUY, quote.price, quote.size)], e.meta, ticks,
+                **({"buy_amount_usdc": buy_amount} if buy_amount is not None else {}),
             )
             oid = prepared.order_ids[0]
             self.ledger.prepare(key, oid, asdict(quote))
@@ -891,11 +895,14 @@ class TaskMarket(SinglePostM4TakerMarket):
                     "opportunity_id": key,
                     "quote": asdict(quote),
                     "body_hash": prepared.body_hash,
+                    **({"principal_usdc": buy_amount, "signed_limit_price": plan["signed_limit_price"]}
+                       if buy_amount is not None else {}),
                 },
             )
             await e.journal.flush()
             attempt = Placement(
-                f"{key}:post{row['posts'] + 1}", quote, expected_order_id=oid, order_id=oid
+                f"{key}:post{row['posts'] + 1}", quote, expected_order_id=oid, order_id=oid,
+                buy_amount_usdc=buy_amount,
             )
             self.register(attempt)
 
