@@ -27,10 +27,10 @@ from polymaker.m6_baseline.config import M6Config
 from polymaker.m6_baseline.signals import M6Feed
 from polymaker.maker_account import account_snapshot
 from polymaker.rdp_sm_writer import AsyncRiskWriter
-from polymaker.taker_pool import ADMISSION_CUTOFF_SEC, POLICY, TakerPool, membership
+from polymaker.taker_pool import ADMISSION_CUTOFF_SEC, POLICY, TakerPool, configured_profiles
 
 
-def strategy_settings(project, strategy, m4):
+def strategy_settings(project, strategy, m4, *, signal_profile=None):
     if strategy == M4_LEDGER:
         identity = read_strategy_config(project)[LIVE_TAKER_IDENTITY_KEY]
         if set(identity) != {"attribution", "ledger"}:
@@ -57,8 +57,12 @@ def strategy_settings(project, strategy, m4):
                                raw["max_opportunities_per_direction"])
         if strategy == M421_LEDGER:
             from polymaker.m4_frequency_signal import PARAMETERS
-            combined = json.dumps({"m21": policy.config_fingerprint, "m4": dict(PARAMETERS),
-                                   "policy": M421_VERSION}, sort_keys=True, default=str)
+            detectors = {"m21": policy.config_fingerprint, "m4": dict(PARAMETERS), "policy": M421_VERSION}
+            if signal_profile == "M42112":
+                from polymaker.m12_live import detector_manifest as m12_manifest
+
+                detectors["m12"] = m12_manifest()
+            combined = json.dumps(detectors, sort_keys=True, default=str)
             policy = TakerStrategy(strategy, M421_VERSION, "M421", strategy,
                                    hashlib.sha256(combined.encode()).hexdigest(),
                                    policy.signal_budget_usdc, policy.market_budget_usdc, policy.direction_limit)
@@ -76,6 +80,7 @@ def strategy_settings(project, strategy, m4):
             "live_taker_price_risk": raw["price_risk"],
             "taker_strategy": asdict(policy),
             **({"taker_buy_amount_policy": M421_PRINCIPAL_FAK} if strategy == M421_LEDGER else {}),
+            **({"signal_profile": signal_profile} if signal_profile is not None else {}),
         })
     if strategy != M6_LEDGER:
         raise ValueError("TAKER_UNKNOWN_STRATEGY")
@@ -145,9 +150,11 @@ async def _prepare_opening(project, root, prepared, startup):
         return None, None, None
     if clock()[0] < epoch:
         raise ValueError("TAKER_POOL_BEFORE_T0")
-    enabled = membership(project)
+    profiles = configured_profiles(project)
     m4 = M4LiveSettings.load(project)
-    settings = {strategy: strategy_settings(project, strategy, m4) for strategy in enabled}
+    settings = {strategy: strategy_settings(project, strategy, m4,
+                signal_profile="M42112" if profile == "M42112" else None)
+                for strategy, profile in profiles.items()}
     max_age = min((cfg.account_max_age_sec for cfg in settings.values()), default=m4.account_max_age_sec)
     retries = 0
     while True:
@@ -156,7 +163,7 @@ async def _prepare_opening(project, root, prepared, startup):
         error = retry = None
         phase = "account"
         remaining = deadline - clock()[1]
-        if enabled and remaining > 0:
+        if profiles and remaining > 0:
             try:
                 if retries:
                     phase = "clock"
@@ -288,11 +295,16 @@ class SharedTakerFeed(TakerSocket, M4Feed):
             from polymaker.m21_live import M21Feed
             from polymaker.m421_live import CombinedSignals
 
-            child = self.secondary[M421_LEDGER] = M21Feed(meta, RDPObiConfig(), taker_settings=m421_settings,
-                                                         monotonic=self.monotonic, wall=self.wall)
+            feed_type = M21Feed
+            if m421_settings.signal_profile == "M42112":
+                from polymaker.m12_live import M42112Feed
+
+                feed_type = M42112Feed
+            child = self.secondary[M421_LEDGER] = feed_type(
+                meta, RDPObiConfig(), taker_settings=m421_settings, monotonic=self.monotonic, wall=self.wall)
             from polymaker.m4_live_numeric import install_live_clock_boundaries
             install_live_clock_boundaries(self)
-            child.m1 = CombinedSignals(self.m1, child.m1, m421_settings)
+            child.m1 = CombinedSignals(self.m1, child.m1, m421_settings, m12=getattr(child, "m12", None))
         for feed in self.secondary.values():
             feed.lock = self.lock
             feed.pending_receipts = self.pending_receipts
@@ -330,11 +342,13 @@ class SharedTakerFeed(TakerSocket, M4Feed):
     def maintain_signals(self):
         if self.transport_only:
             self.secondary[M21_LEDGER].m1.tick()
+        elif m421 := self.secondary.get(M421_LEDGER):
+            if m421.m1.m12 is None:
+                super().maintain_signals()
+                self.m1.evaluate(None)
+            m421.m1.tick()
         else:
             super().maintain_signals()
-            if M421_LEDGER in self.secondary:
-                self.m1.evaluate(None)
-                self.secondary[M421_LEDGER].m1.tick()
 
     def _apply(self, raw, **kwargs):
         frame = raw
@@ -423,6 +437,8 @@ async def run_secondary(primary, opening, feed, root, make_executor, control, lo
             "state_path": str(path), "recovery": recovering, "pool_policy": opening.payload["policy"],
             "signal_input_policy": feed.research.source_order_policy,
             "shared_frame_processing_policy": getattr(feed, "shared_frame_processing_policy", None),
+            **({"signal_profile": settings.signal_profile, "m12_detector": feed.m12_manifest}
+               if settings.signal_profile is not None else {}),
         })
 
         market = BudgetMarket(executor, settings, local_stop, opening=opening, account_owner=primary,

@@ -84,6 +84,7 @@ class M4LiveSettings(M4Config):
     live_taker_price_risk: TakerPriceRisk | None = None
     taker_strategy: TakerStrategy | None = None
     taker_buy_amount_policy: Literal['M421_FAK_BUY_PRINCIPAL_V1'] | None = None
+    signal_profile: Literal['M42112'] | None = None
     order_budget_usdc: int | Decimal = 5
     session_budget_usdc: int | Decimal = 10
 
@@ -132,6 +133,8 @@ class M4LiveSettings(M4Config):
             raise ValueError('M4_RISK_LIMIT_INVALID')
         if self.taker_buy_amount_policy is not None and not m421:
             raise ValueError('M421_PRINCIPAL_POLICY_REQUIRES_M421')
+        if self.signal_profile is not None and not m421:
+            raise ValueError('M42112_SIGNAL_PROFILE_REQUIRES_M421')
         return self
 
     @model_serializer(mode='wrap')
@@ -143,6 +146,8 @@ class M4LiveSettings(M4Config):
             value.pop('taker_strategy')
         if self.taker_buy_amount_policy is None:
             value.pop('taker_buy_amount_policy')
+        if self.signal_profile is None:
+            value.pop('signal_profile')
         return value
 
     @property

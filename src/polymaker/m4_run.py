@@ -507,15 +507,20 @@ def main():
                 NEXT_MARKET_PREPARATION_POLICY,
                 NEXT_MARKET_PREPARATION_SEC,
             )
-            from polymaker.m4_types import TAKER_LEDGER_IDS
-            from polymaker.taker_pool import POLICY, membership
+            from polymaker.m4_types import M421_LEDGER, TAKER_LEDGER_IDS
+            from polymaker.taker_pool import POLICY, configured_profiles
             from polymaker.taker_runner import strategy_settings
-            enabled = membership(args.project_dir)
-            result['taker_pool'] = {'policy': POLICY, 'enabled': enabled,
+            profiles = configured_profiles(args.project_dir)
+            result['taker_pool'] = {'policy': POLICY, 'enabled': tuple(profiles),
+                'selected_signal_profiles': profiles,
                 'available_strategy_settings': {
                     k: strategy_settings(args.project_dir, k, base_settings).model_dump(mode='json')
                     for name, k in TAKER_LEDGER_IDS.items()
                     if name not in {'M21', 'M421'} or (args.project_dir/'config/m4-live/m21.toml').is_file()}}
+            if (args.project_dir/'config/m4-live/m21.toml').is_file():
+                result['taker_pool']['available_signal_profiles'] = {
+                    'M42112': strategy_settings(args.project_dir, M421_LEDGER, base_settings,
+                                               signal_profile='M42112').model_dump(mode='json')}
             if settings.execution_revision == 'm4-taker-budget-v1':
                 result['next_market_preparation'] = {'policy': NEXT_MARKET_PREPARATION_POLICY,
                                                      'previous_market_start_sec': NEXT_MARKET_PREPARATION_SEC}

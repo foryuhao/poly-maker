@@ -1,4 +1,4 @@
-"""Route ordered M4 and M21 formal signals into one M21-style market."""
+"""Route formal signals into the existing M421 execution strategy."""
 
 from dataclasses import replace
 
@@ -6,23 +6,26 @@ from dataclasses import replace
 class CombinedSignals:
     m21_only = True
 
-    def __init__(self, m4, m21, settings):
+    def __init__(self, m4, m21, settings, *, m12=None):
         self.m4, self.m21, self.settings = m4, m21, settings
+        self.m12 = m12
         self.price_risk = settings.live_taker_price_risk
         self.record = self.selected = None
         self._ordered = {}
         self._count = 0
         m4.record = self.record_m4
         m21.record = self.record_m21
+        if m12 is not None:
+            m12.record = self.record_m12
 
     def __getattr__(self, name):
         return getattr(self.m21, name)
 
     @property
     def counts(self):
-        # Heartbeat totals must describe both detectors. Counter addition keeps
-        # their native counts, including diagnostics sampled out of the journal.
-        return self.m4.counts + self.m21.counts
+        # Counter addition keeps native counts, including sampled diagnostics.
+        counts = self.m4.counts + self.m21.counts
+        return counts if self.m12 is None else counts + self.m12.counts
 
     def diagnostics(self):
         return {"strategy": self.settings.strategy, "failure": self.failure,
@@ -34,12 +37,28 @@ class CombinedSignals:
     def record_m21(self, row):
         return self._receive("M21", self.m21, row)
 
+    def record_m12(self, row):
+        return self._receive("M12", self.m12, row)
+
+    def tick(self, **kwargs):
+        if self.m12 is None:
+            return self.m21.tick(**kwargs)
+        feed = self.m21.feed
+        with feed.lock:
+            if feed.stop_event.is_set() or feed.runtime_released:
+                return
+            now, wall, pending = feed.monotonic(), feed.wall(), feed.pending_receipts()
+            self.m4.evaluate(None)
+            self.m21.tick(now=now, wall=wall, pending=pending)
+            self.m12.tick(now=now, wall=wall, pending=pending)
+
     def _receive(self, source, detector, row):
         if row["event"] == "OPPORTUNITY_IDENTIFIED":
             key = row["opportunity"]["episode_id"]
             if key in self._ordered:
                 return True
-            original = next(o for o in detector.opportunities.values() if o.episode_id == key)
+            original = (detector.opportunities[key] if source == "M12" else
+                        next(o for o in detector.opportunities.values() if o.episode_id == key))
             deadline = min(original.order_deadline, original.signal_start_mono + 3)
             unified = replace(original, order_deadline=deadline, price_risk=self.price_risk, taker_strategy=self.settings.taker_strategy,
                               market_id=self.m21.feed.meta.condition_id)

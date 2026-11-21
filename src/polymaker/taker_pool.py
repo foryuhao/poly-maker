@@ -1,7 +1,6 @@
 """Durable market opening and account-wide reservations for the Taker runner."""
 
 import json
-import os
 import sqlite3
 import time
 import tomllib
@@ -11,36 +10,38 @@ from pathlib import Path
 
 from polymaker.m4_live_config import M4LiveSettings
 from polymaker.m4_state import M4Ledger, decimal
-from polymaker.m4_types import TAKER_LEDGER_IDS
+from polymaker.m4_types import M421_LEDGER, TAKER_LEDGER_IDS
 
 POLICY = "SHARED_TAKER_POOL_BEFORE_T240_CLOSE_PLUS_120_V2"
 ADMISSION_CUTOFF_SEC = 240
 STRATEGIES = TAKER_LEDGER_IDS
+SIGNAL_PROFILES = {**STRATEGIES, "M42112": M421_LEDGER}
 
 
-def membership(project):
+def configured_profiles(project):
     directory = Path(project) / "config/m4-live"
     names = []
     # The prior runner hot-reads strategies.toml and rejects unfamiliar names.
     # Put additions for the new runner in a separate list during cutover.
-    override = os.environ.get("POLYMAKER_TAKER_ROSTER")
-    paths = (Path(override),) if override else (directory / "strategies.toml", directory / "strategies-additions.toml")
-    if override and not paths[0].is_file():
-        raise ValueError("TAKER_POOL_OVERRIDE_ROSTER_MISSING")
-    for path in paths:
+    for filename in ("strategies.toml", "strategies-additions.toml"):
+        path = directory / filename
         if not path.is_file():
             continue
         raw = tomllib.loads(path.read_text())
         enabled = raw.get("enabled")
         if (set(raw) != {"enabled"} or not isinstance(enabled, list)
-                or any(not isinstance(name, str) or name not in STRATEGIES for name in enabled)):
+                or any(not isinstance(name, str) or name not in SIGNAL_PROFILES for name in enabled)):
             raise ValueError("TAKER_POOL_MEMBERSHIP_INVALID")
         names.extend(enabled)
     if len(set(names)) != len(names):
         raise ValueError("TAKER_POOL_MEMBERSHIP_INVALID")
-    if "M421" in names and names != ["M421"]:
+    if any(SIGNAL_PROFILES[name] == M421_LEDGER for name in names) and len(names) != 1:
         raise ValueError("M421_REQUIRES_EXCLUSIVE_ROSTER")
-    return tuple(STRATEGIES[name] for name in names)
+    return {SIGNAL_PROFILES[name]: name for name in names}
+
+
+def membership(project):
+    return tuple(configured_profiles(project))
 
 
 def account_cash(account):

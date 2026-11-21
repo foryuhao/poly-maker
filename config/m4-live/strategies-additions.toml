@@ -1,2 +1,3 @@
-# Select M421 for new markets. Set enabled to ["M21"] to roll back.
-enabled = ["M421"]
+# Select ["M421"] or ["M42112"] for new markets on the same M421 execution lane.
+# Set enabled to ["M21"] to run the standalone M21 strategy.
+enabled = ["M42112"]

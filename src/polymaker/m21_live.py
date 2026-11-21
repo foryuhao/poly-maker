@@ -155,12 +155,14 @@ class M21Signals:
         return (live_book_legal(self, book, now) and research.good[book.token_id]
                 and research.legal(book.token_id))
 
-    def tick(self, **kwargs):
+    def tick(self, *, now=None, wall=None, pending=None, **kwargs):
         if self.failure or self.feed.stop_event.is_set() or self.feed.runtime_released:
             return
         with self.feed.lock:
-            self.feed.research.timer(now=self.feed.monotonic(), wall=self.feed.wall(),
-                                     seq=self.feed.m1_frame, pending=self.feed.pending_receipts())
+            self.feed.research.timer(now=self.feed.monotonic() if now is None else now,
+                                     wall=self.feed.wall() if wall is None else wall,
+                                     seq=self.feed.m1_frame,
+                                     pending=self.feed.pending_receipts() if pending is None else pending)
 
     def invalidate(self, reason, token=None):
         self.selected = None
@@ -253,8 +255,8 @@ class M21Feed(SessionFeed):
                 self.frame_age_over_200ms += age > 200_000
             self.m1_frame += 1
             self.research.updated_depth.clear()
-            self.research.apply(raw, now=now, wall=wall, received=received, seq=self.m1_frame,
-                                pending=self.pending_receipts())
+            self.apply_signal_frame(raw, now=now, wall=wall, received=received,
+                                    pending=self.pending_receipts())
             for token, book in self.research.books.items():
                 if not book.tick_verified:
                     self.tick_verified.pop(token, None)
@@ -272,6 +274,10 @@ class M21Feed(SessionFeed):
             self.last_wall = wall if received_wall is None else received_wall
             self.reason = ""
             self.changed.set()
+
+    def apply_signal_frame(self, raw, *, now, wall, received, pending):
+        self.research.apply(raw, now=now, wall=wall, received=received, seq=self.m1_frame,
+                            pending=pending)
 
     def market_input_health(self):
         with self.lock:
