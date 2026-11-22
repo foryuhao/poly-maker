@@ -9,6 +9,7 @@ class CombinedSignals:
     def __init__(self, m4, m21, settings, *, m12=None):
         self.m4, self.m21, self.settings = m4, m21, settings
         self.m12 = m12
+        self.output_sources = settings.signal_output_sources
         self.price_risk = settings.live_taker_price_risk
         self.record = self.selected = None
         self._ordered = {}
@@ -25,7 +26,17 @@ class CombinedSignals:
     def counts(self):
         # Counter addition keeps native counts, including sampled diagnostics.
         counts = self.m4.counts + self.m21.counts
-        return counts if self.m12 is None else counts + self.m12.counts
+        if self.m12 is None:
+            return counts
+        counts += self.m12.counts
+        if self.output_sources is not None:
+            filtered = sum(detector.counts["OPPORTUNITY_IDENTIFIED"]
+                           for source, detector in (("M4", self.m4), ("M21", self.m21), ("M12", self.m12))
+                           if source not in self.output_sources)
+            if filtered:
+                counts["OPPORTUNITY_IDENTIFIED"] -= filtered
+                counts["OPPORTUNITY_OUTPUT_FILTERED"] = filtered
+        return counts
 
     def diagnostics(self):
         return {"strategy": self.settings.strategy, "failure": self.failure,
@@ -53,6 +64,9 @@ class CombinedSignals:
             self.m12.tick(now=now, wall=wall, pending=pending)
 
     def _receive(self, source, detector, row):
+        if (row["event"] == "OPPORTUNITY_IDENTIFIED" and self.output_sources is not None
+                and source not in self.output_sources):
+            row = {**row, "event": "OPPORTUNITY_OUTPUT_FILTERED", "reason": "SIGNAL_SOURCE_DISABLED"}
         if row["event"] == "OPPORTUNITY_IDENTIFIED":
             key = row["opportunity"]["episode_id"]
             if key in self._ordered:

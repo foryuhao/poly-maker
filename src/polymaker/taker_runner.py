@@ -18,7 +18,9 @@ from polymaker.m4_control import atomic_json
 from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
-from polymaker.m4_live_config import M421_PRINCIPAL_FAK, LiveExecutionSettings, M4LiveSettings
+from polymaker.m4_live_config import (
+    M42112_SIGNAL_SOURCES, M421_PRINCIPAL_FAK, LiveExecutionSettings, M4LiveSettings,
+)
 from polymaker.m4_live_halt import MarketHalt
 from polymaker.m4_live_startup import PreparationStopped, transient_read_error
 from polymaker.m4_signals import M4Feed
@@ -44,6 +46,7 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
     if strategy in {M21_LEDGER, M421_LEDGER}:
         from polymaker.m21_live import detector_manifest
 
+        profile_config = {}
         raw = tomllib.loads((project / "config/m4-live/m21.toml").read_text(), parse_float=Decimal)
         if set(raw) != {"version", "attribution", "ledger", "order_budget_usdc", "session_budget_usdc",
                         "max_opportunities_per_direction", "pricing_policy", "price_risk"}:
@@ -62,6 +65,13 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
                 from polymaker.m12_live import detector_manifest as m12_manifest
 
                 detectors["m12"] = m12_manifest()
+                path = project / "config/m4-live/m42112.toml"
+                try:
+                    profile_config = tomllib.loads(path.read_text())
+                except FileNotFoundError:
+                    profile_config = {"signal_output_sources": M42112_SIGNAL_SOURCES}
+                if set(profile_config) != {"signal_output_sources"}:
+                    raise ValueError("M42112_SIGNAL_OUTPUT_CONFIG_INVALID")
             combined = json.dumps(detectors, sort_keys=True, default=str)
             policy = TakerStrategy(strategy, M421_VERSION, "M421", strategy,
                                    hashlib.sha256(combined.encode()).hexdigest(),
@@ -81,6 +91,7 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
             "taker_strategy": asdict(policy),
             **({"taker_buy_amount_policy": M421_PRINCIPAL_FAK} if strategy == M421_LEDGER else {}),
             **({"signal_profile": signal_profile} if signal_profile is not None else {}),
+            **profile_config,
         })
     if strategy != M6_LEDGER:
         raise ValueError("TAKER_UNKNOWN_STRATEGY")
@@ -437,7 +448,8 @@ async def run_secondary(primary, opening, feed, root, make_executor, control, lo
             "state_path": str(path), "recovery": recovering, "pool_policy": opening.payload["policy"],
             "signal_input_policy": feed.research.source_order_policy,
             "shared_frame_processing_policy": getattr(feed, "shared_frame_processing_policy", None),
-            **({"signal_profile": settings.signal_profile, "m12_detector": feed.m12_manifest}
+            **({"signal_profile": settings.signal_profile, "m12_detector": feed.m12_manifest,
+                "signal_output_sources": settings.signal_output_sources or M42112_SIGNAL_SOURCES}
                if settings.signal_profile is not None else {}),
         })
 

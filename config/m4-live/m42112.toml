@@ -1,0 +1,2 @@
+# Select one, two, or all three detector sources for the next M42112 market.
+signal_output_sources = ["M4", "M21", "M12"]

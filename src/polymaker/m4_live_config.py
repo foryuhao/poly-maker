@@ -6,7 +6,7 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from polymaker.execution.taker_fees import buy_amount_fee_reserve, fee_parameters
 from polymaker.m4_config import LIVE_TAKER_IDENTITY_KEY, LIVE_TAKER_PRICE_RISK_KEY, M4Config, read_strategy_config
@@ -22,6 +22,7 @@ from polymaker.m4_types import (
 
 
 M421_PRINCIPAL_FAK = 'M421_FAK_BUY_PRINCIPAL_V1'
+M42112_SIGNAL_SOURCES = ('M4', 'M21', 'M12')
 
 
 class TakerSettings(BaseModel):
@@ -85,8 +86,19 @@ class M4LiveSettings(M4Config):
     taker_strategy: TakerStrategy | None = None
     taker_buy_amount_policy: Literal['M421_FAK_BUY_PRINCIPAL_V1'] | None = None
     signal_profile: Literal['M42112'] | None = None
+    signal_output_sources: tuple[Literal['M4', 'M21', 'M12'], ...] | None = Field(
+        default=None, min_length=1, max_length=3)
     order_budget_usdc: int | Decimal = 5
     session_budget_usdc: int | Decimal = 10
+
+    @field_validator('signal_output_sources')
+    @classmethod
+    def validate_output_sources(cls, sources):
+        if sources is None:
+            return None
+        if len(set(sources)) != len(sources):
+            raise ValueError('M42112_SIGNAL_OUTPUT_SOURCES_DUPLICATE')
+        return tuple(source for source in M42112_SIGNAL_SOURCES if source in sources)
 
     @model_validator(mode='after')
     def execution_identity(self):
@@ -135,6 +147,8 @@ class M4LiveSettings(M4Config):
             raise ValueError('M421_PRINCIPAL_POLICY_REQUIRES_M421')
         if self.signal_profile is not None and not m421:
             raise ValueError('M42112_SIGNAL_PROFILE_REQUIRES_M421')
+        if self.signal_output_sources is not None and self.signal_profile != 'M42112':
+            raise ValueError('M42112_SIGNAL_OUTPUT_SOURCES_REQUIRE_PROFILE')
         return self
 
     @model_serializer(mode='wrap')
@@ -148,6 +162,8 @@ class M4LiveSettings(M4Config):
             value.pop('taker_buy_amount_policy')
         if self.signal_profile is None:
             value.pop('signal_profile')
+        if self.signal_output_sources is None:
+            value.pop('signal_output_sources')
         return value
 
     @property
