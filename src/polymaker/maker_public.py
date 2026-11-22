@@ -4,16 +4,19 @@ import re
 import time
 from dataclasses import replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
 from polymaker.catalog.gamma import parse_market
+from polymaker.market_protocol import gamma_protocol, market_protocol, position_ids
 
 
-def public_market(raw, slug):
+def public_market(raw, slug, *, allow_v2=False, require_version=False):
     """Map Up/Down by outcome, never Gamma's array order or market price."""
-    meta = parse_market(raw) if isinstance(raw, dict) else None
+    if require_version and isinstance(raw, dict) and "version" not in raw:
+        raise ValueError("GAMMA_MARKET_PROTOCOL_MISSING")
+    meta = parse_market(raw, allow_v2=allow_v2) if isinstance(raw, dict) else None
     if meta is None or meta.slug != slug or raw.get("closed") is not False or raw.get("active") is not True:
         raise ValueError("PUBLIC_PUBLIC_MARKET_UNAVAILABLE")
     match = re.fullmatch(r"btc-updown-5m-([0-9]+)", slug)
@@ -134,18 +137,35 @@ def validate_resolution(market, session):
         value = market.get(key)
         return json.loads(value) if isinstance(value, str) else value
 
-    ids = array("clobTokenIds")
+    protocol = market_protocol(session)
+    if gamma_protocol(market) != protocol:
+        raise ValueError("SETTLEMENT_MARKET_PROTOCOL_MISMATCH")
+    ids = position_ids(market) if protocol == "v2" else array("clobTokenIds")
     expected = session.get("token_ids", {})
     if (not isinstance(ids, list) or len(ids) != 2 or len(set(ids)) != 2
             or set(expected) != {"YES", "NO"} or set(ids) != set(expected.values())):
         raise ValueError("SETTLEMENT_TOKEN_IDENTITY_MISMATCH")
-    status = market.get("resolutionStatus") or market.get("umaResolutionStatus")
+    if protocol == "v2":
+        outcomes = array("outcomes")
+        if (not isinstance(outcomes, list) or len(outcomes) != 2
+                or any(not isinstance(outcome, str) for outcome in outcomes)
+                or dict(zip((outcome.casefold() for outcome in outcomes), ids))
+                    != {"up": expected["YES"], "down": expected["NO"]}):
+            raise ValueError("SETTLEMENT_V2_OUTCOME_MAPPING_MISMATCH")
+        status = market.get("resolutionStatus")
+    elif "version" in market:
+        status = market.get("umaResolutionStatus") or market.get("resolutionStatus")
+    else:
+        status = market.get("resolutionStatus") or market.get("umaResolutionStatus")
     if market.get("closed") is not True or status != "resolved":
         return None
     prices = array("outcomePrices")
     if not isinstance(prices, list) or len(prices) != 2:
         raise ValueError("SETTLEMENT_PAYOUT_MISSING")
-    prices = [Decimal(str(p)) for p in prices]
+    try:
+        prices = [Decimal(str(p)) for p in prices]
+    except InvalidOperation as exc:
+        raise ValueError("SETTLEMENT_PAYOUT_NOT_BINARY_FINAL") from exc
     if not all(p.is_finite() for p in prices) or sorted(prices) != [Decimal(0), Decimal(1)]:
         raise ValueError("SETTLEMENT_PAYOUT_NOT_BINARY_FINAL")
     winning_token = ids[prices.index(Decimal(1))]
@@ -153,4 +173,5 @@ def validate_resolution(market, session):
             "token_ids": expected, "winner": next(k for k, v in expected.items() if v == winning_token),
             "source": BASE + session["slug"], "resolution_status": status,
             "closed": True, "outcome_prices": [str(p) for p in prices],
-            "clob_token_ids": ids, "observed_at": time.time()}
+            **({"protocol_version": "v2", "position_ids": ids} if protocol == "v2" else {"clob_token_ids": ids}),
+            "observed_at": time.time()}

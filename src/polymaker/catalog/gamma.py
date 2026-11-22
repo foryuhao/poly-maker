@@ -17,6 +17,7 @@ import httpx
 
 from polymaker.domain import MarketMeta, TokenMeta
 from polymaker.logging import get_logger
+from polymaker.market_protocol import V2MarketMeta, gamma_protocol, position_ids
 
 log = get_logger("catalog.gamma")
 
@@ -131,12 +132,16 @@ class GammaClient:
             offset += limit
 
 
-def parse_market(raw: dict[str, Any], reward_rates: dict[str, float] | None = None) -> MarketMeta | None:
+def parse_market(raw: dict[str, Any], reward_rates: dict[str, float] | None = None, *,
+                 allow_v2: bool = False) -> MarketMeta | None:
     """Convert a Gamma market dict into our MarketMeta, or None if unusable."""
     try:
         if not raw.get("acceptingOrders", False):
             return None
-        token_ids = _json_list(raw.get("clobTokenIds"))
+        protocol = gamma_protocol(raw)
+        if protocol == "v2" and not allow_v2:
+            return None
+        token_ids = position_ids(raw) if protocol == "v2" else _json_list(raw.get("clobTokenIds"))
         outcomes = _json_list(raw.get("outcomes"))
         if len(token_ids) != 2 or len(outcomes) != 2:
             return None  # only binary markets
@@ -151,7 +156,8 @@ def parse_market(raw: dict[str, Any], reward_rates: dict[str, float] | None = No
         if events:
             event_id = str(events[0].get("id")) if events[0].get("id") is not None else None
 
-        return MarketMeta(
+        market_type = V2MarketMeta if protocol == "v2" else MarketMeta
+        return market_type(
             condition_id=condition_id,
             question=raw.get("question", ""),
             slug=raw.get("slug", ""),

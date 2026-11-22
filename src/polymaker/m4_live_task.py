@@ -319,6 +319,10 @@ class TaskLedger(SinglePostM4LiveLedger):
             for r in self.rows()
         )
 
+    @property
+    def instruction_slot_limit(self):
+        return 2 * self.direction_limit
+
     def reserve(self, key, *, spendable, direction_limit=1):
         with self.lock, self.db:
             row = self.row(key)
@@ -326,7 +330,7 @@ class TaskLedger(SinglePostM4LiveLedger):
                 return False
             reason = (
                 "SESSION_INSTRUCTION_LIMIT"
-                if self.instruction_slots() >= 2 * self.direction_limit
+                if self.instruction_slots() >= self.instruction_slot_limit
                 else "M4_DIRECTION_OPPORTUNITY_LIMIT"
                 if direction_limit is not None and self.direction_slots(key) >= direction_limit
                 else None

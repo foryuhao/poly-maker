@@ -4,43 +4,9 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
 
 from polymaker.dashboard.model import summarize
-
-BASE = "https://gamma-api.polymarket.com/markets/slug/"
-
-
-def validate_resolution(market, session):
-    """Map the resolved winning token to the journal's YES/NO identities."""
-    if (market.get("slug") != session["slug"]
-            or not session.get("condition_id")
-            or str(market.get("conditionId", "")).lower() != session["condition_id"].lower()):
-        raise ValueError("SETTLEMENT_MARKET_IDENTITY_MISMATCH")
-    def array(key):
-        value = market.get(key)
-        return json.loads(value) if isinstance(value, str) else value
-
-    ids = array("clobTokenIds")
-    expected = session.get("token_ids", {})
-    if (not isinstance(ids, list) or len(ids) != 2 or len(set(ids)) != 2
-            or set(expected) != {"YES", "NO"} or set(ids) != set(expected.values())):
-        raise ValueError("SETTLEMENT_TOKEN_IDENTITY_MISMATCH")
-    status = market.get("resolutionStatus") or market.get("umaResolutionStatus")
-    if market.get("closed") is not True or status != "resolved":
-        return None
-    prices = array("outcomePrices")
-    if not isinstance(prices, list) or len(prices) != 2:
-        raise ValueError("SETTLEMENT_PAYOUT_MISSING")
-    prices = [Decimal(str(p)) for p in prices]
-    if not all(p.is_finite() for p in prices) or sorted(prices) != [Decimal(0), Decimal(1)]:
-        raise ValueError("SETTLEMENT_PAYOUT_NOT_BINARY_FINAL")
-    winning_token = ids[prices.index(Decimal(1))]
-    return {"slug": session["slug"], "condition_id": session["condition_id"],
-            "token_ids": expected, "winner": next(k for k, v in expected.items() if v == winning_token),
-            "source": BASE + session["slug"], "resolution_status": status,
-            "closed": True, "outcome_prices": [str(p) for p in prices],
-            "clob_token_ids": ids, "observed_at": time.time()}
+from polymaker.maker_public import BASE, validate_resolution as validate_resolution
 
 
 def fetch_resolution(session):

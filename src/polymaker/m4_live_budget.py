@@ -28,6 +28,7 @@ from polymaker.m4_live_pricing import DYNAMIC, quote_valid, rejected_price_band_
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
 from polymaker.m4_types import BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
+from polymaker.market_protocol import market_protocol
 from polymaker.state.tracker import TradeEvent
 
 FAK_BUY_MIN_PRINCIPAL = decimal("1")
@@ -107,6 +108,7 @@ class BudgetLedger(TaskLedger):
         require(market_id == market["condition_id"] and outcome in {"YES", "NO"}
                 and market["tokens"][int(outcome == "NO")]["token_id"] == token,
             "TAKER_OPPORTUNITY_MARKET_CONFLICT")
+        return market_protocol(market)
 
     def root_policy_evidence(self, row):
         evidence = json.loads(row["evidence"])
@@ -114,19 +116,16 @@ class BudgetLedger(TaskLedger):
         snapshot = evidence.get("taker_strategy")
         policy = TakerStrategy(**snapshot) if snapshot is not None else None
         require(policy == self.settings.taker_strategy, "TAKER_OPPORTUNITY_STRATEGY_CONFLICT")
-        if policy:
-            self.validate_opportunity_market(evidence.get("market_id"), row["token"], row["outcome"])
+        protocol = (self.validate_opportunity_market(evidence.get("market_id"), row["token"], row["outcome"])
+                    if policy else "v1")
         risk = TakerPriceRisk(**saved) if saved is not None else None
         source = None
         if self.settings.source_price_bands is not None:
-            with self.lock:
-                order = self.db.execute("SELECT payload FROM facts WHERE kind='m421_signal_order' AND identity=?",
-                                        (row["id"],)).fetchone()
-            require(order is not None, "M42112_PRICE_BAND_SOURCE_MISSING")
-            source = json.loads(order[0])["source"]
+            source = self.m421_signal_source(row["id"])
         require(risk == self.settings.signal_price_risk(source), "M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
         if risk is not None:
             return {**risk.plan_fields(),
+                    **({"protocol_version": "v2"} if protocol == "v2" else {}),
                     **({"detector_source": source, "post_price_band_source": M42112_PRICE_BAND_SOURCE}
                        if source is not None else {}),
                     **({"taker_strategy": snapshot, "market_id": evidence["market_id"]}
@@ -147,6 +146,7 @@ class BudgetLedger(TaskLedger):
         require(root.get("post_price_band") == expected.get("post_price_band")
                 and root.get("taker_strategy") == expected.get("taker_strategy")
                 and root.get("market_id") == expected.get("market_id")
+                and root.get("protocol_version") == expected.get("protocol_version")
                 and root.get("detector_source") == expected.get("detector_source")
                 and root.get("post_price_band_source") == expected.get("post_price_band_source")
                 and root.get("taker_buy_amount_policy") == expected.get("taker_buy_amount_policy")
@@ -508,6 +508,7 @@ class BudgetLedger(TaskLedger):
             and plan.get("taker_strategy") == root.get("taker_strategy")
             and plan.get("taker_buy_amount_policy") == root.get("taker_buy_amount_policy")
             and plan.get("market_id") == root.get("market_id")
+            and plan.get("protocol_version") == root.get("protocol_version")
             and decimal(root["limit_price"]) == self.initial_plan_price(
                 decimal(row["price"]), decimal(root["tick_at_plan"])),
             "M4_TASK_ATTEMPT_PRICING_CONFLICT",
@@ -698,6 +699,25 @@ class BudgetLedger(TaskLedger):
                              WHERE task_id=opportunities.id AND started=1 AND state!='UNSENT')"""
         ).fetchall()
 
+    def m421_signal_source(self, key):
+        with self.lock:
+            fact = self.db.execute("SELECT payload FROM facts WHERE kind='m421_signal_order' AND identity=?",
+                                   (key,)).fetchone()
+        require(fact is not None, "M421_SIGNAL_SOURCE_MISSING")
+        source = json.loads(fact[0])["source"]
+        if self.settings.signal_slot_policy:
+            require(source in self.settings.signal_output_sources, "M42112_SIGNAL_SOURCE_NOT_ENABLED")
+        return source
+
+    def m421_slot_group(self, row):
+        source = self.m421_signal_source(row["id"]) if self.settings.signal_slot_policy else None
+        return source, row["outcome"]
+
+    @property
+    def instruction_slot_limit(self):
+        base = super().instruction_slot_limit
+        return base * len(self.settings.signal_output_sources) if self.settings.signal_slot_policy else base
+
     def instruction_slots(self):
         if self.ledger_strategy != M421_LEDGER:
             return super().instruction_slots()
@@ -708,8 +728,9 @@ class BudgetLedger(TaskLedger):
         if self.ledger_strategy != M421_LEDGER:
             return super().direction_slots(key)
         with self.lock:
-            outcome = self.row(key)["outcome"]
-            return sum(task != key and side == outcome for task, side in self._m421_claims())
+            source, outcome = self.m421_slot_group(self.row(key))
+            return sum(task != key and side == outcome and (source is None or self.m421_signal_source(task) == source)
+                       for task, side in self._m421_claims())
 
     def native_not_sent(self, oid, reason):
         """Durable intent was armed, but the native transport was never invoked.
@@ -835,6 +856,10 @@ class BudgetLedger(TaskLedger):
             return event
 
     def validate_recovery(self):
+        if self.settings.signal_slot_policy:
+            with self.lock:
+                groups = [(self.m421_signal_source(key), outcome) for key, outcome in self._m421_claims()]
+            require(len(groups) == len(set(groups)), "M42112_RECOVERY_DUPLICATE_SIGNAL_SLOT")
         roots = {root["opportunity_id"]: root for root in self.facts("taker_plan")}
         for row in self.rows():
             root = roots.get(row["id"])

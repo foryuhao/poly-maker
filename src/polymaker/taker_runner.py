@@ -19,7 +19,8 @@ from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
 from polymaker.m4_live_config import (
-    M42112_SIGNAL_SOURCES, M421_PRINCIPAL_FAK, LiveExecutionSettings, M42112PriceBand, M4LiveSettings,
+    M42112_PER_SOURCE_DIRECTION, M42112_SIGNAL_SOURCES, M421_PRINCIPAL_FAK,
+    LiveExecutionSettings, M42112PriceBand, M4LiveSettings,
 )
 from polymaker.m4_live_halt import MarketHalt
 from polymaker.m4_live_startup import PreparationStopped, transient_read_error
@@ -28,6 +29,7 @@ from polymaker.m4_types import M4_LEDGER, M6_LEDGER, M21_LEDGER, M21_VERSION, M4
 from polymaker.m6_baseline.config import M6Config
 from polymaker.m6_baseline.signals import M6Feed
 from polymaker.maker_account import account_snapshot
+from polymaker.market_protocol import market_protocol
 from polymaker.rdp_sm_writer import AsyncRiskWriter
 from polymaker.taker_pool import ADMISSION_CUTOFF_SEC, POLICY, TakerPool, configured_profiles
 
@@ -79,6 +81,7 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
                 profile_config = {
                     "signal_output_sources": profile.get("signal_output_sources", M42112_SIGNAL_SOURCES),
                     "source_price_bands": profile.get("price_risk", {}),
+                    "signal_slot_policy": M42112_PER_SOURCE_DIRECTION,
                 }
             combined = json.dumps(detectors, sort_keys=True, default=str)
             policy = TakerStrategy(strategy, M421_VERSION, "M421", strategy,
@@ -146,6 +149,8 @@ async def prepare_opening(project, root, prepared, startup, *, isolated=False):
 async def _prepare_opening(project, root, prepared, startup):
     """Verify capital before creating either strategy's feed or ledger."""
     funder, market_id = prepared.identity["funder"], prepared.meta.condition_id
+    protocol_version = market_protocol(prepared.meta)
+    position_ids = [token.token_id for token in prepared.meta.tokens] if protocol_version == "v2" else None
     epoch = int(prepared.slug.rsplit("-", 1)[1])
     pool = TakerPool(root / "taker-pool.sqlite3", project)
     control = startup.control
@@ -158,7 +163,8 @@ async def _prepare_opening(project, root, prepared, startup):
 
     opened = pool.existing(funder, epoch)
     if opened:
-        if opened.payload["market_id"] != market_id:
+        if (opened.payload["market_id"] != market_id or market_protocol(opened.payload) != protocol_version
+                or opened.payload.get("position_ids") != position_ids):
             raise ValueError("TAKER_POOL_MARKET_IDENTITY_CONFLICT")
         return opened, None, None
     if (prepared.startup or {}).get("recovery"):
@@ -170,6 +176,9 @@ async def _prepare_opening(project, root, prepared, startup):
     if clock()[0] < epoch:
         raise ValueError("TAKER_POOL_BEFORE_T0")
     profiles = configured_profiles(project)
+    unsupported_v2 = protocol_version == "v2" and profiles != {M421_LEDGER: "M42112"}
+    if unsupported_v2:
+        profiles = {}
     m4 = M4LiveSettings.load(project)
     settings = {strategy: strategy_settings(project, strategy, m4,
                 signal_profile="M42112" if profile == "M42112" else None)
@@ -179,7 +188,8 @@ async def _prepare_opening(project, root, prepared, startup):
     while True:
         startup.check_stop()
         account = began = valid_until = None
-        error = retry = None
+        retry = None
+        error = "TAKER_POOL_PROTOCOL_REQUIRES_M42112" if unsupported_v2 else None
         phase = "account"
         remaining = deadline - clock()[1]
         if profiles and remaining > 0:
@@ -220,7 +230,8 @@ async def _prepare_opening(project, root, prepared, startup):
             startup.check_stop()
         if retry is None or clock()[1] >= deadline:
             opened = pool.decide(funder, epoch, market_id, settings, account, clock=clock,
-                                 read_error=error, account_valid_until=valid_until, read_retries=retries)
+                                 read_error=error, account_valid_until=valid_until, read_retries=retries,
+                                 protocol_version=protocol_version, position_ids=position_ids)
             if opened is not None:
                 if retries or opened.payload["official_upper"] >= epoch + m4.start_sec:
                     startup.phase = "pool_decision"
@@ -452,6 +463,7 @@ async def run_secondary(primary, opening, feed, root, make_executor, control, lo
         executor.official_time_uncertainty_s = e.official_time_uncertainty_s
         executor.record("sm_session", {
             "strategy": strategy, "mode": "LIVE", "slug": e.slug, "market_id": e.meta.condition_id,
+            **({"protocol_version": "v2"} if market_protocol(e.meta) == "v2" else {}),
             "settings": settings.model_dump(mode="json"), "settings_hash": settings.fingerprint,
             "state_path": str(path), "recovery": recovering, "pool_policy": opening.payload["policy"],
             "signal_input_policy": feed.research.source_order_policy,

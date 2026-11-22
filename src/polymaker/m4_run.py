@@ -23,6 +23,7 @@ from polymaker.m4_state import M4Ledger
 from polymaker.m4_virtual import VirtualReads
 from polymaker.maker_http import sdk_http1_transport
 from polymaker.maker_public import VirtualPublicAPI
+from polymaker.market_protocol import market_protocol
 from polymaker.rdp_sm import OFFICIAL_HOSTS
 from polymaker.rdp_sm_execution import _ExecutionReads
 from polymaker.rdp_sm_writer import AsyncRiskWriter
@@ -218,8 +219,19 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                     slug, path, identity = prepared.slug, prepared.path, prepared.identity
                     epoch = int(slug.rsplit('-', 1)[1])
                     funder = reads.gateway.funder.lower()
-                    if not independent_m4 and (strategy or (project/'config/m4-live/strategies.toml').exists()
-                                               or (root/'taker-pool.sqlite3').exists()):
+                    use_pool = not independent_m4 and (strategy or (root/'taker-pool.sqlite3').exists()
+                        or any((project/'config/m4-live'/name).exists()
+                               for name in ('strategies.toml', 'strategies-additions.toml')))
+                    if market_protocol(meta) == 'v2' and (
+                            not use_pool or strategy or trial or settings.execution_revision != 'm4-taker-budget-v1'):
+                        reads.close()
+                        reads = None
+                        startup.report('V2_MARKET_REQUIRES_M42112')
+                        if once:
+                            return {'status': 'V2_MARKET_REQUIRES_M42112', 'live': live}
+                        await wait(stop, max(.01, epoch+300-prepared.clock[0]))
+                        continue
+                    if use_pool:
                         from polymaker.m4_types import M6_LEDGER, M21_LEDGER, M421_LEDGER
                         from polymaker.taker_runner import prepare_opening
                         try:
@@ -360,6 +372,7 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                                         and settings.execution_revision == 'm4-taker-budget-v1')
                         executor.record('sm_session', {'strategy': strategy_id, 'mode': 'LIVE' if live else 'VIRTUAL',
                             'slug': slug, 'market_id': meta.condition_id, 'settings': settings.model_dump(mode='json'),
+                            **({'protocol_version': 'v2'} if market_protocol(meta) == 'v2' else {}),
                             'settings_hash': settings.fingerprint,
                             **({'signal_parameters': dict(PARAMETERS)} if strategy != 'M21' else
                                {'signal_input_policy': feed.research.source_order_policy}),

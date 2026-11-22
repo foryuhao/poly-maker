@@ -30,7 +30,7 @@ def compact(kind: str, payload: Record) -> Record:
             # Older headers lack Available Capital. With no reserved startup
             # commitments its value is provably the official startup balance.
             payload = {**payload, "starting_available_capital_usdc": payload.get("starting_official_balance_usdc")}
-        fields = {"session_id", "slug", "market_id", "normal_entry_mode", "runtime_source_sha256",
+        fields = {"session_id", "slug", "market_id", "protocol_version", "normal_entry_mode", "runtime_source_sha256",
                   "strategy", "execution_mode",
                   "ca_entry_direction", "ca_entry_execution", "ca_taker", "ca_matched_tp", "ca_pullback", "m1", "m1_signal_spec", "m1_execution_policy",
                   "repair", "ca_observation", "ba", "ba_flow", "cooldown",
@@ -365,6 +365,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
     if residual and settlement:
         if (settlement.get("condition_id") != condition_id or settlement.get("slug") != slug
                 or settlement.get("token_ids") != token_ids
+                or settlement.get("protocol_version", "v1") != header.get("protocol_version", "v1")
                 or settlement.get("winner") not in {"YES", "NO"}
                 or settlement.get("closed") is not True or settlement.get("resolution_status") != "resolved"):
             problems.append("SETTLEMENT_IDENTITY_MISMATCH")
@@ -411,6 +412,7 @@ def _summarize(session_id: str, events: list[Record], sources: list[Record]) -> 
     result = {
         "session_id": session_id, "slug": slug, "market_start": start,
         "condition_id": condition_id, "token_ids": token_ids,
+        **({"protocol_version": header["protocol_version"]} if "protocol_version" in header else {}),
         "settlement": settlement, "settlement_error": resolution.get("error"),
         "market_end": start + 300 if start is not None else None,
         "header": header, "phase": phase, "reason": reason, "network": network,

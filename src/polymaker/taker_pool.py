@@ -11,6 +11,7 @@ from pathlib import Path
 from polymaker.m4_live_config import M4LiveSettings
 from polymaker.m4_state import M4Ledger, decimal
 from polymaker.m4_types import M421_LEDGER, TAKER_LEDGER_IDS
+from polymaker.market_protocol import market_protocol
 
 POLICY = "SHARED_TAKER_POOL_BEFORE_T240_CLOSE_PLUS_120_V2"
 ADMISSION_CUTOFF_SEC = 240
@@ -87,8 +88,10 @@ class TakerPool:
         return Opening(self, funder, epoch, json.loads(row[0])) if row else None
 
     def decide(self, funder, epoch, market_id, settings, account, *, clock, read_error=None,
-               account_valid_until=None, read_retries=0):
+               account_valid_until=None, read_retries=0, protocol_version="v1", position_ids=None):
         """Commit the first final decision atomically. A stale read can be retried."""
+        if protocol_version not in ("v1", "v2") or (protocol_version == "v2") != (position_ids is not None):
+            raise ValueError("TAKER_POOL_MARKET_PROTOCOL_INVALID")
         with closing(self.connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             lower, upper = clock()
@@ -100,7 +103,8 @@ class TakerPool:
                                   (funder, epoch)).fetchone()
             if existing:
                 payload = json.loads(existing[0])
-                if payload["market_id"] != market_id:
+                if (payload["market_id"] != market_id or market_protocol(payload) != protocol_version
+                        or payload.get("position_ids") != position_ids):
                     raise ValueError("TAKER_POOL_MARKET_IDENTITY_CONFLICT")
                 return Opening(self, funder, epoch, payload)
             older = []
@@ -146,6 +150,7 @@ class TakerPool:
                       else "TAKER_POOL_ACCOUNT_READ_UNAVAILABLE" if available is None
                       else "TAKER_POOL_INSUFFICIENT_FUNDS" if available <= total else None)
             payload = {"policy": POLICY, "market_id": market_id,
+                       **({"protocol_version": "v2", "position_ids": position_ids} if protocol_version == "v2" else {}),
                        "status": "OPEN" if reason is None else "SKIPPED", "reason": reason,
                        "account": account, "available": str(available) if available is not None else None,
                        "older": older, "requested": requested, "reserved": requested if reason is None else {},

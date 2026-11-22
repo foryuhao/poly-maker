@@ -11,6 +11,8 @@ from polymaker.domain import Side
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.execution.taker_fees import buy_amount_fee_reserve
 from polymaker.m4_live_config import all_in_cost, planned_fee, validated_fees
+from polymaker.m4_types import M421_LEDGER
+from polymaker.market_protocol import market_protocol
 from polymaker.rdp_sm import OFFICIAL_HOSTS, _require
 from polymaker.rdp_sm_execution import ExecutionClobClient, _ExecutionReads
 
@@ -117,6 +119,8 @@ class M4LiveClobClient(ExecutionClobClient):
             return False
         row = ledger.row(attempt.quote.window_id)
         plan = ledger.plan(row['id'])
+        if market_protocol(plan) != getattr(self, 'session_market_protocol', 'v1'):
+            return False
         continuous = getattr(ledger, 'continuous', False)
         cash_target = getattr(ledger, 'cash_target', False)
         amount_buy = bool(plan.get('taker_buy_amount_policy'))
@@ -159,7 +163,18 @@ class M4LiveClobClient(ExecutionClobClient):
 
 class M4LiveGateway(ExecutionGateway):
     async def prepare(self, quotes, meta, tick_sizes, *, buy_amount_usdc=None, **kwargs):
-        if getattr(self, 'm4_ledger', None) is not None and self.m4_ledger.is_taker:
+        ledger = getattr(self, 'm4_ledger', None)
+        protocol = market_protocol(meta)
+        if protocol == 'v2' or getattr(self._client, 'session_market_protocol', 'v1') == 'v2':
+            _require(ledger is not None and ledger.ledger_strategy == M421_LEDGER
+                     and ledger.settings.signal_profile == 'M42112' and ledger.amount_buy and ledger.is_taker,
+                     'V2_MARKET_REQUIRES_M42112')
+            saved = ledger.get('market')
+            _require(protocol == market_protocol(saved) == getattr(self._client, 'session_market_protocol', None)
+                     and saved['condition_id'] == meta.condition_id == self._client.session_market_id
+                     and saved['tokens'] == [asdict(token) for token in meta.tokens],
+                     'M42112_V2_SESSION_MARKET_CONFLICT')
+        if ledger is not None and ledger.is_taker:
             if kwargs:
                 raise ValueError('M4_TAKER_PREPARATION_OVERRIDE_FORBIDDEN')
             if getattr(self.m4_ledger, 'amount_buy', False):
@@ -225,6 +240,7 @@ class M4LiveReads(_ExecutionReads):
         client = self.gateway._client
         client.m4_execution = settings.execution
         client.session_market_id = meta.condition_id
+        client.session_market_protocol = market_protocol(meta)
         if settings.execution.mode == 'taker':
             raw = await self.gateway._io(client.get_clob_market_info, meta.condition_id)
             self.taker_fees = validated_fees(raw, (meta.yes.token_id, meta.no.token_id))

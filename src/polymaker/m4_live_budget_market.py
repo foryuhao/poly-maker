@@ -10,7 +10,6 @@ from threading import local
 from types import SimpleNamespace
 from uuid import uuid4
 
-from polymaker.domain import MarketMeta, TokenMeta
 from polymaker.m4_live_budget import (
     AMOUNT_PRECISION,
     FAK_BUY_MIN_PRINCIPAL,
@@ -28,6 +27,7 @@ from polymaker.m4_live_pricing import BOOT_ID, WAIT_US, origin, quote_valid, rej
 from polymaker.m4_live_task import TERMINAL_TASKS, TaskMarket
 from polymaker.m4_state import decimal
 from polymaker.m4_types import M4_LEDGER, M21_LEDGER, M421_LEDGER, TAKER_LEDGER_IDS
+from polymaker.market_protocol import market_from_snapshot, market_protocol
 from polymaker.rdp_sm_network import NetworkHealth
 
 
@@ -135,6 +135,8 @@ class BudgetMarket(TaskMarket):
                    if self.ledger.amount_buy else {"target_all_in_usdc": str(self.ledger.order_budget)}),
                 "taker_strategy": self.ledger.get("settings", {}).get("taker_strategy"),
                 "task_policy": self.ledger.task_policy,
+                **({"signal_slot_policy": self.settings.signal_slot_policy,
+                    "instruction_slot_limit": self.ledger.instruction_slot_limit} if self.settings.signal_slot_policy else {}),
                 "post_marketdata_policy": (
                     "FAK_FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1" if self.ledger.signal_limited
                     else "ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1" if self.ledger.dynamic_pricing
@@ -723,12 +725,13 @@ class BudgetMarket(TaskMarket):
             heads = {}
             for row in sorted(self.ledger.rows(), key=lambda row: self.ledger.get("m421_sequence:" + row["id"]) or 0):
                 if row["id"] in self.pending and row["state"] in {"OBSERVED", "RESERVED"}:
-                    heads.setdefault(row["outcome"], row)
+                    heads.setdefault(self.ledger.m421_slot_group(row), row)
             for row in heads.values():
                 key = row["id"]
                 if row["state"] == "OBSERVED" and not self.ledger.direction_slots(key):
                     self.ledger.reserve(key, spendable=self.spendable(), direction_limit=1)
-            ready = [row for row in ready if heads.get(row["outcome"], {}).get("id") == row["id"]
+            head_ids = {row["id"] for row in heads.values()}
+            ready = [row for row in ready if row["id"] in head_ids
                      and not self.ledger.direction_slots(row["id"])]
         if self.account_current():
             ready.sort(key=lambda r: (bool(r["posts"]), self.retry_after.get(r["id"], 0)))
@@ -857,8 +860,7 @@ class BudgetMarket(TaskMarket):
                 }
                 ledger = BudgetLedger(path, ident, settings=settings, fees=saved["taker_fees"])
                 ledger.set("buy_closed", True)
-                raw = saved["market"]
-                meta = MarketMeta(**{**raw, "tokens": tuple(TokenMeta(**t) for t in raw["tokens"])})
+                meta = market_from_snapshot(saved["market"])
                 client = copy.copy(self.e.gateway._client)
                 # Historical recovery must not feed failures/backoff into the
                 # current market's admission circuit or share mutable read state.
@@ -872,6 +874,7 @@ class BudgetMarket(TaskMarket):
                 client.m4_read_only = True
                 client.m4_ledger = ledger
                 client.session_market_id = meta.condition_id
+                client.session_market_protocol = market_protocol(meta)
                 client.m4_execution = settings.execution
                 gateway = SimpleNamespace(
                     _client=client, _io=self.e.gateway._io, funder=self.e.gateway.funder

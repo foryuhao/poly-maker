@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import Any, TypeVar
 
 import httpx
+from py_clob_client_v2.order_utils.exchange_order_builder_v2 import ExchangeOrderBuilderV2
 
 from polymaker.config import Config
 from polymaker.domain import MarketMeta, OpenOrder, OrderState, Quote, Side
@@ -33,6 +34,7 @@ from polymaker.execution.amounts import market_buy_quantity
 from polymaker.execution.ratelimit import TokenBucket
 from polymaker.journal import Journal
 from polymaker.logging import get_logger
+from polymaker.market_protocol import exchange_v3, market_protocol
 from polymaker.research.capture import CausalCapture
 
 log = get_logger("execution.gateway")
@@ -46,6 +48,15 @@ class GatewayReadError(RuntimeError):
 
 class PlacementUnknown(RuntimeError):
     """A POST may have reached the exchange, but no usable order result arrived."""
+
+
+class ExchangeV3OrderBuilder(ExchangeOrderBuilderV2):
+    """Same order struct as CTF, with a distinct signing and order hash domain."""
+
+    def build_order_typed_data(self, order):
+        data = super().build_order_typed_data(order)
+        data["domain"]["version"] = "3"
+        return data
 
 
 @dataclass(frozen=True)
@@ -224,9 +235,6 @@ class ExecutionGateway:
                 PostOrdersV2Args,
             )
             from py_clob_client_v2.config import get_contract_config
-            from py_clob_client_v2.order_utils.exchange_order_builder_v2 import (
-                ExchangeOrderBuilderV2,
-            )
             from py_clob_client_v2.order_utils.model.order_data_v2 import OrderDataV2
             from py_clob_client_v2.order_utils.model.side import Side as SignedSide
 
@@ -237,9 +245,17 @@ class ExecutionGateway:
                 2,
             ):
                 raise ValueError("PREPARED_SIGNING_MODE_UNSUPPORTED")
-            contracts = get_contract_config(client.chain_id)
-            exchange = contracts.neg_risk_exchange_v2 if meta.neg_risk else contracts.exchange_v2
-            builder = ExchangeOrderBuilderV2(exchange, client.chain_id, client.signer)
+            protocol_v2 = market_protocol(meta) == "v2"
+            if protocol_v2:
+                assets = {token.token_id for token in meta.tokens}
+                if (buy_amount_usdc is None or meta.neg_risk
+                        or any(q.token_id not in assets for q in quotes)):
+                    raise ValueError("PREPARED_V2_REQUIRES_OWNED_PRINCIPAL_FAK")
+                builder = ExchangeV3OrderBuilder(exchange_v3(client.chain_id), client.chain_id, client.signer)
+            else:
+                contracts = get_contract_config(client.chain_id)
+                exchange = contracts.neg_risk_exchange_v2 if meta.neg_risk else contracts.exchange_v2
+                builder = ExchangeOrderBuilderV2(exchange, client.chain_id, client.signer)
             if buy_amount_usdc is not None and (len(quotes) != 1
                     or quotes[0].side is not Side.BUY or immediate_order_type != 'FAK'):
                 raise ValueError('PREPARED_BUY_AMOUNT_MODE_INVALID')
@@ -967,6 +983,8 @@ class ExecutionGateway:
         from py_clob_client_v2.config import get_contract_config
 
         def _resolve() -> tuple[str, ...]:
+            if market_protocol(meta) == "v2":
+                return (exchange_v3(self._client.chain_id),)
             # create_order resolves the same cached version and uses neg_risk
             # from the market-specific options passed by place().
             version = self._client._ClobClient__resolve_version()  # noqa: SLF001

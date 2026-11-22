@@ -15,7 +15,8 @@ from polymaker.m4_live_config import M4LiveSettings
 from polymaker.m4_live_halt import MarketHalt
 from polymaker.m4_live_numeric import age_us
 from polymaker.m4_state import M4Ledger
-from polymaker.maker_public import VirtualPublicAPI
+from polymaker.maker_public import VirtualPublicAPI, public_market
+from polymaker.market_protocol import market_protocol
 from polymaker.rdp_sm_execution import _execution_identity
 
 STARTUP_ENTRY_POLICY = 'NEW_MARKET_BEFORE_T240_V1'
@@ -38,6 +39,12 @@ class LivePublicAPI(VirtualPublicAPI):
         # TLS connection longer than that; retain strict TLS and 5s I/O limits.
         super().__init__(transport=transport or httpx.AsyncHTTPTransport(
             http2=False, retries=0, limits=httpx.Limits(keepalive_expiry=30)))
+
+    async def market(self, slug):
+        return public_market(await self.raw_market(slug), slug, allow_v2=True, require_version=True)
+
+    async def recovery_market(self, slug):
+        return public_market(await self.raw_market(slug), slug, allow_v2=True)
 
 
 def transient_read_error(exc):
@@ -177,7 +184,7 @@ class LiveStartup:
                 self.check_stop()
                 if market.elapsed() + market.e.official_time_uncertainty_s >= close_sec:
                     raise TimeoutError('M4_NEXT_MARKET_PREPARATION_CUTOFF')
-            receipt.update(status='READY', condition_id=meta.condition_id,
+            receipt.update(status='READY', condition_id=meta.condition_id, protocol_version=market_protocol(meta),
                            ticks={token: str(tick) for token, tick in ticks.items()})
         except (PreparationStopped, asyncio.CancelledError):
             if receipt is not None:
@@ -254,12 +261,14 @@ class LiveStartup:
                                     startup_entry_policy=STARTUP_ENTRY_POLICY)
                         await self.pause(min(5, max(.01, epoch+300-server)))
                         continue
-                    meta = await self.read('market', self.api.market, self.slug)
+                    market_read = getattr(self.api, 'recovery_market', self.api.market) if recovering else self.api.market
+                    meta = await self.read('market', market_read, self.slug)
                     reused_prefetch = False
                     if prefetched is not None:
                         warmed = prefetched.meta
                         reused_prefetch = (not recovering and warmed.slug == self.slug
                                            and warmed.condition_id == meta.condition_id
+                                           and market_protocol(warmed) == market_protocol(meta)
                                            and warmed.tokens == meta.tokens and warmed.neg_risk == meta.neg_risk)
                         if reused_prefetch:
                             reads = prefetched.reads
@@ -281,7 +290,8 @@ class LiveStartup:
                         market = json.loads(json.dumps(asdict(meta), default=str))
                         stored = previous.get('market') or {}
                         if (any(saved.get(k) != identity[k] for k in ('strategy', 'mode', 'funder', 'market_id'))
-                                or not recovering or any(stored.get(k) != market[k]
+                                or not recovering or market_protocol(stored) != market_protocol(meta)
+                                or any(stored.get(k) != market[k]
                                                         for k in ('slug', 'condition_id', 'tokens'))):
                             raise ValueError('M4_RECOVERY_SESSION_IDENTITY_CHANGED')
                         settings = M4LiveSettings.model_validate(previous['settings'])
@@ -303,7 +313,7 @@ class LiveStartup:
                         continue
                     observation = {
                         'startup_entry_policy': STARTUP_ENTRY_POLICY,
-                        'slug': self.slug, 'recovery': recovering,
+                        'slug': self.slug, 'recovery': recovering, 'protocol_version': market_protocol(meta),
                         'prepared_at': time.time(),
                         'prepared_elapsed_upper_sec': upper/1_000_000,
                         'late_new_market_start': not recovering and upper >= settings.start_sec*1_000_000,

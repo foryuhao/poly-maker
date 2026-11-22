@@ -24,6 +24,7 @@ from polymaker.m4_types import (
 M421_PRINCIPAL_FAK = 'M421_FAK_BUY_PRINCIPAL_V1'
 M42112_SIGNAL_SOURCES = ('M4', 'M21', 'M12')
 M42112_PRICE_BAND_SOURCE = 'M42112_DETECTOR_PRICE_RISK_V1'
+M42112_PER_SOURCE_DIRECTION = 'M42112_PER_SOURCE_DIRECTION_V1'
 
 
 class M42112PriceBand(BaseModel):
@@ -111,6 +112,7 @@ class M4LiveSettings(M4Config):
     signal_output_sources: tuple[Literal['M4', 'M21', 'M12'], ...] | None = Field(
         default=None, min_length=1, max_length=3)
     source_price_bands: M42112PriceBands | None = None
+    signal_slot_policy: Literal['M42112_PER_SOURCE_DIRECTION_V1'] | None = None
     order_budget_usdc: int | Decimal = 5
     session_budget_usdc: int | Decimal = 10
 
@@ -174,6 +176,8 @@ class M4LiveSettings(M4Config):
             raise ValueError('M42112_SIGNAL_OUTPUT_SOURCES_REQUIRE_PROFILE')
         if self.source_price_bands is not None and self.signal_profile != 'M42112':
             raise ValueError('M42112_PRICE_BANDS_REQUIRE_PROFILE')
+        if self.signal_slot_policy is not None and (self.signal_profile != 'M42112' or not self.signal_output_sources):
+            raise ValueError('M42112_SLOT_POLICY_REQUIRES_OUTPUT_SOURCES')
         return self
 
     @model_serializer(mode='wrap')
@@ -191,6 +195,8 @@ class M4LiveSettings(M4Config):
             value.pop('signal_output_sources')
         if self.source_price_bands is None:
             value.pop('source_price_bands')
+        if self.signal_slot_policy is None:
+            value.pop('signal_slot_policy')
         return value
 
     def signal_price_risk(self, source=None):
