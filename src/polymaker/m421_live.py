@@ -1,6 +1,6 @@
 """Route formal signals into the existing M421 execution strategy."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 
 class CombinedSignals:
@@ -74,11 +74,14 @@ class CombinedSignals:
             original = (detector.opportunities[key] if source == "M12" else
                         next(o for o in detector.opportunities.values() if o.episode_id == key))
             deadline = min(original.order_deadline, original.signal_start_mono + 3)
-            unified = replace(original, order_deadline=deadline, price_risk=self.price_risk, taker_strategy=self.settings.taker_strategy,
+            unified = replace(original, order_deadline=deadline, price_risk=self.settings.signal_price_risk(source),
+                              taker_strategy=self.settings.taker_strategy,
                               market_id=self.m21.feed.meta.condition_id)
             self._count += 1
             self._ordered[key] = (detector, original, unified, self._count, source)
             row = {**row, "m421_sequence": self._count}
+            if self.settings.source_price_bands is not None:
+                row["execution_price_risk"] = asdict(unified.price_risk)
         return self.record({**row, "detector_source": source}) if self.record is not None else True
 
     def provenance(self, key):

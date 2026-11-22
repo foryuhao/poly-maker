@@ -19,7 +19,7 @@ from polymaker.m4_live_budget import (
     minimum_fak_buy_ok,
 )
 from polymaker.m4_live_budget_reconcile import reconcile_owned
-from polymaker.m4_live_config import M4LiveSettings, gross_risk_cost
+from polymaker.m4_live_config import M42112_PRICE_BAND_SOURCE, M4LiveSettings, gross_risk_cost
 from polymaker.m4_live_numeric import age_us, budget_quantity, install_live_clock_boundaries
 from polymaker.m4_live_price_band import (
     ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND,
@@ -126,6 +126,7 @@ class BudgetMarket(TaskMarket):
             "m4_live_task.py",
             "m4_state.py",
         )
+        source_bands = self.settings.source_price_bands
         self.e.record(
             "sm_m4_budget_execution_policy",
             {
@@ -146,12 +147,14 @@ class BudgetMarket(TaskMarket):
                 "fak_buy_min_principal_usdc": str(FAK_BUY_MIN_PRINCIPAL),
                 "sdk_tick_policy": "OFFICIAL_VERIFIED_BOOK_TICK_V1",
                 "post_price_band_policy": (self.ledger.post_price_band or {}).get("policy", ANCHOR_PRICE_FLOOR),
-                "post_minimum_price": (self.ledger.post_price_band or {}).get("minimum"),
-                "post_maximum_price": (self.ledger.post_price_band or {}).get("maximum"),
+                "post_minimum_price": None if source_bands else (self.ledger.post_price_band or {}).get("minimum"),
+                "post_maximum_price": None if source_bands else (self.ledger.post_price_band or {}).get("maximum"),
                 "signal_anchor_price_filter": not bool(self.ledger.post_price_band),
                 "post_price_band_retry_policy": self.settings.post_price_band_retry_policy,
-                "post_price_band_source": (self.settings.live_taker_price_risk.plan_fields()["post_price_band_source"]
+                "post_price_band_source": (M42112_PRICE_BAND_SOURCE if source_bands
+                                           else self.settings.live_taker_price_risk.plan_fields()["post_price_band_source"]
                                            if self.settings.live_taker_price_risk else "SAVED_EXECUTION_SETTINGS"),
+                **({"post_price_bands_by_source": source_bands.model_dump(mode="json")} if source_bands else {}),
                 "source_sha256": {
                     name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                     for name in modules
@@ -244,13 +247,16 @@ class BudgetMarket(TaskMarket):
                     break
                 row = None
                 try:
+                    provenance = (self.feed.m1.provenance(opportunity.episode_id)
+                                  if self.ledger.ledger_strategy == M421_LEDGER else None)
                     row = self.ledger.observe(
-                        opportunity, minimum=self.e.meta.min_order_size, elapsed=self.elapsed()
+                        opportunity, minimum=self.e.meta.min_order_size, elapsed=self.elapsed(),
+                        detector_source=provenance[1] if provenance else None,
                     )
                     if row is None:
                         continue
-                    if self.ledger.ledger_strategy == M421_LEDGER:
-                        sequence, source = self.feed.m1.provenance(row["id"])
+                    if provenance is not None:
+                        sequence, source = provenance
                         self.ledger.fact("m421_signal_order", row["id"], {"sequence": sequence, "source": source})
                         self.ledger.set("m421_sequence:" + row["id"], sequence)
                     self.ledger.plan_signal(

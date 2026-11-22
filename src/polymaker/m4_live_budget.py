@@ -8,7 +8,7 @@ from decimal import ROUND_FLOOR
 from polymaker.domain import Side, TradeState
 from polymaker.execution.amounts import market_buy_quantity
 from polymaker.execution.taker_fees import buy_amount_fee_reserve
-from polymaker.m4_live_config import gross_risk_cost, planned_fee
+from polymaker.m4_live_config import M42112_PRICE_BAND_SOURCE, gross_risk_cost, planned_fee
 from polymaker.m4_live_numeric import (
     MICRO,
     STEP,
@@ -93,8 +93,8 @@ class BudgetLedger(TaskLedger):
                 if self.settings.post_price_band_retry_policy == ABANDON_FIRST_SIGNED_BAND
                 else BEST_ASK_BAND_ABANDONED)
 
-    def observe(self, opportunity, *, minimum, elapsed):
-        require(opportunity.price_risk == self.settings.live_taker_price_risk,
+    def observe(self, opportunity, *, minimum, elapsed, detector_source=None):
+        require(opportunity.price_risk == self.settings.signal_price_risk(detector_source),
                 "M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
         require(opportunity.taker_strategy == self.settings.taker_strategy,
                 "TAKER_OPPORTUNITY_STRATEGY_CONFLICT")
@@ -117,9 +117,19 @@ class BudgetLedger(TaskLedger):
         if policy:
             self.validate_opportunity_market(evidence.get("market_id"), row["token"], row["outcome"])
         risk = TakerPriceRisk(**saved) if saved is not None else None
-        require(risk == self.settings.live_taker_price_risk, "M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
+        source = None
+        if self.settings.source_price_bands is not None:
+            with self.lock:
+                order = self.db.execute("SELECT payload FROM facts WHERE kind='m421_signal_order' AND identity=?",
+                                        (row["id"],)).fetchone()
+            require(order is not None, "M42112_PRICE_BAND_SOURCE_MISSING")
+            source = json.loads(order[0])["source"]
+        require(risk == self.settings.signal_price_risk(source), "M4_OPPORTUNITY_PRICE_RISK_CONFLICT")
         if risk is not None:
-            return {**risk.plan_fields(), **({"taker_strategy": snapshot, "market_id": evidence["market_id"]}
+            return {**risk.plan_fields(),
+                    **({"detector_source": source, "post_price_band_source": M42112_PRICE_BAND_SOURCE}
+                       if source is not None else {}),
+                    **({"taker_strategy": snapshot, "market_id": evidence["market_id"]}
                                            if policy else {}),
                     **({"taker_buy_amount_policy": self.settings.taker_buy_amount_policy}
                        if self.amount_buy else {})}
@@ -137,6 +147,7 @@ class BudgetLedger(TaskLedger):
         require(root.get("post_price_band") == expected.get("post_price_band")
                 and root.get("taker_strategy") == expected.get("taker_strategy")
                 and root.get("market_id") == expected.get("market_id")
+                and root.get("detector_source") == expected.get("detector_source")
                 and root.get("post_price_band_source") == expected.get("post_price_band_source")
                 and root.get("taker_buy_amount_policy") == expected.get("taker_buy_amount_policy")
                 and root.get("post_price_band_retry_policy", WAIT_FOR_PRICE_BAND)
@@ -486,6 +497,10 @@ class BudgetLedger(TaskLedger):
         principal = decimal(plan["principal_usdc"])
         pricing = plan.get("pricing", {})
         self.validate_root_policy(row, root)
+        if self.settings.source_price_bands is not None:
+            require(all(plan.get(field) == root[field] for field in (
+                "detector_source", "post_price_band_source", "post_price_band", "post_price_band_retry_policy",
+            )), "M42112_ATTEMPT_PRICE_BAND_CONFLICT")
         require(
             ("pricing_origin" in root) == self.dynamic_pricing
             and quote_valid(root, plan, row["token"], self.pricing_evidence(pricing.get("id")))

@@ -19,7 +19,7 @@ from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger
 from polymaker.m4_live_budget_market import BudgetMarket
 from polymaker.m4_live_config import (
-    M42112_SIGNAL_SOURCES, M421_PRINCIPAL_FAK, LiveExecutionSettings, M4LiveSettings,
+    M42112_SIGNAL_SOURCES, M421_PRINCIPAL_FAK, LiveExecutionSettings, M42112PriceBand, M4LiveSettings,
 )
 from polymaker.m4_live_halt import MarketHalt
 from polymaker.m4_live_startup import PreparationStopped, transient_read_error
@@ -53,6 +53,10 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
             raise ValueError("M21_LIVE_TAKER_CONFIG_INVALID")
         if (raw["version"], raw["attribution"]) != (M21_VERSION, "M21"):
             raise ValueError("M21_LIVE_TAKER_IDENTITY_CONFLICT")
+        if strategy == M421_LEDGER and signal_profile == "M42112":
+            # The combined profile uses its own price bands. Keep the common
+            # settings shape for the existing detector and executor interfaces.
+            raw["price_risk"] = asdict(M42112PriceBand().to_risk())
         source = json.dumps({"detector": detector_manifest(), "live_taker": raw}, sort_keys=True, default=str)
         policy = TakerStrategy(M21_LEDGER, raw["version"], raw["attribution"], raw["ledger"],
                                hashlib.sha256(source.encode()).hexdigest(),
@@ -67,11 +71,15 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
                 detectors["m12"] = m12_manifest()
                 path = project / "config/m4-live/m42112.toml"
                 try:
-                    profile_config = tomllib.loads(path.read_text())
+                    profile = tomllib.loads(path.read_text(), parse_float=Decimal)
                 except FileNotFoundError:
-                    profile_config = {"signal_output_sources": M42112_SIGNAL_SOURCES}
-                if set(profile_config) != {"signal_output_sources"}:
+                    profile = {}
+                if set(profile) - {"signal_output_sources", "price_risk"}:
                     raise ValueError("M42112_SIGNAL_OUTPUT_CONFIG_INVALID")
+                profile_config = {
+                    "signal_output_sources": profile.get("signal_output_sources", M42112_SIGNAL_SOURCES),
+                    "source_price_bands": profile.get("price_risk", {}),
+                }
             combined = json.dumps(detectors, sort_keys=True, default=str)
             policy = TakerStrategy(strategy, M421_VERSION, "M421", strategy,
                                    hashlib.sha256(combined.encode()).hexdigest(),

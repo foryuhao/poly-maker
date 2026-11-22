@@ -23,6 +23,28 @@ from polymaker.m4_types import (
 
 M421_PRINCIPAL_FAK = 'M421_FAK_BUY_PRINCIPAL_V1'
 M42112_SIGNAL_SOURCES = ('M4', 'M21', 'M12')
+M42112_PRICE_BAND_SOURCE = 'M42112_DETECTOR_PRICE_RISK_V1'
+
+
+class M42112PriceBand(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True, allow_inf_nan=False)
+    minimum: Decimal = Decimal('.50')
+    maximum: Decimal = Decimal('.95')
+
+    @model_validator(mode='after')
+    def validate_bounds(self):
+        self.to_risk()
+        return self
+
+    def to_risk(self):
+        return TakerPriceRisk(POST_SIGNED_LIMIT_BAND, self.minimum, self.maximum, WAIT_SIGNAL_BAND)
+
+
+class M42112PriceBands(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    M4: M42112PriceBand = Field(default_factory=M42112PriceBand)
+    M21: M42112PriceBand = Field(default_factory=M42112PriceBand)
+    M12: M42112PriceBand = Field(default_factory=M42112PriceBand)
 
 
 class TakerSettings(BaseModel):
@@ -88,6 +110,7 @@ class M4LiveSettings(M4Config):
     signal_profile: Literal['M42112'] | None = None
     signal_output_sources: tuple[Literal['M4', 'M21', 'M12'], ...] | None = Field(
         default=None, min_length=1, max_length=3)
+    source_price_bands: M42112PriceBands | None = None
     order_budget_usdc: int | Decimal = 5
     session_budget_usdc: int | Decimal = 10
 
@@ -149,6 +172,8 @@ class M4LiveSettings(M4Config):
             raise ValueError('M42112_SIGNAL_PROFILE_REQUIRES_M421')
         if self.signal_output_sources is not None and self.signal_profile != 'M42112':
             raise ValueError('M42112_SIGNAL_OUTPUT_SOURCES_REQUIRE_PROFILE')
+        if self.source_price_bands is not None and self.signal_profile != 'M42112':
+            raise ValueError('M42112_PRICE_BANDS_REQUIRE_PROFILE')
         return self
 
     @model_serializer(mode='wrap')
@@ -164,7 +189,16 @@ class M4LiveSettings(M4Config):
             value.pop('signal_profile')
         if self.signal_output_sources is None:
             value.pop('signal_output_sources')
+        if self.source_price_bands is None:
+            value.pop('source_price_bands')
         return value
+
+    def signal_price_risk(self, source=None):
+        if self.source_price_bands is None:
+            return self.live_taker_price_risk
+        if source not in M42112_SIGNAL_SOURCES:
+            raise ValueError('M42112_PRICE_BAND_SOURCE_INVALID')
+        return getattr(self.source_price_bands, source).to_risk()
 
     @property
     def post_price_band(self):
