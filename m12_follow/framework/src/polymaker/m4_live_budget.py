@@ -37,6 +37,7 @@ FAK_BUY_MINIMUM_POLICY = "EXCHANGE_PRINCIPAL_GE_1_USDC_V1"
 AMOUNT_PRECISION = "FAK_BUY_CENTS_SHARES_4DP_V1"
 GTD_PRECISION = "LIMIT_BUY_SHARES_2DP_V1"
 CENT = decimal(".01")
+M12_ANCHOR_INVALIDATED = "M12_BEST_ASK_BELOW_SIGNAL_ANCHOR"
 
 
 def follow_fak_amount(principal, price, *, ask_at_cap=False):
@@ -395,6 +396,16 @@ class BudgetLedger(TaskLedger):
             if a["started"]
         ]
 
+    def invalidate_follow_anchor(self, key, evidence):
+        marker = "m12_anchor_invalidation:" + key
+        with self.lock, self.db:
+            if self.get(marker):
+                return False
+            self.db.execute("INSERT INTO metadata VALUES (?,?)", (marker, encode(evidence)))
+            if not self.row(key)["order_id"]:
+                self.refresh_totals(key)
+        return True
+
     def refresh_totals(self, key):
         """Called inside the same SQLite transaction as each evidence transition."""
         row = self.row(key)
@@ -415,6 +426,13 @@ class BudgetLedger(TaskLedger):
             if (not attempts and not self.get("post_price_band_eligible:" + key)
                     and not self.pending_matches(key)):
                 state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
+        elif (self.ledger_strategy == M421_LEDGER and self.get("m12_anchor_invalidation:" + key)
+              and not self.unresolved(key)):
+            reason = M12_ANCHOR_INVALIDATED
+            if self.pending_matches(key):
+                state = "WAIT_SETTLEMENT"
+            else:
+                state = "CUTOFF" if any(a["started"] and a["state"] != "UNSENT" for a in attempts) else "SKIPPED"
         elif self.signal_limited and (self.pending_matches(key) or (not self.amount_buy and filled > 0)):
             state, reason = (("WAIT_SETTLEMENT", f"{self.signal_strategy}_PENDING_MATCHES_NO_TOP_UP")
                              if self.pending_matches(key)
@@ -861,7 +879,8 @@ class BudgetLedger(TaskLedger):
         with self.lock, self.db:
             row = self.row(key)
             require(not row["order_id"] and not row["started"], "M4_UNRESOLVED_ORDER_CANNOT_FINISH")
-            if self.price_band_abandonment(key):
+            if (self.price_band_abandonment(key)
+                    or (self.ledger_strategy == M421_LEDGER and self.get("m12_anchor_invalidation:" + key))):
                 self.refresh_totals(key)
                 return
             if (self.post_price_band and state == "CUTOFF" and reason == "M4_T240_RESIDUAL"

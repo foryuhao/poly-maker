@@ -109,7 +109,9 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                   "sqlite_limit", "sqlite_limit_v2", "sqlite_limit_late", "sqlite_limit_late_v2",
                                   "sqlite_limit_at_cap", "sqlite_limit_cancel",
                                   "sqlite_limit_T240", "sqlite_limit_edge", "sqlite_limit_burst", "sqlite_limit_restart",
-                                  "sqlite_limit_cancel_timeout", "sqlite_limit_small", "sqlite_limit_low", "sqlite_limit_floor"])
+                                  "sqlite_limit_cancel_timeout", "sqlite_limit_small", "sqlite_limit_low", "sqlite_limit_floor",
+                                  "sqlite_limit_anchor_drop", "sqlite_limit_anchor_drop_native_v2",
+                                  "sqlite_limit_anchor_stale", "sqlite_limit_anchor_inside", "sqlite_partial_anchor_drop"])
 async def test_follow_native_fak(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
     primary, lead, parent, clock, _, mock_transport = await mock_live_market(tmp_path, monkeypatch)
@@ -168,6 +170,14 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
              "timestamp": str(feed.wall() * 1000), "bids": [{"price": ".70", "size": "100"}],
              "asks": [{"price": ask, "size": "100"}]} for t in meta.tokens]
     socket._apply(json.dumps(rows), received_mono=clock.now, received_wall=feed.wall())
+
+    def push_ask(ask, token="1"):
+        row = {"event_type": "book", "market": meta.condition_id, "asset_id": token,
+               "timestamp": str(feed.wall() * 1000),
+               "bids": [{"price": str(Decimal(ask) - Decimal(".01")), "size": "100"}],
+               "asks": [{"price": ask, "size": "100"}]}
+        socket._apply(json.dumps([row]), received_mono=clock.now, received_wall=feed.wall())
+
     identity = {"strategy": M421_LEDGER, "mode": "LIVE", "funder": lead.gateway.funder,
                 "market_id": meta.condition_id, "settings_hash": cfg.fingerprint}
 
@@ -261,6 +271,52 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             [opportunity] = market.pending.values()
             market.collect()
             assert len(ledger.rows()) == 1
+            if case == "sqlite_limit_anchor_inside":
+                push_ask(".61")
+                push_ask(".50", token="2")
+            if case == "sqlite_limit_anchor_stale":
+                push_ask(".60")
+                clock.now += .201
+                await market.submit(opportunity)
+                assert not calls and not ledger.attempts()
+                assert market.guard_failure(opportunity.episode_id) == "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
+                assert not ledger.get("m12_anchor_invalidation:" + opportunity.episode_id)
+                push_ask(".61")
+            if case in {"sqlite_limit_anchor_drop", "sqlite_limit_anchor_drop_native"}:
+                key = opportunity.episode_id
+                if case == "sqlite_limit_anchor_drop_native":
+                    def drop_at_native_guard(attempt):
+                        push_ask(".60")
+                        return market.native_guard(attempt)
+                    monkeypatch.setattr(reads.gateway._client, "m4_native_guard", drop_at_native_guard)
+                else:
+                    push_ask(".60")
+                await market.submit(opportunity)
+                assert not calls
+                saved = ledger.get("m12_anchor_invalidation:" + key)
+                assert saved["token_id"] == "1" and saved["drop"] == "0.10"
+                row = ledger.row(key)
+                assert (row["state"], row["reason"]) == ("SKIPPED", "M12_BEST_ASK_BELOW_SIGNAL_ANCHOR")
+                assert not row["order_id"] and Decimal(row["reserved"]) == 0
+                if case == "sqlite_limit_anchor_drop_native":
+                    attempt, = ledger.attempts()
+                    assert attempt["state"] == "UNSENT"
+                    proof = json.loads(attempt["proof"])
+                    assert proof["native_post_sent"] is False and proof["reason"] == row["reason"]
+                else:
+                    assert not ledger.attempts()
+                ledger.validate_recovery()
+                await writer.flush()
+                ledger.close()
+                ledger = open_ledger()
+                executor.ledger = reads.gateway.m4_ledger = reads.gateway._client.m4_ledger = ledger
+                market = BudgetMarket(executor, cfg, executor.stop_event, account_owner=primary, display=lambda _: None)
+                push_ask(".71")
+                market.restore()
+                await market.submit(opportunity)
+                assert not calls and ledger.get("m12_anchor_invalidation:" + key) == saved
+                assert not market.intent_needs_quotes(key)
+                return
             if case == "ended_before_send":
                 engine.sop_runtime.core.signals.clear()
                 advance_source()
@@ -415,7 +471,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                     market.collect()
                     assert set(market.pending) == {opportunity.episode_id}
                     assert len(ledger.rows()) == len(ledger.attempts()) == len(calls) == 1
-                if case in {"partial_active", "partial_ended", "sqlite_partial"}:
+                if case in {"partial_active", "partial_ended", "sqlite_partial", "sqlite_partial_anchor_drop"}:
                     oid = ledger.attempts()[0]["order_id"]
                     order, trade = evidence(market, executor, oid, "2", price=".70", status="MINED")
                     query, _ = serve(monkeypatch, http, order, trade)
@@ -429,6 +485,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                             advance_source()
                         trade["status"] = "CONFIRMED"
                         await market.reconcile(oid)
+                        if case == "sqlite_partial_anchor_drop":
+                            push_ask(".60")
                         await market.submit(opportunity)
                         assert ledger.principal_used(opportunity.episode_id) == Decimal("1.40")
                         if case in {"partial_active", "sqlite_partial"}:
@@ -436,6 +494,10 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                             assert int(calls[1]["order"]["makerAmount"]) == 3_600_000
                         else:
                             assert len(calls) == 1
+                        if case == "sqlite_partial_anchor_drop":
+                            row = ledger.row(opportunity.episode_id)
+                            assert (row["state"], row["reason"]) == ("CUTOFF", "M12_BEST_ASK_BELOW_SIGNAL_ANCHOR")
+                            ledger.validate_recovery()
                     finally:
                         query.close()
                 if case == "zero_then_end":

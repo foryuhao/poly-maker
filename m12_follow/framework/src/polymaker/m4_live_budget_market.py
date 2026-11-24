@@ -15,6 +15,7 @@ from polymaker.m4_live_budget import (
     FAK_BUY_MIN_PRINCIPAL,
     FAK_BUY_MINIMUM_POLICY,
     BudgetLedger,
+    M12_ANCHOR_INVALIDATED,
     minimum_fak_buy_ok,
 )
 from polymaker.m4_live_budget_reconcile import reconcile_owned
@@ -30,6 +31,9 @@ from polymaker.m4_state import decimal
 from polymaker.m4_types import M4_LEDGER, M21_LEDGER, M421_LEDGER, TAKER_LEDGER_IDS
 from polymaker.market_protocol import market_from_snapshot, market_protocol
 from polymaker.rdp_sm_network import NetworkHealth
+
+M12_ANCHOR_DROP = decimal("0.10")
+M12_WAIT_FRESH_ASK = "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
 
 
 class BudgetMarket(TaskMarket):
@@ -152,6 +156,8 @@ class BudgetMarket(TaskMarket):
                     else "ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1" if self.ledger.dynamic_pricing
                     else "ADMITTED_FAK_FIXED_CAP_EXCHANGE_MATCH_V1"),
                 "pricing_policy": "FOLLOW_LIMIT" if follower else self.settings.execution.taker.pricing_policy,
+                **({"invalidate_intent_at_best_ask_drop": str(M12_ANCHOR_DROP)}
+                   if getattr(self.feed, "m12_manifest", None) else {}),
                 **({"max_overpay_ticks": self.feed.m1.reader.max_overpay_ticks} if follower else {}),
                 "anchor_wait_sec": 10 if self.ledger.dynamic_pricing and not self.ledger.signal_limited else None,
                 "amount_precision": "PER_SIGNED_PLAN" if follower else AMOUNT_PRECISION if self.ledger.amount_buy else "FAK_BUY_CENTS_SHARES_0_1_V1",
@@ -372,12 +378,16 @@ class BudgetMarket(TaskMarket):
             row, plan = self.ledger.row(key), self.ledger.plan(key)
             root = self.ledger.root_plan(key)
             book, now = self.feed.books[opportunity.token_id], e.monotonic()
+            stopping = self.stop.is_set() or e.closed or e.inhibited()
             entry_block = self.entry_block()
             pricing_reason = entry_block or self.lifetime_block(opportunity, root, native=native_order_id is not None)
             if not pricing_reason and "market_cutoff" in root.get("pricing_origin", {}) and any(
                     attempt["task_id"] != key and attempt["started"]
                     and attempt["state"] not in {"TERMINAL", "UNSENT"} for attempt in self.ledger.attempts()):
                 pricing_reason = "M12_PREVIOUS_INTENT_AWAITING_ORDER_PROOF"
+            if (getattr(self.feed, "m12_manifest", None) and pricing_reason is None
+                    and not stopping and not e.fatal and self.entry_window_open()):
+                pricing_reason = self.follow_anchor_block(row, root, book, now)
             if self.ledger.dynamic_pricing and pricing_reason is None:
                 captured_elapsed = self.elapsed()
                 age = signal_age(root, now, captured_elapsed)
@@ -404,7 +414,7 @@ class BudgetMarket(TaskMarket):
             health = e.reads.network.snapshot()
             cash = self.account_cash()
             checks = [
-                ("M4_STOPPING", not self.stop.is_set() and not e.closed and not e.inhibited()),
+                ("M4_STOPPING", not stopping),
                 (e.fatal or "M4_FATAL_EXECUTION_STATE", e.fatal is None),
                 ("M4_JOURNAL_UNAVAILABLE", e.journal.ready),
                 (pricing_reason, pricing_reason is None),
@@ -426,11 +436,8 @@ class BudgetMarket(TaskMarket):
                     "M4_POST_LATENCY_BUDGET",
                     quote is None or self.ledger.signal_limited or self.initial_post_budget_available(opportunity),
                 ),
-                # This task was durably admitted from a valid signal. A FAK's
-                # immutable signed cap protects its execution price even when
-                # local depth is queued/stale or currently shows no liquidity.
-                # Do not lose the first attempt by imposing Maker freshness
-                # gates again after signing/fsync; let the exchange match it.
+                # The M12 anchor check above uses the current execution book.
+                # The signed follow limit is still fixed by the original plan.
                 ("M4_TAKER_TICK_UNVERIFIED",
                  self.feed.tick_verified.get(opportunity.token_id) == book.tick),
                 (f"{self.ledger.signal_strategy}_BEST_ASK_CHANGED_OR_STALE", not self.ledger.signal_limited or quote is None
@@ -459,6 +466,23 @@ class BudgetMarket(TaskMarket):
             self.pending_input_age_ms = age / 1000
             self.guard_results[key] = (self.guard_reason, self.pending_input_age_ms)
             return self.guard_reason is None
+
+    def follow_anchor_block(self, row, root, book, now):
+        if row["reason"] == M12_ANCHOR_INVALIDATED:
+            return M12_ANCHOR_INVALIDATED
+        if not self.feed.m1.legal(book, now):
+            return M12_WAIT_FRESH_ASK
+        anchor = decimal(root["anchor_price"])
+        drop = anchor - book.best_ask
+        if drop < M12_ANCHOR_DROP:
+            return None
+        evidence = {"opportunity_id": row["id"], "reason": M12_ANCHOR_INVALIDATED,
+                    "token_id": book.token_id, "anchor_price": str(anchor), "best_ask": str(book.best_ask),
+                    "drop": str(drop), "threshold": str(M12_ANCHOR_DROP),
+                    "received_monotonic": book.received_mono, "source_wall": book.source_time}
+        if self.ledger.invalidate_follow_anchor(row["id"], evidence):
+            self.e.record("m12_follow_anchor_invalidated", evidence)
+        return M12_ANCHOR_INVALIDATED
 
     def skip_unreachable_follow_intent(self, key, root):
         if not root.get("pricing_origin", {}).get("follow_limit"):
