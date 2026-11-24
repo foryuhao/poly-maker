@@ -1,0 +1,687 @@
+"""HD/TP/SL adapter for the existing owned post-only execution lifecycle."""
+from __future__ import annotations
+
+import asyncio
+import math
+import time
+from dataclasses import asdict
+from decimal import Decimal
+from threading import RLock
+from types import SimpleNamespace
+
+from polymaker.domain import Side, TradeState
+from polymaker.execution.filltruth import reconcile_owned_order
+from polymaker.rdp_sm import MIN_REPAIR_EXPOSURE
+from polymaker.rdp_sm_execution import CAPITAL_LIMIT, WindowQuote, repair_buy_quantity
+from polymaker.rdp_sm_repair import RepairController
+from polymaker.repair_policy import PathPoint, RepairPolicy, repair_readiness
+from polymaker.state.tracker import fill_cost
+
+
+class PathRepairController(RepairController):
+    immediate_activation = True
+
+    def __init__(self, executor, lifecycle):
+        super().__init__(executor, lifecycle)
+        self.policy = None
+        self.episode_id = None
+        self.last_path_sequence = -1
+        self.last_decision = None
+        self.fill_signature = {}
+        self._policy_lock = RLock()
+        self._state_log_key = None
+        self._state_log_mono = -math.inf
+        self._small_exposure_key = None
+        self._blocked_logs = {}
+        self._time_boundaries = set()
+
+    def elapsed(self, monotonic=None):
+        e = self.executor
+        return (e.official_time+(e.monotonic() if monotonic is None else monotonic)
+                -e.time_anchor-int(e.slug.rsplit("-", 1)[1]))
+
+    def _policy(self):
+        ep = self.executor.repair_episode
+        if ep is None:
+            return None
+        if self.episode_id != ep["opening_window"]:
+            self.flush_blocked("EPISODE_CHANGED")
+            self.episode_id = ep["opening_window"]
+            ep.setdefault("policy_clock_offset", ep.get("path_clock_offset",
+                self.executor.official_time-self.executor.time_anchor
+                -int(self.executor.slug.rsplit("-", 1)[1])))
+            saved = ep.get("policy_state")
+            self.policy = (RepairPolicy.restore(self.cfg.path, saved) if saved
+                           else RepairPolicy(self.cfg.path))
+            self.last_path_sequence = ep.get("last_path_sequence", -1)
+            self.last_decision = None
+            self.fill_signature = ep.get("policy_fill_signature", {})
+            self._state_log_key = None
+            self._state_log_mono = -math.inf
+        return self.policy
+
+    def reconcile_episode(self):
+        """Only a completed ownership barrier permits a TP/SL direction handoff."""
+        from polymaker.rdp_sm_sl_ledger import install_reverse_episode
+
+        if self.executor.check_repair_abandonment():
+            return False
+        with self._policy_lock:
+            if self.executor.safe_to_continue and install_reverse_episode(self.executor):
+                self.plan = None
+                self.lifecycle.cached_slot = None
+                self.next_review = -math.inf
+                self._policy()
+                self._persist()
+                return True
+        return False
+
+    def _fill_time(self, fill, field="elapsed"):
+        stamp = self.executor.fill_observed_at.get((fill.trade_id, fill.maker_order_id), {})
+        key = {"elapsed": "fill_monotonic", "observed_elapsed": "observed_monotonic",
+               "economic_observed_elapsed": "economic_observed_monotonic"}[field]
+        if key in stamp:
+            return stamp[key]+self.executor.repair_episode["policy_clock_offset"]
+        return stamp.get(field, math.inf)
+
+    def _first_fill_time(self):
+        ep = self.executor.repair_episode
+        return (ep["first_fill_monotonic"]+ep["policy_clock_offset"]
+                if "first_fill_monotonic" in ep else ep["first_fill_elapsed"])
+
+    def _persist(self):
+        ep = self.executor.repair_episode
+        if ep is not None and self.policy is not None:
+            ep["policy_state"] = self.policy.payload()
+            ep["last_path_sequence"] = self.last_path_sequence
+            ep["policy_fill_signature"] = dict(self.fill_signature)
+            latest = self.policy.points[-1] if self.policy.points else None
+            key = (self.policy.mode, self.policy.last_reason, str(self.policy.tp_price),
+                   ep["original_qty"], len(self.policy.path_breaks),
+                   latest.episode_delta if latest else None,
+                   latest.inventory_path_valid if latest else None)
+            now = self.executor.monotonic()
+            if self.policy.mode == "TP":
+                ep.setdefault("tp_signal_observed_monotonic", now)
+            if key == self._state_log_key and 0 <= now-self._state_log_mono < 1:
+                return
+            self._state_log_key, self._state_log_mono = key, now
+            self.executor.record("sm_repair_policy_state", {
+                "opening_window": ep["opening_window"], "policy": "hd_tp_sl_v1",
+                "first_fill_time_source": ep.get("first_fill_time_source"),
+                "first_fill_elapsed": self._first_fill_time() if "first_fill_elapsed" in ep else None,
+                "path_clock_basis": "EPISODE_MONOTONIC",
+                "policy_clock_offset": ep["policy_clock_offset"],
+                "original_qty": ep["original_qty"],
+                "last_path_sequence": self.last_path_sequence,
+                "parameters": self.cfg.path.model_dump(mode="json"),
+                **ep["policy_state"]})
+
+    def _economics(self, elapsed=None):
+        e, ep = self.executor, self.executor.repair_episode
+        windows = set(ep.get("windows", [ep["opening_window"]]))
+        ids = {a.order_id for a in e.attempts if a.order_id and a.quote.window_id in windows}
+        fills = e.economic_fills()
+        if elapsed is not None:
+            fills = [f for f in fills if self._fill_time(f) <= elapsed]
+        yes = sum((Decimal(str(f.size)) for f in fills
+                   if f.token_id == e.meta.yes.token_id), Decimal(0))
+        no = sum((Decimal(str(f.size)) for f in fills
+                  if f.token_id == e.meta.no.token_id), Decimal(0))
+        own = [f for f in fills if f.maker_order_id in ids]
+        own += [f for f in ep.get("source_lots", []) if elapsed is None or
+                self._fill_time(f) <= elapsed]
+        own_y = sum((Decimal(str(f.size)) for f in own
+                     if f.token_id == e.meta.yes.token_id), Decimal(0))
+        own_n = sum((Decimal(str(f.size)) for f in own
+                     if f.token_id == e.meta.no.token_id), Decimal(0))
+        cost = sum((fill_cost(f) for f in own), Decimal(0))
+        return yes, no, own_y, own_n, cost
+
+    def _point(self, p, elapsed, sigma, generation, *, historical=False,
+               tick=.01, path_segment=0, inventory_path_valid=True):
+        y, n, own_y, own_n, cost = self._economics(elapsed if historical else None)
+        q0 = Decimal(self.executor.repair_episode["original_qty"])
+        mark = Decimal(str(p))*own_y+(1-Decimal(str(p)))*own_n-cost
+        return PathPoint(elapsed, p, sigma, generation, float(y-n), float(mark/q0),
+                         episode_delta=float(own_y-own_n), tick=float(tick),
+                         path_segment=path_segment, inventory_path_valid=inventory_path_valid)
+
+    def _episode_fills(self):
+        e, ep = self.executor, self.executor.repair_episode
+        windows = set(ep.get("windows", [ep["opening_window"]]))
+        ids = {a.order_id for a in e.attempts if a.order_id and a.quote.window_id in windows}
+        fills = [f for f in e.economic_fills() if f.maker_order_id in ids]
+        fills += ep.get("source_lots", [])
+        known = {(f.trade_id, f.maker_order_id) for f in fills}
+        pending = any((f.trade_id, f.maker_order_id) not in known
+                      for f in e.processor.economic_fills_for_orders(ids))
+        return fills, pending
+
+    def _sigma_at(self, point):
+        from polymaker.rdp_sm_volatility import estimate_sigma
+
+        return estimate_sigma(self.lifecycle.feed, monotonic=point.monotonic,
+                              wall=point.wall, generation=point.generation).sigma
+
+    def observe(self, snapshot, *, project=False):
+        with self._policy_lock:
+            return self._observe(snapshot, project=project)
+
+    def _observe(self, snapshot, *, project=False):
+        policy = self._policy()
+        ep = self.executor.repair_episode
+        if policy is None or Decimal(ep["original_qty"]) <= 0:
+            raise ValueError("REPAIR_ORIGINAL_QUANTITY_UNKNOWN")
+        if "first_fill_elapsed" not in ep:
+            raise ValueError("REPAIR_FIRST_FILL_TIME_UNKNOWN")
+        if project:
+            policy = RepairPolicy.restore(self.cfg.path, policy.payload())
+        q0 = float(ep["original_qty"])
+        now_mono = self.executor.monotonic()
+        offset = self.executor.official_time-self.executor.time_anchor-int(self.executor.slug.rsplit("-", 1)[1])
+        # Price moves and holding times use ONE immutable monotonic mapping.
+        # Official clock corrections only control session submission boundaries.
+        path_offset = ep["policy_clock_offset"]
+        def elapsed_at(t):
+            return path_offset+t
+        now = elapsed_at(now_mono)
+        session_now = offset+now_mono
+        first_fill = self._first_fill_time()
+        clock_changed = abs(offset-ep.get("path_clock_offset", offset)) > 2
+        if clock_changed:
+            policy.break_path("OFFICIAL_CLOCK_CORRECTION")
+        cursor = policy.points[-1].elapsed if policy.points else first_fill
+        signature = dict(self.fill_signature)
+        fills, pending = self._episode_fills()
+        timeline = []
+        uncertain_until = None
+        for fill in fills:
+            key = fill.trade_id+":"+fill.maker_order_id
+            value = (str(fill.size), str(fill.price))
+            if getattr(fill, "liquidity_role", "MAKER") == "TAKER":
+                value += (str(fill_cost(fill)),)
+            if tuple(signature.get(key, ())) == value:
+                continue
+            stamp = self.executor.fill_observed_at.get((fill.trade_id, fill.maker_order_id), {})
+            native = self._fill_time(fill) if stamp.get("source") == "VENUE_TRADE_TIME" else None
+            uncertain = native is None or native < cursor
+            known_at = self._fill_time(fill, "economic_observed_elapsed")
+            if not math.isfinite(known_at):
+                known_at = self._fill_time(fill, "observed_elapsed")
+            at = max(cursor, known_at if math.isfinite(known_at) else now) if uncertain else native
+            # First observation is an anchor, not a synthetic opening-price move.
+            if at <= now:
+                signature[key] = value
+                timeline.append((at, 0, "FILL", uncertain))
+                if uncertain:
+                    uncertain_until = max(uncertain_until or at, at)
+        removed = set(signature)-{f.trade_id+":"+f.maker_order_id for f in fills}
+        if removed:
+            for key in removed:
+                del signature[key]
+            policy.break_inventory("ECONOMIC_FACT_REMOVED")
+        with self.lifecycle.feed.lock:
+            history = list(self.lifecycle.feed.repair_price_points)
+            segment = self.lifecycle.feed.repair_path_segment
+            points = [p for p in history
+                      if p.sequence > self.last_path_sequence
+                      and p.monotonic >= ep.get("opening_monotonic", -math.inf)
+                      and (not clock_changed or p.monotonic >= now_mono)
+                      and p.monotonic <= now_mono
+                      and p.sequence <= snapshot.sequence]
+        if (not policy.points and not clock_changed and self.last_path_sequence < 0
+                and not policy.path_breaks):
+            # A quiet quote can predate the fill. Use its actual as-of mark,
+            # never the opening cost, to retain the FIRST post-fill price move.
+            before = [s for s in history if elapsed_at(s.monotonic) <= first_fill
+                      and s.sequence <= snapshot.sequence]
+            anchor = before[-1] if before else None
+            after = next((s for s in history if elapsed_at(s.monotonic) > first_fill
+                          and s.sequence <= snapshot.sequence), None)
+            end_generation = after.generation if after else snapshot.generation
+            end_segment = after.path_segment if after else segment
+            if anchor and anchor.generation == end_generation and anchor.path_segment == end_segment:
+                timeline.append((first_fill, -1, "ANCHOR", anchor))
+            else:
+                policy.break_path("FIRST_FILL_MARK_UNKNOWN")
+        if (policy.points and history and self.last_path_sequence >= 0
+                and self.last_path_sequence < history[0].sequence
+                and elapsed_at(history[0].monotonic) > cursor):
+            policy.break_path("PRICE_HISTORY_OVERWRITTEN")
+        timeline.extend((elapsed_at(s.monotonic), s.sequence, "PRICE", s) for s in points)
+        logged = []
+        # Discarded pre-fill / old-clock prices are consumed too. Otherwise a
+        # quiet book spins the price-event scheduler, or replays discarded data
+        # on the next observation after the clock-offset marker is updated.
+        last_sequence = max([self.last_path_sequence]+[s.sequence for s in history
+            if s.sequence <= snapshot.sequence and s.monotonic <= now_mono])
+        for elapsed, sequence, kind, sample in sorted(timeline, key=lambda row: (row[0], row[1])):
+            if kind == "PRICE":
+                last_sequence = max(last_sequence, sequence)
+            if elapsed < first_fill or (policy.points and elapsed < policy.points[-1].elapsed):
+                continue
+            valid = not pending and (uncertain_until is None or elapsed >= uncertain_until)
+            if kind == "FILL":
+                if not policy.points:
+                    continue
+                previous = policy.points[-1]
+                if sample:
+                    policy.break_inventory("FILL_TIME_OR_AVAILABILITY_UNKNOWN")
+                mono = elapsed-path_offset
+                stamp = SimpleNamespace(generation=previous.generation, monotonic=mono,
+                                        wall=self.lifecycle.feed.wall()-(now-elapsed))
+                point = self._point(previous.p, elapsed, self._sigma_at(stamp), previous.generation,
+                                    historical=True, tick=previous.tick, path_segment=previous.path_segment,
+                                    inventory_path_valid=valid)
+            else:
+                sigma_point = sample
+                if kind == "ANCHOR":
+                    mono = elapsed-path_offset
+                    sigma_point = SimpleNamespace(generation=sample.generation, monotonic=mono,
+                        wall=self.lifecycle.feed.wall()-(now-elapsed))
+                point = self._point(sample.p, elapsed, self._sigma_at(sigma_point), sample.generation,
+                                    historical=True, tick=sample.yes_tick if ep["side"] == "YES" else sample.no_tick,
+                                    path_segment=sample.path_segment, inventory_path_valid=valid)
+            policy.decide(point, original_side=ep["side"], original_qty=q0,
+                          first_fill_elapsed=first_fill, session_elapsed=session_now)
+            logged.append({**asdict(point), "kind": kind, "sequence": sequence})
+        if logged and not project:
+            self.executor.record("sm_repair_market_path", {"opening_window": self.episode_id,
+                                                           "points": logged})
+        p = float((snapshot.yes.best_bid+snapshot.yes.best_ask)/2)
+        if abs(p-(1-float((snapshot.no.best_bid+snapshot.no.best_ask)/2))) > .02000000001:
+            raise ValueError("REPAIR_PROBABILITY_INCONSISTENT")
+        book = snapshot.yes if ep["side"] == "YES" else snapshot.no
+        point = self._point(p, now, self.sigma(), snapshot.generation,
+                            tick=book.tick, path_segment=segment, inventory_path_valid=not pending)
+        features = policy.observe(point, original_side=ep["side"], original_qty=q0)
+        decision = policy.decide(point, original_side=ep["side"], original_qty=q0,
+                                 first_fill_elapsed=first_fill, features=features,
+                                 session_elapsed=session_now, cutoff_sec=self.cutoff)
+        decision["session_elapsed"] = session_now
+        decision["next_review_at"] = min(session_now+self.cfg.review_sec, self.cutoff,
+                                         self.cutoff if policy.mode == "SL" or session_now >= 180 else 180.)
+        decision["wake_on"] = ["PRICE_EVENT", "EXECUTION_FACT", "TIME_BOUNDARY"]
+        # Only a bounded causal window is needed for future short-shock tests;
+        # the cumulative price peak is separately preserved across the episode.
+        while (len(policy.points) > 2
+               and policy.points[1].elapsed < point.elapsed-self.cfg.path.shock_max_age_sec):
+            policy.points.popleft()
+        if not project:
+            ep["path_clock_offset"] = offset
+            self.last_decision = decision
+            self.last_path_sequence = last_sequence
+            self.fill_signature = signature
+            self._persist()
+        return decision, point
+
+    def _blocked(self, reason, decision=None, *, discard_plan=True):
+        if discard_plan:
+            self.plan = None
+        key = (self.episode_id, self.policy.mode if self.policy else None, reason)
+        now = self.executor.monotonic()
+        state = self._blocked_logs.setdefault(key, {
+            "count": 0, "emitted": 0, "last_log": -math.inf, "first_monotonic": now})
+        state["count"] += 1
+        state["last_monotonic"] = now
+        if now-state["last_log"] < self.cfg.review_sec:
+            return
+        self.executor.record("sm_repair_execution_blocked", {
+            "policy": "hd_tp_sl_v1", "mode": self.policy.mode if self.policy else None,
+            "reason": reason, "decision": decision, "readiness": repair_readiness(self.cfg),
+            "occurrences": state["count"],
+            "suppressed_since_previous": state["count"]-state["emitted"]-1})
+        state["last_log"], state["emitted"] = now, state["count"]
+
+    def flush_blocked(self, outcome):
+        for (episode, mode, reason), state in self._blocked_logs.items():
+            self.executor.record("sm_repair_block_summary", {
+                "opening_window": episode, "mode": mode, "reason": reason,
+                "occurrences": state["count"], "outcome": outcome,
+                "first_monotonic": state["first_monotonic"],
+                "last_monotonic": state["last_monotonic"]})
+        self._blocked_logs.clear()
+
+    async def wait_blocked(self, snapshot):
+        """Depth-only frames do not retry an unchanged, infeasible target.
+
+        Prices, generations, economic facts and session time boundaries still
+        wake immediately; a bounded periodic retry refreshes account evidence.
+        """
+        e, feed = self.executor, self.lifecycle.feed
+        until = e.monotonic()+self.cfg.review_sec
+        revision = e.revision
+        fingerprint = self.fingerprint(snapshot)
+        segment = feed.repair_path_segment
+        mode = self.policy.mode if self.policy else None
+        episode = e.repair_episode
+        while e.monotonic() < until:
+            elapsed = self.elapsed()
+            boundary = min(180, self.cutoff) if elapsed < 180 else self.cutoff
+            remaining = min(until-e.monotonic(), boundary-elapsed)
+            if remaining <= 0 or elapsed >= self.cutoff:
+                return
+            sequence = feed.sequence
+            current = self.lifecycle.snapshot(self, *e.economic_inventory())
+            if (not current.valid or self.fingerprint(current) != fingerprint
+                    or feed.repair_path_segment != segment or e.revision != revision
+                    or e.repair_episode is not episode
+                    or (self.policy.mode if self.policy else None) != mode):
+                return
+            await feed.wait_after(sequence, min(.1, remaining))
+
+    async def watch_time_boundaries(self):
+        """Signal intent advances even while REST, WS or network admission waits."""
+        while True:
+            self.boundary_close_reason(None, self.elapsed())
+            await asyncio.sleep(.05)
+
+    def _make_plan(self, snapshot, decision, point):
+        e, ep = self.executor, self.executor.repair_episode
+        if (not self.cfg.path.exit_enabled(self.policy.mode)
+                or decision.get("session_elapsed", point.elapsed) >= self.cutoff
+                or abs(Decimal(str(point.delta))) <= MIN_REPAIR_EXPOSURE):
+            return None
+        side = "NO" if point.delta > 0 else "YES"
+        if side == ep["side"] and abs(point.delta) <= float(self.cfg.delta_limit):
+            raise ValueError("REPAIR_DIRECTION_HANDOFF_UNPROVEN")
+        book = snapshot.yes if side == "YES" else snapshot.no
+        price = self.policy.price(bid=book.best_bid, ask=book.best_ask,
+                                  tick=book.tick, sigma=point.sigma)
+        if price is None:
+            return None
+        y, n = e.economic_inventory()
+        cash = max(Decimal(0), getattr(e, "capital_limit", CAPITAL_LIMIT)-e.committed())
+        if self.lifecycle.account is not None:
+            cash = min(cash, Decimal(str(self.lifecycle.account["basic_spendable_budget_usd"])))
+        qty = repair_buy_quantity(e, side, price, y-n, cash)
+        return {**decision, "policy": "hd_tp_sl_v1", "action": "BUY", "side": side,
+                "price": float(price), "quantity": float(qty), "tick": str(book.tick),
+                "cancel_at": min(180., self.cutoff) if self.policy.mode == "TP" else self.cutoff,
+                "next_review_at": min(decision.get("session_elapsed", point.elapsed)+self.cfg.review_sec,
+                                      min(180., self.cutoff) if self.policy.mode == "TP" else self.cutoff),
+                "switch_conditions": ["PATH_SL", "T180"] if self.policy.mode == "TP" else ["PAIRED", f"T{self.cutoff:g}"],
+                "candidates": [], "parameter_status": self.cfg.path.calibration_status}
+
+    async def repair(self, yes, no, window_id):
+        if self.executor.cooldown.active:
+            await self.executor.sleep(.1)
+            return None
+        if self.elapsed() >= self.cutoff:
+            self.plan = None
+            return None
+        e, feed = self.executor, self.lifecycle.feed
+        e.update_repair_episode()
+        if e.check_repair_abandonment():
+            return None
+        self.reconcile_episode()
+        y, n = e.economic_inventory()
+        if abs(y-n) <= MIN_REPAIR_EXPOSURE:
+            self.plan = None
+            key = (e.repair_episode["opening_window"] if e.repair_episode else None, y-n)
+            if e.repair_episode is not None and key != self._small_exposure_key:
+                e.record("sm_repair_small_exposure", {
+                    "reason": "EXPOSURE_AT_OR_BELOW_REPAIR_MINIMUM",
+                    "actual_delta": str(y-n), "threshold_shares": str(MIN_REPAIR_EXPOSURE),
+                    "action": "WAIT_CLOSE_BARRIER", "inventory_flat": y == n,
+                })
+                self._small_exposure_key = key
+            # A socket event does not prove order/fill closure. Bound repeated
+            # account checks while waiting for the existing close barrier.
+            await e.sleep(.1)
+            return None
+        self._small_exposure_key = None
+        if self.elapsed() >= 180:
+            self.boundary_close_reason(None, self.elapsed())
+        price_sequence = feed.repair_price_points[-1].sequence if feed.repair_price_points else -1
+        force_due = (self.cfg.path.sl_enabled and self.elapsed() >= 180
+                     and (self.policy is None or self.policy.mode != "SL"))
+        if (not force_due and e.monotonic() < self.next_review
+                and self.last_review_revision == e.revision
+                and price_sequence == self.last_path_sequence):
+            await feed.wait_after(feed.sequence, min(.1, self.next_review-e.monotonic()))
+            return None
+        self.next_review = e.monotonic()+self.cfg.review_sec
+        self.last_review_revision = e.revision
+        snapshot = self.lifecycle.snapshot(self, yes, no)
+        if not snapshot.valid:
+            if self._policy() is not None:
+                self.policy.break_path(snapshot.reason)
+                self._persist()
+            self.lifecycle.wait(snapshot.reason, snapshot)
+            return None
+        try:
+            decision, point = self.observe(snapshot)
+            self.plan = self._make_plan(snapshot, decision, point)
+        except ValueError as exc:
+            self._blocked(str(exc), self.last_decision)
+            await self.wait_blocked(snapshot)
+            return None
+        self.flush_blocked("PLAN_AVAILABLE" if self.plan else "HOLD")
+        self.executor.record("sm_repair_decision", self.plan or {
+            **decision, "action": "HOLD", "policy": "hd_tp_sl_v1"})
+        if not self.plan:
+            # A price-invalid target cannot become viable from depth-size-only
+            # frames. Wait for a material price/fact change or the bounded
+            # review deadline instead of re-running the same plan every tick.
+            await self.wait_blocked(snapshot)
+            return None
+        if self.policy.mode == "SL":
+            return await self.execute_sl(window_id)
+        return await self.execute_tp(window_id)
+
+    async def execute_sl(self, window_id):
+        return await self._execute_actor(window_id, "SL")
+
+    async def execute_tp(self, window_id):
+        return await self._execute_actor(window_id, "TP")
+
+    async def _execute_actor(self, window_id, mode):
+        from polymaker.rdp_sm_execution import WindowResult
+        from polymaker.rdp_sm_sl import SLExecution
+        from polymaker.rdp_sm_tp import TPExecution
+
+        e = self.executor
+        if e.check_repair_abandonment():
+            return None
+        if e.cooldown.active:
+            return None
+        if not self.cfg.path.exit_enabled(mode):
+            self.plan = None
+            self._blocked(mode+"_DISABLED")
+            return None
+        initial_delta = e.economic_inventory()[0]-e.economic_inventory()[1]
+        initial_plan = self.plan
+        actor = (SLExecution if mode == "SL" else TPExecution)(self, window_id)
+        created = await e._await_owned(actor.run(), propagate_cancel=False)
+        if not created:
+            return None
+        safe = await e._await_owned(e._verify_close(cancel=True), propagate_cancel=False)
+        if not safe and e.pending_confirmations:
+            await e._await_owned(e._wait_for_confirmation(), propagate_cancel=False)
+            safe = e.safe_to_continue
+        e.update_repair_episode()
+        if safe:
+            self.reconcile_episode()
+        self.plan = None
+        result = WindowResult(e.session_id, window_id, e.meta.condition_id, actor.started_wall,
+            end_time=time.time(), requested_quotes=[a.quote for a in created],
+            placement_results=[asdict(a) for a in created], known_order_ids=sorted(e.known),
+            confirmed_fills=[asdict(f) for f in e.economic_fills()],
+            yes_inventory=float(e.economic_inventory()[0]), no_inventory=float(e.economic_inventory()[1]),
+            delta=float(e.economic_inventory()[0]-e.economic_inventory()[1]),
+            capital_committed=float(e.committed()),
+            close_barrier="SAFE_TO_CONTINUE" if safe else "BLOCKED", block_reason=e.reason,
+            t0_monotonic=actor.started_monotonic, close_monotonic=e.monotonic())
+        e.reads.network.complete_batch(actor.group, safe=safe)
+        e.record("sm_window_result", result.to_dict())
+        await e.journal.flush()
+        return result, {"repair_plan": initial_plan, "mode": mode,
+            "order_policy": "SIGNAL_DRIVEN_"+mode, "signed_target_delta": "0",
+            "target_sizing_applied": False, "favorite_data_validity": "NOT_USED",
+            "actual_delta_before": str(initial_delta)}
+
+    def candidates(self, snapshot, yes, no, window_id):
+        if not self.plan or not self.cfg.path.exit_enabled(self.plan["mode"]):
+            return {}
+        plan = self.plan
+        token = self.executor.meta.yes.token_id if plan["side"] == "YES" else self.executor.meta.no.token_id
+        quote = WindowQuote(self.executor.meta.condition_id, token, plan["side"], Side.BUY,
+                            plan["price"], plan["quantity"], window_id)
+        return {"REPAIR": ((quote,), {"repair_plan": plan,
+                "order_policy": "TP_FIXED_PRICE" if plan["mode"] == "TP" else "SL_ASK_MINUS_TICK",
+                "signed_target_delta": "0", "target_sizing_applied": False,
+                "actual_delta_before": str(yes-no), "favorite_data_validity": "NOT_USED"})}
+
+    def matches(self, intent, snapshot):
+        if not self.plan or not snapshot.valid or not self.policy:
+            return False
+        if not self.cfg.path.exit_enabled(self.plan["mode"]):
+            return False
+        elapsed = self.elapsed()
+        if elapsed >= self.plan["cancel_at"] or self.policy.mode != self.plan["mode"]:
+            return False
+        q = intent.quotes[0]
+        book = snapshot.yes if q.outcome == "YES" else snapshot.no
+        price = Decimal(str(q.price))
+        if (str(book.tick) != self.plan["tick"] or price >= book.best_ask
+                or price <= 0 or price % book.tick or q.size != self.plan["quantity"]):
+            return False
+        if self.policy.mode == "SL" and price != book.best_ask-book.tick:
+            return False
+        if self.policy.mode == "TP":
+            # The SDK's final guard may run after a material price move. Check
+            # its risk meaning without mutating policy/journal in that worker.
+            ep = self.executor.repair_episode
+            if ep is None:
+                return False
+            try:
+                decision, _ = self.observe(snapshot, project=True)
+            except ValueError:
+                return False
+            if decision["mode"] != "TP":
+                return False
+        delta, qty = intent.yes-intent.no, Decimal(str(q.size))
+        after = delta+(qty if q.outcome == "YES" else -qty)
+        return (abs(delta) > MIN_REPAIR_EXPOSURE and abs(after) < abs(delta)
+                and self.executor.delta_candidate_allowed(delta, q.outcome, qty))
+
+    def on_order_accepted(self, intent):
+        if self.plan["mode"] == "TP":
+            self.policy.accepted_tp(Decimal(str(intent.quotes[0].price)), Decimal(self.plan["tick"]))
+            self._persist()
+
+    def boundary_close_reason(self, intent, elapsed):
+        """Independent wall-time transition, including sigma warmup/unknown POST."""
+        if self.executor.check_repair_abandonment():
+            return "HIGH_ENTRY_REPAIR_ABANDONED"
+        with self._policy_lock:
+            ep = self.executor.repair_episode
+            if ep is None or Decimal(ep["original_qty"]) <= 0:
+                return None
+            policy = self.policy if self.episode_id == ep["opening_window"] else None
+            if policy is not None and policy.apply_switches():
+                self._persist()
+            if self.plan is not None and not self.cfg.path.exit_enabled(self.plan["mode"]):
+                return self.plan["mode"]+"_DISABLED"
+            delta = self.executor.economic_inventory()[0]-self.executor.economic_inventory()[1]
+            boundary = self.cutoff if elapsed >= self.cutoff else 180 if elapsed >= 180 else None
+            key = (ep["opening_window"], boundary)
+            if boundary is not None and key not in self._time_boundaries:
+                self._time_boundaries.add(key)
+                self.executor.record("sm_repair_time_boundary", {
+                    "opening_window": ep["opening_window"], "boundary": boundary,
+                    "elapsed_s": elapsed, "actual_delta": str(delta),
+                    "action": "STOP_NEW_REPAIR" if boundary == self.cutoff else
+                        "SMALL_EXPOSURE_NO_REPAIR" if abs(delta) <= MIN_REPAIR_EXPOSURE else
+                        "HOLD_SL_DISABLED" if not self.cfg.path.sl_enabled else "FORCE_SL",
+                    "tp_enabled": self.cfg.path.tp_enabled, "sl_enabled": self.cfg.path.sl_enabled})
+            if elapsed >= self.cutoff:
+                self.flush_blocked("CUTOFF")
+                return "MARKET_SUBMISSION_CUTOFF"
+            if elapsed >= 180:
+                if self.cfg.path.sl_enabled and abs(delta) > MIN_REPAIR_EXPOSURE:
+                    policy = self._policy()
+                    if policy is not None and policy.mode != "SL":
+                        policy.force_sl(elapsed)
+                        self._persist()
+                elif not self.cfg.path.sl_enabled:
+                    if policy is not None and policy.mode == "TP":
+                        policy.force_hold(elapsed, "SL_DISABLED_AFTER_T180")
+                        self._persist()
+                    if self.plan is not None and self.plan["mode"] == "TP":
+                        return "TP_SUBMISSION_CUTOFF"
+            if (self.policy is not None and self.policy.mode == "SL"
+                    and self.plan is not None and self.plan["mode"] != "SL"):
+                return "REPAIR_MODE_SL_CANCEL_OLD_STATE"
+        return None
+
+    def _active_result(self, intent, action, reason=None, remaining=None):
+        quote = intent.quotes[0]
+        self.executor.record("sm_repair_decision", {
+            **(self.last_decision or {}), "policy": "hd_tp_sl_v1",
+            "mode": self.policy.mode, "action": action,
+            "execution_reason": reason, "side": quote.outcome,
+            "price": quote.price, "remaining_quantity": str(remaining) if remaining is not None else None,
+            "order_window": intent.window_id})
+        return reason
+
+    async def review_active(self, intent, deadline):
+        e = self.executor
+        if self.plan is not None and not self.cfg.path.exit_enabled(self.plan["mode"]):
+            return self.plan["mode"]+"_DISABLED"
+        # TP risk intent is evaluated before REST reconciliation. A transition
+        # to SL hands off directly; only the final handoff uses full close.
+        y, n = e.economic_inventory()
+        snapshot = self.lifecycle.snapshot(self, y, n)
+        if snapshot.valid and self._policy() is not None:
+            try:
+                decision, _ = self.observe(snapshot)
+                if self.plan["mode"] != decision["mode"]:
+                    return self._active_result(intent, "CANCEL", "REPAIR_MODE_SL_CANCEL_OLD_STATE")
+            except ValueError as exc:
+                self._blocked(str(exc), discard_plan=False)
+        ids = [a.order_id for a in e.attempts if a.quote.window_id == intent.window_id and a.order_id]
+        if not ids:
+            return None
+        for oid in ids:
+            await reconcile_owned_order(oid, e.gateway, e.processor, retry_delays=())
+        boundary = self.boundary_close_reason(intent, self.elapsed())
+        if boundary:
+            return boundary
+        if any(e.processor.has_failed_fill(oid) or e.processor.has_unresolved_fill_key(oid)
+               or oid in e.processor.quarantined_orders for oid in ids):
+            return "REPAIR_EXECUTION_UNRESOLVED"
+        raw = [f for oid in ids for f in e.processor.economic_fills_for_order(oid)]
+        quote = intent.quotes[0]
+        remaining = Decimal(str(quote.size))-sum((Decimal(str(f.size)) for f in raw), Decimal(0))
+        if remaining <= 0:
+            return "REPAIR_FILLED"
+        y, n = e.economic_inventory()
+        pending = [f for f in raw if f.status is not TradeState.CONFIRMED and
+                   (f.trade_id, f.maker_order_id) not in e.position_reconciled]
+        pending_qty = sum((Decimal(str(f.size)) for f in pending), Decimal(0))
+        if not e.delta_candidate_allowed(y-n, quote.outcome, remaining+pending_qty):
+            return "REPAIR_REMAINING_DELTA_LIMIT"
+        if abs(y-n) < Decimal(".1"):
+            return "REPAIR_PAIRED"
+        snapshot = self.lifecycle.snapshot(self, y, n)
+        if not snapshot.valid:
+            return snapshot.reason
+        try:
+            decision, _ = self.observe(snapshot)
+        except ValueError as exc:
+            self._blocked(str(exc), discard_plan=False)
+            return None
+        if self.plan["mode"] != decision["mode"]:
+            return self._active_result(intent, "CANCEL", "REPAIR_MODE_SL_CANCEL_OLD_STATE", remaining)
+        if pending:
+            return None
+        if abs(y-n) <= MIN_REPAIR_EXPOSURE:
+            return self._active_result(intent, "CANCEL", "REPAIR_SMALL_EXPOSURE", remaining)
+        book = snapshot.yes if quote.outcome == "YES" else snapshot.no
+        if (decision["mode"] == "SL"
+                and Decimal(str(quote.price)) <= book.best_ask-2*book.tick):
+            return self._active_result(intent, "REPLACE_AFTER_CANCEL", "REPAIR_SL_REPRICE", remaining)
+        return self._active_result(intent, "KEEP", remaining=remaining)
