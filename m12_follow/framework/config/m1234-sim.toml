@@ -1,0 +1,22 @@
+# Simulation only. No wallet directory, private key or order host can be set.
+seed = 1234
+max_output_mib = 4096
+min_free_disk_mib = 2048
+max_rss_mib = 512
+input_queue_frames = 2048
+writer_queue_records = 8192
+max_seconds = 4500
+max_markets = 12
+markout_seconds = [1, 5, 30]
+
+[scenarios.trades-only]
+post_ms = 100
+ack_ms = 200
+cancel_ms = 200
+ahead_cancel_fraction = "0"
+
+[scenarios.cancel-half]
+post_ms = 100
+ack_ms = 200
+cancel_ms = 200
+ahead_cancel_fraction = ".5"

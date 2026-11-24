@@ -1,0 +1,17 @@
+[Unit]
+Description=Polymaker M12 live executor following admitted baseline intents
+After=network-online.target
+ConditionPathExists=%h/.config/polymaker-m12-follow/source.env
+ConditionPathExists=%h/.config/polymaker-m12-follow/wallet.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h/polymaker/m12_follow
+EnvironmentFile=%h/.config/polymaker-m12-follow/wallet.env
+EnvironmentFile=%h/.config/polymaker-m12-follow/source.env
+Environment=PYTHONPATH=%h/polymaker
+SyslogIdentifier=polymaker-m12-follow-live
+UMask=0077
+ReadOnlyPaths=%t %h/polymaker/research_outputs/m122124_baseline
+ExecStart=%h/polymaker/.venv/bin/python -B -u -m m12_follow.live --live --baseline-db-run ${M12_FOLLOW_BASELINE_DB_RUN} --funder ${M12_FOLLOW_BROWSER_ADDRESS} --existing-project ${M12_FOLLOW_EXISTING_PROJECT} --existing-funder ${M12_FOLLOW_EXISTING_FUNDER}
+Restart=no

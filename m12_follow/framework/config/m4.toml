@@ -1,0 +1,30 @@
+# Shared M4 live/baseline execution contract.
+strategy = "m4-frequency-v2"
+execution_revision = "m4-maker-v1"
+order_budget_usdc = 5
+session_budget_usdc = 10
+max_opportunities_per_direction = 1
+minimum_price = "0.50"
+maximum_price = "1"
+quantity_step = "0.1"
+start_sec = 15
+cutoff_sec = 240
+close_sec = 300
+account_max_age_sec = 2.0
+account_poll_sec = 0.5
+post_budget_floor_ms = 400
+heartbeat_sec = 10
+retry_initial_sec = 0.1
+retry_max_sec = 2
+
+[live_taker_identity]
+attribution = "M4"
+ledger = "m4_frequency_v2_native_v1"
+
+# Frozen into each new live Taker opportunity. The shared minimum_price above
+# continues to describe the historical anchor-price contract.
+[live_taker_price_risk]
+policy = "POST_SIGNED_LIMIT_BAND_V1"
+minimum = "0.50" # Inclusive signed limit. BUY fills can improve below it.
+maximum = "0.95" # Exclusive signed limit.
+retry_policy = "ABANDON_ON_FIRST_SIGNED_LIMIT_BAND_REJECTION_V1"

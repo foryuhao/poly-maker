@@ -1,0 +1,15 @@
+[Unit]
+Description=Polymaker M12 authoritative baseline intent publisher
+After=network-online.target
+ConditionPathExists=%h/.config/polymaker-m12-follow/source.env
+
+[Service]
+Type=simple
+WorkingDirectory=%h/polymaker/m12_follow
+EnvironmentFile=%h/.config/polymaker-m12-follow/source.env
+SyslogIdentifier=polymaker-m12-follow-publisher
+RuntimeDirectory=m12-follow-feed
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 PYTHONPATH=%h/polymaker %h/polymaker/.venv/bin/python -B -u -m m12_follow.publisher run --baseline-runtime ${M12_FOLLOW_BASELINE_RUNTIME} --storage-root %h/polymaker/research_outputs/m122124_baseline --project-root %h/polymaker --run-name ${M12_FOLLOW_RUN_ID} --channel-directory %t/m12-follow-feed
+Restart=no

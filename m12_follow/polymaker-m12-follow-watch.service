@@ -1,0 +1,11 @@
+[Unit]
+Description=Report M12 follow coverage and health in its authorized chat
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/polymaker
+ExecStart=%h/polymaker/.venv/bin/python -B -m m12_follow.watch
+Nice=15
+IOSchedulingClass=idle
+UMask=0077
+TimeoutStartSec=180

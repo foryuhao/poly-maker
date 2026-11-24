@@ -1,0 +1,15 @@
+# Select one, two, or all three detector sources for the next M42112 market.
+signal_output_sources = ["M12"]
+
+# Signed FAK limit price, lower bound inclusive and upper bound exclusive.
+[price_risk.M4]
+minimum = 0.50
+maximum = 0.95
+
+[price_risk.M21]
+minimum = 0.50
+maximum = 0.95
+
+[price_risk.M12]
+minimum = 0.50
+maximum = 0.90

@@ -1,0 +1,26 @@
+# 288 consecutive five-minute markets = 24 hours of observation.
+# Collection guard allows startup alignment and delays; final cleanup adds time.
+continuous = true
+seed = 1234
+max_markets = 288
+max_seconds = 87300
+max_pending_markets = 12
+# Measured ~13.6 GiB/day; reserve 16 GiB output plus 4 GiB free space.
+max_output_mib = 16384
+min_free_disk_mib = 4096
+max_rss_mib = 512
+input_queue_frames = 2048
+writer_queue_records = 8192
+markout_seconds = [1, 5, 30]
+
+[scenarios.trades-only]
+post_ms = 100
+ack_ms = 200
+cancel_ms = 200
+ahead_cancel_fraction = "0"
+
+[scenarios.cancel-half]
+post_ms = 100
+ack_ms = 200
+cancel_ms = 200
+ahead_cancel_fraction = ".5"

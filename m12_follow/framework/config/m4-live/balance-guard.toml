@@ -1,0 +1,3 @@
+# Live-only. Changing settings never releases a persistent stop.
+enabled = true
+threshold_usdc = "10"

@@ -1,0 +1,186 @@
+# polymaker global config. Secrets live in .env, never here.
+# See the README.
+
+[wallet]
+# chain: Polygon mainnet
+chain_id = 137
+# signature_type — pick based on how your Polymarket account was created:
+#   0 = EOA (funds held directly by your key; no proxy)
+#   1 = email/magic proxy wallet
+#   2 = older browser-wallet Gnosis Safe proxy
+#   3 = POLY_1271 deposit wallet (the CURRENT architecture, ~June 2026+)
+# If your UI shows a "deposit address", you almost certainly have a deposit
+# wallet -> use 3. In every proxy case (1/2/3), BROWSER_ADDRESS is the DEPOSIT
+# address (the funder that holds your pUSD), NOT your signing EOA and NOT the
+# deployer/factory. Known SDK auth bugs live here (see the README) — `polymaker
+# doctor` / `livetest` will tell you if you picked the wrong type.
+signature_type = 2
+clob_host = "https://clob.polymarket.com"
+gamma_host = "https://gamma-api.polymarket.com"
+data_api_host = "https://data-api.polymarket.com"
+polygon_rpc = "https://polygon-bor-rpc.publicnode.com"
+
+[engine]
+debounce_ms = 250               # min gap between quote recomputes per market
+quoter_tick_s = 60              # slow baseline refresh (reactions are event-driven); cool-off re-entry is precise
+reconcile_interval_s = 20       # REST drift reconciliation cadence
+catalog_refresh_s = 300         # market catalog rescan cadence (15 min)
+heartbeat = true                # exchange dead-man switch
+heartbeat_interval_s = 5
+journal = true                  # append raw WS/orders to journal/ for backtest
+loop = "uvloop"                 # "uvloop" | "asyncio"
+
+[risk]
+max_total_exposure_usdc = 450.0     # sum of |position notional| + open buy notional
+max_event_group_loss_usdc = 400.0   # neg-risk group worst-case loss cap
+max_market_notional_usdc = 400.0     # per-market position+orders notional cap
+daily_loss_kill_usdc = 40.0         # realized daily loss -> halt new quotes
+ws_stale_halt_s = 10.0               # no book updates for this long -> halt market
+user_ws_blind_halt_s = 15.0          # user WS down this long -> pull all quotes (can't see fills)
+heartbeat_halt_failures = 3          # consecutive heartbeat misses -> halt + resync
+max_order_error_rate = 0.25          # rolling order-post error fraction -> halt
+
+[execution]
+rate_budget_fraction = 0.25     # fraction of documented API limits we allow
+post_only = true                # every quote is post-only (maker-only mandate)
+max_orders_per_batch = 15       # exchange batch cap
+
+[rdp_sm]
+normal_entry_mode = "ca_v1"
+ca_entry_execution = "taker"
+ca_entry_direction = "signal" # Buy the side that produced the eligible CA signal.
+# Seconds from market start; allow new NORMAL orders in [start, cutoff).
+normal_start_sec = 10.0
+normal_cutoff_sec = 200.0
+base_size = "5"
+sizing_mode = "fixed_shares" # fixed_shares: base_size; fixed_risk: risk_per_trade_usdc / entry limit.
+risk_per_trade_usdc = "5" # Maximum opening principal; fees and exit topups are separate.
+target_delta = "0"
+# MATCHED order remaining shares; price/inventory tolerances are separate.
+matched_remaining_tolerance_shares = 0.1
+
+[rdp_sm.ca_taker]
+entry_price_ceiling_enabled = true # Skip CA Taker opening prices at or above the ceiling.
+entry_price_ceiling = "0.80" # Exclusive: do not open a Taker position at or above 0.80.
+
+[rdp_sm.ca_matched_tp]
+enabled = true
+taker_exit_on_expiry = true # Cover original shares after expiry; top up to $1, reconcile before retry.
+restore_after_ba = true # Restore a fixed TP after the BA order is fully reconciled.
+# Opposite fixed maker BUY after the CA opening is MATCHED, before CONFIRMED.
+# Match actual quantity on the BA 0.01-share grid; top up at most 0.01 share.
+# Skip when entry >= 1 - profit_per_share (0.90).
+# A crossing TP target falls back to best bid; each submitted quote stays fixed.
+profit_per_share = "0.05"
+ttl_sec = 15.0 # From the first TP POST; restoration of the same CA lots cannot reset it.
+
+[rdp_sm.ba]
+out_of_order_tolerance_ms = 20.0 # Ignore late frames within this gap; 0 is strict.
+min_sell_shares = "5"
+min_depletion_shares = "5"
+min_refill_shares = "5"
+observation_sec = 0.75
+signal_lifetime_sec = 3.0
+max_sell_age_ms = 500.0
+max_book_age_ms = 200.0
+max_pair_skew_ms = 200.0
+max_entry_age_ms = 1000.0
+
+[rdp_sm.ba.network]
+post_budget_floor_ms = 750.0
+min_live_budget_ms = 500.0
+max_cancel_rtt_ms = 750.0
+
+[rdp_sm.ca_observe]
+# CA evidence/logging. ca_v1 uses CA for NORMAL; ba_v1 only observes it.
+# CA entry requires tC - t0 > 100ms; faster confirmations never age into eligibility.
+enabled = true
+min_buy_shares = "10"
+output_dir = "research_outputs/ca_observe"
+
+[rdp_sm.cooldown]
+max_sec = 0.0
+loss_sec_per_dollar = 100.0
+
+[rdp_sm.repair]
+# Exit policy: opposite_ba_v1 or hd_tp_sl_v1 (its full parameters remain below).
+policy = "opposite_ba_v1"
+ba_enabled = false # Disable BA orders/TP handoffs; keep CA entry and fixed TP active.
+delta_limit = "5"
+review_sec = 2.0
+cutoff_sec = 240.0 # No new REPAIR orders; cancel active pairing orders at this time.
+
+[rdp_sm.repair.opposite_ba]
+out_of_order_tolerance_ms = 20.0
+# Independent exit BA detector; fixed TP restoration is configured above.
+min_sell_shares = "5"
+min_depletion_shares = "5"
+min_refill_shares = "5"
+observation_sec = 0.75
+signal_lifetime_sec = 3.0
+max_sell_age_ms = 500.0
+max_book_age_ms = 200.0
+max_pair_skew_ms = 200.0
+max_entry_age_ms = 1000.0
+
+[rdp_sm.repair.opposite_ba_execution]
+enabled = true
+# Quote once at best ask - 1 tick, without an anchor-relative upper price cap.
+
+[rdp_sm.repair.opposite_ba.network]
+post_budget_floor_ms = 750.0
+min_live_budget_ms = 500.0
+max_cancel_rtt_ms = 750.0
+
+[rdp_sm.repair.inventory_lag]
+# 持仓接口滞后时的受限 REPAIR 容错；成交、订单及资金必须已完整核对。
+enabled = true
+# 启用时必须同时设为 true，确认本市场无其他程序或人工交易、转仓、结算。
+exclusive_market_writer = true
+grace_sec = 2.0
+max_unreported_shares = "5"
+
+[rdp_sm.repair.abandon_high_entry]
+enabled = true
+min_elapsed_sec = 140.0
+entry_price_threshold = "0.80"
+
+[rdp_sm.repair.path]
+# Independent exit controls; both false holds residual Delta without repair.
+tp_enabled = true
+sl_enabled = true
+tp_profit_rate = "0.002"
+shock_window_sec = 2.0
+shock_max_age_sec = 3.0
+shock_min_ticks = 2
+shock_z = 1.5
+drawdown_per_share = "0.06"
+# Execution acceptance for supervised live testing; this is not EV validation.
+calibration_status = "REPLAY_VALIDATED"
+parameter_reference = "docs/development/REPAIR_PARAMETER_PROPOSAL_20261019.md"
+validation_reference = "docs/development/reviews/20261019_sl_execution_recovery_fix/validation.json"
+
+[rdp_sm.obi]
+# Consecutive same-direction depth signals, counted separately in [0,60) and [60,120).
+normal_confirmations_before_60 = 1
+normal_confirmations_from_60 = 3
+# Historical field name: individual slow-request threshold; p95 is diagnostic only.
+max_rtt_p95_ms = 500.0
+network_recent_window_sec = 5.0
+network_slow_sample_count = 3
+network_slow_trigger_count = 2
+network_pause_sec = 2.0
+network_max_pause_sec = 8.0
+network_probe_interval_sec = 0.5
+
+[rdp_sm.sync_observe]
+enabled = true
+use_for_execution = true
+order_interval_s = 1.0
+account_interval_s = 2.0
+output_dir = "research_outputs/periodic_sync"
+
+[paths]
+db = "state.db"
+journal_dir = "journal"
+log_dir = "logs"

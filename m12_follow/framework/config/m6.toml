@@ -1,0 +1,27 @@
+# Shared M6 strategy contract. This implementation enables simulation only.
+strategy = "m6-withdrawal-supported-v1.1"
+minimum_price = "0.02"
+maximum_price = "0.20" # Exclusive; filter the original signal anchor.
+order_budget_usdc = 5
+session_budget_usdc = 10
+max_opportunities_per_direction = 1
+start_sec = 15
+cutoff_sec = 240
+close_sec = 300
+quantity_step = "0.1"
+post_budget_floor_ms = 400
+
+# Live membership is controlled separately from the baseline.
+[live_taker]
+attribution = "M6"
+ledger = "m6_withdrawal_supported_v1_1"
+order_budget_usdc = "1.50"
+session_budget_usdc = "3.00"
+max_opportunities_per_direction = 1
+pricing_policy = "FRESH_BEST_ASK_UNTIL_SIGNAL_DEADLINE_V1"
+
+[live_taker.price_risk]
+policy = "POST_SIGNED_LIMIT_CLOSED_BAND_V1"
+minimum = "0.01"
+maximum = "0.19"
+retry_policy = "WAIT_UNTIL_SIGNAL_DEADLINE_V1"

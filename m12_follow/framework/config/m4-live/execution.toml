@@ -1,0 +1,24 @@
+# Live only. Baseline continues to use config/m4.toml and its existing model.
+# Read at process startup; existing markets always restore their saved mode.
+# Changing this file never clears a manual/balance stop and never starts live.
+# Taker: one durable task per signal; each signed FAK is POSTed at most once.
+# Only exact owned orders/trades are queried. Remaining all-in cash retries until T240.
+# Confirmed debits and pending matches both consume the single 5 USDC task budget.
+# Unknown orders block that task; owned queries have an independent scheduling lane.
+# Each POST: quantity >= 5 shares OR signed notional strictly > 1 USDC.
+# Size from limit-price platform fees: planned principal + fee <= 5 USDC.
+# Actual debit may exceed 5 after improved-price extra shares (user accepted).
+# Market/cash admission still reserves worst-case debit and caps the market at 10.
+mode = "taker" # "maker" or "taker"
+# Require the strategy handoff for newly configured live Taker markets.
+require_opportunity_price_risk = true
+
+[taker]
+order_type = "FAK"
+max_anchor_slippage_ticks = 1
+budget_policy = "LIMIT_PRICE_FEE_PLAN_WITH_GROSS_RESERVE_V1"
+# From signal creation, keep anchor+1 tick for ten seconds. Then capture
+# fresh same-token Best ask for every new FAK; UNKNOWN must first be resolved.
+pricing_policy = "ANCHOR_10S_THEN_BEST_ASK_V1"
+anchor_wait_sec = 10
+# Price risk is supplied by the strategy's Opportunity from config/m4.toml.
