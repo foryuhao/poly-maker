@@ -10,12 +10,14 @@ from types import SimpleNamespace
 
 import pytest
 from m122124_hourly_watch import collect
-from m1223_pair_phase import PairRun
+from m1223_pair_phase import PairRun, archive_resume, prepare_resume
+from m1223_settlement_closeout import canonical_identity
 from m1223_shared72 import (
     MARKETS,
     MARKET_SECONDS,
     PREWARM_SECONDS,
     PUBLIC_ONLY_SAMPLE,
+    SCHEMA,
     MarketCapture,
     MarketEngines,
     RecordedMarketEngines,
@@ -27,7 +29,10 @@ from m1223_shared72 import (
 )
 from m1223_shared_storage import (
     FREE_RESERVE,
+    HANDOFF_FILE,
+    M12_ONLY,
     PAIR,
+    PHASE_DIRECTORY,
     STOP_HEADROOM,
     TAPE_RETENTION_SECONDS,
     Recorder,
@@ -45,9 +50,11 @@ from polymaker.m1234_sim.store import read_audit
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("group_class", [MarketEngines, RecordedMarketEngines])
-@pytest.mark.parametrize("participants", [("M12", "M21", "M24"), PAIR])
+@pytest.mark.parametrize("participants,protocol", [
+    (("M12", "M21", "M24"), None), (PAIR, "v1"), (PAIR, "v2"), (M12_ONLY, "v2"),
+])
 async def test_three_strategies_same_tape_anchor_entries_and_official_settlement(
-    tmp_path, monkeypatch, group_class, participants,
+    tmp_path, monkeypatch, group_class, participants, protocol,
 ):
     def forbidden(*args):
         pytest.fail("shared baseline accessed a local account journal")
@@ -60,10 +67,17 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
     assert settings["tape_retention_seconds"] == 86400
     initial = fixture_events()[0]
     definition = {**initial["definition"], "settings": settings}
+    if protocol:
+        definition["market_protocol"] = protocol
     wall = initial["available_wall"]
     identity = definition["market"]
     directory = tmp_path / identity["slug"]
     group = group_class(directory, settings, parameters, {"mode": "OFFLINE_FIXTURE"})
+    if participants == M12_ONLY and group_class is RecordedMarketEngines:
+        async def forbid_worker(*args, **kwargs):
+            pytest.fail("M12-only markets must seal without a replay worker")
+
+        monkeypatch.setattr("m1223_shared72.asyncio.create_subprocess_exec", forbid_worker)
     writer = Recorder(directory / "input.jsonl.zst", 8192)
 
     async def record(t, kind, **payload):
@@ -186,22 +200,23 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
         for market, orders in group.report().values():
             assert market["pending_settlement_orders"] == 1
             assert orders[0]["assumed_gross_pnl"] is None
-    await record(
-        301,
-        "SETTLEMENT",
-        raw={
-            "slug": identity["slug"],
-            "conditionId": identity["condition_id"],
-            "clobTokenIds": ["1", "2"],
-            "outcomePrices": ["1", "0"],
-            "closed": True,
-            "resolutionStatus": "resolved",
-        },
-    )
+    resolution = {"slug": identity["slug"], "conditionId": identity["condition_id"],
+                  "clobTokenIds": ["1", "2"], "outcomePrices": ["1", "0"],
+                  "closed": True, "resolutionStatus": "resolved"}
+    if protocol == "v1":
+        resolution.update(version="v1", outcomes='["Up","Down"]', umaResolutionStatus="resolved")
+    elif protocol == "v2":
+        resolution.update(version="v2", outcomes='["Down","Up"]', positionIds=["2", "1"],
+                          clobTokenIds='["71","72"]', outcomePrices='["0","1"]')
+        await record(300.5, "SETTLEMENT", raw={**resolution, "version": "v1"})
+        assert group.primary.resolution is None
+    await record(301, "SETTLEMENT", raw=resolution)
     writer.close()
     await group.close()
     if isinstance(group, RecordedMarketEngines):
         await group.materialize(writer.path)
+    frozen = canonical_identity(directory / "M12/simulation.sqlite3")
+    assert frozen.get("protocol_version") == protocol and frozen["token_ids"] == {"YES": "1", "NO": "2"}
     original = group.report()
     reread = list(read_tape(writer.path))
     for name, (market, orders) in original.items():
@@ -214,6 +229,11 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
         assert Decimal(order["assumed_filled_quantity"]) == 10
         assert "known_simulated_gross_pnl" not in order
         evidence = list(read_audit(directory / name / "simulation.sqlite3"))
+        if protocol == "v2":
+            rejected, resolved = [row["payload"] for row in evidence if row["kind"] == "OFFICIAL_RESULT"]
+            assert rejected["read_error"] == "PUBLIC_MARKET_VERSION_MISMATCH"
+            assert rejected["result"] is None
+            assert resolved["raw"] == resolution and resolved["result"]["position_ids"] == ["2", "1"]
         (admission,) = [row for row in evidence if row["kind"] == "ANCHOR_ENTRY"]
         (fill,) = [row for row in evidence if row["kind"] == "ASSUMED_FILL"]
         assert fill["input_seq"] == admission["input_seq"]
@@ -243,9 +263,10 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
     for ledger in sealed["ledgers"].values():
         assert (directory / ledger["file"]).is_file()
         assert not (directory / ledger["file"].removesuffix(".zst")).exists()
-    if participants == PAIR:
-        assert sealed["active_strategies"] == list(PAIR)
+    if participants in (PAIR, M12_ONLY):
+        assert sealed["active_strategies"] == list(participants)
         assert not (directory / "M24").exists()
+        assert (directory / "M21").exists() == (participants == PAIR)
         return
     if group_class is RecordedMarketEngines:
         pair_settings, pair_parameters = configuration(PAIR)
@@ -403,7 +424,7 @@ async def test_replay_timeout_uses_progress_not_total_wall_time(tmp_path, monkey
 
     monkeypatch.setattr("m1223_shared72.REPLAY_IDLE_SECONDS", 0.08)
     monkeypatch.setattr("asyncio.create_subprocess_exec", start)
-    group = RecordedMarketEngines(tmp_path, {}, {"M12": object()}, {})
+    group = RecordedMarketEngines(tmp_path, {}, {name: object() for name in ("M12", "M21", "M24")}, {})
     if stalls:
         with pytest.raises(StrategyReplayTimeout, match="STALLED_AT:1"):
             await group.materialize(Path("tape"))
@@ -470,7 +491,7 @@ async def test_next_market_survives_slow_or_timed_out_replay(
                     raise StrategyReplayTimeout("SHARED_STRATEGY_REPLAY_STALLED_AT:1")
 
         def seal(self):
-            return {"market": self.meta.slug, "complete_window": True, "official_winner": "YES"}
+            return {"market": self.meta.slug, "complete_window": True, "official_winner": "YES", "strategies": {}}
 
     monkeypatch.setattr("m1223_shared72.MarketCapture", Capture)
     monkeypatch.setattr(session, "server_now", lambda: 0)
@@ -579,6 +600,69 @@ async def test_continuation_captures_only_tail_and_reports_both_segments(tmp_pat
     assert json.loads((tmp_path / "completion.json").read_text()) == legacy_terminal
     assert json.loads((tmp_path / "continuation-completion.json").read_text()) == terminal
     assert json.loads((tmp_path / "plan.json").read_text())["market_epochs"] == [300, 600, 900, 1200]
+
+
+def test_pair_resume_retains_handoff_archive_and_original_schedule(tmp_path):
+    settings, _ = configuration(PAIR)
+    phase = tmp_path / PHASE_DIRECTORY
+    phase.mkdir()
+    handoff = {"state": "ACTIVE", "cutoff_epoch": 300, "strategies": list(PAIR)}
+    (phase / HANDOFF_FILE).write_text(json.dumps(handoff))
+    plan = {"path": str(phase), "mode": "SIMULATION_ONLY_PUBLIC_DATA", "schema": SCHEMA,
+            "settings": {**settings, "implementation": {}}, "market_epochs": [300, 600, 900, 1200]}
+    (phase / "plan.json").write_text(json.dumps(plan))
+    terminal = {"errors": [], "peak_bytes": 1}
+    (phase / "completion.json").write_text(json.dumps(terminal))
+    runtime = tmp_path / "frozen"
+    (runtime / "ops").mkdir(parents=True)
+    (runtime / "ops/m1223_shared_worker.py").touch()
+    occupied = phase / "btc-updown-5m-900"
+    occupied.mkdir()
+    with pytest.raises(ValueError, match="OVERLAPS_EXISTING_MARKET"):
+        prepare_resume(tmp_path, settings, 900, runtime)
+
+    saved, resume = prepare_resume(tmp_path, settings, 1200, runtime)
+    resume = archive_resume(phase, saved, resume)
+    assert resume["cutoff"] == 300 and resume["predecessor"]["market_epochs"] == [300, 600, 900]
+    assert json.loads((phase / HANDOFF_FILE).read_text()) == handoff
+    assert json.loads((phase / "plan.json").read_text()) == plan
+    assert json.loads((resume["replay_plan"].parent / "completion.json").read_text()) == terminal
+    assert not (phase / "completion.json").exists()
+    assert occupied.is_dir()
+
+
+def test_resume_only_m12_after_pair_and_keep_historical_reporting(tmp_path):
+    settings, _ = configuration(M12_ONLY)
+    before, _ = configuration(PAIR)
+    phase = tmp_path / PHASE_DIRECTORY
+    phase.mkdir()
+    (phase / HANDOFF_FILE).write_text('{"state":"ACTIVE","cutoff_epoch":300,"strategies":["M12","M21"]}')
+    epochs = [300, 600, 900]
+    (tmp_path / "plan.json").write_text(json.dumps({"market_epochs": epochs}))
+    plan = {"path": str(phase), "mode": "SIMULATION_ONLY_PUBLIC_DATA", "schema": SCHEMA,
+            "settings": before, "market_epochs": epochs, "continuation_start_epoch": 600,
+            "continuation_settings": {**before, "implementation": {}}}
+    (phase / "plan.json").write_text(json.dumps(plan))
+    runtime = tmp_path / "frozen"
+    (runtime / "ops").mkdir(parents=True)
+    (runtime / "ops/m1223_shared_worker.py").touch()
+    prior, resume = prepare_resume(tmp_path, settings, 900, runtime, M12_ONLY)
+    resume = archive_resume(phase, prior, resume)
+    assert resume["m21_stop_epoch"] == 900 and resume["previous_strategies"] == PAIR
+    assert json.loads(resume["replay_plan"].read_text())["continuation_start_epoch"] == 600
+    (phase / "plan.json").write_text(json.dumps({**plan, "m21_stop_epoch": 900}))
+    for epoch, labels in ((300, PAIR), (600, PAIR), (900, M12_ONLY)):
+        slug = f"btc-updown-5m-{epoch}"
+        directory = phase / slug
+        directory.mkdir()
+        report = {"market": slug, "complete_window": True, "official_winner": "YES",
+                  "active_strategies": list(labels), "strategies": {
+                      name: [{"complete": True, "status": "SEALED", "signal_count": 1,
+                              "signal_ids": [name], "assumed_orders": 0}, []] for name in labels}}
+        (directory / "market-report.json").write_text(json.dumps(report))
+    result = collect(tmp_path, {}, {}, datetime.fromtimestamp(1200, timezone.utc))
+    assert result["sealed_markets"] == 3 and result["m21_stop_epoch"] == 900
+    assert result["rows"]["M12"]["signals"] == 3 and result["rows"]["M21"]["signals"] == 2
 
 
 def test_hourly_report_waits_for_continuation_completion(tmp_path):

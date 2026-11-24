@@ -94,11 +94,13 @@ def canonical_identity(database):
         payload = db.execute("SELECT payload FROM audit WHERE kind='DEFINITION'").fetchone()
     if payload is None:
         raise ValueError("FROZEN_MARKET_IDENTITY_UNAVAILABLE")
-    meta = market_meta(json.loads(payload[0])["definition"]["market"])
+    definition = json.loads(payload[0])["definition"]
+    meta = market_meta(definition["market"])
     return {
         "slug": meta.slug,
         "condition_id": meta.condition_id,
         "token_ids": {"YES": meta.yes.token_id, "NO": meta.no.token_id},
+        **({"protocol_version": definition["market_protocol"]} if "market_protocol" in definition else {}),
     }
 
 
@@ -115,11 +117,10 @@ def write_csv(path, rows):
 
 
 async def fetch_official(identities):
-    from polymaker.dashboard.settlement import validate_resolution
-    from polymaker.m1_virtual_api import VirtualPublicAPI
+    from m1223_public_protocol import BaselinePublicAPI, validate_resolution
 
     observations, failovers = [], []
-    api = VirtualPublicAPI(on_failover=lambda *args: failovers.append(args))
+    api = BaselinePublicAPI(on_failover=lambda *args: failovers.append(args))
     try:
         for market, identity in identities.items():
             observed = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat()

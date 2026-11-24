@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 import resource
 import shutil
 import signal
@@ -16,12 +17,15 @@ from contextlib import suppress
 from dataclasses import asdict
 from pathlib import Path
 
+import m1223_public_protocol
 import m1223_shared_storage
 import websockets
 from m1223_execution import ANCHOR_FILL_MODEL
+from m1223_public_protocol import BaselinePublicAPI, PublicMarketError, validate_resolution
 from m1223_report import market_result, summary
 from m1223_shared_storage import (
     FREE_RESERVE,
+    M12_ONLY,
     PAIR,
     TAPE_RETENTION_SECONDS,
     Recorder,
@@ -104,6 +108,7 @@ def configuration(strategies=tuple(VARIANTS)):
         strategy_definitions=versions,
         strategy_revisions=documents,
         coordinator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        public_protocol_sha256=hashlib.sha256(Path(m1223_public_protocol.__file__).read_bytes()).hexdigest(),
         storage_sha256=hashlib.sha256(Path(m1223_shared_storage.__file__).read_bytes()).hexdigest(),
         worker_sha256=hashlib.sha256(
             Path(__file__).with_name("m1223_shared_worker.py").read_bytes()
@@ -111,6 +116,19 @@ def configuration(strategies=tuple(VARIANTS)):
         storage_encoding="ZSTD6_LONG24_ONE_INPUT_AND_ONE_LEDGER_PER_STRATEGY",
     )
     return settings, parameters
+
+
+class SharedSopEngine(SopEngine):
+    def resolve_official_result(self, raw, identity):
+        version = self.definition.get("market_protocol")
+        if version is None or not isinstance(raw, dict):
+            return super().resolve_official_result(raw, identity)
+        try:
+            return validate_resolution(raw, {**identity, "protocol_version": version}), None
+        except PublicMarketError as exc:
+            # Record rejected evidence in both ledgers and let the capture retry
+            # on the same identity. It cannot settle an order or invalidate the tape.
+            return None, str(exc)
 
 
 class MarketEngines:
@@ -137,7 +155,7 @@ class MarketEngines:
                 raise ValueError("SHARED_BASELINE_SETTINGS_MISMATCH")
             for strategy, parameters in self.parameters.items():
                 sop = recorded["strategy_definitions"][strategy]
-                engine = SopEngine(
+                engine = SharedSopEngine(
                     self.directory / strategy,
                     parameters=parameters,
                     execution=recorded["sop_execution"],
@@ -227,8 +245,8 @@ def seal_market(directory, tape, input_seq, slug, group):
         "complete_window": all(s["complete"] for s in states.values()),
         "official_winner": (states["M12"]["resolution"] or {}).get("winner"),
     }
-    if group.participants == PAIR:
-        result["active_strategies"] = list(PAIR)
+    if group.participants != tuple(VARIANTS):
+        result["active_strategies"] = list(group.participants)
     write_json(directory / "market-report.json", result)
     return result
 
@@ -246,8 +264,16 @@ class RecordedMarketEngines(MarketEngines):
         self.worker_states = {}
         self.replay_input_seq = 0
 
-    async def materialize(self, tape, *, original_plan=None):
+    async def materialize(self, tape, *, original_plan=None, previous_runtime=None):
+        if self.participants == M12_ONLY:
+            return
         worker = Path(__file__).with_name("m1223_shared_worker.py")
+        environment = None
+        if previous_runtime is not None:
+            worker = previous_runtime / "ops" / worker.name
+            environment = {**os.environ, "PYTHONPATH": os.pathsep.join(
+                str(previous_runtime / name) for name in ("ops", "research", "src")
+            )}
         options = []
         if self.participants == PAIR:
             options.append("--pair")
@@ -255,7 +281,8 @@ class RecordedMarketEngines(MarketEngines):
             options.extend(("--original-plan", str(original_plan)))
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-B", str(worker), str(self.directory), str(tape),
-            encode(self.owner), *options, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            encode(self.owner), *options, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, env=environment,
         )
         try:
             watermark, states = 0, None
@@ -455,13 +482,16 @@ class MarketCapture:
 
     async def capture(self):
         observed_clock = self.session.public_clock
+        market = asdict(self.meta)
+        protocol = market.pop("protocol_version", None)
         await self.record(
             None,
             "INIT",
             definition={
                 "model": MODEL,
                 "input_schema": INPUT_SCHEMA,
-                "market": asdict(self.meta),
+                "market": market,
+                **({"market_protocol": protocol} if protocol is not None else {}),
                 "official_clock": observed_clock,
                 "ticks": {t: str(v) for t, v in self.ticks.items()},
                 "settings": self.cfg,
@@ -476,7 +506,7 @@ class MarketCapture:
         )
         last_timer = last_pulse = time.monotonic()
         processed = 0
-        log_warm = self.group.participants == PAIR
+        log_warm = self.group.participants in (PAIR, M12_ONLY)
         try:
             while not self.session.stop.is_set():
                 if self.task.done():
@@ -583,10 +613,11 @@ class SharedRun:
     def __init__(self, output, root, settings, parameters, api=None, feed_factory=None,
                  predecessor=None, *, scheduled_end=None):
         self.output, self.root, self.settings, self.parameters = output, root, settings, parameters
-        self.api = api if api is not None else runner.VirtualPublicAPI()
+        self.api = api if api is not None else BaselinePublicAPI()
         self.feed_factory = feed_factory or SharedCaptureFeed
         self.owner = {"schema": SCHEMA, "mode": "SIMULATION_ONLY_PUBLIC_DATA", "path": str(output)}
         self.predecessor = predecessor
+        self.completion_file = "continuation-completion.json" if predecessor else "completion.json"
         self.scheduled_end = scheduled_end
         self.stop, self.stop_reason = asyncio.Event(), None
         self.public_clock = None
@@ -675,23 +706,43 @@ class SharedRun:
             await asyncio.sleep(1)
 
     async def prepare(self, slug, epoch):
-        while not self.stop.is_set() and self.server_now() < epoch + 15:
+        deadline = epoch + 15
+        meta, protocol = None, None
+        while not self.stop.is_set() and (remaining := deadline - self.server_now()) > 0:
             try:
-                meta = await asyncio.wait_for(self.api.market(slug), timeout=4)
-                if meta.slug != slug:
-                    raise ValueError("SHARED_PUBLIC_MARKET_IDENTITY_CHANGED")
+                if meta is None:
+                    discovered = await asyncio.wait_for(self.api.market(slug), timeout=min(4, remaining))
+                    if discovered.slug != slug:
+                        raise PublicMarketError("SHARED_PUBLIC_MARKET_IDENTITY_CHANGED")
+                    version = discovered.protocol_version
+                    if protocol is not None and protocol != version:
+                        raise PublicMarketError("PUBLIC_MARKET_VERSION_MISMATCH")
+                    protocol = version
+                    meta = discovered
+                    self.log("MARKET_PROTOCOL_SELECTED", market=slug,
+                             protocol=protocol,
+                             asset_ids=[token.token_id for token in meta.tokens])
+                remaining = deadline - self.server_now()
+                if remaining <= 0:
+                    break
                 requested = [token.token_id for token in meta.tokens]
-                ticks = await asyncio.wait_for(self.api.ticks(requested), timeout=4)
+                ticks = await asyncio.wait_for(self.api.ticks(requested), timeout=min(4, remaining))
                 if set(ticks) != set(requested):
-                    raise ValueError("SHARED_PUBLIC_TICK_TOKEN_SET_CHANGED")
+                    raise PublicMarketError("SHARED_PUBLIC_TICK_TOKEN_SET_CHANGED")
                 return meta, ticks
-            except (TimeoutError, OSError, runner.httpx.TransportError) as exc:
-                self.log("MARKET_PREPARE_RETRY", market=slug, error=type(exc).__name__)
+            except (TimeoutError, OSError, runner.httpx.TransportError, PublicMarketError) as exc:
+                error = type(exc).__name__
+                if isinstance(exc, PublicMarketError):
+                    protocol = protocol or exc.protocol_version
+                    error = str(exc)
+                self.log("MARKET_PREPARE_RETRY", market=slug, protocol=protocol, error=error)
                 await asyncio.sleep(0.25)
             except runner.httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in (404, 429, 500, 502, 503, 504):
-                    raise
-                self.log("MARKET_PREPARE_RETRY", market=slug, status=exc.response.status_code)
+                status = exc.response.status_code
+                if status not in (404, 408, 429, 500, 502, 503, 504):
+                    self.log("MARKET_PREPARE_UNAVAILABLE", market=slug, protocol=protocol, status=status)
+                    return None
+                self.log("MARKET_PREPARE_RETRY", market=slug, protocol=protocol, status=status)
                 await asyncio.sleep(0.5)
         return None
 
@@ -763,6 +814,9 @@ class SharedRun:
     def accept_capture_for_replay(self, capture):
         return True
 
+    def plan_fields(self):
+        return {}
+
     async def run(self):
         loops = []
         epochs = []
@@ -789,7 +843,7 @@ class SharedRun:
             )
             capture_epochs = list(range(first, first + remaining * MARKET_SECONDS, MARKET_SECONDS))
             epochs = [*prior_epochs, *capture_epochs]
-            plan = {**self.owner, "market_epochs": epochs, "settings": self.settings}
+            plan = {**self.owner, "market_epochs": epochs, "settings": self.settings, **self.plan_fields()}
             if self.predecessor:
                 plan.update(
                     settings=self.predecessor["settings"],
@@ -864,9 +918,11 @@ class SharedRun:
             if row["complete_window"] and row["official_winner"]
         ]
         metrics = {}
-        for name in self.parameters:
-            orders = [order for row in common for order in row["strategies"][name][1]]
-            signals = sum(row["strategies"][name][0]["signal_count"] for row in common)
+        strategies = set(self.parameters) | {name for row in common for name in row["strategies"]}
+        for name in sorted(strategies):
+            ledgers = [row["strategies"][name] for row in common if name in row["strategies"]]
+            orders = [order for _, entries in ledgers for order in entries]
+            signals = sum(ledger["signal_count"] for ledger, _ in ledgers)
             metrics[name] = {"anchor": summary(orders, signals, "anchor")}
         expected = [f"btc-updown-5m-{epoch}" for epoch in epochs]
         terminal = {
@@ -893,8 +949,7 @@ class SharedRun:
             "errors": self.errors,
             "real_orders": 0,
         }
-        name = "continuation-completion.json" if self.predecessor else "completion.json"
-        write_json(self.output / name, terminal)
+        write_json(self.output / self.completion_file, terminal)
         return terminal
 
 

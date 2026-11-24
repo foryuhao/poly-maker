@@ -20,6 +20,7 @@ STOP_HEADROOM = 256 * 1024**2
 TAPE_RETENTION_SECONDS = 24 * 60 * 60
 BASELINE_STRATEGIES = ("M12", "M21", "M24")
 PAIR = ("M12", "M21")
+M12_ONLY = ("M12",)
 PHASE_DIRECTORY = "m12-m21-phase"
 HANDOFF_FILE = "m12-m21-handoff.json"
 ZSTD = ("zstd", "-q", "--single-thread", "-6", "--long=24", "--check", "-c")

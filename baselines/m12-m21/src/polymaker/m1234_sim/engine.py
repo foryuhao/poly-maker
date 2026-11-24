@@ -103,6 +103,11 @@ class Engine:
                 self.invalidate(exc, event.get("kind"))
             raise
 
+    def resolve_official_result(self, raw, identity):
+        if not isinstance(raw, dict):
+            return None, "PUBLIC_RESOLUTION_RESPONSE_NOT_OBJECT"
+        return validate_resolution(raw, identity), None
+
     def invalidate(self, error, input_kind):
         if self.validity["status"] != "INVALID":
             failure = {
@@ -276,7 +281,7 @@ class Engine:
             # Public Gamma can temporarily return JSON null/non-object payloads.
             # Keep the raw response and retry while leaving settlement unresolved.
             raw = event["raw"]
-            result = validate_resolution(raw, identity) if isinstance(raw, dict) else None
+            result, read_error = self.resolve_official_result(raw, identity)
             if result:
                 result["observed_at"] = self.clock.wall
                 if self.resolution is not None and result["winner"] != self.resolution["winner"]:
@@ -286,8 +291,8 @@ class Engine:
                 for broker in self.brokers.values():
                     broker.settle(result["winner"])
             payload = {"result": result, "raw": raw}
-            if not isinstance(raw, dict):
-                payload["read_error"] = "PUBLIC_RESOLUTION_RESPONSE_NOT_OBJECT"
+            if read_error:
+                payload["read_error"] = read_error
             self.emit("OFFICIAL_RESULT", payload)
         elif kind != "RESOURCE":
             raise ValueError("SIM_UNKNOWN_EVENT:" + kind)

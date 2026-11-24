@@ -12,10 +12,10 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from m1223_public_protocol import BaselinePublicAPI, validate_resolution
 from m1223_settlement_closeout import canonical_identity, sha256
-from m1223_shared_storage import BASELINE_STRATEGIES, HANDOFF_FILE, PAIR, PHASE_DIRECTORY
+from m1223_shared_storage import BASELINE_STRATEGIES, HANDOFF_FILE, M12_ONLY, PAIR, PHASE_DIRECTORY
 from polymaker.m6_baseline.control import atomic_json
-from polymaker.maker_public import VirtualPublicAPI, validate_resolution
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -43,7 +43,7 @@ def identity(directory, ledger, copy):
 async def public_results(identities):
     if not identities:
         return {}, {}
-    api = VirtualPublicAPI()
+    api = BaselinePublicAPI()
     found, errors = {}, Counter()
     limit = asyncio.Semaphore(6)
 
@@ -56,7 +56,11 @@ async def public_results(identities):
             for market in response.json():
                 slug = market["slug"]
                 if slug in slugs:
-                    proof = validate_resolution(market, identities[slug])
+                    try:
+                        proof = validate_resolution(market, identities[slug])
+                    except ValueError as exc:
+                        errors[type(exc).__name__] += 1
+                        continue
                     if proof:
                         found[slug] = proof
         except Exception as exc:
@@ -108,6 +112,9 @@ def collect(run, previous, public, now):
     cutoff = handoff["cutoff_epoch"] if handoff.get("state") == "ACTIVE" else None
     if cutoff is not None and (cutoff not in plan or tuple(handoff["strategies"]) != PAIR):
         raise ValueError("Invalid baseline strategy handoff")
+    m21_stop = read(phase / "plan.json").get("m21_stop_epoch") if cutoff is not None else None
+    if m21_stop is not None and (m21_stop not in plan or m21_stop <= cutoff):
+        raise ValueError("Invalid M21 baseline cutoff")
     completion = read(phase / "completion.json" if cutoff is not None else run / completion_name)
     observed = phase if cutoff is not None else run
     last_observed = max((int(p.name.rsplit("-", 1)[-1]) for p in observed.glob("btc-updown-5m-*")), default=None)
@@ -122,6 +129,8 @@ def collect(run, previous, public, now):
             continue
         stats = report["strategies"]
         participants = STRATEGIES if directory.parent == run else PAIR
+        if m21_stop is not None and epoch >= m21_stop:
+            participants = M12_ONLY
         if set(stats) != set(participants) or tuple(report.get("active_strategies", STRATEGIES)) != participants:
             raise ValueError(f"Unexpected strategy coverage for {slug}")
         if not report["complete_window"] or any(
@@ -193,6 +202,7 @@ def collect(run, previous, public, now):
         "sealed_markets": len(sealed), "unsealed_markets": unsealed, "incomplete_markets": incomplete,
         "previous_snapshot": previous.get("snapshot"), "rows": rows, "public_read_errors": errors,
         "pair_from_epoch": cutoff,
+        "m21_stop_epoch": m21_stop,
         "run_finished": bool(completion),
         "final": bool(completion) and not any(row["pending"] for row in rows.values()),
     }
@@ -231,6 +241,8 @@ def render(report, path):
     notes = [f"已按官方结果结算 **{settled} 笔**。毛 PnL 未扣手续费和滑点。"]
     if report.get("pair_from_epoch") is not None:
         notes.append(f"M24 保留原有已封账记录，自 {timestamp(report['pair_from_epoch'])} 起由 M12、M21 继续采集。")
+    if report.get("m21_stop_epoch") is not None:
+        notes.append(f"自 {timestamp(report['m21_stop_epoch'])} 起仅运行 M12，M21 保留历史已封账记录。")
     if pending:
         pending_by_strategy = "、".join(
             f"{label} {row['pending']} 笔" for label, row in report["rows"].items() if row["pending"]
