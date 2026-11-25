@@ -62,6 +62,36 @@ def test_follow_fak_cash_and_cap(remaining, price, at_cap, expected):
     assert cash <= Decimal(remaining) and cash / shares <= Decimal(price)
 
 
+@pytest.mark.parametrize("limit,reported,shares,principal", [
+    (".89", ".8900000141691695", "2.117273", "1.884373"),
+    (".73", ".7300000386970629", "5.685186", "4.150186"),
+    (".73", ".7300002", "5.685186", None),
+    (".73", ".74", ".000001", None),
+])
+def test_follow_maker_fill_price_precision(limit, reported, shares, principal):
+    from polymaker.m4_live_numeric import maker_fill_event
+    from polymaker.userstream.parse import parse_trade
+
+    trade = parse_trade({
+        "id": "confirmed-maker-fill", "market": "market", "status": "CONFIRMED",
+        "trader_side": "MAKER", "taker_order_id": "foreign-taker", "asset_id": "opposite",
+        "side": "BUY", "maker_orders": [{
+            "order_id": "owned-order", "maker_address": "funder", "asset_id": "token",
+            "side": "BUY", "price": reported, "matched_amount": shares,
+        }],
+    })
+    spec = {"market_id": "market", "token_id": "token", "price": Decimal(limit),
+            "quantity": Decimal("7"), "fees": {"rate": ".05", "exponent": 1}}
+    if principal is None:
+        with pytest.raises(ValueError, match="M12_MAKER_LEG_CONFLICT"):
+            maker_fill_event(trade, spec, "owned-order", "funder")
+        return
+    fill, tolerance, fee_ceiling = maker_fill_event(trade, spec, "owned-order", "funder")
+    assert fill.status.value == "CONFIRMED" and fill.size == float(shares)
+    assert fill.price == float(limit) and fill.principal_usdc == principal
+    assert Decimal(fill.fee_usdc) == tolerance == fee_ceiling == 0
+
+
 def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
     clock = SimpleNamespace(now=1.0)
     monkeypatch.setattr(sqlite_source, "time", SimpleNamespace(monotonic=lambda: clock.now))
@@ -549,7 +579,7 @@ async def verify_replace(market, executor, ledger, op, intent, append, original,
         await market.submit(newest)
         assert len(posts) == 1
         maker = {**take, "id": "rest-fill", "taker_order_id": "external", "trader_side": "MAKER", "asset_id": "2", "side": "BUY",
-                 "maker_orders": [{"order_id": oid, "asset_id": "1", "side": "BUY", "price": ".75",
+                 "maker_orders": [{"order_id": oid, "asset_id": "1", "side": "BUY", "price": ".75000001",
                                    "matched_amount": "1", "maker_address": executor.gateway.funder}]}
         order.update(status="CANCELED", size_matched="3", associate_trades=[take["id"], maker["id"]])
         trades[maker["id"]] = maker

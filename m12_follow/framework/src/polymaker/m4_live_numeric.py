@@ -254,16 +254,22 @@ def maker_fill_event(trade, spec, oid, funder):
         raise ValueError("M12_MAKER_TRADE_IDENTITY_INVALID")
     leg = legs[0]
     px, qty = decimal(leg["price"]), units(leg["matched_amount"])
+    signed_price = spec["price"]
     if (leg["asset_id"] != spec["token_id"] or leg["side"].upper() != "BUY"
             or str(leg.get("maker_address", funder)).lower() != funder.lower()
-            or px != spec["price"] or not 0 < qty <= spec["quantity"]):
+            or not 0 < qty <= spec["quantity"]):
+        raise ValueError("M12_MAKER_LEG_CONFLICT")
+    # The venue can express its rounded cash amount as an implied unit price.
+    # Accept only a sub-tick representation with exactly the same cash units.
+    principal = units(qty * signed_price)
+    if abs(px - signed_price) > MICRO or units(qty * px) != principal:
         raise ValueError("M12_MAKER_LEG_CONFLICT")
     fee = units(leg.get("fee_usdc", 0))
     if fee != ZERO:
         raise ValueError("M12_MAKER_FEE_CONFLICT")
-    event = TradeEvent(spec["token_id"], Side.BUY, float(px), float(qty), trade.trade_id,
+    event = TradeEvent(spec["token_id"], Side.BUY, float(signed_price), float(qty), trade.trade_id,
                        trade.status, trade.timestamp, oid, trade.market, "MAKER",
-                       str(units(qty * px)), str(fee))
+                       str(principal), str(fee))
     validate_cash_fills([event], spec)
     return event, ZERO, ZERO
 
