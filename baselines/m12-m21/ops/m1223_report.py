@@ -40,7 +40,7 @@ def install_report_compatibility():
     report.execution_version = execution_version
 
 
-def market_result(path, project, *, eligibility=None):
+def market_result(path, project, *, eligibility=None, expected_input_seq=None):
     from polymaker.m1234_sim.validity import database_validity
 
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
@@ -49,6 +49,11 @@ def market_result(path, project, *, eligibility=None):
         watermark = db.execute("SELECT MAX(input_seq) FROM audit").fetchone()[0]
         row = db.execute("SELECT payload FROM snapshots WHERE name='state'").fetchone()
         state = json.loads(row[0]) if row else None
+        if expected_input_seq is not None:
+            if watermark != expected_input_seq or not state or state["input_seq"] != expected_input_seq:
+                raise ValueError("BASELINE_V2_COMMITTED_WATERMARK_MISMATCH")
+            if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise ValueError("BASELINE_V2_SQLITE_INTEGRITY_FAILED")
         gate_row = db.execute(
             "SELECT payload FROM metadata WHERE name='research_sample_eligibility'"
         ).fetchone()
@@ -66,6 +71,8 @@ def market_result(path, project, *, eligibility=None):
                 ('QUALITY_UNKNOWN','ROUND_UNKNOWN','LW_UNKNOWN','ROOT_UNKNOWN','SEED_UNKNOWN') GROUP BY 1""")
         )
         verified = database_validity(path, state, connection=db) if state is not None else None
+    if expected_input_seq is not None and not any(kind == "OBSERVATION_END" for _, kind, _ in audit):
+        raise ValueError("BASELINE_V2_OBSERVATION_NOT_COMMITTED")
     definition = next((p["definition"] for _, k, p in audit if k == "DEFINITION"), None)
     if definition is None:
         return {

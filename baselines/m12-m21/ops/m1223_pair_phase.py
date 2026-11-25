@@ -1,4 +1,4 @@
-"""Continue an active three-strategy public baseline with M12 and M21."""
+"""Continue the public baseline with M12 and M21, or M12 on Baseline V2."""
 
 import argparse
 import asyncio
@@ -11,17 +11,18 @@ import sqlite3
 import subprocess
 import tempfile
 import time
-from filecmp import cmp
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
 from m1223_shared72 import (
+    BASELINE_V2,
     MARKET_SECONDS,
     SCHEMA,
     RecordedMarketEngines,
     SharedRun,
     configuration,
+    publish_recovered_market,
     seal_market,
 )
 from m1223_shared_storage import HANDOFF_FILE, M12_ONLY, PAIR, PHASE_DIRECTORY, prune_expired_tapes, storage_status
@@ -92,6 +93,7 @@ class PairRun(SharedRun):
         self.resume = resume
         self.cutoff = resume["cutoff"] if resume else None
         self.m21_stop_epoch = resume.get("m21_stop_epoch") if resume else None
+        self.baseline_v2_start_epoch = resume.get("baseline_v2_start_epoch") if resume else None
         self.completion_file = "completion.json"
         if resume and resume["previous_completion"]:
             previous = resume["previous_completion"]
@@ -142,7 +144,12 @@ class PairRun(SharedRun):
         return {key: old[key] + new[key] for key in old}
 
     def plan_fields(self):
-        return {"m21_stop_epoch": self.m21_stop_epoch} if self.m21_stop_epoch is not None else {}
+        return {
+            name: value for name, value in (
+                ("m21_stop_epoch", self.m21_stop_epoch),
+                ("baseline_v2_start_epoch", self.baseline_v2_start_epoch),
+            ) if value is not None
+        }
 
     def accept_capture_for_replay(self, capture):
         return int(capture.meta.slug.rsplit("-", 1)[1]) >= self.cutoff
@@ -169,7 +176,7 @@ class PairRun(SharedRun):
             stage.rename(target)
         self.log("MARKET_SEALED", market=slug, input_seq=input_seq, recovered=True)
 
-    async def recover_previous_pair(self, slug, input_seq):
+    async def recover_previous_market(self, slug, input_seq):
         target = self.output / slug
         with tempfile.TemporaryDirectory(prefix=".resume-", dir=self.output) as temporary:
             stage = Path(temporary) / slug
@@ -186,22 +193,14 @@ class PairRun(SharedRun):
             await group.materialize(tape, original_plan=self.resume["replay_plan"],
                                     previous_runtime=self.resume["previous_runtime"])
             report = await asyncio.to_thread(seal_market, stage, tape, input_seq, slug, group)
-            for ledger in report["ledgers"].values():
-                dest = target / ledger["file"]
-                dest.parent.mkdir(exist_ok=True)
-                if dest.exists():
-                    if not await asyncio.to_thread(cmp, stage / ledger["file"], dest, shallow=False):
-                        raise ValueError(f"PAIR_RESUME_ARCHIVE_CONFLICT:{dest.name}")
-                else:
-                    os.link(stage / ledger["file"], dest)
-            os.link(stage / "market-report.json", target / "market-report.json")
+            await asyncio.to_thread(publish_recovered_market, stage, target, report)
             self.reports[slug] = report
         self.log("MARKET_SEALED", market=slug, input_seq=input_seq, recovered=True)
 
     async def materialize_closed_markets(self):
         if self.resume:
             pending = await asyncio.to_thread(backlog, self.output, self.resume["first"])
-            recover = self.recover_previous_pair
+            recover = self.recover_previous_market
         else:
             try:
                 await self.handoff()
@@ -224,6 +223,11 @@ class PairRun(SharedRun):
             finally:
                 self.replaying = None
         await super().materialize_closed_markets()
+
+    def v2_recovery_epochs(self):
+        if self.baseline_v2_start_epoch is None:
+            return ()
+        return range(self.baseline_v2_start_epoch, self.resume["first"], MARKET_SECONDS)
 
 
 def prepare_resume(original, settings, epoch, previous_runtime, strategies=PAIR):
@@ -254,7 +258,11 @@ def prepare_resume(original, settings, epoch, previous_runtime, strategies=PAIR)
            for tail in plan["market_epochs"] if tail >= epoch):
         raise ValueError("PAIR_RESUME_OVERLAPS_EXISTING_MARKET")
     m21_stop = plan.get("m21_stop_epoch", epoch) if strategies == M12_ONLY else None
+    v2_start = None
+    if settings.get("baseline_architecture") == BASELINE_V2:
+        v2_start = plan.get("baseline_v2_start_epoch", epoch)
     return plan, {"first": epoch, "cutoff": handoff["cutoff_epoch"], "m21_stop_epoch": m21_stop,
+                  "baseline_v2_start_epoch": v2_start,
                   "previous_runtime": previous_runtime,
                   "previous_strategies": previous_strategies,
                   "predecessor": {"settings": plan["settings"],
@@ -282,7 +290,7 @@ def main():
     parser.add_argument("--resume-at", type=int)
     parser.add_argument("--previous-runtime", type=Path)
     parser.add_argument("--check-resume", action="store_true")
-    parser.add_argument("--m12-only", action="store_true")
+    parser.add_argument("--m12-only", action="store_true", help="run M12 on Baseline V2 without raw archives")
     args = parser.parse_args()
     original = args.run_directory.resolve(strict=True)
     plan = json.loads((original / "plan.json").read_text())

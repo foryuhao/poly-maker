@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from m1223_public_protocol import BaselinePublicAPI, validate_resolution
 from m1223_settlement_closeout import canonical_identity, sha256
+from m1223_shared72 import BASELINE_V2
 from m1223_shared_storage import BASELINE_STRATEGIES, HANDOFF_FILE, M12_ONLY, PAIR, PHASE_DIRECTORY
 from polymaker.m6_baseline.control import atomic_json
 
@@ -101,7 +102,11 @@ def market_directory(run, epoch, cutoff):
 def collect(run, previous, public, now):
     run_plan = read(run / "plan.json")
     plan = run_plan["market_epochs"]
-    signals, orders = Counter(), {label: [] for label in STRATEGIES}
+    standalone = run_plan.get("baseline_architecture") == BASELINE_V2
+    if standalone and tuple(run_plan["settings"]["strategy_definitions"]) != (run_plan["strategy"],):
+        raise ValueError("Invalid standalone baseline strategy")
+    labels = (run_plan["strategy"],) if standalone else STRATEGIES
+    signals, orders = Counter(), {label: [] for label in labels}
     sealed, unsealed, incomplete = [], [], []
     sources, official = {}, {}
     completion_name = (
@@ -110,7 +115,7 @@ def collect(run, previous, public, now):
     phase = run / PHASE_DIRECTORY
     handoff = read(phase / HANDOFF_FILE)
     cutoff = handoff["cutoff_epoch"] if handoff.get("state") == "ACTIVE" else None
-    if cutoff is not None and (cutoff not in plan or tuple(handoff["strategies"]) != PAIR):
+    if cutoff is not None and (standalone or cutoff not in plan or tuple(handoff["strategies"]) != PAIR):
         raise ValueError("Invalid baseline strategy handoff")
     m21_stop = read(phase / "plan.json").get("m21_stop_epoch") if cutoff is not None else None
     if m21_stop is not None and (m21_stop not in plan or m21_stop <= cutoff):
@@ -128,11 +133,13 @@ def collect(run, previous, public, now):
             unsealed.append(epoch)
             continue
         stats = report["strategies"]
-        participants = STRATEGIES if directory.parent == run else PAIR
+        participants = labels if directory.parent == run else PAIR
         if m21_stop is not None and epoch >= m21_stop:
             participants = M12_ONLY
         if set(stats) != set(participants) or tuple(report.get("active_strategies", STRATEGIES)) != participants:
             raise ValueError(f"Unexpected strategy coverage for {slug}")
+        if standalone and report.get("baseline_architecture") != BASELINE_V2:
+            raise ValueError(f"Unexpected baseline architecture for {slug}")
         if not report["complete_window"] or any(
             not stats[label][0]["complete"] or stats[label][0]["status"] != "SEALED" for label in participants
         ):

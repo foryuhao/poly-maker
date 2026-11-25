@@ -6,12 +6,12 @@ import json
 import os
 from pathlib import Path
 
-from m1223_shared72 import PAIR, VARIANTS, MarketEngines, configuration
-from m1223_shared_storage import read_tape
+from m1223_shared72 import MarketEngines, configuration
+from m1223_shared_storage import BASELINE_STRATEGIES, PAIR, read_tape
 
 
 async def observe(directory, tape, owner, *, pair=False, original_plan=None):
-    participants = PAIR if pair else tuple(VARIANTS)
+    participants = PAIR if pair else BASELINE_STRATEGIES
     settings, parameters = configuration(participants)
     if original_plan is not None:
         if not pair:

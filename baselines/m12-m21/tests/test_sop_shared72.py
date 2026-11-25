@@ -1,7 +1,9 @@
 """Offline proof of same-tape execution, sealing, handover and disk stops."""
 
 import asyncio
+import fcntl
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -9,10 +11,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from baseline_v2 import SingleStrategyRun, main as baseline_v2_main, resume_session
 from m122124_hourly_watch import collect
 from m1223_pair_phase import PairRun, archive_resume, prepare_resume
 from m1223_settlement_closeout import canonical_identity
 from m1223_shared72 import (
+    BASELINE_V2,
     MARKETS,
     MARKET_SECONDS,
     PREWARM_SECONDS,
@@ -49,10 +53,12 @@ from polymaker.m1234_sim.store import read_audit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("group_class", [MarketEngines, RecordedMarketEngines])
-@pytest.mark.parametrize("participants,protocol", [
-    (("M12", "M21", "M24"), None), (PAIR, "v1"), (PAIR, "v2"), (M12_ONLY, "v2"),
-])
+@pytest.mark.parametrize("group_class,participants,protocol", [
+    (group, labels, protocol)
+    for group in (MarketEngines, RecordedMarketEngines)
+    for labels, protocol in ((("M12", "M21", "M24"), None), (PAIR, "v1"), (PAIR, "v2"))
+] + [(MarketEngines, (strategy,), protocol)
+     for strategy in ("M12", "M21", "M24") for protocol in ("v1", "v2")])
 async def test_three_strategies_same_tape_anchor_entries_and_official_settlement(
     tmp_path, monkeypatch, group_class, participants, protocol,
 ):
@@ -71,18 +77,42 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
         definition["market_protocol"] = protocol
     wall = initial["available_wall"]
     identity = definition["market"]
-    directory = tmp_path / identity["slug"]
-    group = group_class(directory, settings, parameters, {"mode": "OFFLINE_FIXTURE"})
-    if participants == M12_ONLY and group_class is RecordedMarketEngines:
+    strategy = participants[0]
+    single = len(participants) == 1
+    prewarm = 25 if single else 0
+    if single:
+        definition["official_clock"] = [wall - prewarm, 0.0, 0.0]
+    run_directory = tmp_path / PHASE_DIRECTORY if participants == M12_ONLY else tmp_path
+    run_directory.mkdir(exist_ok=True)
+    directory = run_directory / identity["slug"]
+    capture = None
+    writer = None
+    if single:
+        assert settings["baseline_architecture"] == BASELINE_V2
+
         async def forbid_worker(*args, **kwargs):
-            pytest.fail("M12-only markets must seal without a replay worker")
+            pytest.fail("single-strategy markets must seal without a replay worker")
 
         monkeypatch.setattr("m1223_shared72.asyncio.create_subprocess_exec", forbid_worker)
-    writer = Recorder(directory / "input.jsonl.zst", 8192)
+        monkeypatch.setattr("m1223_shared72.Recorder", forbidden)
+        session = SharedRun(run_directory, tmp_path, settings, parameters, api=object())
+        capture = MarketCapture(session, market_meta(identity), definition["ticks"])
+        group = capture.group
+        available = Clock()
+        monkeypatch.setattr("m1223_shared72.time", available)
+    else:
+        group = group_class(directory, settings, parameters, {"mode": "OFFLINE_FIXTURE"})
+        writer = Recorder(directory / "input.jsonl.zst", 8192)
 
     async def record(t, kind, **payload):
-        event = writer.append(kind, Clock(t, wall + t), **payload)
-        await group.ingest(event)
+        if capture is not None:
+            available.set(t + prewarm, wall + t)
+            if kind == "FRAME":
+                payload["received_mono"] += prewarm
+            await capture.record(group.engines.get(strategy), kind, **payload)
+        else:
+            event = writer.append(kind, Clock(t, wall + t), **payload)
+            await group.ingest(event)
 
     async def frame(t, *rows):
         raw = json.dumps(
@@ -151,8 +181,10 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
             },
         )
 
-    await record(0, "INIT", definition=definition)
-    await record(0, "CONNECT")
+    await record(-prewarm, "INIT", definition=definition)
+    await record(-prewarm, "CONNECT")
+    if single:
+        await books(-prewarm)
     await books(0)
     await trade(0.01, qty="5")
     await delta(0.10, bid="90")
@@ -195,8 +227,20 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
     await trade(14.67, side="BUY", price=".52")
     await trade(14.70, price=".49", qty="2")
     await record(14.93, "POLL")
+    if participants == M12_ONLY:
+        while (capture.input_seq + 1) % 40:
+            await record(14.94, "FRAME", raw="PONG", received_mono=14.94, received_wall=wall + 14.94)
+        await record(14.94, "TIMER")
+        (intent,) = [
+            row["payload"]["intent"]
+            for row in read_audit(directory / "M12/simulation.sqlite3")
+            if row["kind"] == "INTENT" and row["payload"]["scenario"] == "sop/anchor"
+        ]
+        assert intent["strategy"] == intent["profile"] == "M12"
+        assert intent["order_type"] == "ASSUMED_FIXED_ANCHOR"
+        assert Decimal(intent["price"]) == Decimal(".50")
     await record(300, "END", reason="T300_OBSERVED", research_sample_eligibility=PUBLIC_ONLY_SAMPLE)
-    if group_class is MarketEngines:
+    if group_class is MarketEngines or capture is not None:
         for market, orders in group.report().values():
             assert market["pending_settlement_orders"] == 1
             assert orders[0]["assumed_gross_pnl"] is None
@@ -211,16 +255,20 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
         await record(300.5, "SETTLEMENT", raw={**resolution, "version": "v1"})
         assert group.primary.resolution is None
     await record(301, "SETTLEMENT", raw=resolution)
-    writer.close()
-    await group.close()
-    if isinstance(group, RecordedMarketEngines):
-        await group.materialize(writer.path)
-    frozen = canonical_identity(directory / "M12/simulation.sqlite3")
+    if capture is not None:
+        await capture.close()
+        final_seq = capture.input_seq
+    else:
+        writer.close()
+        await group.close()
+        if isinstance(group, RecordedMarketEngines):
+            await group.materialize(writer.path)
+        final_seq = list(read_tape(writer.path))[-1]["seq"]
+    frozen = canonical_identity(directory / strategy / "simulation.sqlite3")
     assert frozen.get("protocol_version") == protocol and frozen["token_ids"] == {"YES": "1", "NO": "2"}
     original = group.report()
-    reread = list(read_tape(writer.path))
     for name, (market, orders) in original.items():
-        assert market["input_seq"] == reread[-1]["seq"]
+        assert market["input_seq"] == final_seq
         assert market["status"] == "SEALED" and market["official_winner"] == "YES"
         (order,) = orders
         assert order["token"] == "1"
@@ -238,7 +286,7 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
         (fill,) = [row for row in evidence if row["kind"] == "ASSUMED_FILL"]
         assert fill["input_seq"] == admission["input_seq"]
         if name == "M24":
-            assert fill["payload"]["intent"]["available"] == 14.50
+            assert fill["payload"]["intent"]["available"] == 14.50 + prewarm
             assert any(
                 row["kind"] == "SOP_EVIDENCE" and row["payload"]["event"] == "SIGNAL_SUSPENDED"
                 for row in evidence
@@ -248,22 +296,57 @@ async def test_three_strategies_same_tape_anchor_entries_and_official_settlement
             or row["kind"] in {"SUBMIT", "MODELLED_FILL", "RECEIPT_READY"}
             for row in evidence
         )
-    result = await replay(writer.path, tmp_path / "replayed", settings, parameters)
-    for name, (market, orders) in result.items():
-        assert market["input_seq"] == original[name][0]["input_seq"]
-        assert orders == original[name][1]
+    if writer is not None:
+        result = await replay(writer.path, tmp_path / "replayed", settings, parameters)
+        for name, (market, orders) in result.items():
+            assert market["input_seq"] == original[name][0]["input_seq"]
+            assert orders == original[name][1]
+        capture = object.__new__(MarketCapture)
+        capture.group, capture.directory, capture.recorder = group, directory, writer
+        capture.meta = SimpleNamespace(slug=identity["slug"])
 
-    capture = object.__new__(MarketCapture)
-    capture.group, capture.directory, capture.recorder = group, directory, writer
-    capture.meta = SimpleNamespace(slug=identity["slug"])
     sealed = capture.seal()
-    assert len(list(directory.rglob("input.jsonl.zst"))) == 1
+    assert len(list(directory.rglob("input.jsonl.zst"))) == (writer is not None)
+    if writer is None:
+        assert sealed["baseline_architecture"] == BASELINE_V2
+        assert sealed["input"] is sealed["input_sha256"] is None
     assert not list(directory.rglob("snapshot.sqlite3"))
     assert set(sealed["ledgers"]) == set(parameters)
     for ledger in sealed["ledgers"].values():
         assert (directory / ledger["file"]).is_file()
         assert not (directory / ledger["file"].removesuffix(".zst")).exists()
-    if participants in (PAIR, M12_ONLY):
+    if writer is None:
+        report = directory / "market-report.json"
+        expected = json.loads(report.read_text())
+        report.unlink()  # A crash between compaction and publishing the report.
+        epoch = int(identity["slug"].rsplit("-", 1)[1])
+        if participants == M12_ONLY:
+            recovery = PairRun(tmp_path, settings, parameters, end=0, resume={
+                "cutoff": epoch, "first": epoch + MARKET_SECONDS,
+                "baseline_v2_start_epoch": epoch, "predecessor": None, "previous_completion": None,
+            })
+            (recovery.output / "runtime.jsonl").touch()
+        else:
+            predecessor = {"market_epochs": [epoch], "settings": settings}
+            recovery = SingleStrategyRun(run_directory, tmp_path, settings, parameters,
+                                         api=SimpleNamespace(close=lambda: asyncio.sleep(0)),
+                                         predecessor=predecessor)
+            (run_directory / "plan.json").write_text(json.dumps({**predecessor, **recovery.plan_fields()}))
+        await recovery.api.close()
+        await recovery.materialize_closed_markets()
+        assert not recovery.errors
+        assert json.loads(report.read_text()) == expected
+        if participants != M12_ONLY:
+            metrics = await asyncio.to_thread(
+                collect, run_directory, {}, {}, datetime.fromtimestamp(epoch + 300, timezone.utc)
+            )
+            assert list(metrics["rows"]) == [strategy]
+            assert Decimal(metrics["rows"][strategy]["pnl"]) == 5
+    if single:
+        assert sealed["active_strategies"] == [strategy]
+        assert {path.name for path in directory.iterdir() if path.is_dir()} == {strategy}
+        return
+    if participants == PAIR:
         assert sealed["active_strategies"] == list(participants)
         assert not (directory / "M24").exists()
         assert (directory / "M21").exists() == (participants == PAIR)
@@ -509,6 +592,99 @@ async def test_next_market_survives_slow_or_timed_out_replay(
     assert bool(terminal["errors"]) is timed_out
 
 
+@pytest.mark.asyncio
+async def test_m12_v2_seals_without_replay_and_isolates_seal_failure(tmp_path, monkeypatch):
+    settings, parameters = configuration(M12_ONLY)
+    session = SharedRun(tmp_path, tmp_path, settings, parameters, api=object())
+
+    async def prepare(slug, epoch):
+        return SimpleNamespace(slug=slug, epoch=epoch), {}
+
+    class Capture:
+        input_seq = 12
+
+        def __init__(self, _session, meta, _ticks):
+            self.meta = meta
+
+        async def capture(self):
+            return self.meta
+
+        async def settle(self, _engine):
+            pass
+
+        async def close(self):
+            pass
+
+        def seal(self):
+            if self.meta.epoch == MARKET_SECONDS:
+                raise OSError("injected compaction failure")
+            return {"market": self.meta.slug}
+
+    monkeypatch.setattr("m1223_shared72.MarketCapture", Capture)
+    monkeypatch.setattr(session, "prepare", prepare)
+    monkeypatch.setattr(session, "wait_until", lambda _: asyncio.sleep(0, result=True))
+    first, second = (f"btc-updown-5m-{index * MARKET_SECONDS}" for index in (1, 2))
+    await session.market(first, MARKET_SECONDS)
+    await session.market(second, MARKET_SECONDS * 2)
+    assert not session.stop.is_set()
+    assert session.replay_queue.empty()
+    assert session.closed_markets == {first, second}
+    assert list(session.reports) == [second]
+    assert [(row["market"], row["stage"]) for row in session.errors] == [(first, "LEDGER_SEAL")]
+    log = [json.loads(row) for row in (tmp_path / "runtime.jsonl").read_text().splitlines()]
+    assert [row["event"] for row in log] == [
+        "MARKET_LEDGER_CLOSED", "MARKET_LEDGER_SEAL_FAILED", "MARKET_LEDGER_CLOSED", "MARKET_SEALED",
+    ]
+
+
+def test_v2_cli_keeps_strategy_instances_independent(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "m122124_baseline"
+    root.mkdir()
+    monkeypatch.setattr("baseline_v2.storage_status", lambda *_: {"reason": None})
+    monkeypatch.setattr("baseline_v2.shutil.which", lambda _: "/usr/bin/zstd")
+    launched = []
+
+    async def supervise(session):
+        launched.append((session.output.name, tuple(session.parameters)))
+        await session.api.close()
+        return {"status": "PASS"}
+
+    monkeypatch.setattr("baseline_v2.supervise", supervise)
+
+    def invoke(*options):
+        monkeypatch.setattr(sys, "argv", ["baseline-v2", "run", "--storage-root", str(root), *options])
+        baseline_v2_main()
+
+    with (root / "pair-cutover.lock").open("a") as m12_lock:
+        fcntl.flock(m12_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        invoke("--strategy", "M21", "--run-name", "m21-standalone")
+        with pytest.raises(SystemExit, match="2"):
+            invoke("--strategy", "M12", "--run-name", "duplicate-m12")
+        assert "already has a running baseline" in capsys.readouterr().err
+    invoke("--strategy", "M12", "--run-name", "m12-standalone")
+    with pytest.raises(SystemExit, match="2"):
+        invoke("--strategy", "M12", "--strategy", "M21")
+    assert "exactly one --strategy" in capsys.readouterr().err
+    assert launched == [("m21-standalone", ("M21",)), ("m12-standalone", ("M12",))]
+    assert not (root / "duplicate-m12").exists()
+
+
+def test_v2_resume_checks_strategy_and_keeps_original_market_window(tmp_path):
+    settings, _ = configuration(("M21",))
+    settings["max_markets"] = 4
+    epochs = [300, 600, 900, 1200]
+    plan = {"path": str(tmp_path), "mode": "SIMULATION_ONLY_PUBLIC_DATA", "schema": SCHEMA,
+            "baseline_architecture": BASELINE_V2, "strategy": "M21",
+            "market_epochs": epochs, "settings": settings}
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    previous, end = resume_session(tmp_path, "M21", settings, now=574)
+    assert previous["market_epochs"] == [300, 600] and end == 1500
+    with pytest.raises(ValueError, match="RUN_IDENTITY_MISMATCH"):
+        resume_session(tmp_path, "M12", settings, now=574)
+    with pytest.raises(ValueError, match="RESUME_SETTINGS_CHANGED"):
+        resume_session(tmp_path, "M21", {**settings, "seed": -1}, now=574)
+
+
 def test_disk_admission_and_runtime_stop(tmp_path, monkeypatch):
     free = FREE_RESERVE + STOP_HEADROOM + 1
     monkeypatch.setattr(
@@ -649,6 +825,7 @@ def test_resume_only_m12_after_pair_and_keep_historical_reporting(tmp_path):
     prior, resume = prepare_resume(tmp_path, settings, 900, runtime, M12_ONLY)
     resume = archive_resume(phase, prior, resume)
     assert resume["m21_stop_epoch"] == 900 and resume["previous_strategies"] == PAIR
+    assert resume["baseline_v2_start_epoch"] == 900
     assert json.loads(resume["replay_plan"].read_text())["continuation_start_epoch"] == 600
     (phase / "plan.json").write_text(json.dumps({**plan, "m21_stop_epoch": 900}))
     for epoch, labels in ((300, PAIR), (600, PAIR), (900, M12_ONLY)):

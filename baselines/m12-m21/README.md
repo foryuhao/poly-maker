@@ -1,26 +1,32 @@
-# M12 Baseline V1/V2
+# M12 Baseline V2
 
-M12 单策略模拟基线，源自 2026-11-24 15:00（北京时间）起运行的冻结版本 `m12-only-v2-a2ef175084ace139`。发布沿用 `baselines/m12-m21` 路径，以便从 `M12-21-Baseline` 审查增量。模拟成交继续使用原锚定价，盈亏按官方结果结算。
-
-每场按 Polymarket Gamma 的 `version` 选定资产。V1 使用 `clobTokenIds`，V2 使用 `positionIds`。预热、行情、回放和官方结算使用同组资产。公开证据出错时按当场协议重试。无法预热的单场记缺失。历史归档按原口径读取。
-
-M12 单策略场次直接封账，历史双策略场次仍可用原冻结版封账。汇总和收尾脚本从账本读取协议版本。既有 M12 跟随器仍可沿用原模拟账本路径及历史交接记录。
+该快照对应 2026 年 11 月 25 日启动的模拟基线 V2。每个进程选择一个策略，当前支持 M12、M21、M24。实例独立采集公开行情，按原锚价模拟成交，使用独立的 SQLite 账本和逐场报告。Polymarket V1/V2 按市场识别。基线 V2 无需钱包或私钥，省去逐帧行情归档和回放。封账后的压缩账本可用于审计，待官方结算的交易由汇总继续核验。
 
 ## 离线验证
 
-在本目录运行。依赖 Python 3.12、uv 和 zstd。
+从 `baselines/m12-m21` 运行。需要 Python 3.12、uv 和 zstd。
 
 ```bash
 uv sync --locked --extra dev
 PYTHONPATH=ops:research:src:tests .venv/bin/python -m pytest -q \
-  tests/test_sop_shared_protocol.py tests/test_sop_shared72.py \
-  tests/test_sop_settlement_closeout.py
+  tests/test_sop_shared_protocol.py tests/test_sop_shared72.py tests/test_sop_settlement_closeout.py
 ```
 
-测试覆盖 V1→V2→V1、错误版本和错资产证据、单场失败隔离、单策略封账、历史双策略恢复及汇总。使用 `manifest.json` 核对运行源码和配套汇总代码。
+`manifest.json` 给出全部运行输入文件的 SHA-256。测试覆盖独立启动、实例锁、V1/V2 资产身份、场中 INTENT、原锚价模拟成交、官方结算和恢复。
 
-## 模拟基线接续
+## 每个进程启动一个策略
 
-`ops/m1223_pair_phase.py` 支持在原模拟基线目录用 `--resume-at` 指定未来场次的 Unix 时间戳，用 `--previous-runtime` 指定上一冻结源码目录，并用 `--m12-only` 进入 M12 单策略模式。加 `--check-resume` 执行只读预检。
+将 `/path/to/polymaker` 替换为部署项目根目录。项目根目录下应已有 `research_outputs/m122124_baseline`，也可在 `--storage-root` 指定另一个已存在的专用目录。
 
-生产切换需要目标机原有的公开模拟基线计划和交接记录。旧实例释放独占锁后才能启动新实例。接续由目标机操作者授权和执行。
+```bash
+PYTHONPATH=ops:research:src .venv/bin/python ops/baseline_v2.py check \
+  --strategy M12 --project-root /path/to/polymaker
+PYTHONPATH=ops:research:src .venv/bin/python ops/baseline_v2.py run \
+  --strategy M12 --project-root /path/to/polymaker --run-name m12-v2-example
+```
+
+在独立进程选择 `--strategy M21` 或 `--strategy M24`，并使用各自的运行名。按原计划切换时，可用 `--end-epoch` 传入原收盘边界的 Unix 秒时间戳。用相同的策略和运行名执行 `report` 读汇总，或用 `resume` 接续同一冻结计划。历史 M12 目录仍可用 `m1223_pair_phase.py --m12-only` 在新场接续。Follower 已有的 SQLite 读取接口沿用原字段。
+
+## 新策略接口
+
+策略模块提供冻结参数、变体 ID、SOP 与文档参数 SHA-256，并注册到 SOP Feed、参数解析和 `m1223_shared72.VARIANTS`。信号通过 `SIGNAL_CONFIRMED` 发布，提供信号 ID、策略版本、token、原锚定价、确认时间、截止时间、质量和失效信息。接入用例应验证单策略的完整市场从预热、INTENT 到结算和封账。

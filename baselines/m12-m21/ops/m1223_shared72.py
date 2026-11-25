@@ -10,11 +10,15 @@ import os
 import resource
 import shutil
 import signal
+import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
 from collections import deque
-from contextlib import suppress
+from contextlib import closing, suppress
 from dataclasses import asdict
+from filecmp import cmp
 from pathlib import Path
 
 import m1223_public_protocol
@@ -24,6 +28,7 @@ from m1223_execution import ANCHOR_FILL_MODEL
 from m1223_public_protocol import BaselinePublicAPI, PublicMarketError, validate_resolution
 from m1223_report import market_result, summary
 from m1223_shared_storage import (
+    BASELINE_STRATEGIES,
     FREE_RESERVE,
     M12_ONLY,
     PAIR,
@@ -47,6 +52,7 @@ from polymaker.m1234_sim.events import Clock, encode, write_json
 from polymaker.rdp_sm_marketdata import WS_CLOSE_TIMEOUT_SEC, WS_HEARTBEAT_SEC
 
 SCHEMA = "m122124-shared-public-72h-v1"
+BASELINE_V2 = "BASELINE_V2"
 VARIANTS = {"M12": m12_overlap, "M21": m21, "M24": m24}
 MARKETS = 7 * 24 * 12
 LEGACY_MARKETS = 3 * 24 * 12
@@ -58,7 +64,8 @@ REPLAY_IDLE_SECONDS = 180
 PUBLIC_ONLY_SAMPLE = {"status": "UNAVAILABLE", "reason": "PUBLIC_ONLY_NO_ACCOUNT_ACTIVITY_REVIEW"}
 
 
-def configuration(strategies=tuple(VARIANTS)):
+def configuration(strategies=BASELINE_STRATEGIES):
+    strategies = tuple(strategies)
     root = runner.ROOT
     settings = runner.settings(
         root / "config/m1223-24h.toml", root / "config/m1234-sim-contract.json"
@@ -92,6 +99,8 @@ def configuration(strategies=tuple(VARIANTS)):
         }
         parameters[strategy], documents[strategy] = load_revision(doc)
         versions[strategy] = definition(parameters[strategy])
+        if versions[strategy]["strategy"] != strategy:
+            raise ValueError(f"BASELINE_STRATEGY_REGISTRATION_MISMATCH:{strategy}")
     settings.update(
         profiles={},
         scenarios={"anchor": {}},
@@ -115,6 +124,12 @@ def configuration(strategies=tuple(VARIANTS)):
         ).hexdigest(),
         storage_encoding="ZSTD6_LONG24_ONE_INPUT_AND_ONE_LEDGER_PER_STRATEGY",
     )
+    if len(strategies) == 1:
+        settings.update(
+            baseline_architecture=BASELINE_V2,
+            ledger_timing=f"{strategies[0]}_DURING_CAPTURE",
+            storage_encoding="ZSTD6_LONG24_LEDGER_ONLY",
+        )
     return settings, parameters
 
 
@@ -142,7 +157,7 @@ class MarketEngines:
 
     @property
     def primary(self):
-        return self.engines["M12"]
+        return self.engines[self.participants[0]]
 
     @property
     def needs_reconnect(self):
@@ -199,10 +214,11 @@ class MarketEngines:
         if errors:
             raise ExceptionGroup("SHARED_LEDGER_CLOSE_FAILURES", errors)
 
-    def report(self):
+    def report(self, *, expected_input_seq=None):
         return {
             name: market_result(
-                self.directory / name / "simulation.sqlite3", None, eligibility=PUBLIC_ONLY_SAMPLE
+                self.directory / name / "simulation.sqlite3", None, eligibility=PUBLIC_ONLY_SAMPLE,
+                expected_input_seq=expected_input_seq,
             )
             for name in self.ledger_states()
         }
@@ -222,14 +238,28 @@ class MarketEngines:
 
 def seal_market(directory, tape, input_seq, slug, group):
     states = group.ledger_states()
-    if set(states) != set(group.participants) or any(
+    primary_strategy = group.participants[0]
+    if set(states) != set(group.participants):
+        raise ValueError("SHARED_SEAL_LEDGER_WATERMARK_OR_RESULT_MISMATCH")
+    primary_state = states[primary_strategy]
+    if any(
         state["seq"] != input_seq or not state["closed"] or not state["ended"]
-        or state["resolution"] != states["M12"]["resolution"]
+        or state["resolution"] != primary_state["resolution"]
         for state in states.values()
     ):
         raise ValueError("SHARED_SEAL_LEDGER_WATERMARK_OR_RESULT_MISMATCH")
-    reports = group.report()
-    tape_hash = verify_tape(tape)
+    if tape is None:
+        if len(group.participants) != 1 or group.settings.get("baseline_architecture") != BASELINE_V2:
+            raise ValueError("BASELINE_V2_REQUIRES_ONE_STRATEGY")
+        reports = group.report(expected_input_seq=input_seq)
+        primary = reports[primary_strategy][0]
+        if (primary["market"] != slug or primary["complete"] != primary_state["complete"]
+                or primary["official_winner"] != (primary_state["resolution"] or {}).get("winner")):
+            raise ValueError("BASELINE_V2_COMMITTED_REPORT_MISMATCH")
+        input_provenance = {"baseline_architecture": BASELINE_V2, "input": None, "input_sha256": None}
+    else:
+        reports = group.report()
+        input_provenance = {"input": tape.name, "input_sha256": verify_tape(tape)}
     ledgers = {}
     for name in states:
         ledger = seal_ledger(directory / name / "simulation.sqlite3")
@@ -238,17 +268,83 @@ def seal_market(directory, tape, input_seq, slug, group):
     result = {
         "market": slug,
         "input_seq": input_seq,
-        "input_sha256": tape_hash,
-        "input": tape.name,
+        **input_provenance,
         "ledgers": ledgers,
         "strategies": reports,
         "complete_window": all(s["complete"] for s in states.values()),
-        "official_winner": (states["M12"]["resolution"] or {}).get("winner"),
+        "official_winner": (primary_state["resolution"] or {}).get("winner"),
     }
-    if group.participants != tuple(VARIANTS):
+    if group.participants != BASELINE_STRATEGIES:
         result["active_strategies"] = list(group.participants)
     write_json(directory / "market-report.json", result)
     return result
+
+
+def publish_recovered_market(stage, target, report):
+    for ledger in report["ledgers"].values():
+        source = stage / ledger["file"]
+        destination = target / ledger["file"]
+        if destination.exists():
+            if not cmp(source, destination, shallow=False):
+                raise ValueError(f"BASELINE_RECOVERY_ARCHIVE_CONFLICT:{ledger['file']}")
+        else:
+            destination.parent.mkdir(exist_ok=True)
+            os.link(source, destination)
+    os.link(stage / "market-report.json", target / "market-report.json")
+
+
+class RecoveredLedger(MarketEngines):
+    def __init__(self, directory, settings, parameters, owner, state):
+        super().__init__(directory, settings, parameters, owner)
+        self.state = state
+
+    def ledger_states(self):
+        return {self.participants[0]: self.state}
+
+
+def recover_v2_market(target, settings, parameters, owner):
+    """Seal only a committed end-of-observation ledger from this V2 instance."""
+    strategy, = parameters
+    original = target / strategy
+    plain = original / "simulation.sqlite3"
+    archive = plain.with_suffix(".sqlite3.zst")
+    wal = original / "simulation.sqlite3-wal"
+    with tempfile.TemporaryDirectory(prefix=".ledger-recovery-", dir=target.parent) as temporary:
+        stage = Path(temporary)
+        ledger_dir = stage / strategy
+        ledger_dir.mkdir()
+        copy = ledger_dir / plain.name
+        if wal.exists() and wal.stat().st_size:
+            with closing(sqlite3.connect(plain.as_uri() + "?mode=ro", uri=True)) as source, \
+                    closing(sqlite3.connect(copy)) as dest:
+                source.execute("PRAGMA query_only=ON")
+                source.backup(dest)
+        elif plain.is_file():
+            shutil.copyfile(plain, copy)
+        else:
+            with copy.open("xb") as out:
+                subprocess.run(("zstd", "-qdc", "--", str(archive)), stdout=out, check=True, timeout=30)
+        for evidence in original.glob("*.json"):
+            shutil.copyfile(evidence, ledger_dir / evidence.name)
+        with closing(sqlite3.connect(copy.as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("PRAGMA query_only=ON")
+            snapshot = db.execute("SELECT payload FROM snapshots WHERE name='state'").fetchone()
+            if not snapshot or not db.execute("SELECT 1 FROM audit WHERE kind='OBSERVATION_END'").fetchone():
+                return None
+            definition = json.loads(db.execute("SELECT payload FROM audit WHERE kind='DEFINITION'").fetchone()[0])
+            recorded_owner = db.execute("SELECT payload FROM metadata WHERE name='run_owner'").fetchone()
+        saved_settings = definition["definition"]["settings"]
+        if (saved_settings.get("baseline_architecture") != BASELINE_V2
+                or saved_settings["sop"]["strategy"] != strategy
+                or not recorded_owner or json.loads(recorded_owner[0]) != owner):
+            raise ValueError("BASELINE_V2_RECOVERY_IDENTITY_MISMATCH")
+        saved = json.loads(snapshot[0])
+        state = {"seq": saved["input_seq"], "closed": True, "ended": True,
+                 "complete": saved["coverage"]["complete_window"], "resolution": saved["resolution"]}
+        group = RecoveredLedger(stage, settings, parameters, owner, state)
+        report = seal_market(stage, None, state["seq"], target.name, group)
+        publish_recovered_market(stage, target, report)
+        return report
 
 
 class StrategyReplayTimeout(RuntimeError):
@@ -413,6 +509,25 @@ class SharedCaptureFeed:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=1)
 
 
+class EventSequence:
+    """Assign live input ordinals using the shared engine's event format."""
+
+    def __init__(self):
+        self.seq = 0
+
+    def append(self, kind, clock, generation=0, **payload):
+        self.seq += 1
+        return {
+            "schema": INPUT_SCHEMA,
+            "seq": self.seq,
+            "kind": kind,
+            "available_mono": clock.mono,
+            "available_wall": clock.wall,
+            "generation": generation,
+            **payload,
+        }
+
+
 class MarketCapture:
     # Reuse generation-bound public tick requests and their recorded results.
     fetch_ticks = runner.LiveRun.fetch_ticks
@@ -423,16 +538,24 @@ class MarketCapture:
         self.session, self.api, self.meta, self.cfg = session, session.api, meta, session.settings
         self.ticks, self.tick_task = ticks, None
         self.directory = session.output / meta.slug
-        self.group = RecordedMarketEngines(
-            self.directory, self.cfg, session.parameters, session.owner
-        )
-        self.recorder = Recorder(
-            self.directory / "input.jsonl.zst", self.cfg["writer_queue_records"]
-        )
+        if session.baseline_v2:
+            self.group = MarketEngines(self.directory, self.cfg, session.parameters, session.owner)
+            self.recorder = None
+            self.event_sequence = EventSequence()
+        else:
+            self.group = RecordedMarketEngines(self.directory, self.cfg, session.parameters, session.owner)
+            self.recorder = Recorder(
+                self.directory / "input.jsonl.zst", self.cfg["writer_queue_records"]
+            )
         self.feed = self.task = self.queue = None
 
+    @property
+    def input_seq(self):
+        return (self.recorder or self.event_sequence).seq
+
     async def record(self, engine, kind, **payload):
-        if self.recorder.seq - self.recorder.written >= self.recorder.queue.maxsize:
+        recorder = self.recorder
+        if recorder is not None and recorder.seq - recorder.written >= recorder.queue.maxsize:
             try:
                 async with asyncio.timeout(10):
                     while self.recorder.seq - self.recorder.written >= self.recorder.queue.maxsize:
@@ -449,7 +572,7 @@ class MarketCapture:
                     current=payload.get("received_mono") if kind == "FRAME" else None,
                 )
             )
-        event = self.recorder.append(
+        event = (recorder or self.event_sequence).append(
             kind,
             Clock(time.monotonic(), time.time()),
             generation=engine.coverage["generations"] if engine else 0,
@@ -506,7 +629,7 @@ class MarketCapture:
         )
         last_timer = last_pulse = time.monotonic()
         processed = 0
-        log_warm = self.group.participants in (PAIR, M12_ONLY)
+        log_warm = self.session.baseline_v2 or self.group.participants in (PAIR, M12_ONLY)
         try:
             while not self.session.stop.is_set():
                 if self.task.done():
@@ -550,8 +673,9 @@ class MarketCapture:
                         frames=engine.coverage["frames"],
                         backlog=self.queue.qsize(),
                         gaps=len(engine.coverage["gaps"]),
-                        recorded=self.recorder.seq,
-                        written=self.recorder.written,
+                        input_seq=self.input_seq,
+                        **({"recorded": self.recorder.seq, "written": self.recorder.written}
+                           if self.recorder is not None else {}),
                         receiver_backpressure=self.feed.backpressure_count,
                         max_receiver_wait_ms=self.feed.max_backpressure_ms,
                         max_processing_lag_ms=engine.coverage["max_processing_lag_ms"],
@@ -601,12 +725,14 @@ class MarketCapture:
         try:
             await self.group.close()
         finally:
-            await asyncio.to_thread(self.recorder.close)
+            if self.recorder is not None:
+                await asyncio.to_thread(self.recorder.close)
 
     def seal(self):
-        if self.recorder.written != self.recorder.seq:
+        if self.recorder is not None and self.recorder.written != self.input_seq:
             raise ValueError("SHARED_SEAL_RECORDING_WATERMARK_MISMATCH")
-        return seal_market(self.directory, self.recorder.path, self.recorder.seq, self.meta.slug, self.group)
+        tape = self.recorder.path if self.recorder is not None else None
+        return seal_market(self.directory, tape, self.input_seq, self.meta.slug, self.group)
 
 
 class SharedRun:
@@ -615,6 +741,9 @@ class SharedRun:
         self.output, self.root, self.settings, self.parameters = output, root, settings, parameters
         self.api = api if api is not None else BaselinePublicAPI()
         self.feed_factory = feed_factory or SharedCaptureFeed
+        self.baseline_v2 = settings.get("baseline_architecture") == BASELINE_V2
+        if self.baseline_v2 and len(parameters) != 1:
+            raise ValueError("BASELINE_V2_REQUIRES_ONE_STRATEGY")
         self.owner = {"schema": SCHEMA, "mode": "SIMULATION_ONLY_PUBLIC_DATA", "path": str(output)}
         self.predecessor = predecessor
         self.completion_file = "continuation-completion.json" if predecessor else "completion.json"
@@ -772,6 +901,17 @@ class SharedRun:
             stage = "CLOSE_CAPTURE"
             await capture.close()
             self.closed_markets.add(slug)
+            if self.baseline_v2:
+                self.log("MARKET_LEDGER_CLOSED", market=slug, input_seq=capture.input_seq)
+                try:
+                    self.reports[slug] = await asyncio.to_thread(capture.seal)
+                    self.log("MARKET_SEALED", market=slug, input_seq=capture.input_seq)
+                except Exception as exc:
+                    failure = {"market": slug, "stage": "LEDGER_SEAL",
+                               "error": f"{type(exc).__name__}:{exc}"}
+                    self.errors.append(failure)
+                    self.log("MARKET_LEDGER_SEAL_FAILED", **failure)
+                return
             self.replay_queue.put_nowait(capture)
             self.log("MARKET_TAPE_CLOSED", market=slug, input_seq=capture.recorder.seq,
                      pending_replays=self.replay_queue.qsize())
@@ -789,6 +929,9 @@ class SharedRun:
             self.active.pop(slug, None)
 
     async def materialize_closed_markets(self):
+        if self.baseline_v2:
+            await self.recover_v2_markets()
+            return
         while not self.stop.is_set():
             capture = await self.replay_queue.get()
             if capture is None:
@@ -810,6 +953,35 @@ class SharedRun:
                 self.log("MARKET_LEDGER_REPLAY_FAILED", **failure)
             finally:
                 self.replaying = None
+
+    async def recover_v2_markets(self):
+        strategy, = self.parameters
+        for epoch in self.v2_recovery_epochs():
+            if self.stop.is_set():
+                return
+            slug = f"btc-updown-5m-{epoch}"
+            target = self.output / slug
+            plain = target / strategy / "simulation.sqlite3"
+            if (target / "market-report.json").exists() or not (
+                plain.is_file() or plain.with_suffix(".sqlite3.zst").is_file()
+            ):
+                continue
+            try:
+                report = await asyncio.to_thread(
+                    recover_v2_market, target, self.settings, self.parameters, self.owner
+                )
+                if report is None:
+                    self.log("MARKET_LEDGER_RECOVERY_NO_OBSERVATION_END", market=slug)
+                    continue
+                self.reports[slug] = report
+                self.log("MARKET_SEALED", market=slug, input_seq=report["input_seq"], recovered=True)
+            except Exception as exc:
+                failure = {"market": slug, "stage": "LEDGER_RECOVERY", "error": str(exc)}
+                self.errors.append(failure)
+                self.log("MARKET_LEDGER_RECOVERY_FAILED", **failure)
+
+    def v2_recovery_epochs(self):
+        return self.predecessor["market_epochs"] if self.predecessor else ()
 
     def accept_capture_for_replay(self, capture):
         return True
@@ -867,7 +1039,8 @@ class SharedRun:
             await asyncio.gather(*self.active.values())
             self.stop_at = None
             if not self.stop.is_set():
-                self.replay_queue.put_nowait(None)
+                if not self.baseline_v2:
+                    self.replay_queue.put_nowait(None)
                 stopping = asyncio.create_task(self.stop.wait())
                 try:
                     done, _ = await asyncio.wait((analysis, stopping), return_when=asyncio.FIRST_COMPLETED)
