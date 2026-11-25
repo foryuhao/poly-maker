@@ -23,9 +23,9 @@ from polymaker.m4_live_numeric import (
 from polymaker.m4_live_price_band import (
     ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, BEST_ASK_BAND_ABANDONED,
     SIGNED_LIMIT_BAND_ABANDONED, POST_PRICE_OUTSIDE_BAND,
-    WAIT_FOR_PRICE_BAND, price_in_band,
+    WAIT_FOR_PRICE_BAND,
 )
-from polymaker.m4_live_pricing import DYNAMIC, market_price_allowed, quote_valid, rejected_price_band_valid
+from polymaker.m4_live_pricing import DYNAMIC, order_price_allowed, quote_valid, rejected_price_band_valid
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
 from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES, BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
@@ -38,6 +38,7 @@ AMOUNT_PRECISION = "FAK_BUY_CENTS_SHARES_4DP_V1"
 GTD_PRECISION = "LIMIT_BUY_SHARES_2DP_V1"
 CENT = decimal(".01")
 M12_ANCHOR_INVALIDATED = "M12_BEST_ASK_BELOW_SIGNAL_ANCHOR"
+M12_FROZEN_CAP_INVALIDATED = "M12_BEST_ASK_BELOW_FROZEN_CAP"
 
 
 def follow_fak_amount(principal, price, *, ask_at_cap=False):
@@ -222,8 +223,7 @@ class BudgetLedger(TaskLedger):
 
     @staticmethod
     def post_price_allowed(price, root):
-        band = root.get("post_price_band")
-        return (price_in_band(price, band) if band else 0 < decimal(price) < 1) and market_price_allowed(price, root)
+        return order_price_allowed(price, root)
 
     def record_price_band_wait(self, key, price, stage, root):
         name = "post_price_band_wait:" + key
@@ -397,7 +397,7 @@ class BudgetLedger(TaskLedger):
             if a["started"]
         ]
 
-    def invalidate_follow_anchor(self, key, evidence):
+    def invalidate_follow_price(self, key, evidence):
         marker = "m12_anchor_invalidation:" + key
         with self.lock, self.db:
             if self.get(marker):
@@ -427,9 +427,9 @@ class BudgetLedger(TaskLedger):
             if (not attempts and not self.get("post_price_band_eligible:" + key)
                     and not self.pending_matches(key)):
                 state, reason = "SKIPPED", POST_PRICE_OUTSIDE_BAND
-        elif (self.ledger_strategy == M421_LEDGER and self.get("m12_anchor_invalidation:" + key)
+        elif (self.ledger_strategy == M421_LEDGER and (invalidation := self.get("m12_anchor_invalidation:" + key))
               and not self.unresolved(key)):
-            reason = M12_ANCHOR_INVALIDATED
+            reason = invalidation.get("reason", M12_ANCHOR_INVALIDATED)
             if self.pending_matches(key):
                 state = "WAIT_SETTLEMENT"
             else:

@@ -311,6 +311,7 @@ def main(argv=None):
                           "strategy": args.strategy, "instance_id": args.instance_id,
                           "state_dir": str(state_dir or FRAMEWORK),
                           "framework": str(FRAMEWORK), "price_risk": str(risk),
+                          "price_band_applies_to": "INTENT.price" if db_run else "signed_limit_price",
                           "baseline_db_run": str(db_run) if db_run else None,
                           "max_overpay_ticks": args.max_overpay_ticks,
                           "two_market_trial": window.slugs() if window else None,

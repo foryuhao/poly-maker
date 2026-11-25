@@ -16,6 +16,7 @@ from polymaker.m4_live_budget import (
     FAK_BUY_MINIMUM_POLICY,
     BudgetLedger,
     M12_ANCHOR_INVALIDATED,
+    M12_FROZEN_CAP_INVALIDATED,
     minimum_fak_buy_ok,
 )
 from polymaker.m4_live_budget_reconcile import reconcile_owned
@@ -23,7 +24,7 @@ from polymaker.m4_live_config import M42112_PRICE_BAND_SOURCE, M4LiveSettings, g
 from polymaker.m4_live_numeric import age_us, budget_quantity, install_live_clock_boundaries
 from polymaker.m4_live_pricing import follow_limit_price, frozen_follow_cap
 from polymaker.m4_live_price_band import (
-    ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND,
+    ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND, price_in_band,
 )
 from polymaker.m4_live_pricing import BOOT_ID, WAIT_US, market_price_allowed, origin, quote_valid, rejected_price_band_valid, signal_age
 from polymaker.m4_live_task import TERMINAL_TASKS, TaskMarket
@@ -32,8 +33,9 @@ from polymaker.m4_types import M4_LEDGER, M21_LEDGER, M421_LEDGER, TAKER_LEDGER_
 from polymaker.market_protocol import market_from_snapshot, market_protocol
 from polymaker.rdp_sm_network import NetworkHealth
 
-M12_ANCHOR_DROP = decimal("0.10")
+M12_BEST_ASK_DROP = decimal("0.10")
 M12_WAIT_FRESH_ASK = "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
+M12_ANCHOR_OUTSIDE_BAND = "M12_INTENT_ANCHOR_OUTSIDE_PRICE_BAND"
 
 
 class BudgetMarket(TaskMarket):
@@ -156,7 +158,8 @@ class BudgetMarket(TaskMarket):
                     else "ADMITTED_FAK_ANCHOR_10S_THEN_BEST_ASK_V1" if self.ledger.dynamic_pricing
                     else "ADMITTED_FAK_FIXED_CAP_EXCHANGE_MATCH_V1"),
                 "pricing_policy": "FOLLOW_LIMIT" if follower else self.settings.execution.taker.pricing_policy,
-                **({"invalidate_intent_at_best_ask_drop": str(M12_ANCHOR_DROP)}
+                **({"invalidate_intent_at_best_ask_drop": str(M12_BEST_ASK_DROP),
+                    "best_ask_drop_reference": "frozen_cap" if follower else "anchor_price"}
                    if getattr(self.feed, "m12_manifest", None) else {}),
                 **({"max_overpay_ticks": self.feed.m1.reader.max_overpay_ticks} if follower else {}),
                 "anchor_wait_sec": 10 if self.ledger.dynamic_pricing and not self.ledger.signal_limited else None,
@@ -168,7 +171,7 @@ class BudgetMarket(TaskMarket):
                 "post_price_band_policy": (self.ledger.post_price_band or {}).get("policy", ANCHOR_PRICE_FLOOR),
                 "post_minimum_price": None if source_bands else (self.ledger.post_price_band or {}).get("minimum"),
                 "post_maximum_price": None if source_bands else (self.ledger.post_price_band or {}).get("maximum"),
-                "signal_anchor_price_filter": not bool(self.ledger.post_price_band),
+                "signal_anchor_price_filter": follower or not bool(self.ledger.post_price_band),
                 "post_price_band_retry_policy": self.settings.post_price_band_retry_policy,
                 "post_price_band_source": (M42112_PRICE_BAND_SOURCE if source_bands
                                            else self.settings.live_taker_price_risk.plan_fields()["post_price_band_source"]
@@ -213,7 +216,10 @@ class BudgetMarket(TaskMarket):
         if row is None:
             signal = getattr(getattr(self, "feed", None), "m1", None)
             if getattr(getattr(signal, "reader", None), "follow_limit", False):
-                token = signal.observed[key].token_id
+                opportunity = signal.observed[key]
+                if signal.anchor_outside_band(opportunity):
+                    return False
+                token = opportunity.token_id
                 tick = self.feed.books[token].tick
                 if tick > 0 and self.feed.tick_verified.get(token) == tick:
                     return False  # collect() can admit or filter immediately using the verified tick.
@@ -327,11 +333,16 @@ class BudgetMarket(TaskMarket):
                         sequence, source = provenance
                         self.ledger.fact("m421_signal_order", row["id"], {"sequence": sequence, "source": source})
                         self.ledger.set("m421_sequence:" + row["id"], sequence)
+                    follow_limit = bool(clock_options and getattr(self.feed.m1.reader, "follow_limit", False))
+                    if follow_limit and self.filter_follow_anchor(
+                            row["id"], row["price"], opportunity.price_risk.plan_fields()["post_price_band"]):
+                        self.e.record("sm_m4_live_signal", self.ledger.row(row["id"]))
+                        continue
                     pricing_origin = origin(opportunity.signal_start_mono, self.e.monotonic(), self.elapsed(),
                         deadline=opportunity.order_deadline if self.ledger.signal_limited else None,
                         ledger_strategy=self.ledger.ledger_strategy, **clock_options) if self.ledger.dynamic_pricing else None
-                    if clock_options and getattr(self.feed.m1.reader, "follow_limit", False):
-                        pricing_origin["follow_limit"] = True
+                    if follow_limit:
+                        pricing_origin.update(follow_limit=True, follow_anchor_band=True)
                     self.ledger.plan_signal(
                         row["id"],
                         self.feed.books[opportunity.token_id].tick,
@@ -342,8 +353,7 @@ class BudgetMarket(TaskMarket):
                         self.ledger.finish(row["id"], "SKIPPED", reason)
                         self.e.record("sm_m4_live_signal", self.ledger.row(row["id"]))
                         continue
-                    # An invalid initial cap is terminal under the new policy,
-                    # before account/network readiness can defer a first attempt.
+                    # Finish a filtered intent before account or quote readiness can defer it.
                     now, elapsed = self.e.monotonic(), self.elapsed()
                     root = self.ledger.root_plan(row["id"])
                     if not self.reject_initial_price_band(opportunity, now,
@@ -387,7 +397,11 @@ class BudgetMarket(TaskMarket):
                 pricing_reason = "M12_PREVIOUS_INTENT_AWAITING_ORDER_PROOF"
             if (getattr(self.feed, "m12_manifest", None) and pricing_reason is None
                     and not stopping and not e.fatal and self.entry_window_open()):
-                pricing_reason = self.follow_anchor_block(row, root, book, now)
+                if (root.get("pricing_origin", {}).get("follow_limit") and
+                        self.filter_follow_anchor(key, root["anchor_price"], root["post_price_band"])):
+                    pricing_reason = M12_ANCHOR_OUTSIDE_BAND
+                else:
+                    pricing_reason = self.follow_best_ask_block(row, root, book, now)
             if self.ledger.dynamic_pricing and pricing_reason is None:
                 captured_elapsed = self.elapsed()
                 age = signal_age(root, now, captured_elapsed)
@@ -436,7 +450,7 @@ class BudgetMarket(TaskMarket):
                     "M4_POST_LATENCY_BUDGET",
                     quote is None or self.ledger.signal_limited or self.initial_post_budget_available(opportunity),
                 ),
-                # The M12 anchor check above uses the current execution book.
+                # The best-ask check above uses the current execution book.
                 # The signed follow limit is still fixed by the original plan.
                 ("M4_TAKER_TICK_UNVERIFIED",
                  self.feed.tick_verified.get(opportunity.token_id) == book.tick),
@@ -467,51 +481,53 @@ class BudgetMarket(TaskMarket):
             self.guard_results[key] = (self.guard_reason, self.pending_input_age_ms)
             return self.guard_reason is None
 
-    def follow_anchor_block(self, row, root, book, now):
-        if row["reason"] == M12_ANCHOR_INVALIDATED:
-            return M12_ANCHOR_INVALIDATED
+    def follow_best_ask_block(self, row, root, book, now):
+        if row["reason"] in {M12_ANCHOR_INVALIDATED, M12_FROZEN_CAP_INVALIDATED}:
+            return row["reason"]
         if not self.feed.m1.legal(book, now):
             return M12_WAIT_FRESH_ASK
         anchor = decimal(root["anchor_price"])
-        drop = anchor - book.best_ask
-        if drop < M12_ANCHOR_DROP:
+        uses_frozen_cap = root.get("pricing_origin", {}).get("follow_limit")
+        reference = frozen_follow_cap(root) if uses_frozen_cap else anchor
+        drop = reference - book.best_ask
+        if drop < M12_BEST_ASK_DROP:
             return None
-        evidence = {"opportunity_id": row["id"], "reason": M12_ANCHOR_INVALIDATED,
+        reason = M12_FROZEN_CAP_INVALIDATED if uses_frozen_cap else M12_ANCHOR_INVALIDATED
+        evidence = {"opportunity_id": row["id"], "reason": reason,
                     "token_id": book.token_id, "anchor_price": str(anchor), "best_ask": str(book.best_ask),
-                    "drop": str(drop), "threshold": str(M12_ANCHOR_DROP),
+                    "drop": str(drop), "threshold": str(M12_BEST_ASK_DROP),
+                    **({"frozen_cap": str(reference)} if uses_frozen_cap else {}),
                     "received_monotonic": book.received_mono, "source_wall": book.source_time}
-        if self.ledger.invalidate_follow_anchor(row["id"], evidence):
+        if self.ledger.invalidate_follow_price(row["id"], evidence):
             self.e.record("m12_follow_anchor_invalidated", evidence)
-        return M12_ANCHOR_INVALIDATED
+        return reason
 
-    def skip_unreachable_follow_intent(self, key, root):
-        if not root.get("pricing_origin", {}).get("follow_limit"):
-            return False
-        minimum = decimal(root["post_price_band"]["minimum"])
-        if frozen_follow_cap(root) >= minimum:
+    def filter_follow_anchor(self, key, anchor, band):
+        if price_in_band(anchor, band):
             return False
         row = self.ledger.row(key)
-        if row["order_id"] or row["started"] or self.ledger.attempts(key):
-            return False
-        self.ledger.finish(key, "SKIPPED", "M12_FROZEN_CAP_BELOW_PRICE_FLOOR")
+        if (row["state"] in TERMINAL_TASKS or row["order_id"] or row["started"]
+                or self.ledger.unresolved(key) or self.ledger.pending_matches(key)):
+            return True
+        prior_post = any(a["started"] and a["state"] != "UNSENT" for a in self.ledger.attempts(key))
+        self.ledger.finish(key, "CUTOFF" if prior_post else "SKIPPED", M12_ANCHOR_OUTSIDE_BAND)
         self.pending.pop(key, None)
         self.e.record("m12_follow_price_filtered", {
-            "opportunity_id": key, "anchor": root["anchor_price"], "tick_at_plan": root["tick_at_plan"],
-            "max_overpay_ticks": root["pricing_origin"]["overpay_ticks"],
-            "frozen_cap": str(frozen_follow_cap(root)), "minimum": str(minimum),
+            "opportunity_id": key, "anchor": anchor, "reason": M12_ANCHOR_OUTSIDE_BAND,
+            "minimum": band["minimum"], "maximum": band["maximum"], "policy": band["policy"],
         })
         return True
 
     def restore(self):
         super().restore()
         for key in tuple(self.pending):
-            self.skip_unreachable_follow_intent(key, self.ledger.root_plan(key))
+            root = self.ledger.root_plan(key)
+            if root.get("pricing_origin", {}).get("follow_limit"):
+                self.filter_follow_anchor(key, root["anchor_price"], root["post_price_band"])
 
     def reject_initial_price_band(self, opportunity, now, age, elapsed):
         key = opportunity.episode_id
         root = self.ledger.root_plan(key)
-        if root.get("pricing_origin", {}).get("follow_limit"):
-            return self.skip_unreachable_follow_intent(key, root)
         if root.get("post_price_band_retry_policy") != ABANDON_FIRST_SIGNED_BAND:
             return False
         price = decimal(root["limit_price"])

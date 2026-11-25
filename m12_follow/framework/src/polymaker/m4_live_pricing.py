@@ -46,18 +46,29 @@ def frozen_follow_cap(root):
 
 
 def follow_limit_price(root, tick):
-    """Largest legal BUY tick strictly below the exclusive strategy upper bound."""
+    """Largest legal BUY tick at or below the frozen execution cap."""
+    cap = min(1 - tick, (frozen_follow_cap(root) // tick) * tick)
+    if root["pricing_origin"].get("follow_anchor_band"):
+        return cap
+    # Older saved orders applied the strategy band to the signed limit.
     band = root["post_price_band"]
     high = decimal(band["maximum"])
     band_top = (high // tick) * tick
     if band_top == high and not price_in_band(high, band):
         band_top -= tick
-    return min(1 - tick, band_top, (frozen_follow_cap(root) // tick) * tick)
+    return min(cap, band_top)
 
 
 def market_price_allowed(price, root):
     ticks = root.get("pricing_origin", {}).get("overpay_ticks")
     return ticks is None or decimal(price) <= decimal(root["anchor_price"]) + ticks * decimal(root["tick_at_plan"])
+
+
+def order_price_allowed(price, root):
+    band = root.get("post_price_band")
+    band_price = root["anchor_price"] if root.get("pricing_origin", {}).get("follow_anchor_band") else price
+    return (0 < decimal(price) < 1 and (not band or price_in_band(band_price, band))
+            and market_price_allowed(price, root))
 
 
 def quote_valid(root, plan, token, evidence=None):
@@ -68,9 +79,7 @@ def quote_valid(root, plan, token, evidence=None):
     """
     try:
         price = decimal(plan["limit_price"])
-        if root.get("post_price_band") and not price_in_band(price, root["post_price_band"]):
-            return False
-        if not market_price_allowed(price, root):
+        if not order_price_allowed(price, root):
             return False
         if "pricing_origin" not in root:
             return price == decimal(root["limit_price"])

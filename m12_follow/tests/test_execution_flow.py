@@ -140,10 +140,12 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                   "sqlite_limit_at_cap", "sqlite_limit_cancel",
                                   "sqlite_limit_T240", "sqlite_limit_edge", "sqlite_limit_burst", "sqlite_limit_restart",
                                   "sqlite_limit_cancel_timeout", "sqlite_limit_small", "sqlite_limit_low", "sqlite_limit_floor",
-                                  "sqlite_limit_anchor_drop", "sqlite_limit_anchor_drop_native_v2",
-                                  "sqlite_limit_anchor_stale", "sqlite_limit_anchor_inside", "sqlite_partial_anchor_drop",
+                                  "sqlite_limit_ceiling", "sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_fak",
+                                  "sqlite_limit_cap_drop", "sqlite_limit_cap_drop_native_v2", "sqlite_limit_cap_drop_native_fak_v2",
+                                  "sqlite_limit_cap_stale", "sqlite_limit_cap_inside", "sqlite_partial_anchor_drop",
                                   "m21_sqlite_limit_v2", "m21_sqlite_limit_late_v2",
-                                  "m21_sqlite_limit_cancel", "m21_sqlite_limit_anchor_drop_native_v2"])
+                                  "m21_sqlite_limit_cancel", "m21_sqlite_limit_cap_drop_native_v2",
+                                  "m21_sqlite_limit_low"])
 async def test_follow_native_fak(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
     primary, lead, parent, clock, _, mock_transport = await mock_live_market(tmp_path, monkeypatch)
@@ -199,6 +201,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
     ask = {"outside_band": ".90", "sqlite_cap": ".74"}.get(case, ".71")
     if case.startswith("sqlite_limit"):
         ask = ".82"  # No liquidity within +5 ticks. A resting bid must still be submitted.
+    if case in {"sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_fak"}:
+        ask = ".85"
     if case == "sqlite_limit_at_cap":
         ask = ".87"
     rows = [{"event_type": "book", "market": meta.condition_id, "asset_id": t.token_id,
@@ -268,10 +272,11 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                           signal_version=sqlite_source.BASELINE_VERSIONS[strategy],
                           order_type="ASSUMED_FIXED_ANCHOR", market=meta.slug, side="BUY", token="1",
                           outcome="YES", price=".70", quantity="7.1", available=clock.now, deadline=clock.now+1)
-            if case in {"sqlite_limit_low", "sqlite_limit_floor"}:
-                intent["price"] = ".13" if case == "sqlite_limit_low" else ".45"
-            if case in {"sqlite_limit_late", "sqlite_limit_at_cap"}:
-                intent["price"] = ".82"
+            intent["price"] = {
+                "sqlite_limit_low": ".46", "sqlite_limit_floor": ".50", "sqlite_limit_ceiling": ".90",
+                "sqlite_limit_near_ceiling": ".89", "sqlite_limit_near_ceiling_fak": ".89",
+                "sqlite_limit_late": ".82", "sqlite_limit_at_cap": ".82",
+            }.get(case, intent["price"])
             if sqlite_mode:
                 if case == "sqlite_limit_burst":
                     append_intent({**intent, "opportunity": "earlier-in-same-read"})
@@ -279,24 +284,25 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             else:
                 engine.store.emit("INTENT", {"scenario": "sop/anchor", "intent": intent})
                 advance_source()
-            if case in {"sqlite_limit_low", "sqlite_limit_floor"}:
+            if case in {"sqlite_limit_low", "sqlite_limit_floor", "sqlite_limit_ceiling"}:
                 feed.follow_market = market
                 feed.connected = False
+                if case != "sqlite_limit_floor":
+                    feed.tick_verified.pop("1")
                 feed.m1.refresh(force=True)
                 assert feed.wanted_token() is None
             market.collect()
-            if case == "sqlite_limit_low":
+            if case in {"sqlite_limit_low", "sqlite_limit_ceiling"}:
                 row, = ledger.rows()
-                assert (row["state"], row["reason"]) == ("SKIPPED", "M12_FROZEN_CAP_BELOW_PRICE_FLOOR")
+                assert (row["state"], row["reason"]) == ("SKIPPED", "M12_INTENT_ANCHOR_OUTSIDE_PRICE_BAND")
                 assert not market.pending and not calls and not ledger.attempts()
+                assert not ledger.facts("taker_plan")
                 assert not market.intent_needs_quotes(row["id"]) and feed.wanted_token() is None
                 filtered, = ledger.metric()["by_follow_intent"]
                 assert filtered["posts_started"] == 0 and filtered["principal_completion_ratio"] == "0"
-                # Simulate an unsent task left RESERVED by the preceding binary.
-                with ledger.db:
-                    ledger.db.execute("UPDATE opportunities SET state='RESERVED',reason=NULL WHERE id=?", (row["id"],))
+                ledger.validate_recovery()
                 market.restore()
-                assert not market.pending and ledger.row(row["id"])["state"] == "SKIPPED"
+                assert not market.pending and ledger.row(row["id"]) == row
                 append_intent({**intent, "opportunity": "later", "token": "2", "outcome": "NO", "price": ".65"})
                 market.collect()
                 assert feed.wanted_token() == "2" and len(market.pending) == 1
@@ -304,42 +310,47 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             if case == "sqlite_limit_floor":
                 assert market.pending and feed.wanted_token() == "1"
                 feed.connected = True
+                push_ask(".49")
             [opportunity] = market.pending.values()
             assert feed.m1.provenance(opportunity.episode_id)[1] == strategy
             if sqlite_mode:
                 assert ledger.root_plan(opportunity.episode_id)["detector_source"] == strategy
             market.collect()
             assert len(ledger.rows()) == 1
-            if case == "sqlite_limit_anchor_inside":
-                push_ask(".61")
+            if case == "sqlite_limit_cap_inside":
+                push_ask(".66")  # The frozen cap of .75 is .09 above this ask.
                 push_ask(".50", token="2")
-            if case == "sqlite_limit_anchor_stale":
-                push_ask(".60")
+            if case == "sqlite_limit_cap_stale":
+                push_ask(".65")
                 clock.now += .201
                 await market.submit(opportunity)
                 assert not calls and not ledger.attempts()
                 assert market.guard_failure(opportunity.episode_id) == "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
                 assert not ledger.get("m12_anchor_invalidation:" + opportunity.episode_id)
-                push_ask(".61")
-            if case in {"sqlite_limit_anchor_drop", "sqlite_limit_anchor_drop_native"}:
+                push_ask(".66")
+            if case.startswith("sqlite_limit_cap_drop"):
                 key = opportunity.episode_id
-                if case == "sqlite_limit_anchor_drop_native":
+                if case.endswith("_fak"):
+                    executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
+                if "_native" in case:
                     def drop_at_native_guard(attempt):
-                        push_ask(".60")
+                        push_ask(".65")
                         return market.native_guard(attempt)
                     monkeypatch.setattr(reads.gateway._client, "m4_native_guard", drop_at_native_guard)
                 else:
-                    push_ask(".60")
+                    push_ask(".65")
                 await market.submit(opportunity)
                 assert not calls
                 saved = ledger.get("m12_anchor_invalidation:" + key)
                 assert saved["token_id"] == "1" and saved["drop"] == "0.10"
+                assert (saved["anchor_price"], saved["frozen_cap"], saved["best_ask"]) == ("0.70", "0.75", "0.65")
                 row = ledger.row(key)
-                assert (row["state"], row["reason"]) == ("SKIPPED", "M12_BEST_ASK_BELOW_SIGNAL_ANCHOR")
+                assert (row["state"], row["reason"]) == ("SKIPPED", "M12_BEST_ASK_BELOW_FROZEN_CAP")
                 assert not row["order_id"] and Decimal(row["reserved"]) == 0
-                if case == "sqlite_limit_anchor_drop_native":
+                if "_native" in case:
                     attempt, = ledger.attempts()
                     assert attempt["state"] == "UNSENT"
+                    assert json.loads(attempt["plan"])["order_type"] == ("FAK" if case.endswith("_fak") else "GTD")
                     proof = json.loads(attempt["proof"])
                     assert proof["native_post_sent"] is False and proof["reason"] == row["reason"]
                 else:
@@ -388,18 +399,19 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 monkeypatch.setattr(reads.gateway._client, "m4_native_guard", change_time)
                 await market.submit(opportunity)
                 assert not calls and ledger.attempts()[0]["state"] == "UNSENT"
-            if case in {"sqlite_limit_late", "sqlite_limit_at_cap"}:
+            if case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_near_ceiling_fak"}:
                 executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
             await market.submit(opportunity)
             if case.startswith("sqlite_limit"):
                 assert len(calls) == 1, (market.guard_failure(opportunity.episode_id), ledger.attempts(), ledger.rows())
                 sent, = calls
                 plan = json.loads(ledger.attempts()[-1]["plan"])
-                is_fak = case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_edge", "sqlite_limit_small"}
+                is_fak = case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_edge", "sqlite_limit_small",
+                                  "sqlite_limit_near_ceiling_fak"}
                 assert sent["orderType"] == ("FAK" if is_fak else "GTD")
                 assert sent["postOnly"] is False
-                limit = Decimal({"sqlite_limit_floor": ".50", "sqlite_limit_late": ".87",
-                                 "sqlite_limit_at_cap": ".87"}.get(case, ".75"))
+                limit = Decimal({"sqlite_limit_floor": ".55", "sqlite_limit_late": ".87", "sqlite_limit_at_cap": ".87",
+                                 "sqlite_limit_near_ceiling": ".94", "sqlite_limit_near_ceiling_fak": ".94"}.get(case, ".75"))
                 assert Decimal(plan["limit_price"]) == limit
                 assert int(sent["order"]["expiration"]) == plan["expiration"]
                 assert plan["expiration"] == (0 if is_fak else int(meta.slug.rsplit("-", 1)[1]) + 300)
@@ -614,14 +626,22 @@ async def verify_replace(market, executor, ledger, op, intent, append, original,
 
 
 def test_follow_cap_uses_frozen_tick_and_current_legal_grid():
-    from polymaker.m4_live_pricing import follow_limit_price
+    from polymaker.m4_live_pricing import follow_limit_price, order_price_allowed
     from polymaker.m4_types import CLOSED_SIGNED_LIMIT_BAND, POST_SIGNED_LIMIT_BAND
 
     root = {"anchor_price": ".87", "tick_at_plan": ".01", "pricing_origin": {"overpay_ticks": 5},
             "post_price_band": {"policy": POST_SIGNED_LIMIT_BAND, "minimum": ".50", "maximum": ".90"}}
     assert follow_limit_price(root, Decimal(".01")) == Decimal(".89")
     assert follow_limit_price(root, Decimal(".001")) == Decimal(".899")
+    assert not order_price_allowed(".92", root)
     root["post_price_band"]["policy"] = CLOSED_SIGNED_LIMIT_BAND
     assert follow_limit_price(root, Decimal(".01")) == Decimal(".90")
+    root["post_price_band"]["policy"] = POST_SIGNED_LIMIT_BAND
+    root["pricing_origin"]["follow_anchor_band"] = True
+    assert follow_limit_price(root, Decimal(".01")) == Decimal(".92")
+    assert follow_limit_price(root, Decimal(".001")) == Decimal(".92")
+    assert order_price_allowed(".92", root) and not order_price_allowed(".921", root)
+    root["anchor_price"] = ".46"
+    assert not order_price_allowed(".51", root)
     root["anchor_price"] = ".72"
     assert follow_limit_price(root, Decimal(".1")) == Decimal(".7")

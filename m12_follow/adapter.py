@@ -9,6 +9,7 @@ from m12_follow.transport import stable_id
 from m12_follow.sqlite_source import BASELINE_VERSIONS
 from polymaker.m21_live import M21Feed
 from polymaker.m4_live_numeric import age_us, live_book_legal
+from polymaker.m4_live_price_band import price_in_band
 from polymaker.m4_signals import M4Feed
 from polymaker.m4_types import M421_LEDGER, Opportunity
 from polymaker.taker_runner import SharedTakerFeed, TakerSocket
@@ -162,6 +163,12 @@ class SQLiteBaselineIntents(BaselineIntents):
         self.selected = None
         self.active.clear()
 
+    def anchor_outside_band(self, opportunity):
+        if not getattr(self.reader, "follow_limit", False):
+            return False
+        band = opportunity.price_risk.plan_fields()["post_price_band"]
+        return not price_in_band(opportunity.anchor_bid_price, band)
+
     def refresh(self, *, force=False):
         self.active.clear()
         self.available = False
@@ -196,15 +203,17 @@ class SQLiteBaselineIntents(BaselineIntents):
                       input_seq=intent["input_seq"], audit_seq=intent["audit_seq"])
         self.latest_key = key
         self.available = True
-        if self.feed.connected or (getattr(self.reader, "follow_limit", False)
-                                   and self.feed.tick_verified.get(token) == self.feed.books[token].tick
-                                   and self.feed.books[token].tick > 0):
+        if (self.feed.connected or (getattr(self.reader, "follow_limit", False)
+                                    and self.feed.tick_verified.get(token) == self.feed.books[token].tick
+                                    and self.feed.books[token].tick > 0)
+                or self.anchor_outside_band(self.observed[key])):
             self.active.add(key)
 
     def evaluate(self, snapshot=None):
         super().evaluate(snapshot)
         if (self.selected is not None and
-                self.feed.tick_verified.get(self.selected.token_id) != self.feed.books[self.selected.token_id].tick):
+                self.feed.tick_verified.get(self.selected.token_id) != self.feed.books[self.selected.token_id].tick
+                and not self.anchor_outside_band(self.selected)):
             self.selected = None
 
     def record_admissions(self, ledger):
