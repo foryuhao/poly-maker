@@ -14,6 +14,7 @@ M4_LEDGER = "m4_frequency_v2_native_v1"
 M6_LEDGER = "m6_withdrawal_supported_v1_1"
 M21_LEDGER = "m21_endpoint_coflow_v1"
 M21_VERSION = "m21-endpoint-recovery-withdrawal-v1/raw-joint-endpoint-r1/p-1256b8aa9433"
+BASELINE_FOLLOW_STRATEGIES = ("M12", "M21")
 M421_LEDGER = "m421_combined_v1"
 M421_VERSION = "m421-m4-m21-v1"
 TAKER_LEDGER_IDS = {"M4": M4_LEDGER, "M6": M6_LEDGER, "M21": M21_LEDGER, "M421": M421_LEDGER}

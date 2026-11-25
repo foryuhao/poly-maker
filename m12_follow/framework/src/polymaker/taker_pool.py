@@ -53,8 +53,9 @@ def account_cash(account):
 
 
 class TakerPool:
-    def __init__(self, path, project):
+    def __init__(self, path, project, *, control_root=None):
         self.path, self.project = Path(path).absolute(), Path(project)
+        self.control_root = control_root if control_root is not None else self.project / "runtime/trading-control"
         if self.path != self.path.resolve() or self.path.is_symlink():
             raise ValueError("TAKER_POOL_PATH_INVALID")
         with closing(self.connect()) as db, db:
@@ -156,7 +157,7 @@ class Opening:
                 reason = "TAKER_STRATEGY_REMOVED"
         except (ValueError, OSError):
             reason = "TAKER_POOL_MEMBERSHIP_UNAVAILABLE"
-        if (self.pool.project / f"runtime/trading-control/{name.lower()}-strategy-stop.json").exists():
+        if (self.pool.control_root / f"{name.lower()}-strategy-stop.json").exists():
             reason = "TAKER_STRATEGY_STOPPED"
         with closing(self.pool.connect()) as db, db:
             if reason:

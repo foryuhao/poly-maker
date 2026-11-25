@@ -28,7 +28,7 @@ from polymaker.m4_live_price_band import (
 from polymaker.m4_live_pricing import DYNAMIC, market_price_allowed, quote_valid, rejected_price_band_valid
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
-from polymaker.m4_types import BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
+from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES, BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
 from polymaker.market_protocol import market_protocol
 from polymaker.state.tracker import TradeEvent
 
@@ -179,7 +179,8 @@ class BudgetLedger(TaskLedger):
             clock = root.get("pricing_origin", {})
             scoped = evidence.get("support_id", "").startswith("sqlite:")
             if scoped:
-                require(root.get("detector_source") == "M12" and clock.get("market_cutoff") == self.settings.cutoff_sec
+                require(root.get("detector_source") in BASELINE_FOLLOW_STRATEGIES
+                        and clock.get("market_cutoff") == self.settings.cutoff_sec
                         and type(clock.get("overpay_ticks")) is int and clock["overpay_ticks"] >= 0,
                         "M12_INTENT_MARKET_POLICY_INVALID")
             else:

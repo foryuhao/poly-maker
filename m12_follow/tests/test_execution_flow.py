@@ -141,12 +141,17 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                   "sqlite_limit_T240", "sqlite_limit_edge", "sqlite_limit_burst", "sqlite_limit_restart",
                                   "sqlite_limit_cancel_timeout", "sqlite_limit_small", "sqlite_limit_low", "sqlite_limit_floor",
                                   "sqlite_limit_anchor_drop", "sqlite_limit_anchor_drop_native_v2",
-                                  "sqlite_limit_anchor_stale", "sqlite_limit_anchor_inside", "sqlite_partial_anchor_drop"])
+                                  "sqlite_limit_anchor_stale", "sqlite_limit_anchor_inside", "sqlite_partial_anchor_drop",
+                                  "m21_sqlite_limit_v2", "m21_sqlite_limit_late_v2",
+                                  "m21_sqlite_limit_cancel", "m21_sqlite_limit_anchor_drop_native_v2"])
 async def test_follow_native_fak(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
     primary, lead, parent, clock, _, mock_transport = await mock_live_market(tmp_path, monkeypatch)
     monkeypatch.setattr(transport, "time", SimpleNamespace(monotonic=lambda: clock.now))
-    cfg = strategy_settings(FRAMEWORK, M421_LEDGER, M4LiveSettings.load(FRAMEWORK), signal_profile="M42112")
+    strategy = "M21" if case.startswith("m21_") else "M12"
+    case = case.removeprefix("m21_")
+    cfg = strategy_settings(FRAMEWORK, M421_LEDGER, M4LiveSettings.load(FRAMEWORK),
+                            signal_profile="M42112", follow_strategy=strategy)
     if case.endswith("_v2"):
         case = case.removesuffix("_v2")
         lead.meta = parent.meta = V2MarketMeta(**{**asdict(lead.meta), "tokens": lead.meta.tokens})
@@ -158,7 +163,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
     reader = transport.Reader(tmp_path / "channel", **source)
     sqlite_mode = case.startswith("sqlite_")
     if sqlite_mode:
-        reader = SQLiteIntents(tmp_path, meta, 5 if case.startswith("sqlite_limit") else 3)
+        reader = SQLiteIntents(tmp_path, meta, 5 if case.startswith("sqlite_limit") else 3, strategy=strategy)
         reader.follow_limit = case.startswith("sqlite_limit")
         reader.path.parent.mkdir(parents=True)
         with closing(sqlite3.connect(reader.path)) as db, db:
@@ -259,7 +264,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             advance_source()
             market.collect()
             assert not ledger.rows()
-            intent = dict(opportunity=fact["id"], strategy="M12", profile="M12", signal_version=VERSION,
+            intent = dict(opportunity=fact["id"], strategy=strategy, profile=strategy,
+                          signal_version=sqlite_source.BASELINE_VERSIONS[strategy],
                           order_type="ASSUMED_FIXED_ANCHOR", market=meta.slug, side="BUY", token="1",
                           outcome="YES", price=".70", quantity="7.1", available=clock.now, deadline=clock.now+1)
             if case in {"sqlite_limit_low", "sqlite_limit_floor"}:
@@ -299,6 +305,9 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 assert market.pending and feed.wanted_token() == "1"
                 feed.connected = True
             [opportunity] = market.pending.values()
+            assert feed.m1.provenance(opportunity.episode_id)[1] == strategy
+            if sqlite_mode:
+                assert ledger.root_plan(opportunity.episode_id)["detector_source"] == strategy
             market.collect()
             assert len(ledger.rows()) == 1
             if case == "sqlite_limit_anchor_inside":

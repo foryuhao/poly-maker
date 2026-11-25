@@ -1,4 +1,4 @@
-"""Independent M12 intent-following live runner. Import/check never contacts the venue."""
+"""Independent strategy-baseline follower. Import/check never contacts the venue."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,10 @@ from pathlib import Path
 
 FRAMEWORK = Path(__file__).resolve().parent / "framework"
 sys.path.insert(0, str(FRAMEWORK / "src"))
+
+
+def wallet_lock_directory():
+    return Path.home() / ".local/state/polymaker/follower-wallet-locks"
 
 
 def address(value):
@@ -34,15 +38,39 @@ class FollowConfig:
     existing_wallet_file: Path | None = None
     baseline_db_run: Path | None = None
     max_overpay_ticks: int = 5
+    strategy: str = "M12"
+    instance_id: str | None = None
+    state_dir: Path | None = None
 
     def reader(self, meta):
         if self.baseline_db_run:
             from m12_follow.sqlite_source import SQLiteIntents
-            reader = SQLiteIntents(self.baseline_db_run, meta, self.max_overpay_ticks)
+            reader = SQLiteIntents(self.baseline_db_run, meta, self.max_overpay_ticks, strategy=self.strategy)
         else:
             from m12_follow.transport import Reader
             reader = Reader(self.source_dir, run_id=self.run_id, market=meta.slug, condition_id=meta.condition_id)
         return self.trial_window.scoped_reader(reader, meta.slug) if self.trial_window else reader
+
+    def bind_instance(self, ledger_root):
+        """Called with the execution directory's runner lock held."""
+        if self.state_dir is None:
+            return
+        from polymaker.m4_control import atomic_json
+
+        path = self.state_dir / "instance.json"
+        identity = {
+            "instance_id": self.instance_id, "strategy": self.strategy, "funder": self.funder,
+            "baseline_db_run": str(self.baseline_db_run), "run_id": self.run_id,
+        }
+        if path.is_symlink():
+            raise ValueError("follower instance identity cannot be a symlink")
+        if path.exists():
+            if json.loads(path.read_bytes()) != identity:
+                raise ValueError("follower state directory belongs to a different instance or baseline")
+            return
+        if any(item.name != "runner.lock" for item in ledger_root.iterdir()):
+            raise ValueError("follower state directory already contains unbound execution state")
+        atomic_json(path, identity)
 
     def stop_control(self, own):
         from polymaker.m4_control import StopControl
@@ -174,6 +202,17 @@ class FollowConfig:
         # Old processes use the same advisory locks. Never create a lock in their state.
         self.verify_existing_wallet()
         with ExitStack() as held:
+            directory = wallet_lock_directory()
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if directory.is_symlink() or directory.stat().st_uid != os.getuid():
+                raise ValueError("follower wallet lock directory has invalid ownership")
+            path = directory / f"137-{address(self.funder)}.lock"
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            lock = held.enter_context(os.fdopen(fd, "r+"))
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("another follower still owns the funding wallet lock") from exc
             if self.existing_funder == self.funder:
                 for root in self.previous_roots():
                     path = root / "runner.lock"
@@ -188,7 +227,7 @@ class FollowConfig:
             yield
 
 
-def verify_strategy():
+def verify_strategy(strategy="M12"):
     import polymaker.m4_run
     from polymaker.m4_live_config import M4LiveSettings
     from polymaker.m4_types import M421_LEDGER
@@ -198,13 +237,17 @@ def verify_strategy():
         raise ValueError("follower requires its private execution framework")
     if configured_profiles(FRAMEWORK) != {M421_LEDGER: "M42112"}:
         raise ValueError("M12 follower requires standalone M42112 pool")
-    settings = strategy_settings(FRAMEWORK, M421_LEDGER, M4LiveSettings.load(FRAMEWORK), signal_profile="M42112")
-    if tuple(settings.signal_output_sources) != ("M12",):
-        raise ValueError("M12 follower requires M12-only source settings")
+    settings = strategy_settings(FRAMEWORK, M421_LEDGER, M4LiveSettings.load(FRAMEWORK),
+                                 signal_profile="M42112", follow_strategy=strategy)
+    if tuple(settings.signal_output_sources) != (strategy,):
+        raise ValueError("follower requires a single configured signal source")
     return settings
 
 
 def main(argv=None):
+    from m12_follow.sqlite_source import verify_run
+    from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES
+
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="offline code/configuration check")
@@ -212,6 +255,9 @@ def main(argv=None):
     sources = parser.add_mutually_exclusive_group()
     sources.add_argument("--source-dir", type=Path)
     sources.add_argument("--baseline-db-run", type=Path, help="authoritative baseline run with live SQLite ledgers")
+    parser.add_argument("--instance-id", help="name for an isolated follower")
+    parser.add_argument("--strategy", choices=BASELINE_FOLLOW_STRATEGIES, default="M12")
+    parser.add_argument("--state-dir", type=Path, help="override the named instance's execution state directory")
     parser.add_argument("--max-overpay-ticks", type=int, default=os.environ.get("M12_FOLLOW_MAX_OVERPAY_TICKS", "5"))
     parser.add_argument("--run-id")
     parser.add_argument("--funder", help="expected follower funding address")
@@ -223,15 +269,29 @@ def main(argv=None):
                           default=os.environ.get("M12_FOLLOW_TWO_MARKETS_FROM_EPOCH"),
                           help="only the specified five-minute market and its immediate successor")
     args = parser.parse_args(argv)
+    state_dir = None
+    if args.instance_id is not None:
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", args.instance_id):
+            parser.error("invalid follower instance ID")
+        state_dir = (args.state_dir or FRAMEWORK / "runtime/follow-instances" / args.instance_id).resolve()
+        protected = (FRAMEWORK / "research_outputs", FRAMEWORK / "runtime/trading-control")
+        if state_dir == FRAMEWORK or any(
+                state_dir.is_relative_to(p) or p.is_relative_to(state_dir) for p in protected):
+            parser.error("instance state directory overlaps the legacy follower state")
+    elif args.state_dir is not None or args.strategy != "M12":
+        parser.error("--state-dir and non-M12 strategies require --instance-id")
+    if args.strategy != "M12" and args.baseline_db_run is None:
+        parser.error("non-M12 strategies require --baseline-db-run")
     if args.max_overpay_ticks < 0:
         parser.error("max-overpay-ticks must be nonnegative")
     db_run = None
     if args.baseline_db_run:
-        from m12_follow.sqlite_source import verify_run
         try:
-            db_run = verify_run(args.baseline_db_run)
+            db_run = verify_run(args.baseline_db_run, strategy=args.strategy)
         except (OSError, ValueError, TypeError, AttributeError) as exc:
             parser.error(str(exc))
+        if state_dir is not None and (state_dir.is_relative_to(db_run) or db_run.is_relative_to(state_dir)):
+            parser.error("instance state directory overlaps the read-only baseline")
         if args.run_id and args.run_id != db_run.name:
             parser.error("--run-id must match the authoritative baseline database directory")
         args.run_id = db_run.name
@@ -244,10 +304,12 @@ def main(argv=None):
             window = TwoMarketWindow(args.two_markets_from_epoch)
         except ValueError as exc:
             parser.error(str(exc))
-    settings = verify_strategy()
+    settings = verify_strategy(args.strategy)
     if args.check:
-        risk = settings.signal_price_risk("M12")
-        print(json.dumps({"mode": "OFFLINE_CHECK", "source": "M12_BASELINE_INTENT",
+        risk = settings.signal_price_risk(args.strategy)
+        print(json.dumps({"mode": "OFFLINE_CHECK", "source": f"{args.strategy}_BASELINE_INTENT",
+                          "strategy": args.strategy, "instance_id": args.instance_id,
+                          "state_dir": str(state_dir or FRAMEWORK),
                           "framework": str(FRAMEWORK), "price_risk": str(risk),
                           "baseline_db_run": str(db_run) if db_run else None,
                           "max_overpay_ticks": args.max_overpay_ticks,
@@ -260,6 +322,11 @@ def main(argv=None):
     project = args.existing_project.resolve(strict=True)
     if project == FRAMEWORK or not (project / "config/m4-live/balance-guard.toml").is_file():
         parser.error("--existing-project must identify the existing live deployment")
+    if state_dir is not None and any(
+            state_dir.is_relative_to(p) or p.is_relative_to(state_dir)
+            for p in (project / "research_outputs/m4_live", project / "research_outputs/m4_independent_live",
+                      project / "runtime/trading-control")):
+        parser.error("instance state directory overlaps the existing live deployment")
     # The publisher can be offline at restart. Reader treats a missing channel as
     # ineligible while the executor continues to reconcile its own pending orders.
     source = db_run or args.source_dir.resolve()
@@ -272,12 +339,13 @@ def main(argv=None):
         if any(address(value) != owner for value in (args.funder, args.existing_funder) if value):
             parser.error("funding address conflicts with the existing M4/M21 ledgers")
         follow = FollowConfig(source, args.run_id, owner, project, owner, window, Path(wallet_file),
-                              db_run, args.max_overpay_ticks)
+                              db_run, args.max_overpay_ticks, args.strategy, args.instance_id, state_dir)
     else:
         if not args.funder or not args.existing_funder:
             parser.error("dedicated wallet mode requires --funder and --existing-funder")
         follow = FollowConfig(source, args.run_id, address(args.funder), project, address(args.existing_funder), window,
-                              baseline_db_run=db_run, max_overpay_ticks=args.max_overpay_ticks)
+                              baseline_db_run=db_run, max_overpay_ticks=args.max_overpay_ticks,
+                              strategy=args.strategy, instance_id=args.instance_id, state_dir=state_dir)
     from polymaker.m4_run import run
     os.chdir(FRAMEWORK)
     with follow.writer_ownership():

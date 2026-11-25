@@ -6,7 +6,7 @@ from decimal import Decimal
 import json
 
 from m12_follow.transport import stable_id
-from polymaker.m12_live import M12_VERSION
+from m12_follow.sqlite_source import BASELINE_VERSIONS
 from polymaker.m21_live import M21Feed
 from polymaker.m4_live_numeric import age_us, live_book_legal
 from polymaker.m4_signals import M4Feed
@@ -21,6 +21,8 @@ class BaselineIntents:
 
     def __init__(self, feed, settings, reader, run_id):
         self.feed, self.settings, self.reader, self.run_id = feed, settings, reader, run_id
+        self.strategy = getattr(reader, "strategy", "M12")
+        self.version = BASELINE_VERSIONS[self.strategy]
         self.price_risk = settings.live_taker_price_risk
         self.record = self.failure = self.selected = None
         self.counts = Counter()
@@ -34,12 +36,12 @@ class BaselineIntents:
 
     def emit(self, event, **fields):
         self.counts[event] += 1
-        if self.record and self.record({"event": event, "strategy": "M12",
+        if self.record and self.record({"event": event, "strategy": self.strategy,
                 "available_monotonic": self.feed.monotonic(), **fields}) is False:
             self.failure = "FOLLOW_INTENT_JOURNAL_FAILED"
 
     def diagnostics(self):
-        return {"strategy": "M12_BASELINE_FOLLOW", "failure": self.failure, "counts": dict(self.counts)}
+        return {"strategy": f"{self.strategy}_BASELINE_FOLLOW", "failure": self.failure, "counts": dict(self.counts)}
 
     def invalidate(self, reason, token=None):
         self.selected = None
@@ -71,7 +73,7 @@ class BaselineIntents:
         for sequence, intent in enumerate(snap.intents, 1):
             raw_id, version = intent["opportunity"], intent["version"]
             token = intent["token"]
-            if version != M12_VERSION or self.feed.outcomes.get(token) != intent["outcome"]:
+            if version != self.version or self.feed.outcomes.get(token) != intent["outcome"]:
                 self.failure = "FOLLOW_INTENT_IDENTITY_CONFLICT"
                 self.active.clear()
                 return
@@ -80,7 +82,7 @@ class BaselineIntents:
             if key not in self.observed:
                 op = Opportunity(key, token, intent["outcome"], Decimal(intent["price"]),
                     intent["confirmed"], min(intent["deadline"], intent["confirmed"] + 3),
-                    snap.generation, root, self.feed.generation, self.settings.signal_price_risk("M12"),
+                    snap.generation, root, self.feed.generation, self.settings.signal_price_risk(self.strategy),
                     self.settings.taker_strategy, self.feed.meta.condition_id)
                 self.observed[key] = op
                 self.sequence[key] = sequence
@@ -143,7 +145,7 @@ class BaselineIntents:
             return ledger.row(key) if updated.rowcount else None
 
     def provenance(self, key):
-        return self.sequence[key], "M12"
+        return self.sequence[key], self.strategy
 
 
 class SQLiteBaselineIntents(BaselineIntents):
@@ -170,7 +172,7 @@ class SQLiteBaselineIntents(BaselineIntents):
             return
         intent, = snap.intents
         version, raw_id, token = intent["version"], intent["opportunity"], intent["token"]
-        if version != M12_VERSION or self.feed.outcomes.get(token) != intent["outcome"]:
+        if version != self.version or self.feed.outcomes.get(token) != intent["outcome"]:
             self.failure = "FOLLOW_INTENT_IDENTITY_CONFLICT"
             return
         key = stable_id(self.run_id, self.feed.meta.slug, version, raw_id)
@@ -182,7 +184,7 @@ class SQLiteBaselineIntents(BaselineIntents):
             now = self.feed.monotonic()
             remaining = int(self.feed.meta.slug.rsplit("-", 1)[1]) + self.settings.cutoff_sec - self.feed.wall()
             op = Opportunity(key, token, intent["outcome"], price, now, now + remaining,
-                snap.generation, key, self.feed.generation, self.settings.signal_price_risk("M12"),
+                snap.generation, key, self.feed.generation, self.settings.signal_price_risk(self.strategy),
                 self.settings.taker_strategy, self.feed.meta.condition_id)
             self.observed[key] = op
             self.sequence[key] = intent["audit_seq"]
@@ -219,6 +221,7 @@ class SQLiteBaselineIntents(BaselineIntents):
                     "id": key, "baseline_id": intent["opportunity"], "audit_seq": intent["audit_seq"],
                     "source_run": self.run_id, "anchor": intent["price"], "baseline_quantity": intent["quantity"],
                     "outcome": intent["outcome"], "token": intent["token"],
+                    **({"strategy": self.strategy} if self.strategy != "M12" else {}),
                 }))
             ledger.fact_batch(facts)
             pending.clear()
@@ -263,8 +266,10 @@ class FollowQuoteFeed(TakerSocket, M21Feed):
         self.m1 = kind(self, taker_settings, reader, run_id)
         self.research.emit = self.quote_event
         self.m12_manifest = {"source": "BASELINE_SQLITE" if kind.market_scoped else "LIVE_BASELINE_ADMITTED_INTENT",
-                             "version": M12_VERSION,
+                             "version": self.m1.version,
                              "run_id": run_id}
+        if self.m1.strategy != "M12":
+            self.m12_manifest["strategy"] = self.m1.strategy
         self.observe_until_market_close = True
         self.follow_market = None
         self.execution_token = None

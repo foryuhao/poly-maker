@@ -26,6 +26,19 @@ PYTHONPATH="$PWD/m12_follow/framework/src:$PWD:$PWD/tests/m4" \
 
 systemd 为两者分别分配 cgroup，可用 `journalctl --user -u 单元名` 分别查看日志。SQLite 模式使用公开的 `source.env`、专属的 `wallet.env` 和只读挂载的基线目录，可以在源暂时离线时继续核对自己的未决订单。发布器频道入口保留用于需要实时信号有效期的模式。
 
+### 命令行多实例
+
+用 `--instance-id`、`--strategy` 和 `--baseline-db-run` 选择实例、策略和基线。支持 M12 和 M21，两者使用相同的同场信号替换、GTD/FAK、锚价失效和成交核对规则。策略仅用于选择和校验基线准入。在仓库根目录可先做离线检查。
+
+```bash
+.venv/bin/python -B -m m12_follow.live --check --instance-id m12-v2 \
+  --strategy M12 --baseline-db-run "$M12_BASELINE_RUN"
+.venv/bin/python -B -m m12_follow.live --check --instance-id m21-v2 \
+  --strategy M21 --baseline-db-run "$M21_BASELINE_RUN"
+```
+
+实际启动时改用 `--live`，并为每个进程准备自己的钱包环境和下文所列的实盘参数。同一服务账号下，资金地址的写入锁跨实例生效。命名实例的默认状态目录为 `m12_follow/framework/runtime/follow-instances/<实例 ID>`，可用 `--state-dir` 指定。账本和日志位于该目录的 `research_outputs/m4_live`，停机标记位于 `runtime/trading-control`。状态目录绑定实例、策略、基线和资金账户。现有无实例名的 M12 服务使用原账本恢复。
+
 ### 观察运行
 
 复用本机 M4/M21 时，`wallet.env` 保存原部署和原凭据文件的路径。执行器在本机内存读取原钱包和连接设置，并把资金地址与 M4、M21 的账本身份核对。钱包写者排他锁、实时余额和人工停机是账户级保护。每场只检查该场的订单、占款和禁买记录。同场存在未决订单时禁止继续发单，其他市场的交易历史不参与本场准入。

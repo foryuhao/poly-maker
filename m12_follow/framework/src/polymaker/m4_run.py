@@ -147,7 +147,10 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
         )
         from polymaker.m4_live_taker import M4LiveLedger
         settings_type, ledger_type, reads_type = M4LiveSettings, M4LiveLedger, M4LiveReads
-    configured_settings, control = settings_type.load(project), StopControl(project, live=live)
+    state_dir = getattr(follow, "state_dir", None)
+    follow_strategy = getattr(follow, "strategy", "M12") if follow is not None else None
+    configured_settings = settings_type.load(project)
+    control = StopControl(project, live=live, state_dir=state_dir)
     if follow is not None:
         control = follow.stop_control(control)
     strategy_id = STRATEGY
@@ -164,7 +167,7 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
         raise ValueError('M4_FIRST_FILL_REQUIRES_CASH_TARGET_TAKER')
     if control.inhibited():
         return {'status': 'STOP_CONFIRMATION_REQUIRED', 'live': live}
-    root = paths(project, live, independent_m4=independent_m4)
+    root = paths(state_dir or project, live, independent_m4=independent_m4)
     root.mkdir(parents=True, exist_ok=True)
     journal_dir = root / ('m21-journal' if strategy == 'M21' else 'journal')
     latest_path = root / ('m21-latest.json' if strategy == 'M21' else 'latest.json')
@@ -198,6 +201,8 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
         with runner_ownership(root, strategy), sdk_http1_transport():
             follow_archive = None
             if follow is not None:
+                if state_dir is not None:
+                    follow.bind_instance(root)
                 from m12_follow.archive import PendingArchive
                 follow_archive = PendingArchive(root)
             trial, recovery_slug = None, None
@@ -267,7 +272,8 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                         from polymaker.taker_runner import prepare_opening
                         try:
                             opening, opening_account, account_began = await prepare_opening(
-                                project, root, prepared, startup, **({'isolated': True} if strategy else {}))
+                                project, root, prepared, startup, isolated=bool(strategy),
+                                follow_strategy=follow_strategy)
                         except PreparationStopped:
                             if trial_window and time.time() >= trial_window.end:
                                 reads.close()
@@ -306,7 +312,7 @@ async def run(project, *, live=False, once=False, stop=None, until_first_fill=No
                                 return {'status': 'STOP_CONFIRMATION_REQUIRED', 'live': live}
                     if not (opening and m421_settings is not None and opening.settings(M421_LEDGER)
                             and m421_settings.signal_profile == "M42112"
-                            and tuple(m421_settings.signal_output_sources or ()) == ("M12",)
+                            and tuple(m421_settings.signal_output_sources or ()) == (follow_strategy,)
                             and set(opening.payload["settings"]) == {M421_LEDGER}):
                         reads.close()
                         reads = None

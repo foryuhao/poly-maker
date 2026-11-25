@@ -34,7 +34,7 @@ from polymaker.rdp_sm_writer import AsyncRiskWriter
 from polymaker.taker_pool import ADMISSION_CUTOFF_SEC, POLICY, TakerPool, configured_profiles
 
 
-def strategy_settings(project, strategy, m4, *, signal_profile=None):
+def strategy_settings(project, strategy, m4, *, signal_profile=None, follow_strategy=None):
     if strategy == M4_LEDGER:
         identity = read_strategy_config(project)[LIVE_TAKER_IDENTITY_KEY]
         if set(identity) != {"attribution", "ledger"}:
@@ -83,6 +83,13 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
                     "source_price_bands": profile.get("price_risk", {}),
                     "signal_slot_policy": M42112_PER_SOURCE_DIRECTION,
                 }
+                if follow_strategy is not None:
+                    profile_config["signal_output_sources"] = (follow_strategy,)
+                    # Selecting a baseline changes its identity, not the follower's price band.
+                    bands = profile_config["source_price_bands"]
+                    profile_config["source_price_bands"] = {
+                        **bands, follow_strategy: bands.get("M12", M42112PriceBand().model_dump()),
+                    }
             combined = json.dumps(detectors, sort_keys=True, default=str)
             policy = TakerStrategy(strategy, M421_VERSION, "M421", strategy,
                                    hashlib.sha256(combined.encode()).hexdigest(),
@@ -130,9 +137,9 @@ def strategy_settings(project, strategy, m4, *, signal_profile=None):
     })
 
 
-async def prepare_opening(project, root, prepared, startup, *, isolated=False):
+async def prepare_opening(project, root, prepared, startup, *, isolated=False, follow_strategy=None):
     if not isolated:
-        return await _prepare_opening(project, root, prepared, startup)
+        return await _prepare_opening(project, root, prepared, startup, follow_strategy=follow_strategy)
     # One process performs the official read/retry sequence. The other reuses
     # the durable decision, or takes over if the first dies before committing.
     with (root / "pool-opening.lock").open("a+") as lock:
@@ -143,16 +150,17 @@ async def prepare_opening(project, root, prepared, startup, *, isolated=False):
             except BlockingIOError:
                 await startup.pause(.1)
             else:
-                return await _prepare_opening(project, root, prepared, startup)
+                return await _prepare_opening(project, root, prepared, startup, follow_strategy=follow_strategy)
 
 
-async def _prepare_opening(project, root, prepared, startup):
+async def _prepare_opening(project, root, prepared, startup, *, follow_strategy=None):
     """Verify capital before creating either strategy's feed or ledger."""
     funder, market_id = prepared.identity["funder"], prepared.meta.condition_id
     protocol_version = market_protocol(prepared.meta)
     position_ids = [token.token_id for token in prepared.meta.tokens] if protocol_version == "v2" else None
     epoch = int(prepared.slug.rsplit("-", 1)[1])
-    pool = TakerPool(root / "taker-pool.sqlite3", project)
+    pool = TakerPool(root / "taker-pool.sqlite3", project,
+                    control_root=getattr(startup.control, "root", None))
     control = startup.control
     deadline = epoch + ADMISSION_CUTOFF_SEC
 
@@ -181,7 +189,7 @@ async def _prepare_opening(project, root, prepared, startup):
         profiles = {}
     m4 = M4LiveSettings.load(project)
     settings = {strategy: strategy_settings(project, strategy, m4,
-                signal_profile="M42112" if profile == "M42112" else None)
+                signal_profile="M42112" if profile == "M42112" else None, follow_strategy=follow_strategy)
                 for strategy, profile in profiles.items()}
     max_age = min((cfg.account_max_age_sec for cfg in settings.values()), default=m4.account_max_age_sec)
     retries = 0

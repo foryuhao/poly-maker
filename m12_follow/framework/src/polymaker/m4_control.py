@@ -46,12 +46,13 @@ def legacy_entry_guard(project=None):
 
 
 class StopControl:
-    def __init__(self, project, *, live):
+    def __init__(self, project, *, live, state_dir=None):
         self.project, self.live = Path(project).resolve(), live
-        self.root = self.project/'runtime/trading-control'
+        state = Path(state_dir).resolve() if state_dir is not None else self.project
+        self.root = state/'runtime/trading-control'
         self.manual_path = self.root/('m4-live-stop.json' if live else 'm4-baseline-stop.json')
         self.balance_path = self.root/'balance-stop.json'
-        self.legacy_path = self.project/'research_outputs/m1_live_watch/balance-stop.json'
+        self.legacy_path = state/'research_outputs/m1_live_watch/balance-stop.json'
         self.config_path = self.project/'config/m4-live/balance-guard.toml'
 
     def inhibited(self):

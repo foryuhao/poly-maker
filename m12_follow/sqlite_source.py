@@ -9,6 +9,9 @@ import sqlite3
 import struct
 import time
 
+from polymaker.m12_live import M12_VERSION
+from polymaker.m4_types import M21_VERSION
+
 from .transport import Snapshot
 
 
@@ -16,14 +19,21 @@ INOTIFY_EVENT = struct.Struct("iIII")
 # Modify, move, create and delete. SQLite read-only handles can emit CLOSE_WRITE
 # when they close a WAL descriptor, so that event cannot signal a baseline write.
 INOTIFY_CHANGES = 0xFC2
+BASELINE_VERSIONS = {"M12": M12_VERSION, "M21": M21_VERSION}
 
 
-def verify_run(path):
+def verify_run(path, *, strategy=None):
     path = path.resolve(strict=True)
     data = json.loads((path / "plan.json").read_bytes())
     if any(data.get(k) != v for k, v in (("path", str(path)),
             ("schema", "m122124-shared-public-72h-v1"), ("mode", "SIMULATION_ONLY_PUBLIC_DATA"))):
         raise ValueError("expected the authoritative simulation baseline directory")
+    if strategy is not None:
+        if data.get("strategy", strategy) != strategy:
+            raise ValueError(f"baseline plan does not belong to strategy {strategy}")
+        definition = data.get("settings", {}).get("strategy_definitions", {}).get(strategy, {})
+        if definition.get("version") != BASELINE_VERSIONS[strategy]:
+            raise ValueError(f"baseline plan does not declare a supported {strategy} signal version")
     return path
 
 
@@ -56,13 +66,15 @@ class SQLiteIntents:
     sqlite_source = True
     follow_limit = True
 
-    def __init__(self, path, meta, max_overpay_ticks):
+    def __init__(self, path, meta, max_overpay_ticks, *, strategy="M12"):
         self.root = path
         self.run = path
+        self.strategy = strategy
+        self.version = BASELINE_VERSIONS[strategy]
         self.check_handoff_at = float("-inf")
         self.meta = meta
         self.max_overpay_ticks = max_overpay_ticks
-        self.path = path / meta.slug / "M12/simulation.sqlite3"
+        self.path = path / meta.slug / strategy / "simulation.sqlite3"
         self.database_id = self.latest = self.snapshot = None
         self.watermark = 0
         self.pending_admissions = []
@@ -139,7 +151,7 @@ class SQLiteIntents:
                 if self.latest is not None:
                     raise ValueError("M12 baseline owner changed after admission")
                 self.run = owner
-                self.path = owner / self.meta.slug / "M12/simulation.sqlite3"
+                self.path = owner / self.meta.slug / self.strategy / "simulation.sqlite3"
                 self.database_id = None
                 self.watermark = 0
                 self._watch()
@@ -172,8 +184,10 @@ class SQLiteIntents:
                     continue
                 i = payload["intent"]
                 if (i["market"], i["strategy"], i["profile"], i["side"], i["order_type"]) != (
-                        self.meta.slug, "M12", "M12", "BUY", "ASSUMED_FIXED_ANCHOR"):
+                        self.meta.slug, self.strategy, self.strategy, "BUY", "ASSUMED_FIXED_ANCHOR"):
                     raise ValueError("foreign admission")
+                if i["signal_version"] != self.version:
+                    raise ValueError("unsupported baseline signal version")
                 latest = {**i, "version": i["signal_version"], "root_id": i["opportunity"],
                           "audit_seq": seq, "input_seq": inputs}
                 admissions.append(latest)

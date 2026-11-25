@@ -132,7 +132,8 @@ def test_active_handoff_moves_reader_and_watch_but_preserves_market_and_run_iden
                 ("run_owner", json.dumps(dict(mode="SIMULATION_ONLY_PUBLIC_DATA", path=str(owner))))])
             if owner == phase:
                 i = dict(opportunity="new",market=slug,strategy="M12",profile="M12",side="BUY",
-                         order_type="ASSUMED_FIXED_ANCHOR",signal_version="v",price=".6",outcome="NO")
+                             order_type="ASSUMED_FIXED_ANCHOR",
+                             signal_version=sqlite_source.BASELINE_VERSIONS["M12"],price=".6",outcome="NO")
                 db.execute("INSERT INTO audit VALUES(1,1,'INTENT',?)", (json.dumps(dict(scenario="sop/anchor",intent=i)),))
             db.commit()
     with closing(sqlite_source.SQLiteIntents(root, meta, 5)) as reader:

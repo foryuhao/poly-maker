@@ -5,7 +5,7 @@ from pathlib import Path
 from polymaker.m4_live_numeric import age_us
 from polymaker.m4_live_price_band import ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, price_in_band
 from polymaker.m4_state import decimal
-from polymaker.m4_types import BEST_ASK_SIGNAL, M6_LEDGER, signal_lifetime_limit_us
+from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES, BEST_ASK_SIGNAL, M6_LEDGER, signal_lifetime_limit_us
 
 FIXED = "ANCHOR_FIXED_V1"
 DYNAMIC = "ANCHOR_10S_THEN_BEST_ASK_V1"
@@ -85,7 +85,8 @@ def quote_valid(root, plan, token, evidence=None):
         if start["policy"] == BEST_ASK_SIGNAL:
             ledger = (root.get("taker_strategy") or {}).get("ledger")
             if "market_cutoff" in start:
-                if root.get("detector_source") != "M12" or not 0 <= q["captured_elapsed_s"] < start["market_cutoff"]:
+                if (root.get("detector_source") not in BASELINE_FOLLOW_STRATEGIES
+                        or not 0 <= q["captured_elapsed_s"] < start["market_cutoff"]):
                     return False
             elif not (q["boot_id"] == start["boot_id"]
                       and age < start["lifetime_us"] <= signal_lifetime_limit_us(ledger)):

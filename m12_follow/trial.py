@@ -36,10 +36,13 @@ class TwoMarketWindow:
 
     def scoped_reader(self, reader, slug):
         class TrialReader:
-            def read(inner):
+            def __getattr__(inner, name):
+                return getattr(reader, name)
+
+            def read(inner, **kwargs):
                 now = time.time()
                 if self.contains(slug) and self.first_epoch <= now < self.end and slug == f"btc-updown-5m-{int(now // 300) * 300}":
-                    return reader.read()
+                    return reader.read(**kwargs)
                 return None
 
         return TrialReader()
