@@ -6,6 +6,8 @@ from dataclasses import asdict
 from types import SimpleNamespace
 
 from py_clob_client_v2.clob_types import TradeParams
+from py_clob_client_v2.constants import END_CURSOR, INITIAL_CURSOR
+from py_clob_client_v2.exceptions import PolyApiException
 
 from polymaker.domain import Side
 from polymaker.m4_live_numeric import MICRO, ZERO, fill_event, maker_fill_event, units, validate_cash_fills
@@ -19,7 +21,10 @@ from polymaker.m4_live_task import (
 )
 from polymaker.m4_state import decimal
 from polymaker.rdp_sm_execution import Placement, WindowQuote, _immediate_buy_not_filled_response
-from polymaker.userstream.parse import parse_trade
+from polymaker.userstream.parse import maker_order_id, parse_trade, strict_number
+
+GTD_TAIL_LIMIT = decimal("0.10")
+GTD_TAIL_REASON = "M12_GTD_EXPIRED_TAIL_RECONCILED"
 
 
 def saved_post_response(ledger, oid):
@@ -133,6 +138,94 @@ def trade_ids(raw):
     return ids
 
 
+def linked_trade_ids(ledger, oid):
+    with ledger.lock:
+        return {row[0] for row in ledger.db.execute(
+            "SELECT trade_id FROM taker_trade_links WHERE order_id=?", (oid,))}
+
+
+async def gtd_account_rows(gateway, oid, path, market_id):
+    """Only the terminal cursor proves the account collection is complete."""
+    rows = []
+    cursor, seen = INITIAL_CURSOR, set()
+    for _ in range(10):
+        require(cursor not in seen, "M12_GTD_ACCOUNT_PAGE_INCOMPLETE")
+        seen.add(cursor)
+        page = await gateway._io(gateway._client.gtd_reconciliation_page, oid, path, cursor)
+        require(isinstance(page, dict) and isinstance(page.get("data"), list), "M12_GTD_ACCOUNT_PAGE_INVALID")
+        data = page["data"]
+        require(page.get("count", len(data)) == len(data) and all(
+            isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
+            and row.get("market") == market_id for row in data), "M12_GTD_ACCOUNT_PAGE_INVALID")
+        rows.extend(data)
+        cursor = page.get("next_cursor")
+        require(isinstance(cursor, str) and cursor, "M12_GTD_ACCOUNT_PAGE_INCOMPLETE")
+        if cursor == END_CURSOR:
+            return rows, len(seen)
+    raise ValueError("M12_GTD_ACCOUNT_PAGE_LIMIT")
+
+
+def remember_gtd_tail_fill(ledger, oid, event, tolerance):
+    with ledger.lock:
+        saved = ledger.db.execute("SELECT economics FROM taker_trade_evidence WHERE trade_id=?",
+                                  (event.trade_id,)).fetchone()
+        require(saved is None or decimal(json.loads(saved[0])["size"]) == decimal(event.size),
+                "M4_ORDER_TRADE_QUANTITY_CONFLICT")
+        return ledger.remember_fill(oid, event, tolerance)
+
+
+async def expired_gtd_tail(gateway, ledger, oid, plan, order, spec, matched, ids):
+    require(plan.get("pricing_origin", {}).get("follow_limit") is True
+            and 0 <= spec["quantity"] - matched < GTD_TAIL_LIMIT and ids
+            and decimal(ledger.get("matched_lower_bound:" + oid, "0")) == matched,
+            "M12_GTD_UNPROVEN_REMAINDER")
+    expiration = decimal(plan["expiration"])
+    official = decimal(strict_number(await gateway._io(gateway._client.get_server_time)))
+    require(0 < expiration < official
+            and (order.get("expiration") is None or decimal(order["expiration"]) == expiration),
+            "M12_GTD_UNPROVEN_REMAINDER")
+    funder, market_id = gateway.funder.lower(), spec["market_id"]
+    orders, order_pages = await gtd_account_rows(gateway, oid, "/data/orders", market_id)
+    require(all(row["id"] != oid for row in orders), "M12_GTD_STILL_OPEN")
+    trades, trade_pages = await gtd_account_rows(gateway, oid, "/data/trades", market_id)
+    owned = {}
+    for row in trades:
+        legs = row.get("maker_orders")
+        require(isinstance(legs, list) and all(isinstance(leg, dict) for leg in legs),
+                "M12_GTD_ACCOUNT_TRADE_INVALID")
+        maker_legs = [leg for leg in legs if maker_order_id(leg) == oid]
+        is_taker = row.get("taker_order_id") == oid
+        require(not (is_taker and maker_legs), "M12_GTD_ACCOUNT_TRADE_CONFLICT")
+        if not is_taker and not maker_legs:
+            require(row["id"] not in ids, "M12_GTD_ACCOUNT_TRADE_CONFLICT")
+            continue
+        require(owned.setdefault(row["id"], row) == row, "M12_GTD_ACCOUNT_TRADE_CONFLICT")
+    require(set(owned) == set(ids) == linked_trade_ids(ledger, oid), "M12_GTD_ACCOUNT_TRADE_IDS_CONFLICT")
+    events = []
+    for tid, row in owned.items():
+        trade = parse_trade(row)
+        require(trade.trade_id == tid and trade.status.value in {"CONFIRMED", "FAILED"},
+                "M12_GTD_ACCOUNT_TRADE_NOT_FINAL")
+        if trade.taker_order_id == oid:
+            require(str(row.get("maker_address", "")).lower() == funder, "M4_ORDER_OWNER_CONFLICT")
+            event, tolerance, _ = fill_event(trade, spec)
+        else:
+            require(all(str(leg.get("maker_address", "")).lower() == funder
+                        for leg in row["maker_orders"] if maker_order_id(leg) == oid), "M4_ORDER_OWNER_CONFLICT")
+            event, tolerance, _ = maker_fill_event(trade, spec, oid, funder)
+        events.append((event, tolerance))
+    fills = [event for event, _ in events]
+    require(sum((units(f.size) for f in fills), ZERO) == matched, "M4_ORDER_TRADE_QUANTITY_CONFLICT")
+    confirmed = sum((units(f.size) for f in fills if f.status.value == "CONFIRMED"), ZERO)
+    tail = spec["quantity"] - confirmed
+    require(0 < tail < GTD_TAIL_LIMIT, "M12_GTD_UNPROVEN_REMAINDER")
+    validate_cash_fills(fills, spec)
+    fills = [remember_gtd_tail_fill(ledger, oid, event, tolerance) for event, tolerance in events]
+    return fills, {"expiry": str(expiration), "exchange_time": str(official), "remainder": str(tail),
+                   "funder": funder, "open_order_absent": True, "open_order_pages": order_pages,
+                   "trade_pages": trade_pages}
+
+
 async def reconcile_owned(market, oid):
     e, ledger = market.e, market.ledger
     client = e.gateway._client
@@ -166,18 +259,31 @@ async def reconcile_owned(market, oid):
             require(all(receipt.get(k) in (None, "", oid)
                         for k in ("orderID", "order_id", "orderId", "id")),
                     "M4_RECEIPT_ORDER_CONFLICT")
-        try:
-            raw = await e.gateway._io(client.get_order, oid)
-        except Exception:
-            raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
-        if raw is None or raw == {}:
-            # Some lagging replicas return 200 null/{} instead of 404. Only the
-            # durable final positive receipt can replace absence; the linked
-            # trades must still be fetched and validated below. Nonempty
-            # malformed/foreign/conflicting orders must never take this path.
-            raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
         plan, quote = json.loads(a["plan"]), json.loads(a["quote"])
         resting = plan.get("order_type") == "GTD"
+        detail_status = 200
+        try:
+            raw = await e.gateway._io(client.get_order, oid)
+        except Exception as exc:
+            if resting:
+                if not isinstance(exc, PolyApiException) or exc.status_code != 404:
+                    raise
+                raw = None
+                detail_status = 404
+            else:
+                raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
+        detail_missing = resting and (raw is None or raw == {} or (isinstance(raw, str) and not raw.strip()))
+        if detail_missing or raw is None or raw == {}:
+            if detail_missing:
+                raw = {"id": oid, "market": e.meta.condition_id, "asset_id": quote["token_id"],
+                       "maker_address": e.gateway.funder, "side": "BUY", "order_type": "GTD",
+                       "price": plan["limit_price"], "original_size": plan["quantity"],
+                       "status": "DETAIL_UNAVAILABLE", "evidence_source": "LOCAL_SIGNED_PLAN_AND_MATCH",
+                       "detail_http_status": detail_status,
+                       "size_matched": ledger.get("matched_lower_bound:" + oid, "0"),
+                       "associate_trades": sorted(linked_trade_ids(ledger, oid))}
+            else:
+                raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
         quote_price = decimal(plan["limit_price"])
         reported_price = decimal(raw["price"]) if isinstance(raw, dict) and "price" in raw else None
         price_matches = reported_price == quote_price
@@ -237,14 +343,7 @@ async def reconcile_owned(market, oid):
         if matched > previous:
             ledger.set("matched_lower_bound:" + oid, str(matched))
         ledger.link_trades(oid, ids)
-        with ledger.lock:
-            known = {
-                r[0]
-                for r in ledger.db.execute(
-                    "SELECT trade_id FROM taker_trade_links WHERE order_id=?", (oid,)
-                )
-            }
-        require(known == set(ids), "M4_ORDER_TRADE_LIST_REGRESSED")
+        require(linked_trade_ids(ledger, oid) == set(ids), "M4_ORDER_TRADE_LIST_REGRESSED")
         if receipt:
             reported = receipt.get("tradeIDs") or []
             require(
@@ -268,9 +367,11 @@ async def reconcile_owned(market, oid):
             **({"buy_amount_usdc": decimal(plan["principal_usdc"])}
                if plan.get("taker_buy_amount_policy") else {}),
         }
+        tail_candidate = resting and (detail_missing or
+                                      (raw.get("status") == "MATCHED" and matched < spec["quantity"]))
         fills = []
         pending_margin = ZERO
-        for tid in ids:
+        for tid in (() if detail_missing else ids):
             cursor = None
             seen = set()
             fetched = []
@@ -303,12 +404,18 @@ async def reconcile_owned(market, oid):
             else:
                 require(trade.taker_order_id == oid, "M4_FOREIGN_TRADE")
                 event, tolerance, fee_ceiling = fill_event(trade, spec)
-            event = ledger.remember_fill(oid, event, tolerance)
+            if tail_candidate:
+                event = remember_gtd_tail_fill(ledger, oid, event, tolerance)
+            else:
+                event = ledger.remember_fill(oid, event, tolerance)
             fills.append(event)
             if event.status.value not in {"CONFIRMED", "FAILED"}:
                 # A stable formula-based bound, independent of which fee estimate
                 # arrived first. Later allowed updates cannot consume extra budget.
                 pending_margin += fee_ceiling - decimal(event.fee_usdc) + MICRO
+        tail_evidence = None
+        if tail_candidate:
+            fills, tail_evidence = await expired_gtd_tail(e.gateway, ledger, oid, plan, raw, spec, matched, ids)
         validate_cash_fills(fills, spec)
         require(
             abs(sum((units(f.size) for f in fills), ZERO) - matched) <= MICRO,
@@ -319,9 +426,8 @@ async def reconcile_owned(market, oid):
             if raw.get("status") in {"LIVE", "DELAYED", "UNMATCHED"}:
                 # A confirmed partial fill still leaves an executable remainder.
                 return
-            require(raw.get("status") != "MATCHED" or matched == units(plan["quantity"]),
-                    "M12_GTD_UNPROVEN_REMAINDER")
-        require(raw.get("status") in ORDER_TERMINAL or (resting and raw.get("status") == "EXPIRED"),
+        require(tail_evidence is not None or raw.get("status") in ORDER_TERMINAL
+                or (resting and raw.get("status") == "EXPIRED"),
                 "M4_ORDER_NOT_TERMINAL")
         require(raw["status"] != "MATCHED" or matched > 0, "M4_MATCHED_ORDER_WITHOUT_MATCH")
         # Even an incomplete POST receipt may carry positive paid principal.
@@ -344,6 +450,8 @@ async def reconcile_owned(market, oid):
         }
         if lagging_order:
             proof["lagging_order_observation"] = lagging_order
+        if tail_evidence is not None:
+            proof.update(reason=GTD_TAIL_REASON, gtd_tail=tail_evidence)
         if all(f.status.value in {"CONFIRMED", "FAILED"} for f in fills):
             confirmed = [f for f in fills if f.status.value == "CONFIRMED"]
             qty = sum((units(f.size) for f in confirmed), ZERO)
@@ -355,6 +463,7 @@ async def reconcile_owned(market, oid):
                     "order_id": oid,
                     "confirmed_quantity": str(qty),
                     "principal_and_fee_usdc": str(cost),
+                    **({"reason": GTD_TAIL_REASON} if tail_evidence is not None else {}),
                 },
             )
         else:

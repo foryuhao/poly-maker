@@ -6,6 +6,7 @@ from decimal import Decimal
 from urllib.parse import urlsplit
 
 from py_clob_client_v2.client import ClobClient
+from py_clob_client_v2.constants import INITIAL_CURSOR
 
 from polymaker.domain import Side
 from polymaker.execution.gateway import ExecutionGateway
@@ -26,6 +27,17 @@ class NativePostNotSent(RuntimeError):
 
 
 class M4LiveClobClient(ExecutionClobClient):
+    def gtd_reconciliation_page(self, oid, path, cursor):
+        _require(path in {'/data/orders', '/data/trades'}, 'M12_GTD_ACCOUNT_READ_SCOPE_INVALID')
+        local = self.operation_local
+        previous = getattr(local, 'gtd_reconciliation_order', None)
+        local.gtd_reconciliation_order = oid
+        try:
+            return self._get(f'{self.host}{path}', headers=self._l2_headers('GET', path),
+                             params={'market': self.session_market_id, 'next_cursor': cursor or INITIAL_CURSOR})
+        finally:
+            local.gtd_reconciliation_order = previous
+
     def get_tick_size(self, token_id):
         if getattr(getattr(self, 'm4_ledger', None), 'cash_target', False):
             # The SDK caches market-info ticks indefinitely. The active market
@@ -79,6 +91,20 @@ class M4LiveClobClient(ExecutionClobClient):
                      and f'{parsed.scheme}://{parsed.netloc}' == OFFICIAL_HOSTS['clob_host']
                      and not parsed.query and not parsed.fragment,
                      'M4_LIVE_FILL_READ_FORBIDDEN')
+            gtd_order = getattr(getattr(self, 'operation_local', None), 'gtd_reconciliation_order', None)
+            if gtd_order is not None:
+                _require(parsed.path in {'/data/orders', '/data/trades'}
+                         and isinstance(params, dict) and set(params) == {'market', 'next_cursor'}
+                         and params['market'] == self.session_market_id == ledger.get('market')['condition_id']
+                         and isinstance(params['next_cursor'], str) and bool(params['next_cursor'])
+                         and self.builder.funder.lower() == ledger.get('identity')['funder'].lower()
+                         and ledger.owns_order(gtd_order), 'M12_GTD_ACCOUNT_READ_SCOPE_INVALID')
+                saved = ledger.attempt(gtd_order)
+                plan = json.loads(saved['plan'])
+                _require(saved['state'] not in {'TERMINAL', 'UNSENT'} and plan.get('order_type') == 'GTD'
+                         and plan.get('pricing_origin', {}).get('follow_limit') is True,
+                         'M12_GTD_ACCOUNT_READ_SCOPE_INVALID')
+                return ClobClient._get(self, endpoint, headers=headers, params=params)
             if parsed.path.startswith('/data/order/'):
                 oid = parsed.path.removeprefix('/data/order/')
                 allowed = (re.fullmatch(r'0x[0-9a-fA-F]{64}', oid) is not None

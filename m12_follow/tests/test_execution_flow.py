@@ -4,7 +4,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -145,7 +145,12 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                   "sqlite_limit_cap_stale", "sqlite_limit_cap_inside", "sqlite_partial_anchor_drop",
                                   "m21_sqlite_limit_v2", "m21_sqlite_limit_late_v2",
                                   "m21_sqlite_limit_cancel", "m21_sqlite_limit_cap_drop_native_v2",
-                                  "m21_sqlite_limit_low"])
+                                  "m21_sqlite_limit_low",
+                                  *["sqlite_limit_gtd_tail_" + mode for mode in (
+                                      "matched", "null", "empty", "blank", "404", "below", "boundary", "not_expired",
+                                      "still_open", "orders_incomplete", "trades_incomplete", "query_failed",
+                                      "nonfinal", "quantity_conflict", "owner_conflict", "taker_fee", "two_sides",
+                                  )]])
 async def test_follow_native_fak(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
     primary, lead, parent, clock, _, mock_transport = await mock_live_market(tmp_path, monkeypatch)
@@ -219,10 +224,13 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
 
     identity = {"strategy": M421_LEDGER, "mode": "LIVE", "funder": lead.gateway.funder,
                 "market_id": meta.condition_id, "settings_hash": cfg.fingerprint}
+    fees = primary.ledger.fees
+    if case.startswith("sqlite_limit_gtd_tail_"):
+        fees = {**fees, "rate": "0.05"}
 
     def open_ledger():
         path = tmp_path / "m421-ledgers" / f"{meta.slug}.sqlite3"
-        return BudgetLedger(path, identity, settings=cfg, fees=primary.ledger.fees)
+        return BudgetLedger(path, identity, settings=cfg, fees=fees)
 
     ledger = open_ledger()
     sid = "m4_live_" + "a" * 32
@@ -277,6 +285,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 "sqlite_limit_near_ceiling": ".89", "sqlite_limit_near_ceiling_fak": ".89",
                 "sqlite_limit_late": ".82", "sqlite_limit_at_cap": ".82",
             }.get(case, intent["price"])
+            if case.startswith("sqlite_limit_gtd_tail_"):
+                intent["price"] = ".64"
             if sqlite_mode:
                 if case == "sqlite_limit_burst":
                     append_intent({**intent, "opportunity": "earlier-in-same-read"})
@@ -402,6 +412,26 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             if case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_near_ceiling_fak"}:
                 executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
             await market.submit(opportunity)
+            if case.startswith("sqlite_limit_gtd_tail_"):
+                mode = case.removeprefix("sqlite_limit_gtd_tail_")
+                assert len(calls) == 1 and calls[0]["orderType"] == "GTD"
+                first, = ledger.attempts()
+                first_plan = json.loads(first["plan"])
+                assert (first_plan["limit_price"], first_plan["quantity"]) == ("0.69", "7.24")
+                first_trades = await verify_gtd_tail(market, first, mode, http, monkeypatch)
+                if mode == "two_sides":
+                    append_intent({**intent, "opportunity": "later-no", "outcome": "NO", "token": "2"})
+                    market.collect()
+                    no_intent, = (op for op in market.pending.values() if op.outcome == "NO")
+                    await market.submit(no_intent)
+                    assert len(calls) == 2 and calls[-1]["orderType"] == "GTD"
+                    second = ledger.attempts()[-1]
+                    assert second["order_id"] != first["order_id"]
+                    await verify_gtd_tail(market, second, "matched", http, monkeypatch, other_trades=first_trades)
+                    assert ledger.row(first["task_id"])["outcome"] == "YES"
+                    assert ledger.row(second["task_id"])["outcome"] == "NO"
+                    assert len(ledger.db.execute("SELECT * FROM taker_trade_evidence").fetchall()) == 4
+                return
             if case.startswith("sqlite_limit"):
                 assert len(calls) == 1, (market.guard_failure(opportunity.episode_id), ledger.attempts(), ledger.rows())
                 sent, = calls
@@ -561,6 +591,133 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
         await close(market, executor)
         await close(primary, lead)
         mock_transport.close()
+
+
+async def verify_gtd_tail(market, attempt, mode, original, monkeypatch, *, other_trades=()):
+    ledger, e, oid = market.ledger, market.e, attempt["order_id"]
+    plan, quote = json.loads(attempt["plan"]), json.loads(attempt["quote"])
+    assert plan["order_type"] == "GTD"
+    tail = Decimal({"below": "0.099999", "boundary": "0.100000"}.get(mode, "0.009354"))
+    total = Decimal(plan["quantity"]) - tail
+    order, _ = evidence(market, e, oid, total)
+    order.update(order_type="GTD", expiration=str(plan["expiration"]))
+    trades = []
+    for number, quantity in enumerate((Decimal(3), total - 3), 1):
+        trades.append({
+            "id": f"gtd-trade-{attempt['seq']}-{number}", "market": order["market"],
+            "trader_side": "MAKER", "taker_order_id": "counterparty-order",
+            "asset_id": "2" if quote["token_id"] == "1" else "1", "side": "BUY",
+            "status": "CONFIRMED", "price": str(1 - Decimal(plan["limit_price"])), "size": str(quantity),
+            "maker_orders": [{"order_id": oid, "asset_id": quote["token_id"], "side": "BUY",
+                              "maker_address": e.gateway.funder,
+                              "price": plan["limit_price"], "matched_amount": str(quantity)}],
+        })
+    order["associate_trades"] = [row["id"] for row in trades]
+    fee = Decimal(0)
+    if mode == "taker_fee":
+        _, take = evidence(market, e, oid, "3")
+        take.update(id=trades[0]["id"], maker_address=e.gateway.funder)
+        trades[0] = take
+        price = Decimal(plan["limit_price"])
+        fee = (3 * Decimal(str(plan["fees"]["rate"])) * (price * (1 - price))
+               ** plan["fees"]["exponent"]).quantize(Decimal(".00001"), rounding=ROUND_HALF_UP)
+        assert fee > 0
+    exchange_time = plan["expiration"] + 1
+    detail = "matched"
+    reads = []
+
+    def page(data, cursor="LTE="):
+        return httpx.Response(200, json={"data": data, "next_cursor": cursor, "count": len(data)})
+
+    def wire(request):
+        if request.method == "POST":
+            return original._transport.handle_request(request)
+        path = request.url.path
+        reads.append(path)
+        if path == "/time":
+            return httpx.Response(200, json=exchange_time)
+        if path == f"/data/order/{oid}":
+            if detail == "404":
+                return httpx.Response(404, json={"error": "not found"})
+            if detail == "null":
+                return httpx.Response(200, content=b"null", headers={"Content-Type": "application/json"})
+            if detail == "blank":
+                return httpx.Response(200, content=b"")
+            return httpx.Response(200, json={} if detail == "empty" else order)
+        assert request.url.params["market"] == order["market"]
+        assert request.headers["POLY_API_KEY"]
+        if path == "/data/orders":
+            assert set(request.url.params) == {"market", "next_cursor"}
+            if request.url.params["next_cursor"] == "MA==":
+                return page([], "NEXT")
+            if mode == "orders_incomplete":
+                return page([], "NEXT")
+            return page([order] if mode == "still_open" else [])
+        assert path == "/data/trades"
+        trade_id = request.url.params.get("id")
+        if trade_id:
+            return page([trade for trade in trades if trade["id"] == trade_id])
+        assert set(request.url.params) == {"market", "next_cursor"}
+        if mode == "query_failed":
+            return httpx.Response(503, json={"error": "unavailable"})
+        if request.url.params["next_cursor"] == "MA==":
+            return page([*other_trades, trades[0]], "NEXT")
+        if mode == "trades_incomplete":
+            return page([], None)
+        last = trades[1]
+        if mode == "nonfinal":
+            last = {**last, "status": "MINED"}
+        if mode == "quantity_conflict":
+            last = {**last, "maker_orders": [dict(last["maker_orders"][0], matched_amount="1")]}
+        if mode == "owner_conflict":
+            last = {**last, "maker_orders": [dict(last["maker_orders"][0], maker_address="0x" + "1" * 40)]}
+        return page([trades[0], last])  # A repeated ID across pages appears once in the proof.
+
+    with httpx.Client(transport=httpx.MockTransport(wire)) as query, monkeypatch.context() as patch:
+        patch.setattr(helpers, "_http_client", query)
+        missing = {"null", "empty", "blank", "404"}
+        if mode in missing or mode == "not_expired":
+            exchange_time = plan["expiration"]
+            await market.reconcile(oid)
+            assert ledger.attempt(oid)["state"] == "UNKNOWN"
+            assert "/data/orders" not in reads
+            exchange_time += mode != "not_expired"
+            if mode in missing:
+                detail = mode
+        reserve = Decimal(ledger.row(attempt["task_id"])["reserved"])
+        assert reserve == Decimal(plan["commitment_usdc"]) > 0
+        if quote["token_id"] == "1":
+            assert reserve == Decimal("5.495161")
+        if mode != "two_sides":
+            ledger.set("buy_closed", True)
+        await market.reconcile(oid)
+        saved = ledger.attempt(oid)
+        row = ledger.row(attempt["task_id"])
+        if mode not in missing | {"matched", "below", "two_sides", "taker_fee"}:
+            assert saved["state"] == "UNKNOWN" and Decimal(row["reserved"]) == reserve
+            return trades
+        principal = sum((Decimal(t["maker_orders"][0]["matched_amount"]) * Decimal(plan["limit_price"]))
+                        .quantize(Decimal(".000001"), rounding=ROUND_HALF_UP) for t in trades)
+        if mode in missing | {"matched", "taker_fee"} and quote["token_id"] == "1":
+            assert (total, principal) == (Decimal("7.230646"), Decimal("4.989146"))
+        assert saved["state"] == "TERMINAL" and Decimal(saved["filled"]) == total
+        assert Decimal(row["reserved"]) == 0 and Decimal(saved["spent"]) == principal + fee
+        assert ledger.confirmed_principal(saved) == principal
+        assert row["state"] == ("DUST" if mode == "two_sides" else "CUTOFF")
+        proof = json.loads(saved["proof"])
+        assert proof["reason"] == "M12_GTD_EXPIRED_TAIL_RECONCILED"
+        assert Decimal(proof["gtd_tail"]["remainder"]) == tail
+        assert proof["gtd_tail"]["open_order_absent"] is True
+        assert (proof["gtd_tail"]["open_order_pages"], proof["gtd_tail"]["trade_pages"]) == (2, 2)
+        assert {item["trade_id"] for item in proof["trades"]} == set(order["associate_trades"])
+        assert sum(Decimal(item["fee_usdc"]) for item in proof["trades"]) == fee
+        if mode in missing:
+            assert proof["order"]["detail_http_status"] == (404 if mode == "404" else 200)
+        before = len(reads)
+        await market.reconcile(oid)
+        assert len(reads) == before and ledger.attempt(oid) == saved and ledger.row(attempt["task_id"]) == row
+        ledger.validate_recovery()
+    return trades
 
 
 async def verify_replace(market, executor, ledger, op, intent, append, original, posts, monkeypatch, *, timeout):
