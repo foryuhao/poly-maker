@@ -25,7 +25,7 @@ from polymaker.m4_live_price_band import (
     SIGNED_LIMIT_BAND_ABANDONED, POST_PRICE_OUTSIDE_BAND,
     WAIT_FOR_PRICE_BAND,
 )
-from polymaker.m4_live_pricing import DYNAMIC, order_price_allowed, quote_valid, rejected_price_band_valid
+from polymaker.m4_live_pricing import GTD_CHASE_STAGE, DYNAMIC, order_price_allowed, quote_valid, rejected_price_band_valid
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
 from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES, BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
@@ -222,8 +222,71 @@ class BudgetLedger(TaskLedger):
             return proof
 
     @staticmethod
-    def post_price_allowed(price, root):
-        return order_price_allowed(price, root)
+    def post_price_allowed(price, root, pricing=None):
+        return order_price_allowed(price, root, pricing)
+
+    def gtd_chase(self, key):
+        return self.get("gtd_chase:" + key, {})
+
+    def _write_gtd_chase(self, key, state):
+        self.db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)", ("gtd_chase:" + key, encode(state)))
+
+    def _replace_gtd_chase(self, key, previous, state):
+        changed = self.db.execute("UPDATE metadata SET value=? WHERE key=? AND value=?",
+                                  (encode(state), "gtd_chase:" + key, encode(previous)))
+        return changed.rowcount == 1
+
+    def change_gtd_chase(self, key, expected, phase, **evidence):
+        with self.lock, self.db:
+            previous = self.gtd_chase(key)
+            if previous.get("phase") != expected:
+                return None
+            state = {**previous, **evidence, "phase": phase}
+            return state if self._replace_gtd_chase(key, previous, state) else None
+
+    def record_follow_native_post(self, oid, stamp):
+        with self.lock, self.db:
+            attempt = self.attempt(oid)
+            key, plan = attempt["task_id"], json.loads(attempt["plan"])
+            if not plan.get("pricing_origin", {}).get("follow_limit") or not attempt["started"]:
+                return None
+            state = self.gtd_chase(key)
+            if plan.get("pricing", {}).get("stage") == GTD_CHASE_STAGE:
+                require(state.get("phase") == "ARMED" and state.get("new_order_id") == oid,
+                        "M12_GTD_CHASE_POST_CONFLICT")
+                state.update(phase="SENT", chase_post=stamp)
+            elif plan["order_type"] == "GTD" and not state and not any(
+                    a["seq"] < attempt["seq"] and a["started"] and a["state"] != "UNSENT"
+                    and json.loads(a["plan"])["order_type"] == "GTD" for a in self.attempts(key)):
+                state = {"phase": "WATCH", "old_order_id": oid, "first_post": stamp}
+            else:
+                return None
+            self._write_gtd_chase(key, state)
+            return state
+
+    def zero_canceled_gtd(self, key, oid):
+        a = self.attempt(oid)
+        if (a["task_id"] != key or not a["started"] or a["state"] != "TERMINAL"
+                or decimal(a["filled"]) != 0 or decimal(a["spent"]) != 0
+                or decimal(self.get("matched_lower_bound:" + oid, "0")) != 0
+                or json.loads(a["plan"])["order_type"] != "GTD"):
+            return False
+        proof = json.loads(a["proof"])
+        order = proof.get("order", {})
+        return (proof["kind"] == "OWNED_TERMINAL_ORDER_AND_TRADES" and order.get("id") == oid
+                and order.get("status") in {"CANCELED", "CANCELLED"}
+                and decimal(order["size_matched"]) == 0 and order.get("associate_trades") == []
+                and proof.get("trades") == [])
+
+    def validate_gtd_chase(self, key, pricing, oid=None):
+        state = self.gtd_chase(key)
+        old_id = pricing["old_order_id"]
+        require(state.get("old_order_id") == old_id and state.get("zero_cancel_verified") is True
+                and state["trigger_check"]["threshold"] == pricing["trigger_threshold"]
+                and self.zero_canceled_gtd(key, old_id)
+                and (state.get("new_order_id") == oid and oid is not None
+                     or state.get("phase") == "READY" and not state.get("new_order_id")),
+                "M12_GTD_CHASE_NOT_AUTHORIZED")
 
     def record_price_band_wait(self, key, price, stage, root):
         name = "post_price_band_wait:" + key
@@ -278,17 +341,19 @@ class BudgetLedger(TaskLedger):
     def amount_minimum_ok(amount, quantity):
         return amount >= FAK_BUY_MIN_PRINCIPAL and (quantity >= 5 or amount > 1)
 
-    def amount_price_allowed(self, price, amount, quantity, root):
+    def amount_price_allowed(self, price, amount, quantity, root, pricing=None):
         if quantity <= 0:
             return False
         signed = amount / quantity
+        if (pricing or {}).get("stage") == GTD_CHASE_STAGE:
+            return signed == price and self.post_price_allowed(signed, root, pricing)
         # Shares are rounded down. Preserve the intended executable ask and
         # exclude any higher tick, including after the market's tick tightens.
         if root.get("pricing_origin", {}).get("follow_limit"):
             return price - decimal(".0001") < signed <= price and self.post_price_allowed(signed, root)
         return price <= signed < price + decimal(".0001") and self.post_price_allowed(signed, root)
 
-    def amount_order(self, key, price, available=None, *, order_type="FAK", ask_at_cap=False):
+    def amount_order(self, key, price, available=None, *, order_type="FAK", ask_at_cap=False, pricing=None):
         principal = self.order_budget - self.principal_used(key)
         if available is not None:
             # Invert the same gross commitment used to reserve actual cash.
@@ -303,7 +368,8 @@ class BudgetLedger(TaskLedger):
                 amount = price * quantity
             else:
                 amount, quantity = follow_fak_amount(amount, price, ask_at_cap=ask_at_cap)
-            if not self.amount_minimum_ok(amount, quantity) or not self.post_price_allowed(amount / quantity, self.root_plan(key)):
+            if (not self.amount_minimum_ok(amount, quantity)
+                    or not self.amount_price_allowed(price, amount, quantity, self.root_plan(key), pricing)):
                 return None
             return amount, quantity
         quantity = market_buy_quantity(amount, price)
@@ -318,6 +384,7 @@ class BudgetLedger(TaskLedger):
             return (qty >= decimal(plan["minimum"]) and qty % CENT == 0 and principal == price * qty
                     and plan.get("expiration") == cutoff + 60)
         return (plan.get("order_type") == "FAK" and plan.get("expiration") == 0 and principal % CENT == 0
+                and (plan.get("pricing", {}).get("stage") != GTD_CHASE_STAGE or principal == price * qty)
                 and qty == (principal / price).quantize(decimal(".0001"), rounding=ROUND_CEILING))
 
     def plan_minimum_ok(self, plan, price, quantity):
@@ -346,6 +413,9 @@ class BudgetLedger(TaskLedger):
             require(self.dynamic_pricing and not row["order_id"] and not self.unresolved(key),
                     "M4_PRICING_ORDER_UNRESOLVED")
             plan = {**root, "pricing": quote, "limit_price": quote["limit_price"]}
+            if quote["stage"] == GTD_CHASE_STAGE:
+                self.validate_gtd_chase(key, quote)
+                plan["order_type"] = "FAK"
             require(quote_valid(root, plan, row["token"], quote), "M4_PRICING_QUOTE_INVALID")
             self.fact("taker_pricing_quote", quote["id"], quote)
             with self.db:
@@ -491,8 +561,11 @@ class BudgetLedger(TaskLedger):
                 return None
             selected = self.get("pricing_selection:" + key) if self.dynamic_pricing else None
             require(not self.dynamic_pricing or selected is not None, "M4_PRICING_NOT_SELECTED")
+            chase = (selected or {}).get("stage") == GTD_CHASE_STAGE
+            if chase:
+                self.validate_gtd_chase(key, selected)
             price = self.selected_price(key)
-            require(self.post_price_allowed(price, root), POST_PRICE_OUTSIDE_BAND)
+            require(self.post_price_allowed(price, root, selected), POST_PRICE_OUTSIDE_BAND)
             used = self.budget_used(key)
             pending = self.pending_cost(key)
             # pending matches stay reserved; only an unsent preparation may be replaced.
@@ -501,14 +574,15 @@ class BudgetLedger(TaskLedger):
             follow = root.get("pricing_origin", {}).get("follow_limit")
             order_type = "FAK"
             expiration = 0
-            if follow and remaining_sec is not None and remaining_sec > 120:
+            if follow and not chase and remaining_sec is not None and remaining_sec > 120:
                 rest = self.amount_order(key, price, available, order_type="GTD")
                 if rest and rest[1] >= decimal(minimum):
                     order_type = "GTD"
                     expiration = int(self.get("market")["slug"].rsplit("-", 1)[1]) + self.settings.cutoff_sec + 60
             if self.amount_buy:
                 amount_order = self.amount_order(key, price, available, order_type=order_type,
-                                                 ask_at_cap=bool(follow and selected.get("ask_at_cap")))
+                                                 ask_at_cap=bool(follow and selected.get("ask_at_cap")),
+                                                 pricing=selected)
             else:
                 qty = budget_quantity(price, self.order_budget - used, self.fees)
                 if not minimum_fak_buy_ok(price, qty):
@@ -520,6 +594,9 @@ class BudgetLedger(TaskLedger):
                     qty -= STEP
                 amount_order = (price * qty, qty) if minimum_fak_buy_ok(price, qty) else None
             if amount_order is None:
+                if chase:
+                    self._write_gtd_chase(key, {**self.gtd_chase(key), "phase": "STOPPED",
+                                                "reason": "M12_GTD_CHASE_NO_LEGAL_AMOUNT"})
                 self.db.execute(
                     "UPDATE opportunities SET reserved=?,reason='M4_WAIT_REMAINDER_FUNDS' WHERE id=?",
                     (str(pending), key),
@@ -589,7 +666,9 @@ class BudgetLedger(TaskLedger):
                 decimal(row["price"]), decimal(root["tick_at_plan"])),
             "M4_TASK_ATTEMPT_PRICING_CONFLICT",
         )
-        require(self.post_price_allowed(price, root), POST_PRICE_OUTSIDE_BAND)
+        require(self.post_price_allowed(price, root, pricing), POST_PRICE_OUTSIDE_BAND)
+        if pricing.get("stage") == GTD_CHASE_STAGE:
+            self.validate_gtd_chase(row["id"], pricing, attempt["order_id"])
         require(
             re.fullmatch(r"0x[0-9a-fA-F]{64}", attempt["order_id"]) is not None
             and quote["window_id"] == row["id"]
@@ -614,7 +693,7 @@ class BudgetLedger(TaskLedger):
                     and (self.valid_follow_terms(plan, principal, price, qty) if root.get("pricing_origin", {}).get("follow_limit")
                          else qty == market_buy_quantity(principal, price))
                     and decimal(plan["signed_limit_price"]) == principal / qty
-                    and self.amount_price_allowed(price, principal, qty, root)
+                    and self.amount_price_allowed(price, principal, qty, root, pricing)
                     and prior_principal == decimal(plan["prior_principal_usdc"])
                     and 0 <= prior_principal <= self.order_budget - principal,
                     "M421_ATTEMPT_PRINCIPAL_OR_PRICE_CONFLICT")
@@ -682,6 +761,12 @@ class BudgetLedger(TaskLedger):
                 and committed <= self.limit,
                 "M4_TASK_RESIDUAL_BUDGET_CHANGED",
             )
+            if plan.get("pricing", {}).get("stage") == GTD_CHASE_STAGE:
+                chase = self.gtd_chase(key)
+                require(chase.get("phase") == "READY" and self._replace_gtd_chase(key, chase, {
+                    **chase, "phase": "PREPARED", "new_order_id": oid, "limit_price": plan["limit_price"],
+                    "signed_limit_price": plan["signed_limit_price"],
+                }), "M12_GTD_CHASE_ALREADY_PREPARED")
             self.db.execute(
                 "INSERT INTO taker_attempts(order_id,task_id,plan,quote,state) VALUES (?,?,?,?,?)",
                 (oid, key, a["plan"], a["quote"], "PREPARED"),
@@ -734,6 +819,10 @@ class BudgetLedger(TaskLedger):
                 self.db.execute("DELETE FROM metadata WHERE key=?", ("next_plan:" + row["id"],))
             self.db.execute("DELETE FROM metadata WHERE key=?", ("blocked:" + oid,))
             self.refresh_totals(row["id"])
+            chase = self.gtd_chase(row["id"])
+            if chase.get("new_order_id") == oid:
+                self._write_gtd_chase(row["id"], {**chase, "phase": "STOPPED" if unsent else "DONE",
+                                                 "result": proof["kind"], "filled": str(filled), "spent": str(spent)})
 
     def post_start(self, key, **kwargs):
         # Last durable gate, under the same lock that updates reconciliation facts.
@@ -741,7 +830,8 @@ class BudgetLedger(TaskLedger):
         with self.lock, self.db:
             require(not self.price_band_abandonment(key), self.price_band_stop_reason)
             plan = self.plan(key)
-            require(self.post_price_allowed(decimal(plan["limit_price"]), self.root_plan(key)),
+            pricing = plan.get("pricing", {})
+            require(self.post_price_allowed(decimal(plan["limit_price"]), self.root_plan(key), pricing),
                     POST_PRICE_OUTSIDE_BAND)
             require(not self.unresolved(key), "M4_UNRESOLVED_PRIOR_ATTEMPT")
             require(
@@ -749,6 +839,12 @@ class BudgetLedger(TaskLedger):
                 and self.committed() <= self.limit and not self.filled_or_matched(key),
                 "M4_TASK_RESIDUAL_BUDGET_CHANGED",
             )
+            if pricing.get("stage") == GTD_CHASE_STAGE:
+                chase = self.gtd_chase(key)
+                require(chase.get("phase") == "PREPARED" and chase.get("new_order_id") == self.row(key)["order_id"],
+                        "M12_GTD_CHASE_ALREADY_ARMED")
+                require(self._replace_gtd_chase(key, chase, {**chase, "phase": "ARMED"}),
+                        "M12_GTD_CHASE_ALREADY_ARMED")
             return super().post_start(key, **kwargs)
 
     def native_ready(self, key, oid):
@@ -832,6 +928,9 @@ class BudgetLedger(TaskLedger):
             )
             self.db.execute("DELETE FROM metadata WHERE key=?", ("next_plan:" + row["id"],))
             self.refresh_totals(row["id"])
+            chase = self.gtd_chase(row["id"])
+            if chase.get("new_order_id") == oid:
+                self._write_gtd_chase(row["id"], {**chase, "phase": "STOPPED", "reason": reason})
 
     def settling(self, oid, proof, cost_bound, quantity):
         with self.lock, self.db:

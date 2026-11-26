@@ -23,6 +23,7 @@ from polymaker.domain import Quote, Side
 from polymaker.m4_execution import SUBMIT_PENDING_TOLERANCE_SEC
 from polymaker.m4_live_config import all_in_cost, gross_risk_cost, planned_fee
 from polymaker.m4_live_http import NativePostNotSent
+from polymaker.m4_live_pricing import BOOT_ID, GTD_CHASE_STAGE
 from polymaker.m4_live_taker import SinglePostM4LiveLedger, SinglePostM4TakerMarket
 from polymaker.m4_state import decimal
 from polymaker.maker_retry import post_exception_rejection, rejection
@@ -887,7 +888,24 @@ class TaskMarket(SinglePostM4TakerMarket):
             key,
         )
         attempt, oid = None, None
+        native_stamp = None
+        chase_fak = plan.get("pricing", {}).get("stage") == GTD_CHASE_STAGE
+        track_native_post = follow and (plan["order_type"] == "GTD" or chase_fak)
         buy_amount = plan["principal_usdc"] if plan.get("taker_buy_amount_policy") else None
+
+        def capture_native_post():
+            nonlocal native_stamp
+            now = e.monotonic()
+            native_stamp = {"boot_id": BOOT_ID, "monotonic": now,
+                            "exchange_time": e.official_time + now - e.time_anchor}
+
+        def save_native_post():
+            nonlocal native_stamp
+            if native_stamp is not None:
+                stamp, native_stamp = native_stamp, None
+                if state := self.ledger.record_follow_native_post(oid, stamp):
+                    e.record("m12_gtd_chase_post", {"order_id": oid, "opportunity_id": key, **state})
+
         try:
             ticks = {token: float(book.tick) for token, book in self.feed.books.items()}
             prepared = await e.gateway.prepare(
@@ -940,8 +958,10 @@ class TaskMarket(SinglePostM4TakerMarket):
                     "batch_attempts": [attempt],
                     "network_batch_id": None,
                     "on_post_start": post_start,
+                    **({"capture_native_post": capture_native_post} if track_native_post else {}),
                 },
             )
+            save_native_post()
             if self.ledger.attempt(oid)["started"]:
                 self.ledger.post_receipt(oid, raw)
             if not self.ledger.attempt(oid)["started"]:
@@ -960,6 +980,13 @@ class TaskMarket(SinglePostM4TakerMarket):
                     else "UNKNOWN"
                 )
                 self.ledger.response(oid, state, raw)
+            if chase_fak:
+                saved = self.ledger.attempt(oid)
+                e.record("m12_gtd_chase_fak_receipt", {
+                    "opportunity_id": key, "old_order_id": plan["pricing"]["old_order_id"], "order_id": oid,
+                    "limit_price": plan["limit_price"], "signed_limit_price": plan["signed_limit_price"],
+                    "state": saved["state"], "filled": saved["filled"], "spent": saved["spent"], "response": raw,
+                })
             e.record(
                 "sm_m4_live_post",
                 {
@@ -970,6 +997,7 @@ class TaskMarket(SinglePostM4TakerMarket):
                 },
             )
         except Exception as exc:
+            save_native_post()
             if oid is not None and any(a["order_id"] == oid for a in self.ledger.attempts(key)):
                 a = self.ledger.attempt(oid)
                 if (isinstance(exc, NativePostNotSent) and exc.order_id == oid

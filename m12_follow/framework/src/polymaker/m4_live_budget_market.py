@@ -22,7 +22,7 @@ from polymaker.m4_live_budget import (
 from polymaker.m4_live_budget_reconcile import reconcile_owned
 from polymaker.m4_live_config import M42112_PRICE_BAND_SOURCE, M4LiveSettings, gross_risk_cost
 from polymaker.m4_live_numeric import age_us, budget_quantity, install_live_clock_boundaries
-from polymaker.m4_live_pricing import follow_limit_price, frozen_follow_cap
+from polymaker.m4_live_pricing import GTD_CHASE_DELAY, GTD_CHASE_STAGE, follow_limit_price, frozen_follow_cap, gtd_chase_threshold
 from polymaker.m4_live_price_band import (
     ABANDON_BEST_ASK_BAND, ABANDON_FIRST_SIGNED_BAND, ANCHOR_PRICE_FLOOR, POST_PRICE_OUTSIDE_BAND, price_in_band,
 )
@@ -402,6 +402,9 @@ class BudgetMarket(TaskMarket):
                     pricing_reason = M12_ANCHOR_OUTSIDE_BAND
                 else:
                     pricing_reason = self.follow_best_ask_block(row, root, book, now)
+            if (pricing_reason and quote is None and not row["order_id"]
+                    and root.get("pricing_origin", {}).get("follow_limit")):
+                self.change_chase(key, "READY", "STOPPED", reason=pricing_reason)
             if self.ledger.dynamic_pricing and pricing_reason is None:
                 captured_elapsed = self.elapsed()
                 age = signal_age(root, now, captured_elapsed)
@@ -409,7 +412,9 @@ class BudgetMarket(TaskMarket):
                         and (not self.ledger.amount_buy or not self.ledger.pending_matches(key))
                         and self.entry_window_open()):
                     pricing_reason = self.select_pricing(opportunity, book, now, age, captured_elapsed)
-                    plan = {**self.ledger.plan(key), "limit_price": str(self.ledger.selected_price(key))}
+                    selected = self.ledger.get("pricing_selection:" + key)
+                    if selected is not None:
+                        plan = {**self.ledger.plan(key), "limit_price": selected["limit_price"], "pricing": selected}
                 elif (quote is not None and plan.get("pricing", {}).get("stage") == "ANCHOR"
                       and age >= WAIT_US):
                     # Signing/fsync crossed the switch: leave this intent UNSENT,
@@ -421,7 +426,12 @@ class BudgetMarket(TaskMarket):
             age = age_us(now, min(queued)) if queued else 0
             price = decimal(plan["limit_price"])
             signed_price = decimal(quote.price) if quote is not None else price
-            band_allowed = self.ledger.post_price_allowed(signed_price, root)
+            pricing = plan.get("pricing", {})
+            chase = pricing.get("stage") == GTD_CHASE_STAGE
+            if chase and quote is not None and pricing_reason is None:
+                reason, _ = self.chase_quote(root, book, now, trigger_threshold=pricing["trigger_threshold"])
+                pricing_reason = reason or ("M12_GTD_CHASE_ASK_CHANGED" if signed_price != book.best_ask else None)
+            band_allowed = self.ledger.post_price_allowed(signed_price, root, pricing)
             if not band_allowed and pricing_reason != POST_PRICE_OUTSIDE_BAND:
                 self.ledger.record_price_band_wait(key, signed_price, plan.get("pricing", {}).get("stage", "ANCHOR"), root)
                 self.price_band_waits[key] = {"signed_limit": str(signed_price)}
@@ -451,12 +461,12 @@ class BudgetMarket(TaskMarket):
                     quote is None or self.ledger.signal_limited or self.initial_post_budget_available(opportunity),
                 ),
                 # The best-ask check above uses the current execution book.
-                # The signed follow limit is still fixed by the original plan.
+                # The ordinary follow limit is still fixed by the original plan.
                 ("M4_TAKER_TICK_UNVERIFIED",
                  self.feed.tick_verified.get(opportunity.token_id) == book.tick),
                 (f"{self.ledger.signal_strategy}_BEST_ASK_CHANGED_OR_STALE", not self.ledger.signal_limited or quote is None
                  or (root.get("pricing_origin", {}).get("follow_limit") and book.tick > 0
-                     and signed_price == follow_limit_price(root, book.tick))
+                     and (chase or signed_price == follow_limit_price(root, book.tick)))
                  or (not root.get("pricing_origin", {}).get("follow_limit")
                      and self.feed.m1.legal(book, now) and book.best_ask == signed_price)),
                 # Frozen cap stays fixed; a verified finer tick must not disable it.
@@ -524,6 +534,7 @@ class BudgetMarket(TaskMarket):
             root = self.ledger.root_plan(key)
             if root.get("pricing_origin", {}).get("follow_limit"):
                 self.filter_follow_anchor(key, root["anchor_price"], root["post_price_band"])
+                self.change_chase(key, "CANCELING", "STOPPED", reason="M12_GTD_CHASE_CANCEL_INTERRUPTED")
 
     def reject_initial_price_band(self, opportunity, now, age, elapsed):
         key = opportunity.episode_id
@@ -547,6 +558,23 @@ class BudgetMarket(TaskMarket):
         if self.reject_initial_price_band(opportunity, now, age, elapsed):
             return POST_PRICE_OUTSIDE_BAND
         if root["pricing_origin"].get("follow_limit"):
+            state = self.ledger.gtd_chase(key)
+            if state.get("phase") == "READY":
+                threshold = state["trigger_check"]["threshold"]
+                reason, details = self.chase_quote(root, book, now, trigger_threshold=threshold)
+                if reason:
+                    self.change_chase(key, "READY", "STOPPED", reason=reason, final_check=details)
+                    return reason
+                capture = self.pricing_capture(key, opportunity.token_id, book, now, age, elapsed,
+                                               GTD_CHASE_STAGE, book.best_ask)
+                capture.update(old_order_id=state["old_order_id"], trigger_threshold=threshold, ask_at_cap=True)
+                if not quote_valid(root, {**root, "pricing": capture, "limit_price": capture["limit_price"],
+                                          "order_type": "FAK"}, opportunity.token_id, capture):
+                    reason = "M12_GTD_CHASE_QUOTE_INVALID"
+                    self.change_chase(key, "READY", "STOPPED", reason=reason, final_check=details)
+                    return reason
+                self.ledger.select_pricing(key, capture)
+                return None
             tick = self.feed.tick_verified.get(book.token_id)
             if not tick or tick != book.tick:
                 return "M4_TAKER_TICK_UNVERIFIED"
@@ -635,7 +663,7 @@ class BudgetMarket(TaskMarket):
              "stage": stage, "signal_age_us": age, "captured_monotonic": now,
              "captured_elapsed_s": elapsed, "boot_id": BOOT_ID,
              "limit_price": str(price)}
-        if stage == "BEST_ASK":
+        if stage in {"BEST_ASK", GTD_CHASE_STAGE}:
             q.update(tick=str(book.tick), best_bid=str(book.best_bid), best_ask=str(book.best_ask),
                      connected=self.feed.connected, generation=self.feed.generation,
                      snapshot_generation=book.snapshot_generation,
@@ -716,6 +744,8 @@ class BudgetMarket(TaskMarket):
             delay = max(delay, 0.5)
         elif reason == "M4_BEST_ASK_REPRICE_WAIT_FRESH_BOOK":
             delay = max(delay, self.settings.retry_initial_sec)
+        if self.ledger.gtd_chase(row["id"]).get("phase") == "READY":
+            delay = 0
         self.retry_after[row["id"]] = self.e.monotonic() + delay
         self.retry_wake_after[row["id"]] = self.e.monotonic() + self.settings.retry_initial_sec
         self.retry_book_states[row["id"]] = self.retry_book_state(opportunity)
@@ -794,7 +824,7 @@ class BudgetMarket(TaskMarket):
         return False
 
     async def reconcile(self, oid):
-        await reconcile_owned(self, oid)
+        return await reconcile_owned(self, oid)
 
     async def submit(self, opportunity):
         key = opportunity.episode_id
@@ -807,6 +837,13 @@ class BudgetMarket(TaskMarket):
         # otherwise two writers could race to finalize the same attempt.
         self.posting_keys.add(opportunity.episode_id)
         try:
+            chase = self.ledger.gtd_chase(opportunity.episode_id)
+            if chase.get("phase") == "WAIT_CLOSE":
+                old = self.ledger.attempt(chase["old_order_id"])
+                if old["state"] == "TERMINAL":
+                    # A restart can occur after the terminal debit committed but
+                    # before the scheduler saw the zero-cancel result.
+                    await self.advance_gtd_chase(old, None, False)
             await super()._submit(opportunity)
         finally:
             self.posting_keys.discard(opportunity.episode_id)
@@ -834,13 +871,105 @@ class BudgetMarket(TaskMarket):
             self.e.record("m12_follow_cancel_unverified", {"order_id": oid, "error": type(exc).__name__})
         # A cancel response never releases cash. Only reconcile_owned can prove the remainder closed.
 
+    def change_chase(self, key, expected, phase, **evidence):
+        state = self.ledger.change_gtd_chase(key, expected, phase, **evidence)
+        if state is not None:
+            self.e.record("m12_gtd_chase", {"opportunity_id": key, **state})
+        return state
+
+    def chase_due(self, order, now):
+        state = self.ledger.gtd_chase(order["task_id"])
+        if state.get("phase") != "WATCH" or state["old_order_id"] != order["order_id"]:
+            return False
+        stamp = state["first_post"]
+        return stamp["boot_id"] != BOOT_ID or now >= stamp["monotonic"] + GTD_CHASE_DELAY
+
+    def chase_quote(self, root, book, now, *, trigger_threshold=None):
+        tick = self.feed.tick_verified.get(book.token_id)
+        details = {"checked_monotonic": now,
+                   "best_ask": str(book.best_ask) if book.best_ask is not None else None}
+        if not tick or tick != book.tick:
+            return "M12_GTD_CHASE_TICK_UNVERIFIED", details
+        threshold = gtd_chase_threshold(root, tick)
+        if trigger_threshold is not None:
+            threshold = max(threshold, decimal(trigger_threshold))
+        details.update(threshold=str(threshold), tick=str(tick))
+        if (not self.feed.m1.legal(book, now) or book.best_ask is None
+                or book.best_ask % tick or not tick <= book.best_ask <= 1 - tick):
+            return "M12_GTD_CHASE_ASK_STALE", details
+        if book.best_ask <= threshold:
+            return "M12_GTD_CHASE_AT_OR_BELOW_THRESHOLD", details
+        return None, details
+
+    def chase_entry_block(self, opportunity, root):
+        if (self.stop.is_set() or self.e.closed or self.e.inhibited() or self.e.fatal
+                or not self.entry_window_open() or self.ledger.get("buy_closed") or self.ledger.get("complete")):
+            return "M12_GTD_CHASE_ENTRY_CLOSED"
+        return self.entry_block() or self.lifetime_block(opportunity, root)
+
+    async def advance_gtd_chase(self, order, live, due):
+        key, oid = order["task_id"], order["order_id"]
+        state = self.ledger.gtd_chase(key)
+        phase = state.get("phase")
+        if state.get("old_order_id") != oid or phase not in {"WATCH", "WAIT_CLOSE"}:
+            return
+        if phase == "WATCH" and not due:
+            if self.ledger.attempt(oid)["state"] in {"TERMINAL", "SETTLING"}:
+                self.change_chase(key, phase, "STOPPED", reason="M12_GTD_CHASE_OLD_ORDER_NO_LONGER_OPEN")
+            return
+        root = self.ledger.root_plan(key)
+        op = self.restored_opportunity(self.ledger.row(key))
+        reason = self.chase_entry_block(op, root)
+        if phase == "WATCH" and state["first_post"]["boot_id"] != BOOT_ID:
+            reason = reason or "M12_GTD_CHASE_POST_CLOCK_LOST"
+        if reason:
+            self.change_chase(key, phase, "STOPPED", reason=reason)
+            return
+        if phase == "WATCH":
+            with self.feed.lock:
+                quote_reason, details = self.chase_quote(root, self.feed.books[op.token_id], self.e.monotonic())
+                if live is None or self.ledger.attempt(oid)["state"] != "ACK" or self.ledger.get("blocked:" + oid):
+                    quote_reason = "M12_GTD_CHASE_NO_LIVE_ZERO_PROOF"
+                if quote_reason:
+                    self.change_chase(key, phase, "STOPPED", reason=quote_reason, trigger_check=details)
+                    return
+                if not self.change_chase(key, phase, "CANCELING", trigger_check=details, live_order=live):
+                    return
+            try:
+                reply = await self.e.gateway._io(self.e.gateway._client.cancel_orders, [oid])
+            except Exception as exc:
+                self.change_chase(key, "CANCELING", "STOPPED", reason="M12_GTD_CHASE_CANCEL_UNVERIFIED",
+                                  cancel_error=type(exc).__name__)
+                return
+            if (not isinstance(reply, dict) or reply.get("canceled") != [oid]
+                    or reply.get("not_canceled", {}) != {}):
+                self.change_chase(key, "CANCELING", "STOPPED", reason="M12_GTD_CHASE_CANCEL_UNVERIFIED",
+                                  cancel_response=reply)
+                return
+            state = self.change_chase(key, "CANCELING", "WAIT_CLOSE", cancel_response=reply)
+            if state is None:
+                return
+            live = await self.reconcile(oid)
+            phase = "WAIT_CLOSE"
+        if self.ledger.zero_canceled_gtd(key, oid):
+            with self.feed.lock:
+                reason, details = self.chase_quote(root, self.feed.books[op.token_id], self.e.monotonic(),
+                                                   trigger_threshold=state["trigger_check"]["threshold"])
+                reason = reason or self.chase_entry_block(op, root)
+                self.change_chase(key, phase, "STOPPED" if reason else "READY", zero_cancel_verified=True,
+                                  final_check=details, **({"reason": reason} if reason else {}))
+        elif live is None or self.ledger.attempt(oid)["state"] != "ACK" or self.ledger.get("blocked:" + oid):
+            self.change_chase(key, phase, "STOPPED", reason="M12_GTD_CHASE_ZERO_CANCEL_NOT_PROVEN")
+
     async def read_order(self, oid):
         order = self.ledger.attempt(oid)
         await self.cancel_resting(order)
         key = order["task_id"]
         was_ready = (self.ledger.row(key)["state"] == "RESERVED"
                      and not self.ledger.unresolved(key))
-        await self.reconcile(oid)
+        due = self.chase_due(order, self.e.monotonic())
+        live = await self.reconcile(oid)
+        await self.advance_gtd_chase(order, live, due)
         a = self.ledger.attempt(oid)
         blocked = a["state"] == "UNKNOWN" or bool(self.ledger.get("blocked:" + oid))
         self.read_failures[oid] = self.read_failures.get(oid, 0) + 1 if blocked else 0
@@ -985,6 +1114,7 @@ class BudgetMarket(TaskMarket):
                 not (a["task_id"] in self.posting_keys and a["state"] in {"ACK", "UNKNOWN"})
                 and a["order_id"] not in self.read_jobs
                 and (now >= self.read_after.get(a["order_id"], 0)
+                     or self.chase_due(a, now)
                      or (a["order_id"] not in self.cancel_after and a["state"] != "SETTLING"
                          and getattr(self.feed.m1, "latest_key", None) not in {None, a["task_id"]}
                          and json.loads(a["plan"]).get("order_type") == "GTD"))
@@ -1122,6 +1252,10 @@ class BudgetMarket(TaskMarket):
     def finish_pending(self):
         if self.elapsed() >= self.settings.cutoff_sec:
             self.ledger.set("buy_closed", True)
+            for row in self.ledger.rows():
+                phase = self.ledger.gtd_chase(row["id"]).get("phase")
+                if phase in {"WATCH", "WAIT_CLOSE", "READY"}:
+                    self.change_chase(row["id"], phase, "STOPPED", reason="M12_GTD_CHASE_ENTRY_CLOSED")
         super().finish_pending()
 
     async def recycle_after_cutoff(self):

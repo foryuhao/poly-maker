@@ -11,6 +11,8 @@ FIXED = "ANCHOR_FIXED_V1"
 DYNAMIC = "ANCHOR_10S_THEN_BEST_ASK_V1"
 WAIT_US = 10_000_000
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+GTD_CHASE_STAGE = "GTD_CHASE_FAK"
+GTD_CHASE_DELAY = 5
 
 
 def origin(signal_mono, now, elapsed, *, deadline=None, ledger_strategy=M6_LEDGER,
@@ -64,8 +66,16 @@ def market_price_allowed(price, root):
     return ticks is None or decimal(price) <= decimal(root["anchor_price"]) + ticks * decimal(root["tick_at_plan"])
 
 
-def order_price_allowed(price, root):
+def gtd_chase_threshold(root, tick):
+    return frozen_follow_cap(root) + 5 * tick
+
+
+def order_price_allowed(price, root, pricing=None):
     band = root.get("post_price_band")
+    if (pricing or {}).get("stage") == GTD_CHASE_STAGE:
+        return (root.get("pricing_origin", {}).get("follow_limit") is True
+                and band is not None and price_in_band(root["anchor_price"], band)
+                and 0 < decimal(price) <= decimal(pricing["limit_price"]) < 1)
     band_price = root["anchor_price"] if root.get("pricing_origin", {}).get("follow_anchor_band") else price
     return (0 < decimal(price) < 1 and (not band or price_in_band(band_price, band))
             and market_price_allowed(price, root))
@@ -79,7 +89,7 @@ def quote_valid(root, plan, token, evidence=None):
     """
     try:
         price = decimal(plan["limit_price"])
-        if not order_price_allowed(price, root):
+        if not order_price_allowed(price, root, plan.get("pricing")):
             return False
         if "pricing_origin" not in root:
             return price == decimal(root["limit_price"])
@@ -100,7 +110,7 @@ def quote_valid(root, plan, token, evidence=None):
             elif not (q["boot_id"] == start["boot_id"]
                       and age < start["lifetime_us"] <= signal_lifetime_limit_us(ledger)):
                 return False
-        if start.get("follow_limit") and q["stage"] != "FOLLOW_LIMIT":
+        if start.get("follow_limit") and q["stage"] not in {"FOLLOW_LIMIT", GTD_CHASE_STAGE}:
             return False
         if q["stage"] == "FOLLOW_LIMIT":
             tick = decimal(q["verified_tick"])
@@ -109,7 +119,13 @@ def quote_valid(root, plan, token, evidence=None):
         if q["stage"] == "ANCHOR":
             return start["policy"] == DYNAMIC and age < WAIT_US and price == decimal(root["limit_price"])
         tick, bid, ask = (decimal(q[k]) for k in ("tick", "best_bid", "best_ask"))
-        return (q["stage"] == "BEST_ASK" and age >= start["wait_us"] and price == ask
+        if q["stage"] == GTD_CHASE_STAGE:
+            if (plan.get("order_type") != "FAK" or not q.get("old_order_id")
+                    or not ask > max(decimal(q["trigger_threshold"]), gtd_chase_threshold(root, tick))):
+                return False
+        elif q["stage"] != "BEST_ASK":
+            return False
+        return (age >= start["wait_us"] and price == ask
                 and 0 < bid < ask < 1 and tick > 0 and ask % tick == 0
                 and tick <= ask <= 1 - tick and q["connected"] is True
                 and q["generation"] == q["snapshot_generation"]

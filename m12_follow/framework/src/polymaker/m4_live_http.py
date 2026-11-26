@@ -69,6 +69,8 @@ class M4LiveClobClient(ExecutionClobClient):
             if reason:
                 raise NativePostNotSent(oid, reason)
         # No persistence, logging, signing or account queries after this last check.
+        if stamp := self._operation_value('capture_native_post'):
+            stamp()
         return super()._native_order_post(endpoint, headers=headers, data=data, params=params)
 
     def _post(self, endpoint, headers=None, data=None, params=None):
@@ -175,7 +177,7 @@ class M4LiveClobClient(ExecutionClobClient):
             taker = Decimal(str(signed['takerAmount']))
             if (attempt.buy_amount_usdc != plan['principal_usdc']
                     or not ledger.amount_price_allowed(Decimal(plan['limit_price']), maker, taker,
-                                                       ledger.root_plan(row['id']))):
+                                                       ledger.root_plan(row['id']), plan.get('pricing'))):
                 return False
         elif attempt.buy_amount_usdc is not None:
             return False

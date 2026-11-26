@@ -11,6 +11,7 @@ from py_clob_client_v2.exceptions import PolyApiException
 
 from polymaker.domain import Side
 from polymaker.m4_live_numeric import MICRO, ZERO, fill_event, maker_fill_event, units, validate_cash_fills
+from polymaker.m4_live_pricing import GTD_CHASE_STAGE
 from polymaker.m4_live_task import (
     ORDER_TERMINAL,
     POST_TRADE_ID_FIELDS,
@@ -425,7 +426,14 @@ async def reconcile_owned(market, oid):
             require(matched <= units(plan["quantity"]), "M12_GTD_QUANTITY_EXCEEDED")
             if raw.get("status") in {"LIVE", "DELAYED", "UNMATCHED"}:
                 # A confirmed partial fill still leaves an executable remainder.
-                return
+                if raw["status"] == "LIVE" and matched == previous == 0 and not ids:
+                    paid = (receipt or {}).get("makingAmount")
+                    try:
+                        if paid in (None, "") or decimal(paid) == 0:
+                            return raw
+                    except (TypeError, ValueError, ArithmeticError):
+                        pass  # Inconclusive receipt cannot authorize a chase.
+                return None
         require(tail_evidence is not None or raw.get("status") in ORDER_TERMINAL
                 or (resting and raw.get("status") == "EXPIRED"),
                 "M4_ORDER_NOT_TERMINAL")
@@ -464,6 +472,8 @@ async def reconcile_owned(market, oid):
                     "confirmed_quantity": str(qty),
                     "principal_and_fee_usdc": str(cost),
                     **({"reason": GTD_TAIL_REASON} if tail_evidence is not None else {}),
+                    **({"pricing_stage": GTD_CHASE_STAGE, "old_order_id": plan["pricing"]["old_order_id"]}
+                       if plan.get("pricing", {}).get("stage") == GTD_CHASE_STAGE else {}),
                 },
             )
         else:

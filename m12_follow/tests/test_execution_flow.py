@@ -3,7 +3,7 @@ import asyncio
 import json
 import sqlite3
 from contextlib import closing
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +26,7 @@ from polymaker.m4_journal import M4RiskJournal
 from polymaker.m4_live_budget import BudgetLedger, follow_fak_amount
 from polymaker.m4_live_budget_market import BudgetMarket
 from polymaker.m4_live_config import M4LiveSettings
+from polymaker.m4_live_task import FAK_NO_MATCH
 from polymaker.m4_run import Executor
 from polymaker.m4_types import M421_LEDGER
 from polymaker.market_protocol import V2MarketMeta
@@ -150,6 +151,12 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                       "matched", "null", "empty", "blank", "404", "below", "boundary", "not_expired",
                                       "still_open", "orders_incomplete", "trades_incomplete", "query_failed",
                                       "nonfinal", "quantity_conflict", "owner_conflict", "taker_fee", "two_sides",
+                                  )],
+                                  *["sqlite_limit_gtd_chase_" + mode for mode in (
+                                      "equal", "higher_v2", "cancel_fill", "cancel_timeout", "ask_back", "ask_stale",
+                                      "cutoff", "unknown", "restart_ready", "restart_unknown", "native_ask_back_v2",
+                                      "restart_cancel", "cancel_ack_lags", "partial_v2", "stale_before_sign", "scheduler_v2",
+                                      "concurrent_v2", "finer_tick",
                                   )]])
 async def test_follow_native_fak(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
@@ -242,6 +249,18 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
     executor.meta, executor.official_time, executor.time_anchor = meta, lead.official_time, lead.time_anchor
     executor.stop_event = asyncio.Event()
     market = BudgetMarket(executor, cfg, executor.stop_event, account_owner=primary, display=lambda _: None)
+
+    async def restart_follow_market():
+        nonlocal ledger, market
+        await writer.flush()
+        ledger.close()
+        ledger = open_ledger()
+        executor.ledger = reads.gateway.m4_ledger = reads.gateway._client.m4_ledger = ledger
+        executor.known.clear()
+        market = BudgetMarket(executor, cfg, executor.stop_event, account_owner=primary, display=lambda _: None)
+        market.restore()
+        return market
+
     events = []
     fact = dict(id="m12:pair:example", token="1", anchor_price=".70", confirmed=clock.now-.02,
                 version=VERSION, root_id="m12:component:example")
@@ -395,7 +414,6 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 monkeypatch.setattr(reads.gateway._client, "m4_native_guard", end_at_native_guard)
             if case == "sqlite_limit_small":
                 # The actual per-market GTD share minimum may exceed available budget.
-                from dataclasses import replace
                 executor.meta = replace(executor.meta, min_order_size=10)
             if case == "sqlite_limit_T240":
                 executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 240
@@ -412,6 +430,11 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
             if case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_near_ceiling_fak"}:
                 executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
             await market.submit(opportunity)
+            if case.startswith("sqlite_limit_gtd_chase_"):
+                mode = case.removeprefix("sqlite_limit_gtd_chase_")
+                await verify_gtd_chase(market, opportunity, mode, clock, push_ask, http, calls, monkeypatch,
+                                       restart_follow_market)
+                return
             if case.startswith("sqlite_limit_gtd_tail_"):
                 mode = case.removeprefix("sqlite_limit_gtd_tail_")
                 assert len(calls) == 1 and calls[0]["orderType"] == "GTD"
@@ -591,6 +614,194 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
         await close(market, executor)
         await close(primary, lead)
         mock_transport.close()
+
+
+async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original, posts, monkeypatch,
+                           restart_follow_market):
+    ledger, e, key = market.ledger, market.e, opportunity.episode_id
+    old, = ledger.attempts(key)
+    oid = old["order_id"]
+    state = ledger.gtd_chase(key)
+    assert old["state"] == "ACK" and posts[0]["orderType"] == "GTD"
+    assert state["phase"] == "WATCH" and state["old_order_id"] == oid
+    stamp = state["first_post"]["monotonic"]
+    order, _ = evidence(market, e, oid, "0")
+    order.update(order_type="GTD", status="LIVE")
+    cancellations, trades = [], {}
+    chase_posts = []
+    chase_order = None
+    owner = market.account_owner
+    gateway = e.gateway
+
+    def wire(request):
+        nonlocal chase_order
+        if request.method == "POST":
+            planned = gateway._client._operation_value("attempt").expected_order_id
+            plan = json.loads(gateway._client.m4_ledger.attempt(planned)["plan"])
+            if plan["pricing"]["stage"] != "GTD_CHASE_FAK":
+                return original._transport.handle_request(request)
+            row, = json.loads(request.content)
+            posts.append(row)
+            chase_posts.append(planned)
+            if mode == "restart_unknown":
+                raise httpx.ReadTimeout("chase response lost", request=request)
+            if mode == "partial":
+                chase_order, trade = evidence(market, e, planned, "2")
+                trades[trade["id"]] = trade
+                return httpx.Response(200, json=[{"success": True, "orderID": planned}])
+            return httpx.Response(200, json=[{"success": False, "errorMsg": FAK_NO_MATCH}])
+        if request.method == "DELETE":
+            assert json.loads(request.content) == [oid]
+            cancellations.append(oid)
+            if mode != "cancel_ack_lags":
+                order["status"] = "CANCELED"
+            if mode == "cancel_timeout":
+                raise httpx.ReadTimeout("cancel response lost", request=request)
+            if mode == "cancel_fill":
+                _, trade = evidence(market, e, oid, "1")
+                trades[trade["id"]] = trade
+                order.update(size_matched="1", associate_trades=[trade["id"]])
+            if mode == "ask_back":
+                push_ask(".80")
+            if mode == "finer_tick":
+                push_ask(".79")
+                with market.feed.lock:
+                    market.feed.books["1"] = replace(market.feed.books["1"], tick=Decimal(".001"))
+                    market.feed.tick_verified["1"] = Decimal(".001")
+            if mode == "ask_stale":
+                clock.now += .25
+            if mode == "cutoff":
+                e.official_time = int(e.meta.slug.rsplit("-", 1)[1]) + 240
+            return httpx.Response(200, json={"canceled": [oid], "not_canceled": {}})
+        if request.url.path == f"/data/order/{oid}":
+            if mode == "unknown" and clock.now >= stamp + 5:
+                return httpx.Response(503, json={"error": "order read unavailable"})
+            return httpx.Response(200, json=order)
+        if request.url.path.startswith("/data/order/"):
+            if chase_order and request.url.path == f"/data/order/{chase_order['id']}":
+                return httpx.Response(200, json=chase_order)
+            return httpx.Response(404, json={"error": "unknown FAK"})
+        assert request.url.path == "/data/trades"
+        return httpx.Response(200, json={"data": [trades[request.url.params["id"]]], "next_cursor": "LTE="})
+
+    async def restore():
+        nonlocal ledger, market
+        market = await restart_follow_market()
+        ledger = market.ledger
+
+    try:
+        with httpx.Client(transport=httpx.MockTransport(wire)) as query, monkeypatch.context() as patch:
+            patch.setattr(helpers, "_http_client", query)
+            clock.now = stamp + 4.999
+            push_ask(".81")
+            await market.read_order(oid)
+            assert not cancellations and ledger.gtd_chase(key)["phase"] == "WATCH"
+            clock.now = stamp + 5
+            owner.account_at = clock.now
+            push_ask(".80" if mode == "equal" else ".81")
+            if mode == "restart_cancel":
+                assert market.change_chase(key, "WATCH", "CANCELING")
+                await restore()
+                order["status"] = "CANCELED"
+                await market.read_order(oid)
+                assert ledger.attempt(oid)["state"] == "TERMINAL"
+                assert ledger.gtd_chase(key)["reason"] == "M12_GTD_CHASE_CANCEL_INTERRUPTED"
+                assert not cancellations and not chase_posts and len(posts) == 1
+                return
+            if mode == "scheduler":
+                market.read_after[oid] = clock.now + 30
+                await market.advance()
+                await market.read_jobs[oid]
+            else:
+                await market.read_order(oid)
+            state = ledger.gtd_chase(key)
+            assert state["trigger_check"]["threshold"] == "0.80"
+            assert state["trigger_check"]["best_ask"] == ("0.80" if mode == "equal" else "0.81")
+            if mode in {"equal", "unknown"}:
+                assert not cancellations and state["phase"] == "STOPPED" and len(posts) == 1
+                return
+            assert cancellations == [oid]
+            if mode == "cancel_ack_lags":
+                assert state["phase"] == "WAIT_CLOSE" and ledger.attempt(oid)["state"] == "ACK"
+                await market.submit(opportunity)
+                assert len(posts) == 1
+                order["status"] = "CANCELED"
+                await market.read_order(oid)
+                state = ledger.gtd_chase(key)
+            if mode in {"cancel_fill", "cancel_timeout", "ask_back", "ask_stale", "cutoff", "finer_tick"}:
+                if mode == "cancel_timeout":
+                    assert ledger.attempt(oid)["state"] != "TERMINAL"
+                    await market.read_order(oid)
+                    assert ledger.attempt(oid)["state"] == "TERMINAL"
+                if mode == "cancel_fill":
+                    assert Decimal(ledger.attempt(oid)["filled"]) == 1
+                if mode == "finer_tick":
+                    assert state["final_check"]["threshold"] == "0.80"
+                    assert state["final_check"]["tick"] == "0.001"
+                    assert state["reason"] == "M12_GTD_CHASE_AT_OR_BELOW_THRESHOLD"
+                assert ledger.gtd_chase(key)["phase"] == "STOPPED" and len(posts) == 1
+                return
+            assert state["phase"] == "READY" and state["zero_cancel_verified"] is True
+            assert ledger.attempt(oid)["state"] == "TERMINAL"
+            if mode == "restart_ready":
+                await restore()
+            if mode == "native_ask_back":
+                def native_guard(attempt):
+                    push_ask(".80")
+                    return market.native_guard(attempt)
+                patch.setattr(gateway._client, "m4_native_guard", native_guard)
+            if mode == "stale_before_sign":
+                clock.now += .25
+            if mode == "scheduler":
+                await market.advance()
+                await market.post_jobs[key]
+            elif mode == "concurrent":
+                await asyncio.gather(market.submit(opportunity), market.submit(opportunity))
+            else:
+                await market.submit(opportunity)
+            saved = ledger.gtd_chase(key)
+            if mode == "stale_before_sign":
+                assert not chase_posts and len(posts) == 1 and saved["phase"] == "STOPPED"
+                assert saved["reason"] == "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
+                return
+            if mode == "native_ask_back":
+                assert not chase_posts and len(posts) == 1 and saved["phase"] == "STOPPED", market.guard_failure(key)
+                assert ledger.attempt(saved["new_order_id"])["state"] == "UNSENT"
+                return
+            if mode == "concurrent":
+                assert len(posts) == 3 and chase_posts == [saved["new_order_id"]]
+                assert Decimal(json.loads(ledger.attempts(key)[-1]["plan"])["limit_price"]) <= Decimal(".75")
+                ledger.validate_recovery()
+                return
+            assert len(posts) == 2 and chase_posts == [saved["new_order_id"]], (market.guard_failure(key), saved)
+            assert posts[1]["orderType"] == "FAK" and posts[1]["order"]["side"] == "BUY"
+            assert posts[1]["order"]["tokenId"] == posts[0]["order"]["tokenId"] == "1"
+            assert Decimal(posts[1]["order"]["makerAmount"]) / Decimal(posts[1]["order"]["takerAmount"]) == Decimal(".81")
+            if mode == "restart_unknown":
+                assert saved["phase"] == "SENT"
+                await restore()
+                await market.submit(opportunity)
+                assert len(posts) == 2 and chase_posts == [saved["new_order_id"]]
+                assert ledger.attempt(saved["new_order_id"])["state"] == "UNKNOWN"
+            else:
+                if mode == "partial":
+                    await market.read_order(saved["new_order_id"])
+                    saved = ledger.gtd_chase(key)
+                    assert Decimal(saved["filled"]) == 2
+                    assert ledger.principal_used(key) == Decimal("1.62")
+                else:
+                    assert Decimal(saved["filled"]) == 0
+                assert saved["phase"] == "DONE"
+                await market.submit(opportunity)
+                newest = json.loads(ledger.attempts(key)[-1]["plan"])
+                assert Decimal(newest["limit_price"]) <= Decimal(".75")
+                assert chase_posts == [saved["new_order_id"]]
+            ledger.validate_recovery()
+    finally:
+        if ledger is not gateway._client.m4_ledger:
+            raise AssertionError("fixture ledger diverged")
+        if ledger is not e.ledger:
+            raise AssertionError("fixture executor ledger diverged")
 
 
 async def verify_gtd_tail(market, attempt, mode, original, monkeypatch, *, other_trades=()):
