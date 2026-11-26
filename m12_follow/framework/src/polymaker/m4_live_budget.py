@@ -25,7 +25,9 @@ from polymaker.m4_live_price_band import (
     SIGNED_LIMIT_BAND_ABANDONED, POST_PRICE_OUTSIDE_BAND,
     WAIT_FOR_PRICE_BAND,
 )
-from polymaker.m4_live_pricing import GTD_CHASE_STAGE, DYNAMIC, order_price_allowed, quote_valid, rejected_price_band_valid
+from polymaker.m4_live_pricing import (
+    DYNAMIC, GTD_CHASE_STAGE, follower_order, gtd_expiration, order_price_allowed, quote_valid, rejected_price_band_valid,
+)
 from polymaker.m4_live_task import TaskLedger, encode, minimum_order_ok, require
 from polymaker.m4_state import decimal
 from polymaker.m4_types import BASELINE_FOLLOW_STRATEGIES, BEST_ASK_SIGNAL, M21_LEDGER, M421_LEDGER, TakerPriceRisk, TakerStrategy, signal_lifetime_limit_us
@@ -362,7 +364,7 @@ class BudgetLedger(TaskLedger):
         amount = principal.quantize(CENT, rounding=ROUND_FLOOR)
         if amount < FAK_BUY_MIN_PRINCIPAL:
             return None
-        if self.root_plan(key).get("pricing_origin", {}).get("follow_limit"):
+        if order_type == "GTD" or self.root_plan(key).get("pricing_origin", {}).get("follow_limit"):
             if order_type == "GTD":
                 quantity = (principal / price).quantize(CENT, rounding=ROUND_FLOOR)
                 amount = price * quantity
@@ -381,13 +383,17 @@ class BudgetLedger(TaskLedger):
     def valid_follow_terms(self, plan, principal, price, qty):
         if plan.get("order_type") == "GTD":
             cutoff = int(self.get("market")["slug"].rsplit("-", 1)[1]) + self.settings.cutoff_sec
+            planned_upper = plan.get("gtd_planned_upper")
+            expiry = cutoff + 60 if planned_upper is None else gtd_expiration(cutoff, planned_upper)
             return (qty >= decimal(plan["minimum"]) and qty % CENT == 0 and principal == price * qty
-                    and plan.get("expiration") == cutoff + 60)
+                    and plan.get("expiration") == expiry)
         return (plan.get("order_type") == "FAK" and plan.get("expiration") == 0 and principal % CENT == 0
                 and (plan.get("pricing", {}).get("stage") != GTD_CHASE_STAGE or principal == price * qty)
                 and qty == (principal / price).quantize(decimal(".0001"), rounding=ROUND_CEILING))
 
     def plan_minimum_ok(self, plan, price, quantity):
+        if plan.get("order_type") == "GTD" and quantity < decimal(plan["minimum"]):
+            return False
         return (self.amount_minimum_ok(decimal(plan["principal_usdc"]), quantity)
                 if self.amount_buy else minimum_fak_buy_ok(price, quantity))
 
@@ -552,7 +558,7 @@ class BudgetLedger(TaskLedger):
             (str(filled), str(spent), str(reserve), state, reason, key),
         )
 
-    def next_plan(self, key, *, minimum, spendable, remaining_sec=None):
+    def next_plan(self, key, *, minimum, spendable, gtd_exchange_upper=None):
         with self.lock, self.db:
             require(not self.price_band_abandonment(key), self.price_band_stop_reason)
             row, root = self.row(key), self.root_plan(key)
@@ -571,18 +577,27 @@ class BudgetLedger(TaskLedger):
             # pending matches stay reserved; only an unsent preparation may be replaced.
             own = decimal(row["reserved"]) - pending
             available = min(self.limit - self.committed() + own, decimal(spendable) + own)
-            follow = root.get("pricing_origin", {}).get("follow_limit")
-            order_type = "FAK"
-            expiration = 0
-            if follow and not chase and remaining_sec is not None and remaining_sec > 120:
-                rest = self.amount_order(key, price, available, order_type="GTD")
-                if rest and rest[1] >= decimal(minimum):
-                    order_type = "GTD"
-                    expiration = int(self.get("market")["slug"].rsplit("-", 1)[1]) + self.settings.cutoff_sec + 60
+            follow = follower_order(root) or gtd_exchange_upper is not None
+            order_type = "GTD" if follow and not chase else "FAK"
+            wire_terms = {"order_type": order_type, "expiration": 0} if follow else {}
+            if follow and not follower_order(root):
+                wire_terms["follower_gtd"] = True
+            wait_reason = "M4_WAIT_REMAINDER_FUNDS"
+            if order_type == "GTD":
+                cutoff = int(self.get("market")["slug"].rsplit("-", 1)[1]) + self.settings.cutoff_sec
+                if gtd_exchange_upper is None or gtd_exchange_upper >= cutoff:
+                    return None
+                wire_terms.update(expiration=gtd_expiration(cutoff, gtd_exchange_upper),
+                                  gtd_planned_upper=gtd_exchange_upper)
             if self.amount_buy:
                 amount_order = self.amount_order(key, price, available, order_type=order_type,
-                                                 ask_at_cap=bool(follow and selected.get("ask_at_cap")),
+                                                 ask_at_cap=bool(chase and selected.get("ask_at_cap")),
                                                  pricing=selected)
+                if order_type == "GTD":
+                    if amount_order is None:
+                        wait_reason = "M12_GTD_NO_LEGAL_AMOUNT"
+                    elif amount_order[1] < decimal(minimum):
+                        amount_order, wait_reason = None, "M12_GTD_BELOW_MIN_SHARES"
             else:
                 qty = budget_quantity(price, self.order_budget - used, self.fees)
                 if not minimum_fak_buy_ok(price, qty):
@@ -598,8 +613,8 @@ class BudgetLedger(TaskLedger):
                     self._write_gtd_chase(key, {**self.gtd_chase(key), "phase": "STOPPED",
                                                 "reason": "M12_GTD_CHASE_NO_LEGAL_AMOUNT"})
                 self.db.execute(
-                    "UPDATE opportunities SET reserved=?,reason='M4_WAIT_REMAINDER_FUNDS' WHERE id=?",
-                    (str(pending), key),
+                    "UPDATE opportunities SET reserved=?,reason=? WHERE id=?",
+                    (str(pending), wait_reason, key),
                 )
                 self.db.execute("DELETE FROM metadata WHERE key=?", ("next_plan:" + key,))
                 return None
@@ -607,7 +622,7 @@ class BudgetLedger(TaskLedger):
             fee = planned_fee(price, qty, self.fees)
             plan = {
                 **root,
-                **({"order_type": order_type, "expiration": expiration} if follow else {}),
+                **wire_terms,
                 "limit_price": str(price),
                 **({"pricing": selected} if selected else {}),
                 "quantity": str(qty),
@@ -690,7 +705,7 @@ class BudgetLedger(TaskLedger):
             require(plan.get("amount_precision") == (GTD_PRECISION if plan.get("order_type") == "GTD" else AMOUNT_PRECISION)
                     and plan["task_policy"] == self.task_policy
                     and self.amount_minimum_ok(principal, qty)
-                    and (self.valid_follow_terms(plan, principal, price, qty) if root.get("pricing_origin", {}).get("follow_limit")
+                    and (self.valid_follow_terms(plan, principal, price, qty) if follower_order(plan)
                          else qty == market_buy_quantity(principal, price))
                     and decimal(plan["signed_limit_price"]) == principal / qty
                     and self.amount_price_allowed(price, principal, qty, root, pricing)

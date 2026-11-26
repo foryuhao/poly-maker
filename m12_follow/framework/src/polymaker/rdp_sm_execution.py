@@ -571,6 +571,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
             signed, quote = row["order"], current.quote
             if current.buy_amount_usdc is not None:
                 from polymaker.execution.amounts import market_buy_quantity
+                from polymaker.m4_live_pricing import follower_order
 
                 amount = Decimal(current.buy_amount_usdc)
                 spec = getattr(self, 'expiry_buy_amounts', {}).get(current.expected_order_id)
@@ -578,7 +579,7 @@ class ExecutionClobClient(ReadOnlyClobClient):
                 # M421 amount plan and the signed legs against its price band.
                 m421_amount = sm_config is not None and sm_config.normal_entry_mode == "m4_v2"
                 owned_plan = getattr(self, 'm4_taker_ids', {}).get(current.expected_order_id, {}).get('plan', {})
-                follow = m421_amount and owned_plan.get('pricing_origin', {}).get('follow_limit')
+                follow = m421_amount and follower_order(owned_plan)
                 _require(current.entry_execution == 'taker'
                          and row.get('orderType') == (owned_plan['order_type'] if follow else 'FAK')
                          and row.get('postOnly') is False

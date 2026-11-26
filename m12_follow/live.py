@@ -16,6 +16,8 @@ from pathlib import Path
 FRAMEWORK = Path(__file__).resolve().parent / "framework"
 sys.path.insert(0, str(FRAMEWORK / "src"))
 
+from polymaker.m4_live_pricing import DEFAULT_CHASE_FAK_EXTRA_TICKS
+
 
 def wallet_lock_directory():
     return Path.home() / ".local/state/polymaker/follower-wallet-locks"
@@ -41,11 +43,13 @@ class FollowConfig:
     strategy: str = "M12"
     instance_id: str | None = None
     state_dir: Path | None = None
+    chase_fak_extra_ticks: int = DEFAULT_CHASE_FAK_EXTRA_TICKS
 
     def reader(self, meta):
         if self.baseline_db_run:
             from m12_follow.sqlite_source import SQLiteIntents
-            reader = SQLiteIntents(self.baseline_db_run, meta, self.max_overpay_ticks, strategy=self.strategy)
+            reader = SQLiteIntents(self.baseline_db_run, meta, self.max_overpay_ticks, strategy=self.strategy,
+                                   chase_fak_extra_ticks=self.chase_fak_extra_ticks)
         else:
             from m12_follow.transport import Reader
             reader = Reader(self.source_dir, run_id=self.run_id, market=meta.slug, condition_id=meta.condition_id)
@@ -259,6 +263,8 @@ def main(argv=None):
     parser.add_argument("--strategy", choices=BASELINE_FOLLOW_STRATEGIES, default="M12")
     parser.add_argument("--state-dir", type=Path, help="override the named instance's execution state directory")
     parser.add_argument("--max-overpay-ticks", type=int, default=os.environ.get("M12_FOLLOW_MAX_OVERPAY_TICKS", "5"))
+    parser.add_argument("--chase-fak-extra-ticks", type=int, default=os.environ.get(
+        "M12_FOLLOW_CHASE_FAK_EXTRA_TICKS", str(DEFAULT_CHASE_FAK_EXTRA_TICKS)))
     parser.add_argument("--run-id")
     parser.add_argument("--funder", help="expected follower funding address")
     parser.add_argument("--existing-project", type=Path, help="old live deployment; read-only controls")
@@ -284,6 +290,8 @@ def main(argv=None):
         parser.error("non-M12 strategies require --baseline-db-run")
     if args.max_overpay_ticks < 0:
         parser.error("max-overpay-ticks must be nonnegative")
+    if args.chase_fak_extra_ticks < 0:
+        parser.error("chase-fak-extra-ticks must be nonnegative")
     db_run = None
     if args.baseline_db_run:
         try:
@@ -314,6 +322,7 @@ def main(argv=None):
                           "price_band_applies_to": "INTENT.price" if db_run else "signed_limit_price",
                           "baseline_db_run": str(db_run) if db_run else None,
                           "max_overpay_ticks": args.max_overpay_ticks,
+                          "chase_fak_extra_ticks": args.chase_fak_extra_ticks,
                           "two_market_trial": window.slugs() if window else None,
                           "order_budget": str(settings.order_budget_usdc),
                           "market_budget": str(settings.session_budget_usdc)}))
@@ -340,13 +349,15 @@ def main(argv=None):
         if any(address(value) != owner for value in (args.funder, args.existing_funder) if value):
             parser.error("funding address conflicts with the existing M4/M21 ledgers")
         follow = FollowConfig(source, args.run_id, owner, project, owner, window, Path(wallet_file),
-                              db_run, args.max_overpay_ticks, args.strategy, args.instance_id, state_dir)
+                              db_run, args.max_overpay_ticks, args.strategy, args.instance_id, state_dir,
+                              chase_fak_extra_ticks=args.chase_fak_extra_ticks)
     else:
         if not args.funder or not args.existing_funder:
             parser.error("dedicated wallet mode requires --funder and --existing-funder")
         follow = FollowConfig(source, args.run_id, address(args.funder), project, address(args.existing_funder), window,
                               baseline_db_run=db_run, max_overpay_ticks=args.max_overpay_ticks,
-                              strategy=args.strategy, instance_id=args.instance_id, state_dir=state_dir)
+                              strategy=args.strategy, instance_id=args.instance_id, state_dir=state_dir,
+                              chase_fak_extra_ticks=args.chase_fak_extra_ticks)
     from polymaker.m4_run import run
     os.chdir(FRAMEWORK)
     with follow.writer_ownership():

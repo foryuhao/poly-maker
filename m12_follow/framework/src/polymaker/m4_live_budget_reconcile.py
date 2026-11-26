@@ -11,7 +11,7 @@ from py_clob_client_v2.exceptions import PolyApiException
 
 from polymaker.domain import Side
 from polymaker.m4_live_numeric import MICRO, ZERO, fill_event, maker_fill_event, units, validate_cash_fills
-from polymaker.m4_live_pricing import GTD_CHASE_STAGE
+from polymaker.m4_live_pricing import GTD_CHASE_STAGE, follower_order
 from polymaker.m4_live_task import (
     ORDER_TERMINAL,
     POST_TRADE_ID_FIELDS,
@@ -176,7 +176,7 @@ def remember_gtd_tail_fill(ledger, oid, event, tolerance):
 
 
 async def expired_gtd_tail(gateway, ledger, oid, plan, order, spec, matched, ids):
-    require(plan.get("pricing_origin", {}).get("follow_limit") is True
+    require(follower_order(plan)
             and 0 <= spec["quantity"] - matched < GTD_TAIL_LIMIT and ids
             and decimal(ledger.get("matched_lower_bound:" + oid, "0")) == matched,
             "M12_GTD_UNPROVEN_REMAINDER")

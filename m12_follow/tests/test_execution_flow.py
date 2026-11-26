@@ -138,11 +138,12 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                   "trial_end_after_signing", "trial_archive_unknown", "sqlite_late",
                                   "sqlite_cap", "sqlite_superseded", "sqlite_T240", "sqlite_unknown", "sqlite_partial",
                                   "sqlite_limit", "sqlite_limit_v2", "sqlite_limit_late", "sqlite_limit_late_v2",
+                                  "sqlite_limit_late_no_v2", "sqlite_limit_gtd_retry", "sqlite_limit_native_expiry",
                                   "sqlite_limit_at_cap", "sqlite_limit_cancel",
-                                  "sqlite_limit_T240", "sqlite_limit_edge", "sqlite_limit_burst", "sqlite_limit_restart",
+                                  "sqlite_limit_T240", "sqlite_limit_burst", "sqlite_limit_restart",
                                   "sqlite_limit_cancel_timeout", "sqlite_limit_small", "sqlite_limit_low", "sqlite_limit_floor",
-                                  "sqlite_limit_ceiling", "sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_fak",
-                                  "sqlite_limit_cap_drop", "sqlite_limit_cap_drop_native_v2", "sqlite_limit_cap_drop_native_fak_v2",
+                                  "sqlite_limit_ceiling", "sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_late",
+                                  "sqlite_limit_cap_drop", "sqlite_limit_cap_drop_native_v2", "sqlite_limit_cap_drop_native_late_v2",
                                   "sqlite_limit_cap_stale", "sqlite_limit_cap_inside", "sqlite_partial_anchor_drop",
                                   "m21_sqlite_limit_v2", "m21_sqlite_limit_late_v2",
                                   "m21_sqlite_limit_cancel", "m21_sqlite_limit_cap_drop_native_v2",
@@ -153,12 +154,13 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                       "nonfinal", "quantity_conflict", "owner_conflict", "taker_fee", "two_sides",
                                   )],
                                   *["sqlite_limit_gtd_chase_" + mode for mode in (
-                                      "equal", "higher_v2", "cancel_fill", "cancel_timeout", "ask_back", "ask_stale",
+                                      "equal", "higher_v2", "cancel_fill", "cancel_timeout", "cancel_budget", "ask_back", "ask_stale",
                                       "cutoff", "unknown", "restart_ready", "restart_unknown", "native_ask_back_v2",
                                       "restart_cancel", "cancel_ack_lags", "partial_v2", "stale_before_sign", "scheduler_v2",
-                                      "concurrent_v2", "finer_tick",
+                                      "concurrent_v2", "finer_tick", "no_cushion_v2", "example_v2",
+                                      "native_within_limit_v2", "native_above_limit_v2",
                                   )]])
-async def test_follow_native_fak(tmp_path, monkeypatch, case):
+async def test_follow_native_orders(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
     primary, lead, parent, clock, _, mock_transport = await mock_live_market(tmp_path, monkeypatch)
     monkeypatch.setattr(transport, "time", SimpleNamespace(monotonic=lambda: clock.now))
@@ -178,6 +180,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
     sqlite_mode = case.startswith("sqlite_")
     if sqlite_mode:
         reader = SQLiteIntents(tmp_path, meta, 5 if case.startswith("sqlite_limit") else 3, strategy=strategy)
+        if case == "sqlite_limit_gtd_chase_no_cushion":
+            reader.chase_fak_extra_ticks = 0
         reader.follow_limit = case.startswith("sqlite_limit")
         reader.path.parent.mkdir(parents=True)
         with closing(sqlite3.connect(reader.path)) as db, db:
@@ -213,12 +217,15 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
     ask = {"outside_band": ".90", "sqlite_cap": ".74"}.get(case, ".71")
     if case.startswith("sqlite_limit"):
         ask = ".82"  # No liquidity within +5 ticks. A resting bid must still be submitted.
-    if case in {"sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_fak"}:
+    if case in {"sqlite_limit_near_ceiling", "sqlite_limit_near_ceiling_late"}:
         ask = ".85"
     if case == "sqlite_limit_at_cap":
         ask = ".87"
+    if case in {"sqlite_limit_late_no", "sqlite_limit_gtd_chase_example"}:
+        ask = ".67"
     rows = [{"event_type": "book", "market": meta.condition_id, "asset_id": t.token_id,
-             "timestamp": str(feed.wall() * 1000), "bids": [{"price": ".70", "size": "100"}],
+             "timestamp": str(feed.wall() * 1000),
+             "bids": [{"price": ".66" if ask == ".67" else ".70", "size": "100"}],
              "asks": [{"price": ask, "size": "100"}]} for t in meta.tokens]
     socket._apply(json.dumps(rows), received_mono=clock.now, received_wall=feed.wall())
 
@@ -301,11 +308,15 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                           outcome="YES", price=".70", quantity="7.1", available=clock.now, deadline=clock.now+1)
             intent["price"] = {
                 "sqlite_limit_low": ".46", "sqlite_limit_floor": ".50", "sqlite_limit_ceiling": ".90",
-                "sqlite_limit_near_ceiling": ".89", "sqlite_limit_near_ceiling_fak": ".89",
+                "sqlite_limit_near_ceiling": ".89", "sqlite_limit_near_ceiling_late": ".89",
                 "sqlite_limit_late": ".82", "sqlite_limit_at_cap": ".82",
             }.get(case, intent["price"])
             if case.startswith("sqlite_limit_gtd_tail_"):
                 intent["price"] = ".64"
+            if case in {"sqlite_limit_late_no", "sqlite_limit_gtd_chase_example"}:
+                intent["price"] = ".58"
+            if case == "sqlite_limit_late_no":
+                intent.update(outcome="NO", token="2")
             if sqlite_mode:
                 if case == "sqlite_limit_burst":
                     append_intent({**intent, "opportunity": "earlier-in-same-read"})
@@ -359,7 +370,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 push_ask(".66")
             if case.startswith("sqlite_limit_cap_drop"):
                 key = opportunity.episode_id
-                if case.endswith("_fak"):
+                if case.endswith("_late"):
                     executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
                 if "_native" in case:
                     def drop_at_native_guard(attempt):
@@ -379,7 +390,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 if "_native" in case:
                     attempt, = ledger.attempts()
                     assert attempt["state"] == "UNSENT"
-                    assert json.loads(attempt["plan"])["order_type"] == ("FAK" if case.endswith("_fak") else "GTD")
+                    assert json.loads(attempt["plan"])["order_type"] == "GTD"
                     proof = json.loads(attempt["proof"])
                     assert proof["native_post_sent"] is False and proof["reason"] == row["reason"]
                 else:
@@ -420,16 +431,31 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 await market.submit(opportunity)
                 assert not calls
                 return
-            if case == "sqlite_limit_edge":
+            epoch = int(meta.slug.rsplit("-", 1)[1])
+            if case == "sqlite_limit_native_expiry":
                 def change_time(attempt):
-                    executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 120
+                    executor.official_time = epoch + 151
                     return market.native_guard(attempt)
-                monkeypatch.setattr(reads.gateway._client, "m4_native_guard", change_time)
-                await market.submit(opportunity)
-                assert not calls and ledger.attempts()[0]["state"] == "UNSENT"
-            if case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_near_ceiling_fak"}:
-                executor.official_time = int(meta.slug.rsplit("-", 1)[1]) + 140
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(reads.gateway._client, "m4_native_guard", change_time)
+                    await market.submit(opportunity)
+                blocked, = ledger.attempts()
+                assert not calls and blocked["state"] == "UNSENT"
+                assert json.loads(blocked["proof"])["reason"] == "M12_GTD_EXPIRATION_TOO_SOON"
+                assert not ledger.gtd_chase(opportunity.episode_id)
+            if case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_near_ceiling_late"}:
+                executor.official_time = epoch + 140
+            if case == "sqlite_limit_late_no":
+                executor.official_time = epoch + 151
             await market.submit(opportunity)
+            if case == "sqlite_limit_small":
+                assert not calls and not ledger.attempts()
+                assert ledger.row(opportunity.episode_id)["reason"] == "M12_GTD_BELOW_MIN_SHARES"
+                return
+            if case == "sqlite_limit_gtd_retry":
+                await verify_gtd_retry(market, opportunity, http, calls, monkeypatch)
+                return
             if case.startswith("sqlite_limit_gtd_chase_"):
                 mode = case.removeprefix("sqlite_limit_gtd_chase_")
                 await verify_gtd_chase(market, opportunity, mode, clock, push_ask, http, calls, monkeypatch,
@@ -459,24 +485,27 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 assert len(calls) == 1, (market.guard_failure(opportunity.episode_id), ledger.attempts(), ledger.rows())
                 sent, = calls
                 plan = json.loads(ledger.attempts()[-1]["plan"])
-                is_fak = case in {"sqlite_limit_late", "sqlite_limit_at_cap", "sqlite_limit_edge", "sqlite_limit_small",
-                                  "sqlite_limit_near_ceiling_fak"}
-                assert sent["orderType"] == ("FAK" if is_fak else "GTD")
+                assert sent["orderType"] == "GTD"
                 assert sent["postOnly"] is False
                 limit = Decimal({"sqlite_limit_floor": ".55", "sqlite_limit_late": ".87", "sqlite_limit_at_cap": ".87",
-                                 "sqlite_limit_near_ceiling": ".94", "sqlite_limit_near_ceiling_fak": ".94"}.get(case, ".75"))
+                                 "sqlite_limit_late_no": ".63", "sqlite_limit_near_ceiling": ".94",
+                                 "sqlite_limit_near_ceiling_late": ".94"}.get(case, ".75"))
                 assert Decimal(plan["limit_price"]) == limit
                 assert int(sent["order"]["expiration"]) == plan["expiration"]
-                assert plan["expiration"] == (0 if is_fak else int(meta.slug.rsplit("-", 1)[1]) + 300)
+                assert plan["expiration"] >= epoch + 300
+                assert plan["expiration"] >= executor.official_time + 180
                 assert 0 < Decimal(sent["order"]["makerAmount"]) / Decimal(sent["order"]["takerAmount"]) <= limit
                 if case == "sqlite_limit_late":
-                    assert int(sent["order"]["makerAmount"]) == 5_000_000
-                    assert int(sent["order"]["takerAmount"]) == 5_747_200
-                    assert Decimal(plan["planned_cost_usdc"]) > Decimal(plan["principal_usdc"]) == 5
+                    assert int(sent["order"]["makerAmount"]) == 4_993_800
+                    assert int(sent["order"]["takerAmount"]) == 5_740_000
+                if case == "sqlite_limit_late_no":
+                    assert sent["order"]["tokenId"] == "2"
+                    assert epoch + 240 - executor.official_time == 89
+                    assert Decimal(sent["order"]["makerAmount"]) / Decimal(sent["order"]["takerAmount"]) == limit
                 if case == "sqlite_limit_at_cap":
                     assert plan["pricing"]["ask_at_cap"] is True
-                    assert int(sent["order"]["makerAmount"]) == 4_350_000
-                    assert int(sent["order"]["takerAmount"]) == 5_000_000
+                    assert int(sent["order"]["makerAmount"]) == 4_993_800
+                    assert int(sent["order"]["takerAmount"]) == 5_740_000
                 ledger.validate_recovery()
                 if case == "sqlite_limit_burst":
                     skipped, latest = ledger.metric()["by_follow_intent"]
@@ -512,7 +541,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                     assert market.guard_failure(opportunity.episode_id) == "M12_ABOVE_ANCHOR_CAP"
             else:
                 assert len(calls) == 1
-                assert calls[0]["orderType"] == "FAK"
+                assert calls[0]["orderType"] == "GTD"
                 assert calls[0]["order"]["tokenId"] == "1"
                 assert 0 < int(calls[0]["order"]["makerAmount"]) <= 5_000_000
                 if case in {"unknown", "restart_unknown", "sqlite_unknown"}:
@@ -528,6 +557,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                     trial_clock.now = window.end
                     oid = ledger.attempts()[0]["order_id"]
                     order, trade = evidence(market, executor, oid, "2", price=".70", status="CONFIRMED")
+                    order.update(order_type="GTD", status="CANCELED")
                     query, _ = serve(monkeypatch, http, order, trade)
 
                     class ArchiveReads:
@@ -578,6 +608,7 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                 if case in {"partial_active", "partial_ended", "sqlite_partial", "sqlite_partial_anchor_drop"}:
                     oid = ledger.attempts()[0]["order_id"]
                     order, trade = evidence(market, executor, oid, "2", price=".70", status="MINED")
+                    order.update(order_type="GTD", status="CANCELED")
                     query, _ = serve(monkeypatch, http, order, trade)
                     try:
                         await market.reconcile(oid)
@@ -595,7 +626,8 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
                         assert ledger.principal_used(opportunity.episode_id) == Decimal("1.40")
                         if case in {"partial_active", "sqlite_partial"}:
                             assert len(calls) == 2
-                            assert int(calls[1]["order"]["makerAmount"]) == 3_600_000
+                            assert calls[1]["orderType"] == "GTD"
+                            assert 0 < int(calls[1]["order"]["makerAmount"]) <= 3_600_000
                         else:
                             assert len(calls) == 1
                         if case == "sqlite_partial_anchor_drop":
@@ -616,6 +648,51 @@ async def test_follow_native_fak(tmp_path, monkeypatch, case):
         mock_transport.close()
 
 
+async def verify_gtd_retry(market, opportunity, original, posts, monkeypatch):
+    ledger, executor, key = market.ledger, market.e, opportunity.episode_id
+    first, = ledger.attempts(key)
+    assert [post["orderType"] for post in posts] == ["GTD"]
+    orders, cancellations = {}, []
+
+    def live_order(order_id):
+        order, _ = evidence(market, executor, order_id, "0")
+        orders[order_id] = {**order, "order_type": "GTD", "status": "LIVE"}
+        return orders[order_id]
+
+    def wire(request):
+        if request.method == "POST":
+            return original._transport.handle_request(request)
+        if request.method == "DELETE":
+            order_id, = json.loads(request.content)
+            cancellations.append(order_id)
+            orders[order_id]["status"] = "CANCELED"
+            return httpx.Response(200, json={"canceled": [order_id], "not_canceled": {}})
+        assert request.url.path.startswith("/data/order/")
+        return httpx.Response(200, json=orders[request.url.path.rsplit("/", 1)[1]])
+
+    with httpx.Client(transport=httpx.MockTransport(wire)) as query, monkeypatch.context() as patch:
+        patch.setattr(helpers, "_http_client", query)
+        order = live_order(first["order_id"])
+        await market.read_order(first["order_id"])
+        await market.submit(opportunity)
+        assert len(posts) == 1
+        order["status"] = "CANCELED"
+        await market.read_order(first["order_id"])
+        assert ledger.attempt(first["order_id"])["state"] == "TERMINAL"
+        await market.submit(opportunity)
+        assert [post["orderType"] for post in posts] == ["GTD", "GTD"]
+        assert ledger.gtd_chase(key)["old_order_id"] == first["order_id"]
+        second_id = ledger.attempts(key)[-1]["order_id"]
+        live_order(second_id)
+        executor.official_time = int(executor.meta.slug.rsplit("-", 1)[1]) + 240
+        await market.read_order(second_id)
+        assert cancellations == [second_id]
+        assert ledger.attempt(second_id)["state"] == "TERMINAL"
+        await market.submit(opportunity)
+        assert len(posts) == 2
+        ledger.validate_recovery()
+
+
 async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original, posts, monkeypatch,
                            restart_follow_market):
     ledger, e, key = market.ledger, market.e, opportunity.episode_id
@@ -632,6 +709,11 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
     chase_order = None
     owner = market.account_owner
     gateway = e.gateway
+    trigger = ".68" if mode == "example" else ".80"
+    ask = ".69" if mode == "example" else ".81"
+    frozen_cap = Decimal(".63" if mode == "example" else ".75")
+    extra_ticks = 0 if mode == "no_cushion" else 5
+    chase_limit = Decimal(ask) + extra_ticks * Decimal(".01")
 
     def wire(request):
         nonlocal chase_order
@@ -646,7 +728,7 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             if mode == "restart_unknown":
                 raise httpx.ReadTimeout("chase response lost", request=request)
             if mode == "partial":
-                chase_order, trade = evidence(market, e, planned, "2")
+                chase_order, trade = evidence(market, e, planned, "1")
                 trades[trade["id"]] = trade
                 return httpx.Response(200, json=[{"success": True, "orderID": planned}])
             return httpx.Response(200, json=[{"success": False, "errorMsg": FAK_NO_MATCH}])
@@ -661,6 +743,8 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 _, trade = evidence(market, e, oid, "1")
                 trades[trade["id"]] = trade
                 order.update(size_matched="1", associate_trades=[trade["id"]])
+            if mode == "cancel_budget":
+                owner.account["official_balance_usd"] = ".99"
             if mode == "ask_back":
                 push_ask(".80")
             if mode == "finer_tick":
@@ -693,12 +777,12 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
         with httpx.Client(transport=httpx.MockTransport(wire)) as query, monkeypatch.context() as patch:
             patch.setattr(helpers, "_http_client", query)
             clock.now = stamp + 4.999
-            push_ask(".81")
+            push_ask(ask)
             await market.read_order(oid)
             assert not cancellations and ledger.gtd_chase(key)["phase"] == "WATCH"
             clock.now = stamp + 5
             owner.account_at = clock.now
-            push_ask(".80" if mode == "equal" else ".81")
+            push_ask(trigger if mode == "equal" else ask)
             if mode == "restart_cancel":
                 assert market.change_chase(key, "WATCH", "CANCELING")
                 await restore()
@@ -715,8 +799,8 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             else:
                 await market.read_order(oid)
             state = ledger.gtd_chase(key)
-            assert state["trigger_check"]["threshold"] == "0.80"
-            assert state["trigger_check"]["best_ask"] == ("0.80" if mode == "equal" else "0.81")
+            assert Decimal(state["trigger_check"]["threshold"]) == Decimal(trigger)
+            assert Decimal(state["trigger_check"]["best_ask"]) == Decimal(trigger if mode == "equal" else ask)
             if mode in {"equal", "unknown"}:
                 assert not cancellations and state["phase"] == "STOPPED" and len(posts) == 1
                 return
@@ -728,13 +812,16 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 order["status"] = "CANCELED"
                 await market.read_order(oid)
                 state = ledger.gtd_chase(key)
-            if mode in {"cancel_fill", "cancel_timeout", "ask_back", "ask_stale", "cutoff", "finer_tick"}:
+            if mode in {"cancel_fill", "cancel_timeout", "cancel_budget", "ask_back", "ask_stale", "cutoff", "finer_tick"}:
                 if mode == "cancel_timeout":
                     assert ledger.attempt(oid)["state"] != "TERMINAL"
                     await market.read_order(oid)
                     assert ledger.attempt(oid)["state"] == "TERMINAL"
                 if mode == "cancel_fill":
                     assert Decimal(ledger.attempt(oid)["filled"]) == 1
+                if mode == "cancel_budget":
+                    assert ledger.attempt(oid)["state"] == "TERMINAL"
+                    assert state["reason"] == "M12_GTD_CHASE_NO_LEGAL_AMOUNT"
                 if mode == "finer_tick":
                     assert state["final_check"]["threshold"] == "0.80"
                     assert state["final_check"]["tick"] == "0.001"
@@ -745,9 +832,10 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             assert ledger.attempt(oid)["state"] == "TERMINAL"
             if mode == "restart_ready":
                 await restore()
-            if mode == "native_ask_back":
+            native_ask = {"native_ask_back": trigger, "native_within_limit": ".85", "native_above_limit": ".87"}.get(mode)
+            if native_ask is not None:
                 def native_guard(attempt):
-                    push_ask(".80")
+                    push_ask(native_ask)
                     return market.native_guard(attempt)
                 patch.setattr(gateway._client, "m4_native_guard", native_guard)
             if mode == "stale_before_sign":
@@ -764,19 +852,24 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 assert not chase_posts and len(posts) == 1 and saved["phase"] == "STOPPED"
                 assert saved["reason"] == "M12_WAIT_FRESH_BEST_ASK_BEFORE_POST"
                 return
-            if mode == "native_ask_back":
+            if mode in {"native_ask_back", "native_above_limit"}:
                 assert not chase_posts and len(posts) == 1 and saved["phase"] == "STOPPED", market.guard_failure(key)
                 assert ledger.attempt(saved["new_order_id"])["state"] == "UNSENT"
+                if mode == "native_above_limit":
+                    assert saved["reason"] == "M12_GTD_CHASE_ASK_ABOVE_SIGNED_LIMIT"
                 return
             if mode == "concurrent":
-                assert len(posts) == 3 and chase_posts == [saved["new_order_id"]]
-                assert Decimal(json.loads(ledger.attempts(key)[-1]["plan"])["limit_price"]) <= Decimal(".75")
+                assert [post["orderType"] for post in posts] == ["GTD", "FAK", "GTD"]
+                assert chase_posts == [saved["new_order_id"]]
+                assert Decimal(json.loads(ledger.attempts(key)[-1]["plan"])["limit_price"]) <= frozen_cap
                 ledger.validate_recovery()
                 return
             assert len(posts) == 2 and chase_posts == [saved["new_order_id"]], (market.guard_failure(key), saved)
             assert posts[1]["orderType"] == "FAK" and posts[1]["order"]["side"] == "BUY"
             assert posts[1]["order"]["tokenId"] == posts[0]["order"]["tokenId"] == "1"
-            assert Decimal(posts[1]["order"]["makerAmount"]) / Decimal(posts[1]["order"]["takerAmount"]) == Decimal(".81")
+            assert Decimal(posts[1]["order"]["makerAmount"]) / Decimal(posts[1]["order"]["takerAmount"]) == chase_limit
+            pricing = json.loads(ledger.attempt(saved["new_order_id"])["plan"])["pricing"]
+            assert pricing["chase_fak_extra_ticks"] == extra_ticks and Decimal(pricing["best_ask"]) == Decimal(ask)
             if mode == "restart_unknown":
                 assert saved["phase"] == "SENT"
                 await restore()
@@ -787,14 +880,16 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 if mode == "partial":
                     await market.read_order(saved["new_order_id"])
                     saved = ledger.gtd_chase(key)
-                    assert Decimal(saved["filled"]) == 2
-                    assert ledger.principal_used(key) == Decimal("1.62")
+                    assert Decimal(saved["filled"]) == 1
+                    assert ledger.principal_used(key) == chase_limit
                 else:
                     assert Decimal(saved["filled"]) == 0
                 assert saved["phase"] == "DONE"
                 await market.submit(opportunity)
                 newest = json.loads(ledger.attempts(key)[-1]["plan"])
-                assert Decimal(newest["limit_price"]) <= Decimal(".75")
+                assert [post["orderType"] for post in posts] == ["GTD", "FAK", "GTD"]
+                assert Decimal(newest["limit_price"]) <= frozen_cap
+                assert Decimal(newest["principal_usdc"]) <= Decimal(5) - ledger.principal_used(key)
                 assert chase_posts == [saved["new_order_id"]]
             ledger.validate_recovery()
     finally:

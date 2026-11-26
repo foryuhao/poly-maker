@@ -13,6 +13,16 @@ WAIT_US = 10_000_000
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 GTD_CHASE_STAGE = "GTD_CHASE_FAK"
 GTD_CHASE_DELAY = 5
+DEFAULT_CHASE_FAK_EXTRA_TICKS = 5
+GTD_MIN_FUTURE_SEC = 180
+
+
+def follower_order(plan):
+    return bool(plan.get("follower_gtd") or plan.get("pricing_origin", {}).get("follow_limit"))
+
+
+def gtd_expiration(cutoff, exchange_upper):
+    return max(cutoff + 60, int(exchange_upper) + GTD_MIN_FUTURE_SEC + 1)
 
 
 def origin(signal_mono, now, elapsed, *, deadline=None, ledger_strategy=M6_LEDGER,
@@ -119,13 +129,17 @@ def quote_valid(root, plan, token, evidence=None):
         if q["stage"] == "ANCHOR":
             return start["policy"] == DYNAMIC and age < WAIT_US and price == decimal(root["limit_price"])
         tick, bid, ask = (decimal(q[k]) for k in ("tick", "best_bid", "best_ask"))
+        expected_price = ask
         if q["stage"] == GTD_CHASE_STAGE:
+            extra = q.get("chase_fak_extra_ticks", 0)  # Old durable quotes were signed at the ask.
             if (plan.get("order_type") != "FAK" or not q.get("old_order_id")
+                    or type(extra) is not int or extra < 0
                     or not ask > max(decimal(q["trigger_threshold"]), gtd_chase_threshold(root, tick))):
                 return False
+            expected_price = ask + extra * tick
         elif q["stage"] != "BEST_ASK":
             return False
-        return (age >= start["wait_us"] and price == ask
+        return (age >= start["wait_us"] and price == expected_price and price <= 1 - tick
                 and 0 < bid < ask < 1 and tick > 0 and ask % tick == 0
                 and tick <= ask <= 1 - tick and q["connected"] is True
                 and q["generation"] == q["snapshot_generation"]

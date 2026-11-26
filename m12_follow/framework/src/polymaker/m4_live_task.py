@@ -23,7 +23,7 @@ from polymaker.domain import Quote, Side
 from polymaker.m4_execution import SUBMIT_PENDING_TOLERANCE_SEC
 from polymaker.m4_live_config import all_in_cost, gross_risk_cost, planned_fee
 from polymaker.m4_live_http import NativePostNotSent
-from polymaker.m4_live_pricing import BOOT_ID, GTD_CHASE_STAGE
+from polymaker.m4_live_pricing import BOOT_ID, GTD_CHASE_STAGE, follower_order
 from polymaker.m4_live_taker import SinglePostM4LiveLedger, SinglePostM4TakerMarket
 from polymaker.m4_state import decimal
 from polymaker.maker_retry import post_exception_rejection, rejection
@@ -870,10 +870,12 @@ class TaskMarket(SinglePostM4TakerMarket):
             direction_limit=self.ledger.direction_limit,
         ):
             return
-        follow = self.ledger.root_plan(key).get("pricing_origin", {}).get("follow_limit")
-        remaining = self.settings.cutoff_sec - self.elapsed() - getattr(e, "official_time_uncertainty_s", 0)
-        plan = self.ledger.next_plan(key, minimum=e.meta.min_order_size, spendable=self.spendable(),
-                                     **({"remaining_sec": remaining} if follow else {}))
+        root = self.ledger.root_plan(key)
+        gtd_clock = {}
+        if follower_order(root) or getattr(self.feed, "m12_manifest", None):
+            epoch = int(e.meta.slug.rsplit("-", 1)[1])
+            gtd_clock["gtd_exchange_upper"] = epoch + self.elapsed() + getattr(e, "official_time_uncertainty_s", 0)
+        plan = self.ledger.next_plan(key, minimum=e.meta.min_order_size, spendable=self.spendable(), **gtd_clock)
         if plan is None:
             e.record("sm_m4_task_remainder", self.ledger.row(key))
             self.schedule(opportunity)
@@ -889,8 +891,9 @@ class TaskMarket(SinglePostM4TakerMarket):
         )
         attempt, oid = None, None
         native_stamp = None
+        follow = follower_order(plan)
         chase_fak = plan.get("pricing", {}).get("stage") == GTD_CHASE_STAGE
-        track_native_post = follow and (plan["order_type"] == "GTD" or chase_fak)
+        track_native_post = follower_order(root) and (plan["order_type"] == "GTD" or chase_fak)
         buy_amount = plan["principal_usdc"] if plan.get("taker_buy_amount_policy") else None
 
         def capture_native_post():

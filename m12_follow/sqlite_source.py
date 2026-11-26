@@ -66,7 +66,7 @@ class SQLiteIntents:
     sqlite_source = True
     follow_limit = True
 
-    def __init__(self, path, meta, max_overpay_ticks, *, strategy="M12"):
+    def __init__(self, path, meta, max_overpay_ticks, *, strategy="M12", chase_fak_extra_ticks=None):
         self.root = path
         self.run = path
         self.strategy = strategy
@@ -74,6 +74,8 @@ class SQLiteIntents:
         self.check_handoff_at = float("-inf")
         self.meta = meta
         self.max_overpay_ticks = max_overpay_ticks
+        if chase_fak_extra_ticks is not None:
+            self.chase_fak_extra_ticks = chase_fak_extra_ticks
         self.path = path / meta.slug / strategy / "simulation.sqlite3"
         self.database_id = self.latest = self.snapshot = None
         self.watermark = 0

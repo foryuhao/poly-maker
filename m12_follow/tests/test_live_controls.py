@@ -79,7 +79,8 @@ def test_followers_isolate_instance_state_and_share_wallet_lock(tmp_path):
             assert not second.stop_control(second_control).inhibited()
 
 
-def test_check_rejects_wrong_baseline_and_uses_one_policy(tmp_path, capsys):
+def test_check_rejects_wrong_baseline_and_uses_one_policy(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("M12_FOLLOW_CHASE_FAK_EXTRA_TICKS", raising=False)
     checks = {}
     for strategy, version in BASELINE_VERSIONS.items():
         baseline = tmp_path / strategy
@@ -96,7 +97,14 @@ def test_check_rejects_wrong_baseline_and_uses_one_policy(tmp_path, capsys):
         checks[strategy] = json.loads(capsys.readouterr().out)
         assert checks[strategy]["source"] == f"{strategy}_BASELINE_INTENT"
         assert checks[strategy]["state_dir"] == str(instance)
+        assert checks[strategy]["chase_fak_extra_ticks"] == 5
         assert not instance.exists()
+        with monkeypatch.context() as patch:
+            patch.setenv("M12_FOLLOW_CHASE_FAK_EXTRA_TICKS", "0")
+            live.main([*options, "--strategy", strategy])
+            assert json.loads(capsys.readouterr().out)["chase_fak_extra_ticks"] == 0
+            live.main([*options, "--strategy", strategy, "--chase-fak-extra-ticks", "1"])
+            assert json.loads(capsys.readouterr().out)["chase_fak_extra_ticks"] == 1
         wrong_strategy = "M12" if strategy == "M21" else "M21"
         with pytest.raises(SystemExit) as error:
             live.main([*options, "--strategy", wrong_strategy])

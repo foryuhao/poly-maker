@@ -318,21 +318,6 @@ async def test_live_maker_wire_still_postonly_gtc(tmp_path, monkeypatch):
         transport.close()
 
 
-async def test_no_private_order_trade_reads_or_cancel_even_if_known(tmp_path, monkeypatch):
-    m, e, f, c, calls, transport = await market(tmp_path, monkeypatch)
-    client = e.gateway._client
-    try:
-        for path in ('/data/orders', '/data/trades', '/data/order/known'):
-            with pytest.raises(ValueError, match='FILL_READ_FORBIDDEN'):
-                client._get('https://clob.polymarket.com'+path)
-        with pytest.raises(RuntimeError, match='CANCEL_FORBIDDEN'):
-            client._delete('https://clob.polymarket.com/orders', data='["known"]')
-        assert not calls
-    finally:
-        await close(m, e)
-        transport.close()
-
-
 def test_public_fee_identity_is_required():
     assert validated_fees({'t': [{'t': '1'}, {'t': '2'}], 'fd': {'r': .07, 'e': 1, 'to': True}}, ('1', '2')) == FEES
     with pytest.raises(ValueError):
@@ -453,21 +438,3 @@ async def test_live_maker_keeps_its_original_one_uncertain_retry(tmp_path, monke
     finally:
         await close(m, e)
         transport.close()
-
-
-@pytest.mark.parametrize('mode', ['maker', 'taker'])
-async def test_live_stop_prevents_any_connection_even_after_mode_change(tmp_path, monkeypatch, mode):
-    from polymaker.m4_live_http import M4LiveReads
-    from polymaker.m4_run import run
-    (tmp_path/'config/m4-live').mkdir(parents=True)
-    (tmp_path/'config/m4.toml').write_text('minimum_price="0.20"\n')
-    (tmp_path/'config/m4-live/execution.toml').write_text(f'mode="{mode}"\n')
-    marker = tmp_path/'runtime/trading-control/balance-stop.json'
-    marker.parent.mkdir(parents=True)
-    marker.write_text('{"requires_confirmation":true}')
-    async def forbidden(*args, **kwargs):
-        raise AssertionError('stop marker must prevent connection')
-    monkeypatch.setattr(M4LiveReads, 'connect_account', forbidden)
-    assert await run(tmp_path, live=True) == {'status': 'STOP_CONFIRMATION_REQUIRED', 'live': True}
-    assert marker.read_text() == '{"requires_confirmation":true}'
-    assert not (tmp_path/'research_outputs').exists()

@@ -12,6 +12,7 @@ from polymaker.domain import Side
 from polymaker.execution.gateway import ExecutionGateway
 from polymaker.execution.taker_fees import buy_amount_fee_reserve
 from polymaker.m4_live_config import all_in_cost, planned_fee, validated_fees
+from polymaker.m4_live_pricing import GTD_CHASE_STAGE, follower_order
 from polymaker.m4_types import M421_LEDGER
 from polymaker.market_protocol import market_protocol
 from polymaker.rdp_sm import OFFICIAL_HOSTS, _require
@@ -104,7 +105,7 @@ class M4LiveClobClient(ExecutionClobClient):
                 saved = ledger.attempt(gtd_order)
                 plan = json.loads(saved['plan'])
                 _require(saved['state'] not in {'TERMINAL', 'UNSENT'} and plan.get('order_type') == 'GTD'
-                         and plan.get('pricing_origin', {}).get('follow_limit') is True,
+                         and follower_order(plan),
                          'M12_GTD_ACCOUNT_READ_SCOPE_INVALID')
                 return ClobClient._get(self, endpoint, headers=headers, params=params)
             if parsed.path.startswith('/data/order/'):
@@ -126,7 +127,7 @@ class M4LiveClobClient(ExecutionClobClient):
                         # A complementary trade's taker asset can be the other token.
                         # Only one already linked trade ID in this exact market is readable.
                         plan = json.loads(attempt['plan'])
-                        allowed = plan.get('pricing_origin', {}).get('follow_limit') and plan['order_type'] == 'GTD'
+                        allowed = follower_order(plan) and plan['order_type'] == 'GTD'
             else:
                 allowed = False
             _require(allowed, 'M4_OWNED_ORDER_READ_SCOPE_INVALID')
@@ -152,7 +153,7 @@ class M4LiveClobClient(ExecutionClobClient):
         plan = json.loads(saved['plan'])
         _require(saved['started'] and saved['state'] not in {'TERMINAL','UNSENT'}
                  and ledger.get('market')['condition_id'] == self.session_market_id
-                 and plan.get('pricing_origin', {}).get('follow_limit')
+                 and follower_order(plan)
                  and plan['order_type'] == 'GTD', 'M12_CANCEL_NOT_RESTING_ORDER')
         self.known_ids.add(ids[0])  # Includes an owned order recovered after restart.
         return super()._delete(endpoint, headers=headers, data=data, params=params)
@@ -192,8 +193,11 @@ class M4LiveClobClient(ExecutionClobClient):
                         > Decimal(ledger.root_plan(row['id'])['quantity']))
                     or (cash_target and ledger.unresolved(row['id']))):
                 return False
-        follow = plan.get('pricing_origin', {}).get('follow_limit') is True
+        follow = follower_order(plan)
         kind = plan['order_type'] if follow else 'FAK'
+        if getattr(self, 'follower_gtd_only', False) and (
+                not follow or (kind == 'FAK' and plan.get('pricing', {}).get('stage') != GTD_CHASE_STAGE)):
+            return False
         return (wire.get('postOnly') is False and wire.get('orderType') == attempt.order_type == kind
                 and int(wire['order'].get('expiration', 0)) == (plan['expiration'] if follow else 0)
                 and attempt.entry_execution == 'taker'
@@ -229,7 +233,7 @@ class M4LiveGateway(ExecutionGateway):
                 key = follow_plan['opportunity_id']
                 _require(not kwargs and ledger.amount_buy and ledger.ledger_strategy == M421_LEDGER
                          and ledger.settings.signal_profile == 'M42112'
-                         and ledger.root_plan(key).get('pricing_origin', {}).get('follow_limit') is True
+                         and follower_order(follow_plan)
                          and ledger.get('next_plan:' + key) == follow_plan
                          and follow_plan['principal_usdc'] == buy_amount_usdc
                          and len(quotes) == 1 and quotes[0].token_id == ledger.row(key)['token']

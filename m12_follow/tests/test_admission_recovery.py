@@ -1,7 +1,7 @@
 """Exercise the crash boundary between durable observation and immutable planning."""
 import pytest
 
-from m12_follow.tests.test_execution_flow import test_follow_native_fak as follow_flow
+from m12_follow.tests.test_execution_flow import test_follow_native_orders as follow_flow
 
 
 @pytest.mark.asyncio
