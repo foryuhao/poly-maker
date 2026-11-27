@@ -961,9 +961,11 @@ class BudgetMarket(TaskMarket):
             self.change_chase(key, phase, "STOPPED", reason=reason)
             return
         if phase == "WATCH":
-            with self.feed.lock:
+            with self.feed.lock, self.ledger.lock:
                 quote_reason, details = self.chase_quote(root, self.feed.books[op.token_id], self.e.monotonic())
-                if live is None or self.ledger.attempt(oid)["state"] != "ACK" or self.ledger.get("blocked:" + oid):
+                current = self.ledger.attempt(oid)
+                if (live is None or current["state"] != "ACK" or not self.ledger.gtd_zero_match(current)
+                        or self.ledger.get("blocked:" + oid)):
                     quote_reason = "M12_GTD_CHASE_NO_LIVE_ZERO_PROOF"
                 if quote_reason:
                     self.change_chase(key, phase, "STOPPED", reason=quote_reason, trigger_check=details)

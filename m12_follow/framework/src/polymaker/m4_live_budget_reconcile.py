@@ -145,6 +145,49 @@ def linked_trade_ids(ledger, oid):
             "SELECT trade_id FROM taker_trade_links WHERE order_id=?", (oid,))}
 
 
+def zero_post_economics(receipt):
+    receipt = receipt or {}
+    try:
+        return (receipt.get("status") != "matched" and not receipt.get("tradeIDs")
+                and not receipt.get("transactionsHashes")
+                and all(receipt.get(key) in (None, "") or decimal(receipt[key]) == 0
+                        for key in ("takingAmount", "makingAmount")))
+    except (TypeError, ValueError, ArithmeticError):
+        return False
+
+
+def live_zero_gtd_ack(e, ledger, before, raw):
+    oid = before["order_id"]
+    with ledger.lock:
+        current = ledger.attempt(oid)
+        row = ledger.row(current["task_id"])
+        if (current["state"] not in {"ACK", "UNKNOWN"} or row["state"] != current["state"]
+                or row["order_id"] != oid or not row["started"] or not ledger.gtd_zero_match(current)
+                or ledger.get("blocked:" + oid)):
+            return False
+        if current["state"] == "ACK":
+            return True
+        if (before["state"] != "UNKNOWN" or current["proof"] != before["proof"]
+                or not follower_order(json.loads(current["plan"]))):
+            return False
+        failure = json.loads(current["proof"] or "null")
+        # Older ledgers stored the SDK read failure or missing-detail error without a flag.
+        if not isinstance(failure, dict) or not (failure.get("gtd_detail_unavailable") is True
+                or failure.get("error_type") == "PolyApiException"
+                or failure.get("reason") == "M12_GTD_UNPROVEN_REMAINDER"):
+            return False
+        response, http_status = saved_post_response(ledger, oid)
+        receipt = normalized_receipt(response)
+        if (http_status is not None or not receipt or receipt.get("success") is not True
+                or receipt.get("orderID") != oid or receipt.get("errorMsg") not in (None, "")
+                or receipt.get("error") or not zero_post_economics(receipt)
+                or any(receipt.get(key) not in (None, "", oid) for key in ("order_id", "orderId", "id"))):
+            return False
+        ledger.response(oid, "ACK", {"kind": "M12_GTD_LIVE_ZERO_ACK_RESTORED", "order": raw})
+    e.record("m12_gtd_live_zero_ack_restored", {"order_id": oid, "opportunity_id": current["task_id"]})
+    return True
+
+
 async def gtd_account_rows(gateway, oid, path, market_id):
     """Only the terminal cursor proves the account collection is complete."""
     rows = []
@@ -233,6 +276,7 @@ async def reconcile_owned(market, oid):
     a = ledger.attempt(oid)
     if a["state"] in {"TERMINAL", "UNSENT"}:
         return
+    gtd_detail_unavailable = False
     try:
         require(a["started"] and ledger.owns_order(oid), "M4_FOREIGN_ORDER")
         response, http_status = saved_post_response(ledger, oid)
@@ -267,6 +311,7 @@ async def reconcile_owned(market, oid):
             raw = await e.gateway._io(client.get_order, oid)
         except Exception as exc:
             if resting:
+                gtd_detail_unavailable = True
                 if not isinstance(exc, PolyApiException) or exc.status_code != 404:
                     raise
                 raw = None
@@ -274,6 +319,7 @@ async def reconcile_owned(market, oid):
             else:
                 raw = order_from_receipt(receipt, a, e.meta, e.gateway.funder)
         detail_missing = resting and (raw is None or raw == {} or (isinstance(raw, str) and not raw.strip()))
+        gtd_detail_unavailable |= detail_missing
         if detail_missing or raw is None or raw == {}:
             if detail_missing:
                 raw = {"id": oid, "market": e.meta.condition_id, "asset_id": quote["token_id"],
@@ -339,12 +385,15 @@ async def reconcile_owned(market, oid):
         if receipt and (receipt.get("status") == "matched" or receipt.get("tradeIDs")
                         or receipt.get("transactionsHashes")):
             require(matched > 0, "M4_POST_MATCH_EVIDENCE_MISSING")
-        previous = decimal(ledger.get("matched_lower_bound:" + oid, "0"))
-        require(matched >= 0 and matched + MICRO >= previous, "M4_ORDER_MATCHED_REGRESSED")
-        if matched > previous:
-            ledger.set("matched_lower_bound:" + oid, str(matched))
-        ledger.link_trades(oid, ids)
-        require(linked_trade_ids(ledger, oid) == set(ids), "M4_ORDER_TRADE_LIST_REGRESSED")
+        with ledger.lock:
+            if resting and ledger.attempt(oid)["state"] in {"TERMINAL", "UNSENT"}:
+                return None  # A newer read already closed this order.
+            previous = decimal(ledger.get("matched_lower_bound:" + oid, "0"))
+            require(matched >= 0 and matched + MICRO >= previous, "M4_ORDER_MATCHED_REGRESSED")
+            if matched > previous:
+                ledger.set("matched_lower_bound:" + oid, str(matched))
+            ledger.link_trades(oid, ids)
+            require(linked_trade_ids(ledger, oid) == set(ids), "M4_ORDER_TRADE_LIST_REGRESSED")
         if receipt:
             reported = receipt.get("tradeIDs") or []
             require(
@@ -426,13 +475,9 @@ async def reconcile_owned(market, oid):
             require(matched <= units(plan["quantity"]), "M12_GTD_QUANTITY_EXCEEDED")
             if raw.get("status") in {"LIVE", "DELAYED", "UNMATCHED"}:
                 # A confirmed partial fill still leaves an executable remainder.
-                if raw["status"] == "LIVE" and matched == previous == 0 and not ids:
-                    paid = (receipt or {}).get("makingAmount")
-                    try:
-                        if paid in (None, "") or decimal(paid) == 0:
-                            return raw
-                    except (TypeError, ValueError, ArithmeticError):
-                        pass  # Inconclusive receipt cannot authorize a chase.
+                if (raw["status"] == "LIVE" and decimal(raw["size_matched"]) == previous == 0 and not ids
+                        and zero_post_economics(receipt) and live_zero_gtd_ack(e, ledger, a, raw)):
+                    return raw
                 return None
         require(tail_evidence is not None or raw.get("status") in ORDER_TERMINAL
                 or (resting and raw.get("status") == "EXPIRED"),
@@ -504,6 +549,8 @@ async def reconcile_owned(market, oid):
     except Exception as exc:
         if ledger.attempt(oid)["state"] not in {"TERMINAL", "UNSENT"}:
             reason = {"reason": str(exc), "error_type": type(exc).__name__}
+            if gtd_detail_unavailable:
+                reason["gtd_detail_unavailable"] = True
             ledger.block_reconciliation(oid, reason)
             e.record("sm_m4_owned_order_wait", {"order_id": oid, **reason})
         else:

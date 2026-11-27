@@ -266,19 +266,27 @@ class BudgetLedger(TaskLedger):
             self._write_gtd_chase(key, state)
             return state
 
+    def gtd_zero_match(self, attempt):
+        """Check current attempt and durable match evidence under the caller's ledger lock."""
+        oid = attempt["order_id"]
+        return (attempt["started"] and json.loads(attempt["plan"]).get("order_type") == "GTD"
+                and decimal(attempt["filled"]) == decimal(attempt["spent"]) == 0
+                and decimal(self.get("matched_lower_bound:" + oid, "0")) == 0
+                and not self.db.execute("SELECT 1 FROM taker_trade_links WHERE order_id=? "
+                                        "UNION ALL SELECT 1 FROM taker_trade_evidence WHERE order_id=? LIMIT 1",
+                                        (oid, oid)).fetchone())
+
     def zero_canceled_gtd(self, key, oid):
-        a = self.attempt(oid)
-        if (a["task_id"] != key or not a["started"] or a["state"] != "TERMINAL"
-                or decimal(a["filled"]) != 0 or decimal(a["spent"]) != 0
-                or decimal(self.get("matched_lower_bound:" + oid, "0")) != 0
-                or json.loads(a["plan"])["order_type"] != "GTD"):
-            return False
-        proof = json.loads(a["proof"])
-        order = proof.get("order", {})
-        return (proof["kind"] == "OWNED_TERMINAL_ORDER_AND_TRADES" and order.get("id") == oid
-                and order.get("status") in {"CANCELED", "CANCELLED"}
-                and decimal(order["size_matched"]) == 0 and order.get("associate_trades") == []
-                and proof.get("trades") == [])
+        with self.lock:
+            a = self.attempt(oid)
+            if a["task_id"] != key or a["state"] != "TERMINAL" or not self.gtd_zero_match(a):
+                return False
+            proof = json.loads(a["proof"])
+            order = proof.get("order", {})
+            return (proof["kind"] == "OWNED_TERMINAL_ORDER_AND_TRADES" and order.get("id") == oid
+                    and order.get("status") in {"CANCELED", "CANCELLED"}
+                    and decimal(order["size_matched"]) == 0 and order.get("associate_trades") == []
+                    and proof.get("trades") == [])
 
     def validate_gtd_chase(self, key, pricing, oid=None):
         state = self.gtd_chase(key)

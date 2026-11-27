@@ -159,6 +159,10 @@ def test_sqlite_wakes_for_baseline_wal_writes_only(tmp_path, monkeypatch):
                                       "restart_cancel", "cancel_ack_lags", "partial_v2", "stale_before_sign", "scheduler_v2",
                                       "concurrent_v2", "finer_tick", "no_cushion_v2", "example_v2",
                                       "native_within_limit_v2", "native_above_limit_v2",
+                                      "recover_before_v2", "recover_due_v2", "recover_legacy_v2", "recover_equal_v2", "recover_below_v2",
+                                      "recover_missing_v2", "recover_matched_v2", "recover_linked_v2", "recover_paid_v2",
+                                      "recover_unacknowledged_v2", "recover_wrong_owner_v2", "recover_wait_close_v2",
+                                      "recover_race_match_v2", "recover_race_settling_v2", "recover_race_terminal_v2",
                                   )]])
 async def test_follow_native_orders(tmp_path, monkeypatch, case):
     assert Path(__import__("polymaker").__file__).resolve().is_relative_to(FRAMEWORK)
@@ -283,9 +287,12 @@ async def test_follow_native_orders(tmp_path, monkeypatch, case):
         assert (request.method, request.url.path) == ("POST", "/orders")
         calls.extend(json.loads(request.content))
         oid = reads.gateway._client._operation_value("attempt").expected_order_id
-        if case in {"unknown", "restart_unknown", "trial_archive_unknown", "sqlite_unknown"}:
+        if case in {"unknown", "restart_unknown", "trial_archive_unknown", "sqlite_unknown",
+                    "sqlite_limit_gtd_chase_recover_unacknowledged"}:
             raise httpx.ReadTimeout("mock lost acknowledgement", request=request)
         reply = {"success": True, "orderID": oid}
+        if case == "sqlite_limit_gtd_chase_recover_paid":
+            reply["makingAmount"] = "0.01"
         if case == "zero_then_end":
             reply.update(errorMsg="no orders found to match with FAK order. FAK orders are partially filled or killed if no match is found.",
                          status="", makingAmount="", takingAmount="", tradeIDs=[], transactionsHashes=[])
@@ -693,13 +700,54 @@ async def verify_gtd_retry(market, opportunity, original, posts, monkeypatch):
         ledger.validate_recovery()
 
 
+async def verify_stale_gtd_live_read(market, oid, order, trades, mode, patch):
+    ledger, executor = market.ledger, market.e
+    key = ledger.attempt(oid)["task_id"]
+    fetched, release = asyncio.Event(), asyncio.Event()
+    io = executor.gateway._io
+
+    async def interleaved_io(call, *args, **kwargs):
+        result = await io(call, *args, **kwargs)
+        if asyncio.current_task() is stale:
+            assert result["status"] == "LIVE" and Decimal(result["size_matched"]) == 0
+            fetched.set()
+            await release.wait()
+        return result
+
+    with patch.context() as io_patch:
+        io_patch.setattr(executor.gateway, "_io", interleaved_io)
+        stale = asyncio.create_task(market.reconcile(oid))
+        try:
+            await asyncio.wait_for(fetched.wait(), timeout=2)
+            quantity = "0" if mode == "terminal" else "1"
+            newer, trade = evidence(market, executor, oid, quantity, status="MINED" if mode == "settling" else "CONFIRMED")
+            order.update(newer, order_type="GTD", status="LIVE" if mode == "match" else "CANCELED")
+            if quantity != "0":
+                trades[trade["id"]] = trade
+            await market.reconcile(oid)
+            updated = ledger.attempt(oid)
+            assert updated["state"] == {"match": "UNKNOWN", "settling": "SETTLING", "terminal": "TERMINAL"}[mode]
+            held = ledger.row(key)["reserved"]
+            lower = ledger.get("matched_lower_bound:" + oid)
+            release.set()
+            assert await stale is None
+            assert ledger.attempt(oid)["state"] == updated["state"]
+            assert ledger.row(key)["reserved"] == held and ledger.get("matched_lower_bound:" + oid) == lower
+            assert executor.fatal is None
+        finally:
+            release.set()
+            await stale
+
+
 async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original, posts, monkeypatch,
                            restart_follow_market):
     ledger, e, key = market.ledger, market.e, opportunity.episode_id
     old, = ledger.attempts(key)
     oid = old["order_id"]
     state = ledger.gtd_chase(key)
-    assert old["state"] == "ACK" and posts[0]["orderType"] == "GTD"
+    recovery = mode.startswith("recover_")
+    assert old["state"] == ("UNKNOWN" if mode == "recover_unacknowledged" else "ACK")
+    assert posts[0]["orderType"] == "GTD"
     assert state["phase"] == "WATCH" and state["old_order_id"] == oid
     stamp = state["first_post"]["monotonic"]
     order, _ = evidence(market, e, oid, "0")
@@ -707,6 +755,8 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
     cancellations, trades = [], {}
     chase_posts = []
     chase_order = None
+    detail_unavailable = False
+    wait_cancel_close = mode in {"cancel_ack_lags", "recover_wait_close"}
     owner = market.account_owner
     gateway = e.gateway
     trigger = ".68" if mode == "example" else ".80"
@@ -714,6 +764,16 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
     frozen_cap = Decimal(".63" if mode == "example" else ".75")
     extra_ticks = 0 if mode == "no_cushion" else 5
     chase_limit = Decimal(ask) + extra_ticks * Decimal(".01")
+    reserved = ledger.row(key)["reserved"]
+    receipt = ledger.facts("owned_post_receipt")
+
+    def assert_recovered():
+        current = ledger.attempt(oid)
+        assert current["state"] == ledger.row(key)["state"] == "ACK"
+        assert current["filled"] == old["filled"] and current["spent"] == old["spent"]
+        assert json.loads(current["proof"])["kind"] == "M12_GTD_LIVE_ZERO_ACK_RESTORED"
+        assert ledger.row(key)["reserved"] == reserved and ledger.facts("owned_post_receipt") == receipt
+        assert ledger.gtd_chase(key)["first_post"] == state["first_post"]
 
     def wire(request):
         nonlocal chase_order
@@ -734,8 +794,10 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             return httpx.Response(200, json=[{"success": False, "errorMsg": FAK_NO_MATCH}])
         if request.method == "DELETE":
             assert json.loads(request.content) == [oid]
+            if recovery:
+                assert_recovered()
             cancellations.append(oid)
-            if mode != "cancel_ack_lags":
+            if not wait_cancel_close:
                 order["status"] = "CANCELED"
             if mode == "cancel_timeout":
                 raise httpx.ReadTimeout("cancel response lost", request=request)
@@ -758,8 +820,9 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 e.official_time = int(e.meta.slug.rsplit("-", 1)[1]) + 240
             return httpx.Response(200, json={"canceled": [oid], "not_canceled": {}})
         if request.url.path == f"/data/order/{oid}":
-            if mode == "unknown" and clock.now >= stamp + 5:
-                return httpx.Response(503, json={"error": "order read unavailable"})
+            if detail_unavailable or (mode == "unknown" and clock.now >= stamp + 5):
+                status = 404 if mode == "recover_missing" and clock.now >= stamp + 5 else 503
+                return httpx.Response(status, json={"error": "order read unavailable"})
             return httpx.Response(200, json=order)
         if request.url.path.startswith("/data/order/"):
             if chase_order and request.url.path == f"/data/order/{chase_order['id']}":
@@ -776,13 +839,37 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
     try:
         with httpx.Client(transport=httpx.MockTransport(wire)) as query, monkeypatch.context() as patch:
             patch.setattr(helpers, "_http_client", query)
+            if recovery:
+                clock.now = stamp + 4.5
+                detail_unavailable = True
+                await market.read_order(oid)
+                assert ledger.attempt(oid)["state"] == ledger.row(key)["state"] == "UNKNOWN"
+                assert ledger.row(key)["reserved"] == reserved and ledger.facts("owned_post_receipt") == receipt
+                assert ledger.gtd_chase(key)["phase"] == "WATCH"
+                detail_unavailable = mode == "recover_missing"
+                if mode == "recover_legacy":
+                    failure = json.loads(ledger.attempt(oid)["proof"])
+                    assert failure.pop("gtd_detail_unavailable") is True and failure["error_type"] == "PolyApiException"
+                    ledger.response(oid, "UNKNOWN", failure)
+                if mode.startswith("recover_race_"):
+                    await verify_stale_gtd_live_read(market, oid, order, trades, mode.removeprefix("recover_race_"), patch)
+                if mode == "recover_matched":
+                    ledger.set("matched_lower_bound:" + oid, "0.000001")
+                if mode == "recover_linked":
+                    ledger.link_trades(oid, ["previous-associated-trade"])
+                if mode == "recover_wrong_owner":
+                    order["maker_address"] = "foreign-owner"
             clock.now = stamp + 4.999
             push_ask(ask)
-            await market.read_order(oid)
-            assert not cancellations and ledger.gtd_chase(key)["phase"] == "WATCH"
+            if not recovery or mode == "recover_before":
+                await market.read_order(oid)
+                assert not cancellations and ledger.gtd_chase(key)["phase"] == "WATCH"
+                if recovery:
+                    assert_recovered()
             clock.now = stamp + 5
             owner.account_at = clock.now
-            push_ask(trigger if mode == "equal" else ask)
+            checked_ask = trigger if mode in {"equal", "recover_equal"} else ".79" if mode == "recover_below" else ask
+            push_ask(checked_ask)
             if mode == "restart_cancel":
                 assert market.change_chase(key, "WATCH", "CANCELING")
                 await restore()
@@ -799,16 +886,39 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             else:
                 await market.read_order(oid)
             state = ledger.gtd_chase(key)
+            if mode.startswith("recover_race_"):
+                assert not cancellations and not chase_posts and state["phase"] == "STOPPED"
+                return
             assert Decimal(state["trigger_check"]["threshold"]) == Decimal(trigger)
-            assert Decimal(state["trigger_check"]["best_ask"]) == Decimal(trigger if mode == "equal" else ask)
+            assert Decimal(state["trigger_check"]["best_ask"]) == Decimal(checked_ask)
+            if mode in {"recover_equal", "recover_below"}:
+                assert_recovered()
+                assert not cancellations and not chase_posts and state["phase"] == "STOPPED"
+                assert state["reason"] == "M12_GTD_CHASE_AT_OR_BELOW_THRESHOLD"
+                return
+            if mode in {"recover_missing", "recover_matched", "recover_linked", "recover_paid",
+                        "recover_unacknowledged", "recover_wrong_owner"}:
+                assert not cancellations and not chase_posts and state["phase"] == "STOPPED"
+                assert ledger.attempt(oid)["state"] == ledger.row(key)["state"] == "UNKNOWN"
+                assert ledger.row(key)["reserved"] == reserved
+                if mode == "recover_missing":
+                    detail_unavailable = False
+                    await market.read_order(oid)
+                    assert_recovered()
+                    assert ledger.gtd_chase(key)["phase"] == "STOPPED" and not cancellations and not chase_posts
+                return
             if mode in {"equal", "unknown"}:
                 assert not cancellations and state["phase"] == "STOPPED" and len(posts) == 1
                 return
             assert cancellations == [oid]
-            if mode == "cancel_ack_lags":
+            if wait_cancel_close:
                 assert state["phase"] == "WAIT_CLOSE" and ledger.attempt(oid)["state"] == "ACK"
                 await market.submit(opportunity)
                 assert len(posts) == 1
+                if recovery:
+                    await restore()
+                    await market.submit(opportunity)
+                    assert not chase_posts and ledger.gtd_chase(key)["phase"] == "WAIT_CLOSE"
                 order["status"] = "CANCELED"
                 await market.read_order(oid)
                 state = ledger.gtd_chase(key)
@@ -843,7 +953,7 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
             if mode == "scheduler":
                 await market.advance()
                 await market.post_jobs[key]
-            elif mode == "concurrent":
+            elif mode in {"concurrent", "recover_wait_close"}:
                 await asyncio.gather(market.submit(opportunity), market.submit(opportunity))
             else:
                 await market.submit(opportunity)
@@ -858,7 +968,7 @@ async def verify_gtd_chase(market, opportunity, mode, clock, push_ask, original,
                 if mode == "native_above_limit":
                     assert saved["reason"] == "M12_GTD_CHASE_ASK_ABOVE_SIGNED_LIMIT"
                 return
-            if mode == "concurrent":
+            if mode in {"concurrent", "recover_wait_close"}:
                 assert [post["orderType"] for post in posts] == ["GTD", "FAK", "GTD"]
                 assert chase_posts == [saved["new_order_id"]]
                 assert Decimal(json.loads(ledger.attempts(key)[-1]["plan"])["limit_price"]) <= frozen_cap
